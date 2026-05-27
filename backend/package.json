@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",
-    "@nestjs/common": "^11.1.19",
+    "@nestjs/common": "^11.1.24",
     "@nestjs/core": "^11.1.21",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
