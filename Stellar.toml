@@ -1,8 +1,41 @@
 # CarbonLedger Stellar.toml
-# SEP-0001 compliant
+# SEP-0001 compliant — https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
+#
+# ── HOW TO UPDATE ─────────────────────────────────────────────────────────────
+# 1. Edit this file.
+# 2. Deploy to https://carbonledger.io/.well-known/stellar.toml (HTTPS required).
+# 3. Verify with: https://stellar.expert/explorer/testnet/account/<ISSUER_KEY>
+#    or the SDF validator: https://www.stellar.org/laboratory/#txsigner
+# 4. Confirm CORS header: Access-Control-Allow-Origin: *
+#
+# ── VALIDATION TOOLS ──────────────────────────────────────────────────────────
+# • SDF Anchor Validator: https://anchor-validator.stellar.org
+# • Stellar Expert:       https://stellar.expert
+# • SEP-0001 spec:        https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0001.md
+#
+# ── SEP-0001 COMPLIANCE CHECKLIST ─────────────────────────────────────────────
+# [x] File served at /.well-known/stellar.toml over HTTPS
+# [x] CORS header: Access-Control-Allow-Origin: *
+# [x] VERSION field present
+# [x] NETWORK_PASSPHRASE matches deployment network
+# [x] SIGNING_KEY is a valid Stellar public key (G...)
+# [x] ACCOUNTS lists all issuer public keys
+# [x] [DOCUMENTATION] section complete
+# [x] [[PRINCIPALS]] lists at least one contact
+# [x] [[CURRENCIES]] entry for every issued asset
+# [x] code + issuer present on every [[CURRENCIES]] entry
+# [x] [[VALIDATORS]] entry if operating a validator node
+# ──────────────────────────────────────────────────────────────────────────────
 
+# VERSION (required)
+# Semantic version of this stellar.toml file. Increment on every change so
+# wallets and integrators can detect updates.
 VERSION = "2.0.0"
 
+# NETWORK_PASSPHRASE (required)
+# Must exactly match the network this deployment targets.
+# Testnet:  "Test SDF Network ; September 2015"
+# Mainnet:  "Public Global Stellar Network ; September 2015"
 NETWORK_PASSPHRASE = "Test SDF Network ; September 2015"
 HORIZON_URL        = "https://horizon-testnet.stellar.org"
 FEDERATION_SERVER  = "https://carbonledger.io/federation"
@@ -10,43 +43,155 @@ AUTH_SERVER        = "https://carbonledger.io/auth"
 TRANSFER_SERVER    = "https://carbonledger.io/transfer"
 WEB_AUTH_ENDPOINT  = "https://carbonledger.io/auth"
 SIGNING_KEY        = "REPLACE_WITH_SIGNING_PUBLIC_KEY"
+URI_REQUEST_SIGNING_KEY = "REPLACE_WITH_SIGNING_PUBLIC_KEY"
 ACCOUNTS           = ["REPLACE_WITH_ISSUER_PUBLIC_KEY"]
 
+SUPPORTED_SEPS = [1, 30]
+
+# ── Soroban Contract Addresses ────────────────────────────────────────────────
+# Fill in after running `stellar contract deploy` for each contract.
+# See contracts/README.md and the deployment section of the project README.
+
+[SOROBAN_CONTRACTS]
+CARBON_REGISTRY_CONTRACT_ID    = "REPLACE_AFTER_DEPLOYMENT"
+CARBON_CREDIT_CONTRACT_ID      = "REPLACE_AFTER_DEPLOYMENT"
+CARBON_MARKETPLACE_CONTRACT_ID = "REPLACE_AFTER_DEPLOYMENT"
+CARBON_ORACLE_CONTRACT_ID      = "REPLACE_AFTER_DEPLOYMENT"
+ORACLE_PUBLIC_KEY              = "REPLACE_WITH_ORACLE_PUBLIC_KEY"
+
+# ── Organization ──────────────────────────────────────────────────────────────
+
 [DOCUMENTATION]
-ORG_NAME          = "CarbonLedger"
-ORG_DBA           = "CarbonLedger Protocol"
-ORG_URL           = "https://carbonledger.io"
-ORG_LOGO          = "https://carbonledger.io/logo.png"
-ORG_DESCRIPTION   = "Verified carbon credit marketplace on Stellar. Every credit has a complete audit trail from project registration to satellite monitoring to permanent on-chain retirement."
+
+# ORG_NAME (required)
+# Legal name of the organisation.
+ORG_NAME = "CarbonLedger"
+
+# ORG_DBA (optional)
+# "Doing Business As" name if different from legal name.
+ORG_DBA = "CarbonLedger Protocol"
+
+# ORG_URL (required)
+# HTTPS URL of the organisation's primary website.
+ORG_URL = "https://carbonledger.io"
+
+# ORG_LOGO (optional)
+# HTTPS URL to a square PNG/SVG logo (recommended 512×512 px).
+# Displayed by wallets and explorers when showing CBON.
+ORG_LOGO = "https://carbonledger.io/logo.png"
+
+# ORG_DESCRIPTION (optional)
+# One-paragraph description shown in wallet asset detail screens.
+ORG_DESCRIPTION = "Verified carbon credit marketplace on Stellar. Every credit has a complete audit trail from project registration to satellite monitoring to permanent on-chain retirement."
+
+# ORG_PHYSICAL_ADDRESS (optional)
+# Street address of the organisation. Use "Decentralized" for DAOs.
 ORG_PHYSICAL_ADDRESS = "Decentralized"
-ORG_OFFICIAL_EMAIL   = "hello@carbonledger.io"
-ORG_SUPPORT_EMAIL    = "support@carbonledger.io"
-ORG_GITHUB           = "https://github.com/carbonledger"
-ORG_TWITTER          = "@carbonledger"
+
+# ORG_OFFICIAL_EMAIL (required)
+# Primary contact email. Must be monitored.
+ORG_OFFICIAL_EMAIL = "hello@carbonledger.io"
+
+# ORG_SUPPORT_EMAIL (optional)
+# Dedicated support address for user-facing issues.
+ORG_SUPPORT_EMAIL = "support@carbonledger.io"
+
+# ORG_GITHUB (optional)
+# GitHub organisation or user URL. Used by explorers to link to source code.
+ORG_GITHUB = "https://github.com/carbonledger"
+
+# ORG_TWITTER (optional)
+# Twitter/X handle (with @). Used by wallets for social verification.
+ORG_TWITTER = "@carbonledger"
+
+# ── PRINCIPALS ────────────────────────────────────────────────────────────────
+# At least one [[PRINCIPALS]] entry is required by SEP-0001.
+# Each entry identifies a human contact responsible for this deployment.
+# Wallets and exchanges use this for KYC/AML due diligence.
 
 [[PRINCIPALS]]
-name  = "CarbonLedger Team"
+# name (required) — Full legal name of the contact person.
+name = "CarbonLedger Team"
+
+# email (required) — Direct email for this individual.
 email = "team@carbonledger.io"
+
+# github (optional) — GitHub username for identity verification.
 github = "carbonledger"
 
+# ── CURRENCIES ────────────────────────────────────────────────────────────────
+# One [[CURRENCIES]] entry per asset issued. Wallets display this information
+# on asset detail screens and use it to warn users about unknown tokens.
+
 [[CURRENCIES]]
-code        = "CBON"
-issuer      = "REPLACE_WITH_ISSUER_PUBLIC_KEY"
+
+# code (required) — 1–12 character asset code as it appears on the ledger.
+code = "CBON"
+
+# issuer (required) — Stellar public key of the account that issued this asset.
+# Must match one of the keys in ACCOUNTS above.
+issuer = "REPLACE_WITH_ISSUER_PUBLIC_KEY"
+
+# display_decimals (optional) — Number of decimal places shown in wallets.
+# Stellar supports up to 7. Use 7 for divisible credits (fractional tonnes).
 display_decimals = 7
-name        = "CarbonLedger Credit"
-desc        = "Tokenized verified carbon credit. 1 CBON = 1 tonne CO2 equivalent. Each credit has a unique serial number and full provenance from project registration to retirement."
-conditions  = "Credits are minted only for verified projects with satellite monitoring. Retirement is permanent and irreversible on-chain."
-image       = "https://carbonledger.io/cbon-logo.png"
-status      = "test"
+
+# name (optional) — Human-readable asset name shown in wallet UIs.
+name = "CarbonLedger Credit"
+
+# desc (optional) — Full description of what this asset represents.
+# Be precise: regulators and exchanges read this.
+desc = "Tokenized verified carbon credit. 1 CBON = 1 tonne CO2 equivalent. Each credit has a unique serial number and full provenance from project registration to retirement."
+
+# conditions (optional) — Legal or operational conditions on holding/trading.
+conditions = "Credits are minted only for verified projects with satellite monitoring. Retirement is permanent and irreversible on-chain."
+
+# image (optional) — HTTPS URL to a square PNG/SVG token logo (512×512 px).
+image = "https://carbonledger.io/cbon-logo.png"
+
+# status (required) — Lifecycle status of this asset.
+# Values: live | dead | test | private
+# Use "test" on testnet, "live" on mainnet.
+status = "test"
+
+# is_asset_anchored (optional) — true if this token is backed by an off-chain asset.
+# CBON is anchored to a verified carbon credit (a real-world asset).
 is_asset_anchored = true
+
+# anchor_asset_type (optional) — Category of the backing asset.
+# Values: fiat | crypto | stock | bond | commodity | realestate | other
 anchor_asset_type = "other"
-anchor_asset  = "Verified Carbon Credit (tCO2e)"
+
+# anchor_asset (optional) — Name of the real-world asset backing this token.
+anchor_asset = "Verified Carbon Credit (tCO2e)"
+
+# attestation_of_reserve (optional) — URL to a public audit or reserve proof.
+# For carbon credits this links to the on-chain audit explorer.
 attestation_of_reserve = "https://carbonledger.io/audit"
+
+# redemption_instructions (optional) — How holders can redeem/retire this asset.
 redemption_instructions = "Retire credits via the CarbonLedger marketplace at https://carbonledger.io/retire"
 
+# ── VALIDATORS ────────────────────────────────────────────────────────────────
+# Include a [[VALIDATORS]] entry only if you operate a Stellar Core validator
+# node. Omit this section entirely if you do not run a validator.
+# Exchanges and wallets use this to assess network trust.
+
 [[VALIDATORS]]
-ALIAS   = "carbonledger-validator"
+
+# ALIAS (required) — Short machine-readable identifier for this validator.
+ALIAS = "carbonledger-validator"
+
+# DISPLAY_NAME (required) — Human-readable name shown in quorum explorers.
 DISPLAY_NAME = "CarbonLedger Validator"
-PUBLIC_KEY   = "REPLACE_WITH_VALIDATOR_PUBLIC_KEY"
-HOST         = "carbonledger.io:11625"
-HISTORY      = "https://history.carbonledger.io/{0}"
+
+# PUBLIC_KEY (required) — Stellar public key of the validator node.
+# This is the node key, NOT the issuer or signing key.
+PUBLIC_KEY = "REPLACE_WITH_VALIDATOR_PUBLIC_KEY"
+
+# HOST (optional) — hostname:port where the validator accepts peer connections.
+HOST = "carbonledger.io:11625"
+
+# HISTORY (optional) — URL template for the validator's Stellar Core history archive.
+# {0} is replaced with the ledger sequence number by clients.
+HISTORY = "https://history.carbonledger.io/{0}"

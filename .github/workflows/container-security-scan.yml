@@ -1,0 +1,102 @@
+name: Container Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'backend/Dockerfile'
+      - 'frontend/Dockerfile'
+      - 'oracle/Dockerfile'
+      - '.github/workflows/container-security-scan.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'backend/Dockerfile'
+      - 'frontend/Dockerfile'
+      - 'oracle/Dockerfile'
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dockerfile:
+          - path: backend/Dockerfile
+            name: backend
+          - path: frontend/Dockerfile
+            name: frontend
+          - path: oracle/Dockerfile
+            name: oracle
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -f ${{ matrix.dockerfile.path }} \
+            -t carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }} .
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-${{ matrix.dockerfile.name }}-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-${{ matrix.dockerfile.name }}-results.sarif'
+          category: 'trivy-${{ matrix.dockerfile.name }}'
+
+      - name: Check for critical CVEs
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity CRITICAL \
+            --exit-code 1 \
+            carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
+
+      - name: Generate scan report
+        if: always()
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --format json \
+            --output trivy-${{ matrix.dockerfile.name }}-report.json \
+            carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
+
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: trivy-scan-results
+          path: trivy-*-report.json
+          retention-days: 30
+
+      - name: Comment PR with scan summary
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportFile = 'trivy-${{ matrix.dockerfile.name }}-report.json';
+            if (fs.existsSync(reportFile)) {
+              const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+              let vulnCount = 0;
+              if (report.Results) {
+                report.Results.forEach(r => {
+                  if (r.Vulnerabilities) vulnCount += r.Vulnerabilities.length;
+                });
+              }
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🔒 Trivy Scan - ${{ matrix.dockerfile.name }}\nVulnerabilities found: ${vulnCount}`
+              });
+            }

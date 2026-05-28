@@ -29,8 +29,27 @@
 - [User Roles](#-user-roles)
 - [Credit Lifecycle](#-credit-lifecycle)
 - [Roadmap](#-roadmap)
+- [Changelog](#-changelog)
 - [Contributing](#-contributing)
 - [License](#-license)
+
+---
+
+## 🎯 New Contributors Start Here!
+
+**Want to contribute?** We've created comprehensive guides to get you started in under 30 minutes:
+
+- 📖 **[New Contributor Guide](docs/NEW_CONTRIBUTOR_GUIDE.md)** - Complete overview
+- 🚀 **[Quick Start Guide](docs/QUICK_START.md)** - Setup in 15-25 minutes
+- ✅ **[Setup Checklist](docs/SETUP_CHECKLIST.md)** - Verify your environment
+- 🔧 **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues solved
+- 📋 **[Quick Reference](docs/QUICK_REFERENCE.md)** - One-page command reference
+
+**Run this to verify your setup:**
+```bash
+./scripts/verify-setup.sh  # Linux/macOS
+.\scripts\verify-setup.ps1  # Windows
+```
 
 ---
 
@@ -112,6 +131,8 @@ PROJECT DEVELOPER          CARBONLEDGER               CORPORATION
 │  Project docs │ Credit batches │ Retirements │ Certificates  │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+> Key architectural decisions are documented in [docs/adr/](docs/adr/). See the [ADR index](docs/adr/README.md) for the full list.
 
 ---
 
@@ -291,81 +312,60 @@ carbonledger/
 
 ##  Getting Started
 
-### Prerequisites
+### For Contributors
+
+**New to the project?** Follow our step-by-step guide:
+
+📖 **[Quick Start Guide](docs/QUICK_START.md)** - Get running in under 30 minutes
+
+📝 **[Contributing Guide](CONTRIBUTING.md)** - Detailed setup with troubleshooting
+
+🔧 **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+
+### Quick Setup
 
 ```bash
-# Rust + Soroban
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup target add wasm32-unknown-unknown
-cargo install --locked soroban-cli
-
-# Stellar CLI
-cargo install stellar-cli
-
-# Node.js 18+
-node --version
-
-# Python 3.10+
-python3 --version
-
-# PostgreSQL
-psql --version
-```
-
-### Clone the repo
-
-```bash
+# 1. Clone and configure
 git clone https://github.com/YOUR_USERNAME/carbonledger.git
 cd carbonledger
+cp .env.example .env
+
+# 2. Install Rust toolchain
+rustup target add wasm32-unknown-unknown
+cargo install --locked stellar-cli --version 21.0.0
+
+# 3. Setup database
+createdb carbonledger
+
+# 4. Install dependencies
+cd backend && npm install && npx prisma migrate dev && cd ..
+cd frontend && npm install && cd ..
+cd oracle && pip3 install -r requirements.txt && cd ..
+cd contracts && cargo build --target wasm32-unknown-unknown --release && cd ..
+
+# 5. Run tests
+./scripts/test-all.sh
 ```
 
-### Environment Variables
+### Verify Your Setup
 
 ```bash
-cp .env.example .env
+# Linux/macOS
+./scripts/verify-setup.sh
+
+# Windows
+.\scripts\verify-setup.ps1
 ```
 
-```env
-# Stellar
-STELLAR_NETWORK=testnet
-STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
-NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+### Prerequisites
 
-# Contract Addresses (after deployment)
-CARBON_REGISTRY_CONTRACT_ID=
-CARBON_CREDIT_CONTRACT_ID=
-CARBON_MARKETPLACE_CONTRACT_ID=
-CARBON_ORACLE_CONTRACT_ID=
-
-# Oracle Keypair
-ORACLE_SECRET_KEY=
-ORACLE_PUBLIC_KEY=
-
-# Admin Keypair
-ADMIN_SECRET_KEY=
-ADMIN_PUBLIC_KEY=
-
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/carbonledger
-
-# IPFS
-IPFS_API_URL=https://api.pinata.cloud
-IPFS_API_KEY=
-IPFS_SECRET_KEY=
-
-# Satellite Data
-GOOGLE_EARTH_ENGINE_KEY=
-PLANET_LABS_API_KEY=
-
-# Price Feeds
-XPANSIV_API_KEY=
-TOUCAN_API_KEY=
-
-# JWT
-JWT_SECRET=
-JWT_EXPIRY=7d
-```
+| Tool | Version | Installation |
+|------|---------|--------------|
+| Node.js | 18+ | [nodejs.org](https://nodejs.org) |
+| Rust | 1.74+ | [rustup.rs](https://rustup.rs) |
+| Python | 3.10+ | [python.org](https://python.org) |
+| PostgreSQL | 14+ | [postgresql.org](https://postgresql.org) |
+| Docker | 24+ (optional) | [docker.com](https://docker.com) |
 
 ---
 
@@ -448,20 +448,37 @@ docker-compose up --build
 
 ##  Running Tests
 
+### Run All Tests
+
 ```bash
+# Automated test runner
+./scripts/test-all.sh
+
+# Or manually:
+cd contracts && cargo test          # 30 Rust tests
+cd backend && npm test              # Backend tests
+cd frontend && npm test             # Frontend tests
+```
+
+### Individual Test Suites
+
+```bash
+# Rust contracts
 cd contracts
+cargo test                          # All contracts
+cargo test -p carbon_registry       # Specific contract
+cargo test -- --nocapture           # With output
 
-# Run all tests
-cargo test
+# Backend (NestJS)
+cd backend
+npm test                            # All tests
+npm test -- --watch                 # Watch mode
+npm test projects.service.spec.ts   # Specific file
 
-# Run per contract
-cargo test -p carbon_registry
-cargo test -p carbon_credit
-cargo test -p carbon_marketplace
-cargo test -p carbon_oracle
-
-# With output
-cargo test -- --nocapture
+# Frontend (Next.js)
+cd frontend
+npm test                            # All tests
+npm test -- --coverage              # With coverage
 ```
 
 ### Test Coverage (30 tests across 4 contracts)
@@ -472,6 +489,8 @@ cargo test -- --nocapture
 | carbon_credit | 10 tests |
 | carbon_marketplace | 7 tests |
 | carbon_oracle | 6 tests |
+
+**See:** [CONTRIBUTING.md](CONTRIBUTING.md#running-tests) for detailed testing guide
 
 ---
 
@@ -559,18 +578,48 @@ ESG Report Filed
 
 ##  Contributing
 
+We welcome contributions! Here's how to get started:
+
+### Quick Links
+
+- 📖 [Quick Start Guide](docs/QUICK_START.md) - Setup in under 30 minutes
+- 📝 [Contributing Guide](CONTRIBUTING.md) - Detailed setup and workflow
+- 🔧 [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and fixes
+- 🏷️ [Good First Issues](https://github.com/YOUR_USERNAME/carbonledger/labels/good%20first%20issue)
+
+### Development Workflow
+
 ```bash
+# 1. Create feature branch
 git checkout -b feat/your-feature-name
-git commit -m "feat: add your feature"
+
+# 2. Make changes and test
+./scripts/test-all.sh
+
+# 3. Commit with conventional commits
+git commit -m "feat: add serial number validation"
+
+# 4. Push and create PR
 git push origin feat/your-feature-name
 ```
 
-Please follow:
-- [Conventional Commits](https://www.conventionalcommits.org/)
-- `CarbonError` enum for all contract errors
-- Checks-effects-interactions in all Soroban contracts
-- Retirement must always be irreversible — never add logic that undoes it
-- No crypto jargon on buyer-facing pages
+### Code Guidelines
+
+- Follow [Conventional Commits](https://www.conventionalcommits.org/)
+- Use `CarbonError` enum for all contract errors
+- Follow checks-effects-interactions pattern in Soroban contracts
+- Retirement must always be irreversible
+- Avoid crypto jargon on buyer-facing pages
+- Add tests for new features
+- Update documentation
+
+**See:** [CONTRIBUTING.md](CONTRIBUTING.md) for complete guidelines
+
+---
+
+## 📜 Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for a full history of changes and releases.
 
 ---
 

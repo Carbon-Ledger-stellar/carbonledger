@@ -4,6 +4,7 @@ import { usePlatformStats, useRetirements } from "../lib/api";
 import { formatTonnes, formatStroops } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import LoadingSkeleton from "../components/LoadingSkeleton";
+import ThemeToggle from "../components/ThemeToggle";
 
 function StatCard({ label, value, sub, icon }: { label: string; value: string; sub?: string; icon: string }) {
   return (
@@ -34,6 +35,11 @@ export default function HomePage() {
 
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "3rem 2rem" }}>
+      {/* Theme Toggle */}
+      <div style={{ position: "fixed", top: "1rem", right: "1rem", zIndex: 50 }}>
+        <ThemeToggle />
+      </div>
+
       {/* Hero */}
       <div style={{ textAlign: "center", marginBottom: "4rem" }}>
         <div style={{

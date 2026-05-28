@@ -1,0 +1,38 @@
+# Staging overrides — merged on top of docker-compose.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+
+version: "3.9"
+
+services:
+  postgres:
+    environment:
+      POSTGRES_DB:       carbonledger_staging
+      POSTGRES_USER:     carbonledger
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/carbonledger/backend:staging-latest}
+    environment:
+      DATABASE_URL:                    postgresql://carbonledger:${POSTGRES_PASSWORD}@postgres:5432/carbonledger_staging
+      JWT_SECRET:                      ${JWT_SECRET}
+      STELLAR_NETWORK:                 testnet
+      STELLAR_RPC_URL:                 https://soroban-testnet.stellar.org
+      CARBON_REGISTRY_CONTRACT_ID:     ${STAGING_REGISTRY_CONTRACT_ID}
+      CARBON_CREDIT_CONTRACT_ID:       ${STAGING_CREDIT_CONTRACT_ID}
+      CARBON_MARKETPLACE_CONTRACT_ID:  ${STAGING_MARKETPLACE_CONTRACT_ID}
+      CARBON_ORACLE_CONTRACT_ID:       ${STAGING_ORACLE_CONTRACT_ID}
+      USDC_CONTRACT_ID:                ${STAGING_USDC_CONTRACT_ID}
+      REDIS_SENTINELS:                 redis-sentinel:26379
+      REDIS_SENTINEL_NAME:             mymaster
+      REDIS_PASSWORD:                  ${REDIS_PASSWORD:-}
+      FRONTEND_URL:                    ${STAGING_URL}
+      ALLOWED_ORIGINS:                 ${ALLOWED_ORIGINS:-https://staging.carbonledger.com}
+      PORT:                            3001
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/carbonledger/frontend:staging-latest}
+
+volumes:
+  postgres_staging_data:

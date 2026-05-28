@@ -40,3 +40,8 @@ coverage/
 # Logs
 *.log
 npm-debug.log*
+
+.agents/
+.claude/
+skills-lock.json
+issue.md

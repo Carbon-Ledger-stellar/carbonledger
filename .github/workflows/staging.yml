@@ -1,0 +1,217 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: [develop]
+
+concurrency:
+  group: staging
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ── 1. Run full test suite before deploying ──────────────────────────────────
+  test:
+    name: Test Suite
+    uses: ./.github/workflows/ci.yml
+
+  # ── 2. Build & push Docker images ────────────────────────────────────────────
+  build:
+    name: Build Images
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend_image:  ${{ steps.meta-backend.outputs.tags }}
+      frontend_image: ${{ steps.meta-frontend.outputs.tags }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta — backend
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
+          tags: |
+            type=sha,prefix=staging-
+            type=raw,value=staging-latest
+
+      - name: Docker meta — frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
+          tags: |
+            type=sha,prefix=staging-
+            type=raw,value=staging-latest
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.STAGING_API_URL }}
+            NEXT_PUBLIC_STELLAR_NETWORK=testnet
+            NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org
+            NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+            NEXT_PUBLIC_REGISTRY_CONTRACT=${{ secrets.STAGING_REGISTRY_CONTRACT_ID }}
+            NEXT_PUBLIC_CREDIT_CONTRACT=${{ secrets.STAGING_CREDIT_CONTRACT_ID }}
+            NEXT_PUBLIC_MARKETPLACE_CONTRACT=${{ secrets.STAGING_MARKETPLACE_CONTRACT_ID }}
+            NEXT_PUBLIC_ORACLE_CONTRACT=${{ secrets.STAGING_ORACLE_CONTRACT_ID }}
+            NEXT_PUBLIC_USDC_CONTRACT=${{ secrets.STAGING_USDC_CONTRACT_ID }}
+
+  # ── 2.5. Build Storybook ─────────────────────────────────────────────────────
+  build-storybook:
+    name: Build Storybook
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Build Storybook
+        working-directory: ./frontend
+        run: npm run build-storybook
+
+      - name: Upload Storybook build
+        uses: actions/upload-artifact@v4
+        with:
+          name: storybook-build
+          path: frontend/storybook-static/
+          retention-days: 1
+
+  # ── 3. Deploy to staging server ───────────────────────────────────────────────
+  deploy:
+    name: Deploy to Staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ secrets.STAGING_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key:      ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/carbonledger-staging
+
+            # Pull latest compose file
+            git fetch origin develop
+            git checkout origin/develop -- docker-compose.yml docker-compose.staging.yml
+
+            # Inject image tags
+            export BACKEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:staging-latest"
+            export FRONTEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:staging-latest"
+
+            # Pull new images and restart
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --remove-orphans
+
+            # Run migrations
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml \
+              exec -T backend npx prisma migrate deploy
+
+            # Seed staging DB if first deploy
+            if [ -f .seed_needed ]; then
+              docker compose -f docker-compose.yml -f docker-compose.staging.yml \
+                exec -T backend npx ts-node prisma/seed-staging.ts
+              rm .seed_needed
+            fi
+
+  # ── 3.5. Deploy Storybook to staging ──────────────────────────────────────────
+  deploy-storybook:
+    name: Deploy Storybook
+    needs: [build-storybook, deploy]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Storybook build
+        uses: actions/download-artifact@v4
+        with:
+          name: storybook-build
+          path: storybook-static
+
+      - name: Deploy to staging server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key:      ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            set -e
+            # Deploy Storybook to /var/www/storybook.staging.carbonledger.com or similar
+            sudo rm -rf /var/www/storybook-staging/*
+            sudo cp -r storybook-static/* /var/www/storybook-staging/
+            sudo chown -R www-data:www-data /var/www/storybook-staging
+
+  # ── 4. Smoke test ─────────────────────────────────────────────────────────────
+  smoke:
+    name: Smoke Test
+    needs: [deploy, deploy-storybook]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Wait for staging to be ready
+        run: sleep 20
+
+      - name: Health check — backend
+        run: |
+          curl --fail --retry 5 --retry-delay 5 \
+            "${{ secrets.STAGING_API_URL }}/health" \
+            -H "Accept: application/json"
+
+      - name: Health check — frontend
+        run: |
+          curl --fail --retry 5 --retry-delay 5 \
+            "${{ secrets.STAGING_URL }}"
+
+      - name: Health check — Storybook
+        run: |
+          curl --fail --retry 5 --retry-delay 5 \
+            "${{ secrets.STORYBOOK_STAGING_URL }}"
+
+      - name: Verify Testnet contract IDs are set
+        run: |
+          RESPONSE=$(curl -s "${{ secrets.STAGING_API_URL }}/health")
+          echo "$RESPONSE" | grep -q '"stellar_network":"testnet"' || \
+            (echo "Staging is not pointing at testnet!" && exit 1)

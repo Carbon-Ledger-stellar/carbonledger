@@ -1,0 +1,39 @@
+version: "3.9"
+
+# Production overlay — rolling zero-downtime deployment.
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps --scale backend=2 backend
+services:
+  backend:
+    restart: always
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1          # replace one replica at a time
+        delay: 15s              # wait between each replica
+        failure_action: rollback
+        order: start-first      # new container starts before old one stops
+      rollback_config:
+        parallelism: 1
+        failure_action: continue
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    restart: always
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

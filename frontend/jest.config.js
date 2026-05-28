@@ -1,14 +1,35 @@
 /** @type {import('jest').Config} */
-module.exports = {
-  testEnvironment: "jest-environment-jsdom",
-  transform: { "^.+\\.(ts|tsx|js|jsx)$": "babel-jest" },
+const config = {
+  preset: 'ts-jest',
+  testEnvironment: 'jest-environment-jsdom',
+  testMatch: ['**/__tests__/**/*.test.ts', '**/__tests__/**/*.test.tsx'],
   moduleNameMapper: {
-    "^../styles/(.*)$": "<rootDir>/__mocks__/styleMock.js",
-    "^../../styles/(.*)$": "<rootDir>/__mocks__/styleMock.js",
-    "^../lib/api$": "<rootDir>/__mocks__/api.ts",
-    "^../../lib/api$": "<rootDir>/__mocks__/api.ts",
-    "^../lib/carbon-utils$": "<rootDir>/__mocks__/carbon-utils.ts",
-    "^../../lib/carbon-utils$": "<rootDir>/__mocks__/carbon-utils.ts",
+    '^@/(.*)$': '<rootDir>/$1',
   },
-  setupFilesAfterEnv: ["@testing-library/jest-dom"],
+  transform: {
+    '^.+\\.(ts|tsx)$': [
+      'ts-jest',
+      {
+        tsconfig: {
+          jsx: 'react',
+          rootDir: '.',
+          moduleResolution: 'node',
+          ignoreDeprecations: '6.0',
+        },
+      },
+    ],
+  },
+  testPathIgnorePatterns: ['/node_modules/', '/tests/'],
+  // Scope coverage to the 4 lib files required by issue #96
+  collectCoverageFrom: [
+    'lib/stellar.ts',
+    'lib/soroban.ts',
+    'lib/carbon-utils.ts',
+    'lib/wallet-errors.ts',
+  ],
+  coverageThreshold: {
+    global: { lines: 80, functions: 80, branches: 80, statements: 80 },
+  },
 };
+
+module.exports = config;
