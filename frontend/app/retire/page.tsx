@@ -11,7 +11,7 @@ import TransactionStatus, { TxStatus } from "../../components/TransactionStatus"
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
-
+import ErrorBoundary from "../../components/ErrorBoundary";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface RetireFormState {
@@ -418,10 +418,10 @@ export default function RetirePage() {
       await new Promise(r => setTimeout(r, 1000));
       setTxStatus("submitting");
       const result = await retireCredits({
-        batchId:          form.batchId,
-        amount:           form.amount,
-        beneficiary:      form.beneficiary,
-        retirementReason: form.reason,
+        batchId,
+        amount,
+        beneficiary,
+        retirementReason: reason,
         holderPublicKey:  walletKey,
       });
       setTxStatus("polling");
@@ -432,11 +432,9 @@ export default function RetirePage() {
       addToast({
         type:    "success",
         title:   "Credits permanently retired",
-        message: `${formatTonnes(form.amount)} retired on behalf of ${form.beneficiary}`,
+        message: `${formatTonnes(amount)} retired on behalf of ${beneficiary}`,
         txHash:  result.txHash,
       });
-      // Brief pause so user sees confirmed state before step 5
-      setTimeout(() => setStep(5), 1200);
     } catch (e: any) {
       setTxStatus("failed");
       addToast({ type: "error", title: "Retirement failed", message: e.message });
