@@ -502,3 +502,41 @@ jobs:
           --skip fuzz_purchase_from_sold_listing_fails
           --skip fuzz_purchase_valid_reduces_available
           --skip fuzz_purchase_full_amount_marks_sold
+
+
+  rust-contracts-ci:
+    name: Rust Contracts CI (test / clippy / fmt)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust toolchain and cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ci-
+
+      - name: Run tests (all four contracts)
+        working-directory: contracts
+        run: cargo test --all
+
+      - name: Run Clippy (fail on warnings)
+        working-directory: contracts
+        run: cargo clippy -- -D warnings
+
+      - name: Check formatting
+        working-directory: contracts
+        run: cargo fmt --check
