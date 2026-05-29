@@ -268,6 +268,9 @@ impl CarbonRegistryContract {
         Self::require_verifier(&env, &verifier_address)?;
 
         let mut project = Self::load_project(&env, &project_id)?;
+        if project.status == ProjectStatus::Verified {
+            return Err(CarbonError::ProjectAlreadyExists);
+        }
         project.status = ProjectStatus::Rejected;
         env.storage().persistent().set(&DataKey::Project(project_id.clone()), &project);
 
@@ -308,6 +311,9 @@ impl CarbonRegistryContract {
         Self::require_admin(&env, &admin)?;
 
         let mut project = Self::load_project(&env, &project_id)?;
+        if project.status == ProjectStatus::Suspended {
+            return Err(CarbonError::ProjectSuspended);
+        }
         project.status = ProjectStatus::Suspended;
         env.storage().persistent().set(&DataKey::Project(project_id.clone()), &project);
 
@@ -967,5 +973,45 @@ mod edge_case_tests {
         let (client, admin, oracle, verifier) = init(&env);
         let result = client.try_initialize(&admin, &oracle, &vec![&env, verifier]);
         assert_eq!(result.unwrap_err(), Ok(CarbonError::AlreadyInitialized));
+    }
+
+    // ── New edge cases (issue #91) ────────────────────────────────────────────
+
+    #[test]
+    fn test_reject_already_verified_project_fails() {
+        let env = Env::default();
+        let (client, admin, _, verifier) = init(&env);
+        register_proj(&env, &client, &admin, "p1");
+        client.verify_project(&verifier, &s(&env, "p1")).unwrap();
+        let result = client.try_reject_project(&verifier, &s(&env, "p1"), &s(&env, "fraud"));
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectAlreadyExists));
+    }
+
+    #[test]
+    fn test_unauthorized_verifier_cannot_verify() {
+        let env = Env::default();
+        let (client, admin, _, _) = init(&env);
+        register_proj(&env, &client, &admin, "p1");
+        let rogue = Address::generate(&env);
+        let result = client.try_verify_project(&rogue, &s(&env, "p1"));
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedVerifier));
+    }
+
+    #[test]
+    fn test_suspend_already_suspended_project_fails() {
+        let env = Env::default();
+        let (client, admin, _, _) = init(&env);
+        register_proj(&env, &client, &admin, "p1");
+        client.suspend_project(&admin, &s(&env, "p1"), &s(&env, "investigation")).unwrap();
+        let result = client.try_suspend_project(&admin, &s(&env, "p1"), &s(&env, "again"));
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectSuspended));
+    }
+
+    #[test]
+    fn test_get_project_not_found() {
+        let env = Env::default();
+        let (client, _, _, _) = init(&env);
+        let result = client.try_get_project(&s(&env, "nonexistent"));
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectNotFound));
     }
 }
