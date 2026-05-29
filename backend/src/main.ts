@@ -2,19 +2,23 @@ import { NestFactory } from '@nestjs/core';
 import { ConsoleLogger, ForbiddenException, LogLevel, ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { PrismaService } from './prisma.service';
+import { CorrelationIdContext } from './logger/correlation-id.context';
+import * as express from 'express';
 
 /**
- * Minimal JSON logger — wraps NestJS ConsoleLogger so every line emitted to
- * stdout is a single JSON object.  Promtail's JSON pipeline stage picks up
- * `level`, `message`, and `service` labels automatically.
+ * Enhanced JSON logger with correlation ID support.
+ * Wraps NestJS ConsoleLogger so every line emitted to stdout is a single JSON object.
+ * Includes correlation ID from AsyncLocalStorage for request tracing.
  */
 class JsonLogger extends ConsoleLogger {
   private write(level: string, message: unknown, context?: string): void {
+    const correlationId = CorrelationIdContext.getCorrelationId();
     process.stdout.write(
       JSON.stringify({
         timestamp: new Date().toISOString(),
         level,
         service: 'backend',
+        correlationId: correlationId || undefined,
         context: context ?? this.context,
         message,
       }) + '\n',

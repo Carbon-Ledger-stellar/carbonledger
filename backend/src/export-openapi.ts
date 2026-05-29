@@ -4,6 +4,9 @@ import { VersioningType } from "@nestjs/common";
 import { writeFileSync } from "fs";
 import { resolve } from "path";
 import { AppModule } from "./app.module";
+import { StructuredLogger } from "./logger/structured-logger";
+
+const logger = new StructuredLogger('carbonledger-openapi-export');
 
 async function exportSpec() {
   const app = await NestFactory.create(AppModule, { logger: false });
@@ -48,7 +51,7 @@ async function exportSpec() {
   const document = SwaggerModule.createDocument(app, config);
   const outPath = resolve(__dirname, "../docs/openapi.json");
   writeFileSync(outPath, JSON.stringify(document, null, 2));
-  console.log(`OpenAPI spec written to ${outPath}`);
+  logger.info(`OpenAPI spec written to ${outPath}`, { path: outPath });
   await app.close();
 }
 exportSpec();

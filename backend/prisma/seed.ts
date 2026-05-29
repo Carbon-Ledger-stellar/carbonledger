@@ -1,6 +1,8 @@
 import { PrismaClient } from "@prisma/client";
+import { StructuredLogger } from "../src/logger/structured-logger";
 
 const prisma = new PrismaClient();
+const logger = new StructuredLogger('carbonledger-seed');
 
 async function main() {
   // Seed a test project
@@ -84,12 +86,14 @@ async function main() {
     },
   });
 
-  console.log("Seed complete.");
+  logger.info("Seed complete");
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    logger.error("Seed failed", e instanceof Error ? e : new Error(String(e)), {
+      error: e instanceof Error ? e.message : String(e),
+    });
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());

@@ -1,9 +1,11 @@
 import { Injectable, LoggerService as NestLoggerService } from "@nestjs/common";
 import * as winston from "winston";
 import CloudWatchTransport from "winston-cloudwatch";
+import { CorrelationIdContext } from "./correlation-id.context";
 
 export interface LogContext {
   trace_id?: string;
+  correlationId?: string;
   user_id?: string;
   contract_id?: string;
   [key: string]: unknown;
@@ -44,8 +46,18 @@ export class LoggerService implements NestLoggerService {
     });
   }
 
+  private getContextWithCorrelationId(context?: LogContext | string): LogContext {
+    const baseContext = typeof context === "string" ? { context } : (context ?? {});
+    const correlationId = CorrelationIdContext.getCorrelationId();
+    
+    return {
+      ...baseContext,
+      correlationId: baseContext.correlationId || correlationId,
+    };
+  }
+
   private write(level: string, message: string, context?: LogContext | string) {
-    const meta = typeof context === "string" ? { context } : (context ?? {});
+    const meta = this.getContextWithCorrelationId(context);
     this.logger.log(level, message, meta);
   }
 
@@ -54,8 +66,8 @@ export class LoggerService implements NestLoggerService {
   }
 
   error(message: string, trace?: string, context?: LogContext | string) {
-    const meta = typeof context === "string" ? { context, trace } : { ...(context ?? {}), trace };
-    this.logger.error(message, meta);
+    const meta = this.getContextWithCorrelationId(context);
+    this.logger.error(message, { ...meta, trace });
   }
 
   warn(message: string, context?: LogContext | string) {

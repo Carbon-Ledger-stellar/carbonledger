@@ -1,9 +1,11 @@
 import { PrismaClient } from '@prisma/client';
+import { StructuredLogger } from '../src/logger/structured-logger';
 
 const prisma = new PrismaClient();
+const logger = new StructuredLogger('carbonledger-seed-staging');
 
 async function main() {
-  console.log('🌱 Seeding staging database...');
+  logger.info('Seeding staging database');
 
   // Create staging admin user
   const adminUser = await prisma.user.upsert({
@@ -143,16 +145,18 @@ async function main() {
     },
   });
 
-  console.log('✅ Staging database seeded successfully');
-  console.log(`👤 Admin user: ${adminUser.email}`);
-  console.log(`👤 Test users: ${testUser1.email}, ${testUser2.email}`);
-  console.log(`🏗️ Test projects: ${testProject1.name}, ${testProject2.name}`);
-  console.log('🔧 Admin configuration and API keys created');
+  logger.info('Staging database seeded successfully', {
+    adminUser: adminUser.email,
+    testUsers: [testUser1.email, testUser2.email],
+    testProjects: [testProject1.name, testProject2.name],
+  });
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Error seeding staging database:', e);
+    logger.error('Error seeding staging database', e instanceof Error ? e : new Error(String(e)), {
+      error: e instanceof Error ? e.message : String(e),
+    });
     process.exit(1);
   })
   .finally(async () => {

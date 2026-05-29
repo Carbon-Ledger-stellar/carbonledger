@@ -1,7 +1,8 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpStatus } from "@nestjs/common";
+import { ExceptionFilter, Catch, ArgumentsHost, HttpStatus, Inject } from "@nestjs/common";
 import { ThrottlerException } from "@nestjs/throttler";
 import { Response } from "express";
 import { ResponseAlreadySentException } from "../auth/login-rate-limit.guard";
+import { LoggerService } from "../logger/logger.service";
 
 /**
  * Catches ThrottlerException and sends a well-formed 429 JSON response
@@ -30,8 +31,10 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
  */
 @Catch(ResponseAlreadySentException)
 export class ResponseAlreadySentFilter implements ExceptionFilter {
+  constructor(@Inject(LoggerService) private readonly logger: LoggerService) {}
+
   catch(_exception: ResponseAlreadySentException, _host: ArgumentsHost) {
-    console.log("ResponseAlreadySentFilter: response already sent, doing nothing");
+    this.logger.debug("Response already sent by guard, filter doing nothing");
     // Response was already sent by the guard — nothing to do
   }
 }

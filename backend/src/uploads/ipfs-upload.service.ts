@@ -1,11 +1,15 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
+import { LoggerService } from "../logger/logger.service";
 import axios from "axios";
 import FormData from "form-data";
 
 @Injectable()
 export class IpfsUploadService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly logger: LoggerService,
+  ) {}
 
   /**
    * Upload file to Pinata and store file record in database
@@ -170,8 +174,13 @@ export class IpfsUploadService {
         data: { pinStatus: "failed" },
       });
 
-      console.error(
-        `Async pin failed for file ${dbRecordId}: ${error?.message || "Unknown error"}`
+      this.logger.error(
+        `Async pin failed for file ${dbRecordId}`,
+        error?.stack,
+        {
+          fileId: dbRecordId,
+          error: error?.message || "Unknown error",
+        }
       );
     }
   }

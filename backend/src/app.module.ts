@@ -1,6 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
-import { Module, Controller, Get } from "@nestjs/common";
+import { Module, Controller, Get, MiddlewareConsumer, NestModule } from "@nestjs/common";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
@@ -20,6 +20,9 @@ import { PrismaService } from "./prisma.service";
 import { VerifiersModule } from "./verifiers/verifiers.module";
 import { ThrottlerExceptionFilter, ResponseAlreadySentFilter } from "./common/throttler-exception.filter";
 import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
+import { LoggerModule } from "./logger/logger.module";
+import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
+import { LoggingInterceptor } from "./logger/logging.interceptor";
 
 @Controller("health")
 class HealthController {
@@ -95,8 +98,20 @@ class HealthController {
     },
     {
       provide: APP_INTERCEPTOR,
+      useClass: CorrelationIdMiddleware,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: LoggingInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
       useClass: AuditInterceptor,
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+  }
+}
