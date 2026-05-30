@@ -308,6 +308,8 @@ impl CarbonMarketplaceContract {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
+       
+
         let mut listing = Self::load_listing(&env, &listing_id)?;
 
         if listing.status == ListingStatus::Delisted || listing.status == ListingStatus::Sold {
