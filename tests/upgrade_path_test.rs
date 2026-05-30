@@ -1,236 +1,326 @@
-use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String, vec};
-use carbon_registry_v1::CarbonRegistryContractV1 as V1;
-use carbon_registry_v2::CarbonRegistryContractV2 as V2;
+use soroban_sdk::{testutils::{Address as _}, Env, String, Vec, vec, BytesN, Address};
+use carbon_registry::{CarbonRegistryContract, CarbonRegistryContractClient};
+use carbon_credit::{CarbonCreditContract, CarbonCreditContractClient};
+use carbon_marketplace::{CarbonMarketplaceContract, CarbonMarketplaceContractClient};
+use carbon_oracle::{CarbonOracleContract, CarbonOracleContractClient};
 
-fn setup_v1() -> (Env, Address, Address, Address) {
+fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+// -- carbon_registry upgrade tests --------------------------------------------
+
+#[test]
+fn test_registry_upgrade_admin_only() {
     let env = Env::default();
     env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let admin    = Address::generate(&env);
+    let oracle   = Address::generate(&env);
     let verifier = Address::generate(&env);
-    
-    let v1_contract_id = env.register_contract(None, V1);
-    let v1_client = V1::Client::new(&env, &v1_contract_id);
-    v1_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    (env, admin, oracle, verifier)
+    let id       = env.register_contract(None, CarbonRegistryContract);
+    let client   = CarbonRegistryContractClient::new(&env, &id);
+    client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]).unwrap();
+
+    let attacker = Address::generate(&env);
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let result = client.try_upgrade(&attacker, &fake_hash);
+    assert!(result.is_err());
+
+    // Admin upgrade succeeds
+    client.upgrade(&admin, &fake_hash).unwrap();
+    assert_eq!(client.get_version(), 2);
+    let history = client.get_upgrade_history().unwrap();
+    assert_eq!(history.from_version, 1);
+    assert_eq!(history.to_version, 2);
+    assert_eq!(history.upgraded_by, admin);
+    assert_eq!(history.wasm_hash, fake_hash);
 }
 
-fn setup_v2() -> (Env, Address, Address, Address) {
+#[test]
+fn test_registry_retired_credits_preserved_after_upgrade() {
     let env = Env::default();
     env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let admin    = Address::generate(&env);
+    let oracle   = Address::generate(&env);
     let verifier = Address::generate(&env);
-    
-    let v2_contract_id = env.register_contract(None, V2);
-    let v2_client = V2::Client::new(&env, &v2_contract_id);
-    v2_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    (env, admin, oracle, verifier)
-}
+    let id       = env.register_contract(None, CarbonRegistryContract);
+    let client   = CarbonRegistryContractClient::new(&env, &id);
+    client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]).unwrap();
 
-fn make_str(env: &Env, s: &str) -> String {
-    String::from_str(env, s)
-}
-
-#[test]
-fn test_upgrade_path_v1_to_v2() {
-    // Setup v1 contract
-    let (env, admin, oracle, verifier) = setup_v1();
-    let v1_contract_id = env.register_contract(None, V1);
-    let v1_client = V1::Client::new(&env, &v1_contract_id);
-    v1_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    // Register a project in v1
-    v1_client.register_project(
-        &admin,
-        &make_str(&env, "proj-001"),
-        &make_str(&env, "Amazon Reforestation"),
-        &make_str(&env, "QmCID123"),
-        &verifier,
-        &make_str(&env, "VCS"),
-        &make_str(&env, "Brazil"),
-        &make_str(&env, "forestry"),
-        2023_u32,
-    ).unwrap();
-    
-    // Verify the project
-    v1_client.verify_project(&verifier, &make_str(&env, "proj-001")).unwrap();
-    
-    // Issue some credits
-    v1_client.increment_issued(&oracle, &make_str(&env, "proj-001"), &1000_i128).unwrap();
-    
-    // Retire some credits
-    v1_client.retire_credits(&admin, &make_str(&env, "proj-001"), &300_i128).unwrap();
-    
-    // Verify v1 state
-    let project_v1 = v1_client.get_project(&make_str(&env, "proj-001")).unwrap();
-    assert_eq!(project_v1.total_credits_issued, 1000);
-    assert_eq!(project_v1.total_credits_retired, 300);
-    
-    // Now deploy v2 contract and simulate upgrade
-    let v2_contract_id = env.register_contract(None, V2);
-    let v2_client = V2::Client::new(&env, &v2_contract_id);
-    
-    // Initialize v2 with same admin/oracle/verifier
-    v2_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    // Perform upgrade
-    v2_client.upgrade_from_v1(&admin).unwrap();
-    
-    // Verify upgrade
-    assert_eq!(v2_client.get_version(), 2);
-    
-    let upgrade_history = v2_client.get_upgrade_history().unwrap();
-    assert_eq!(upgrade_history.from_version, 1);
-    assert_eq!(upgrade_history.to_version, 2);
-    assert_eq!(upgrade_history.upgraded_by, admin);
-    
-    println!("✅ Upgrade path test passed");
-}
-
-#[test]
-fn test_state_preservation_after_upgrade() {
-    // Setup v1 contract with state
-    let (env, admin, oracle, verifier) = setup_v1();
-    let v1_contract_id = env.register_contract(None, V1);
-    let v1_client = V1::Client::new(&env, &v1_contract_id);
-    v1_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
     // Register and verify project
-    v1_client.register_project(
+    client.register_project(
         &admin,
-        &make_str(&env, "proj-002"),
-        &make_str(&env, "Solar Farm Project"),
-        &make_str(&env, "QmCID456"),
+        &s(&env, "proj-001"),
+        &s(&env, "Amazon Reforestation"),
+        &s(&env, "QmCID123"),
         &verifier,
-        &make_str(&env, "GS"),
-        &make_str(&env, "India"),
-        &make_str(&env, "renewable"),
-        2024_u32,
+        &s(&env, "VCS"),
+        &s(&env, "Brazil"),
+        &s(&env, "forestry"),
+        &75_u32,
+        &2023_u32,
     ).unwrap();
-    
-    v1_client.verify_project(&verifier, &make_str(&env, "proj-002")).unwrap();
-    v1_client.increment_issued(&oracle, &make_str(&env, "proj-002"), &500_i128).unwrap();
-    v1_client.retire_credits(&admin, &make_str(&env, "proj-002"), &200_i128).unwrap();
-    
-    // Deploy v2 and migrate state (in real scenario, this would be handled by upgrade mechanism)
-    let v2_contract_id = env.register_contract(None, V2);
-    let v2_client = V2::Client::new(&env, &v2_contract_id);
-    v2_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    // Register same project in v2 to simulate migration
-    v2_client.register_project(
-        &admin,
-        &make_str(&env, "proj-002"),
-        &make_str(&env, "Solar Farm Project"),
-        &make_str(&env, "QmCID456"),
-        &verifier,
-        &make_str(&env, "GS"),
-        &make_str(&env, "India"),
-        &make_str(&env, "renewable"),
-        2024_u32,
-    ).unwrap();
-    
-    v2_client.verify_project(&verifier, &make_str(&env, "proj-002")).unwrap();
-    v2_client.increment_issued(&oracle, &make_str(&env, "proj-002"), &500_i128).unwrap();
-    v2_client.retire_credits(&admin, &make_str(&env, "proj-002"), &200_i128).unwrap();
-    
-    // Verify state preservation
-    let project_v2 = v2_client.get_project(&make_str(&env, "proj-002")).unwrap();
-    assert_eq!(project_v2.total_credits_issued, 500);
-    assert_eq!(project_v2.total_credits_retired, 200);
-    
-    println!("✅ State preservation test passed");
-}
+    client.verify_project(&verifier, &s(&env, "proj-001")).unwrap();
+    client.increment_issued(&oracle, &s(&env, "proj-001"), &1000_i128).unwrap();
+    client.retire_credits(&admin, &s(&env, "proj-001"), &300_i128).unwrap();
 
-#[test]
-fn test_retired_credits_remain_retired() {
-    let (env, admin, oracle, verifier) = setup_v2();
-    let v2_contract_id = env.register_contract(None, V2);
-    let v2_client = V2::Client::new(&env, &v2_contract_id);
-    v2_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    // Register and verify project
-    v2_client.register_project(
-        &admin,
-        &make_str(&env, "proj-003"),
-        &make_str(&env, "Wind Energy Project"),
-        &make_str(&env, "QmCID789"),
-        &verifier,
-        &make_str(&env, "VCS"),
-        &make_str(&env, "USA"),
-        &make_str(&env, "wind"),
-        2023_u32,
-    ).unwrap();
-    
-    v2_client.verify_project(&verifier, &make_str(&env, "proj-003")).unwrap();
-    v2_client.increment_issued(&oracle, &make_str(&env, "proj-003"), &1000_i128).unwrap();
-    
-    // Retire credits
-    v2_client.retire_credits(&admin, &make_str(&env, "proj-003"), &800_i128).unwrap();
-    
-    // Verify retired credits
-    let project = v2_client.get_project(&make_str(&env, "proj-003")).unwrap();
-    assert_eq!(project.total_credits_retired, 800);
-    assert_eq!(project.total_credits_issued, 1000);
-    
-    // Try to retire more than available - should fail
-    let result = v2_client.try_retire_credits(&admin, &make_str(&env, "proj-003"), &300_i128);
+    // Verify pre-upgrade state
+    let pre = client.get_project(&s(&env, "proj-001")).unwrap();
+    assert_eq!(pre.total_credits_retired, 300);
+
+    // Upgrade
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    client.upgrade(&admin, &fake_hash).unwrap();
+
+    // Verify post-upgrade state is preserved
+    let post = client.get_project(&s(&env, "proj-001")).unwrap();
+    assert_eq!(post.total_credits_retired, 300);
+    assert_eq!(post.total_credits_issued, 1000);
+
+    // Retirement must still be irreversible
+    let result = client.try_retire_credits(&admin, &s(&env, "proj-001"), &800_i128);
     assert!(result.is_err());
-    
-    println!("✅ Retired credits preservation test passed");
 }
 
+// -- carbon_credit upgrade tests ----------------------------------------------
+
 #[test]
-fn test_upgrade_by_non_admin_fails() {
-    let (env, admin, oracle, verifier) = setup_v2();
-    let v2_contract_id = env.register_contract(None, V2);
-    let v2_client = V2::Client::new(&env, &v2_contract_id);
-    v2_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    // Try upgrade with non-admin
-    let non_admin = Address::generate(&env);
-    let result = v2_client.try_upgrade_from_v1(&non_admin);
+fn test_credit_upgrade_admin_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin    = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let id       = env.register_contract(None, CarbonCreditContract);
+    let client   = CarbonCreditContractClient::new(&env, &id);
+    client.initialize(&admin, &registry).unwrap();
+
+    let attacker = Address::generate(&env);
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let result = client.try_upgrade(&attacker, &fake_hash);
     assert!(result.is_err());
-    
-    println!("✅ Non-admin upgrade restriction test passed");
+
+    client.upgrade(&admin, &fake_hash).unwrap();
+    assert_eq!(client.get_version(), 2);
 }
 
 #[test]
-fn test_new_v2_functions() {
-    let (env, admin, oracle, verifier) = setup_v2();
-    let v2_contract_id = env.register_contract(None, V2);
-    let v2_client = V2::Client::new(&env, &v2_contract_id);
-    v2_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-    
-    // Register and verify project
-    v2_client.register_project(
+fn test_credit_retired_records_preserved_after_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin    = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let id       = env.register_contract(None, CarbonCreditContract);
+    let client   = CarbonCreditContractClient::new(&env, &id);
+    client.initialize(&admin, &registry).unwrap();
+
+    let owner = Address::generate(&env);
+    client.mint_credits(
         &admin,
-        &make_str(&env, "proj-004"),
-        &make_str(&env, "Hydroelectric Project"),
-        &make_str(&env, "QmCID999"),
-        &verifier,
-        &make_str(&env, "GS"),
-        &make_str(&env, "Canada"),
-        &make_str(&env, "hydro"),
-        2024_u32,
+        &s(&env, "proj-001"),
+        &1000_i128,
+        &2023_u32,
+        &s(&env, "batch-001"),
+        &1_u64,
+        &1000_u64,
+        &s(&env, "QmCID"),
+        &owner,
     ).unwrap();
-    
-    v2_client.verify_project(&verifier, &make_str(&env, "proj-004")).unwrap();
-    
-    // Use new v2 function: certify_project
-    v2_client.certify_project(&admin, &make_str(&env, "proj-004"), &85_u32).unwrap();
-    
-    // Verify certification
-    let project = v2_client.get_project(&make_str(&env, "proj-004")).unwrap();
-    assert_eq!(project.credit_score, 85);
-    assert!(project.certification_date.is_some());
-    assert_eq!(project.status, V2::ProjectStatus::Certified);
-    
-    // Test version function
-    assert_eq!(v2_client.get_version(), 2);
-    
-    println!("✅ New v2 functions test passed");
+
+    client.retire_credits(
+        &owner,
+        &s(&env, "batch-001"),
+        &800_i128,
+        &s(&env, "offset"),
+        &s(&env, "Acme Corp"),
+        &s(&env, "ret-001"),
+        &s(&env, "txhash"),
+        &s(&env, "QmCertCID"),
+    ).unwrap();
+
+    // Verify pre-upgrade retirement
+    let batch_pre = client.get_credit_batch(&s(&env, "batch-001")).unwrap();
+    assert_eq!(batch_pre.status, carbon_credit::CreditStatus::PartiallyRetired);
+
+    // Upgrade
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    client.upgrade(&admin, &fake_hash).unwrap();
+
+    // Verify post-upgrade retirement is preserved
+    let batch_post = client.get_credit_batch(&s(&env, "batch-001")).unwrap();
+    assert_eq!(batch_post.status, carbon_credit::CreditStatus::PartiallyRetired);
+
+    let cert = client.get_retirement_certificate(&s(&env, "ret-001")).unwrap();
+    assert_eq!(cert.amount, 800);
+
+    // Cannot retire more than remaining
+    let result = client.try_retire_credits(
+        &owner,
+        &s(&env, "batch-001"),
+        &300_i128,
+        &s(&env, "offset2"),
+        &s(&env, "Acme Corp"),
+        &s(&env, "ret-002"),
+        &s(&env, "txhash2"),
+        &s(&env, "QmCertCID2"),
+    );
+    assert!(result.is_err());
+}
+
+// -- carbon_marketplace upgrade tests -----------------------------------------
+
+#[test]
+fn test_marketplace_upgrade_admin_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin    = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let usdc     = env.register_stellar_asset_contract(admin.clone());
+    let credit_id = env.register_contract(None, CarbonCreditContract);
+    let id       = env.register_contract(None, CarbonMarketplaceContract);
+    let client   = CarbonMarketplaceContractClient::new(&env, &id);
+    client.initialize(&admin, &usdc, &credit_id, &treasury).unwrap();
+
+    let attacker = Address::generate(&env);
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let result = client.try_upgrade(&attacker, &fake_hash);
+    assert!(result.is_err());
+
+    client.upgrade(&admin, &fake_hash).unwrap();
+    assert_eq!(client.get_version(), 2);
+}
+
+#[test]
+fn test_marketplace_listings_preserved_after_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin    = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let seller   = Address::generate(&env);
+    let usdc     = env.register_stellar_asset_contract(admin.clone());
+    let credit_id = env.register_contract(None, CarbonCreditContract);
+    let id       = env.register_contract(None, CarbonMarketplaceContract);
+    let client   = CarbonMarketplaceContractClient::new(&env, &id);
+    client.initialize(&admin, &usdc, &credit_id, &treasury).unwrap();
+
+    client.list_credits(
+        &seller,
+        &s(&env, "list-001"),
+        &s(&env, "batch-001"),
+        &s(&env, "proj-001"),
+        &100_i128,
+        &10_0000000_i128,
+        &2023_u32,
+        &s(&env, "VCS"),
+        &s(&env, "Brazil"),
+    ).unwrap();
+
+    let pre = client.get_listing(&s(&env, "list-001")).unwrap();
+    assert_eq!(pre.amount_available, 100);
+
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    client.upgrade(&admin, &fake_hash).unwrap();
+
+    let post = client.get_listing(&s(&env, "list-001")).unwrap();
+    assert_eq!(post.amount_available, 100);
+    assert_eq!(post.status, carbon_marketplace::ListingStatus::Active);
+}
+
+// -- carbon_oracle upgrade tests ----------------------------------------------
+
+#[test]
+fn test_oracle_upgrade_admin_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin  = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let id     = env.register_contract(None, CarbonOracleContract);
+    let client = CarbonOracleContractClient::new(&env, &id);
+    client.initialize(&admin, &oracle).unwrap();
+
+    let attacker = Address::generate(&env);
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let result = client.try_upgrade(&attacker, &fake_hash);
+    assert!(result.is_err());
+
+    client.upgrade(&admin, &fake_hash).unwrap();
+    assert_eq!(client.get_version(), 2);
+}
+
+#[test]
+fn test_oracle_monitoring_preserved_after_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin  = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let id     = env.register_contract(None, CarbonOracleContract);
+    let client = CarbonOracleContractClient::new(&env, &id);
+    client.initialize(&admin, &oracle).unwrap();
+
+    client.submit_monitoring_data(
+        &oracle,
+        &s(&env, "proj-001"),
+        &s(&env, "2023-Q1"),
+        &5000_i128,
+        &85_u32,
+        &s(&env, "QmSatCID"),
+    ).unwrap();
+
+    let pre = client.get_monitoring_data(&s(&env, "proj-001"), &s(&env, "2023-Q1")).unwrap();
+    assert_eq!(pre.tonnes_verified, 5000);
+
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    client.upgrade(&admin, &fake_hash).unwrap();
+
+    let post = client.get_monitoring_data(&s(&env, "proj-001"), &s(&env, "2023-Q1")).unwrap();
+    assert_eq!(post.tonnes_verified, 5000);
+    assert!(client.is_monitoring_current(&s(&env, "proj-001")));
+}
+
+// -- Cross-contract upgrade consistency test ----------------------------------
+
+#[test]
+fn test_all_contracts_version_consistency() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Deploy all four contracts
+    let admin    = Address::generate(&env);
+    let oracle   = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let usdc     = env.register_stellar_asset_contract(admin.clone());
+
+    let reg_id   = env.register_contract(None, CarbonRegistryContract);
+    let reg_client = CarbonRegistryContractClient::new(&env, &reg_id);
+    reg_client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]).unwrap();
+
+    let cred_id  = env.register_contract(None, CarbonCreditContract);
+    let cred_client = CarbonCreditContractClient::new(&env, &cred_id);
+    cred_client.initialize(&admin, &registry).unwrap();
+
+    let mkt_id   = env.register_contract(None, CarbonMarketplaceContract);
+    let mkt_client = CarbonMarketplaceContractClient::new(&env, &mkt_id);
+    mkt_client.initialize(&admin, &usdc, &cred_id, &treasury).unwrap();
+
+    let ora_id   = env.register_contract(None, CarbonOracleContract);
+    let ora_client = CarbonOracleContractClient::new(&env, &ora_id);
+    ora_client.initialize(&admin, &oracle).unwrap();
+
+    // All start at version 1
+    assert_eq!(reg_client.get_version(), 1);
+    assert_eq!(cred_client.get_version(), 1);
+    assert_eq!(mkt_client.get_version(), 1);
+    assert_eq!(ora_client.get_version(), 1);
+
+    // Upgrade all
+    let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+    reg_client.upgrade(&admin, &fake_hash).unwrap();
+    cred_client.upgrade(&admin, &fake_hash).unwrap();
+    mkt_client.upgrade(&admin, &fake_hash).unwrap();
+    ora_client.upgrade(&admin, &fake_hash).unwrap();
+
+    // All now at version 2
+    assert_eq!(reg_client.get_version(), 2);
+    assert_eq!(cred_client.get_version(), 2);
+    assert_eq!(mkt_client.get_version(), 2);
+    assert_eq!(ora_client.get_version(), 2);
 }

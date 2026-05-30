@@ -1,0 +1,18 @@
+[Unit]
+Description=CarbonLedger Verification Listener
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=carbonledger
+WorkingDirectory=/opt/carbonledger/oracle
+EnvironmentFile=/opt/carbonledger/.env
+ExecStart=/opt/carbonledger/venv/bin/python3 verification_listener.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/carbonledger/verification_listener.log
+StandardError=append:/var/log/carbonledger/verification_listener.log
+
+[Install]
+WantedBy=multi-user.target

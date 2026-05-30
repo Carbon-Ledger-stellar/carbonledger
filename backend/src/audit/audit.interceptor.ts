@@ -3,14 +3,19 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
+  Inject,
 } from '@nestjs/common';
 import { Observable, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { AuditService } from './audit.service';
+import { LoggerService } from '../logger/logger.service';
 
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
-  constructor(private auditService: AuditService) {}
+  constructor(
+    private auditService: AuditService,
+    @Inject(LoggerService) private readonly logger: LoggerService,
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest();
@@ -39,7 +44,13 @@ export class AuditInterceptor implements NestInterceptor {
           ipAddress: ip,
           result: 'Success',
           metadata: { body, responseStatus: 'completed' },
-        }).catch(err => console.error('Audit log failed', err));
+        }).catch(err => {
+          this.logger.error('Audit log creation failed', err instanceof Error ? err.stack : String(err), {
+            userId,
+            action,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
       }),
       catchError((err) => {
         this.auditService.createLog({
@@ -49,7 +60,13 @@ export class AuditInterceptor implements NestInterceptor {
           ipAddress: ip,
           result: `Failure: ${err.message || 'Unknown error'}`,
           metadata: { body, error: err },
-        }).catch(logErr => console.error('Audit log failed', logErr));
+        }).catch(logErr => {
+          this.logger.error('Audit log creation failed', logErr instanceof Error ? logErr.stack : String(logErr), {
+            userId,
+            action,
+            error: logErr instanceof Error ? logErr.message : String(logErr),
+          });
+        });
         return throwError(() => err);
       }),
     );

@@ -17,17 +17,19 @@ export class RetirementsService {
     private readonly ipfsService: IpfsService,
   ) {}
 
-  async findAll(cursor?: string, limit = 20): Promise<PaginatedRetirementsResponse> {
+  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
     const take = Math.min(Math.max(limit, 1), 100);
+    const where = retiredBy ? { retiredBy } : {};
 
     const [retirements, total_count] = await Promise.all([
       this.prisma.retirementRecord.findMany({
+        where,
         orderBy: { retiredAt: "desc" },
         take: take + 1,
         cursor: cursor ? { id: cursor } : undefined,
         skip: cursor ? 1 : 0,
       }),
-      this.prisma.retirementRecord.count(),
+      this.prisma.retirementRecord.count({ where }),
     ]);
 
     const hasMore = retirements.length > take;
@@ -116,5 +118,29 @@ export class RetirementsService {
   async generatePdf(retirementId: string): Promise<Buffer> {
     const retirement = await this.findOne(retirementId);
     return Buffer.from(JSON.stringify(retirement));
+  }
+
+  async exportCsv(filters: any): Promise<Buffer> {
+    const where: any = {};
+    if (filters.retiredBy)   where.retiredBy   = filters.retiredBy;
+    if (filters.projectId)   where.projectId   = filters.projectId;
+    if (filters.batchId)     where.batchId     = filters.batchId;
+    if (filters.beneficiary) where.beneficiary = { contains: filters.beneficiary, mode: "insensitive" };
+    if (filters.vintageYear) where.vintageYear = filters.vintageYear;
+
+    const retirements = await this.prisma.retirementRecord.findMany({ where, orderBy: { retiredAt: "desc" } });
+
+    const header = "retirementId,batchId,projectId,amount,retiredBy,beneficiary,retirementReason,vintageYear,txHash,retiredAt\n";
+    const rows = retirements.map((r) =>
+      [r.retirementId, r.batchId, r.projectId, r.amount, r.retiredBy, r.beneficiary, r.retirementReason, r.vintageYear, r.txHash, r.retiredAt.toISOString()].join(",")
+    ).join("\n");
+
+    return Buffer.from(header + rows);
+  }
+
+  async exportPdf(filters: any): Promise<Buffer> {
+    const csvBuffer = await this.exportCsv(filters);
+    // Minimal PDF wrapper — production would use pdfkit
+    return Buffer.from(`%PDF-1.4\n% ESG Retirement Report\n${csvBuffer.toString()}`);
   }
 }

@@ -1,289 +1,196 @@
-# CarbonLedger Implementation Summary
+# Structured JSON Logging Implementation Summary
 
 ## Overview
-Two major features have been implemented to strengthen the CarbonLedger platform:
+Implemented structured JSON logging with correlation IDs across the backend to enable request tracing for debugging production issues and maintaining audit trails.
 
-1. **Methodology Score Validation** - Enforces 70/100 minimum score for project registration
-2. **IPFS Document Upload Service** - Centralized service for uploading project documents and certificates to IPFS via Pinata
+## Files Created
 
----
+### Core Logging Infrastructure
+1. **`src/logger/correlation-id.context.ts`** (NEW)
+   - AsyncLocalStorage-based context manager for correlation IDs
+   - Generates UUIDs and manages correlation context across async operations
 
-## Feature 1: Methodology Score Validation (70/100 Minimum)
+2. **`src/logger/correlation-id.middleware.ts`** (NEW)
+   - Express middleware that generates/extracts correlation IDs
+   - Sets correlation ID in response headers
+   - Stores context in AsyncLocalStorage
 
-### Changes Made
+### Documentation
+3. **`docs/STRUCTURED_LOGGING.md`** (NEW)
+   - Comprehensive guide on structured logging implementation
+   - Usage examples and debugging instructions
 
-#### 1. Smart Contracts (`contracts/carbon_registry/src/lib.rs`)
-- Added `methodology_score: u32` field to `CarbonProject` struct
-- Added `methodology_score` parameter to `register_project()` function
-- Added validation: rejects projects with score < 70
-- Updated event emission to include methodology score
-- **Lines changed:** ~15 lines added/modified
+## Files Modified
 
-#### 2. Backend Prisma Schema (`backend/prisma/schema.prisma`)
-- Added `methodologyScore Int` field to `CarbonProject` model
-- **Lines changed:** 1 line added
+### Core Application Setup
+1. **`src/main.ts`**
+   - Enhanced `JsonLogger` to include correlation ID from AsyncLocalStorage
+   - Added import for `CorrelationIdContext`
 
-#### 3. Backend DTO (`backend/src/projects/projects.dto.ts`)
-- Added `@IsInt() @Min(70) @Max(100)` validated `methodologyScore` field to `RegisterProjectDto`
-- **Lines changed:** 1 line added
+2. **`src/app.module.ts`**
+   - Added `LoggerModule` import
+   - Registered `CorrelationIdMiddleware` in `configure()` method
+   - Added `LoggingInterceptor` as global interceptor
+   - Implemented `NestModule` interface
 
-#### 4. Backend Service (`backend/src/projects/projects.service.ts`)
-- Added validation rejecting projects with score < 70
-- Returns clear error message: "Project registration rejected: methodology score X is below minimum 70/100"
-- **Lines changed:** 3 lines added
+### Logger Module
+3. **`src/logger/logger.service.ts`**
+   - Enhanced to automatically include correlation ID from AsyncLocalStorage
+   - Added `getContextWithCorrelationId()` method
+   - Updated all logging methods to use correlation context
 
-#### 5. Frontend API Types (`frontend/lib/api.ts`)
-- Added `methodologyScore: number` to `CarbonProject` interface
-- **Lines changed:** 1 line added
+4. **`src/logger/logging.interceptor.ts`**
+   - Updated to use correlation ID from request object
+   - Enhanced to log structured fields: method, path, statusCode, duration
+   - Updated correlation context with response details
 
-#### 6. Frontend Project Detail Page (`frontend/app/projects/[id]/page.tsx`)
-- Added methodology score to project header (e.g., "VCS · forestry · Brazil · 2023 Vintage · Score 85/100")
-- Added "Methodology Score" card to Credit Summary section with color coding
-- Updated grid layout from 3 to 4 columns to accommodate new metric
-- **Lines changed:** ~21 lines modified
+5. **`src/logger/logger.module.ts`**
+   - Added `CorrelationIdContext` to providers and exports
 
-#### 7. Documentation (`METHODOLOGY_SCORING_RUBRIC.md`)
-- Comprehensive 6875-word scoring rubric with 5 categories:
-  - **Additionality** (0-30 points): Financial additionality and innovation
-  - **Quantification & Monitoring** (0-25 points): MRV rigor and uncertainty
-  - **Permanence & Risk Management** (0-20 points): Long-term storage and reversals
-  - **Leakage & Co-Benefits** (0-15 points): Emission displacement and SDG alignment
-  - **Governance & Transparency** (0-10 points): Data transparency and stakeholder engagement
-- Score thresholds:
-  - 90-100: Exceptional (Premium tier)
-  - 80-89: Strong (Standard tier)
-  - 70-79: Acceptable (Entry tier) ← Minimum threshold
-  - <70: Rejected
+### Service Layer
+6. **`src/uploads/ipfs-upload.service.ts`**
+   - Replaced `console.error` with `LoggerService.error()`
+   - Added structured logging context
 
-### Enforcement Chain
-1. **Contract Layer**: `carbon_registry::register_project()` validates `methodology_score >= 70`
-2. **Backend DTO**: `@Min(70) @Max(100)` class-validator constraints
-3. **Backend Service**: Additional check with clear error message
-4. **Database**: Score stored in `CarbonProject.methodologyScore`
-5. **On-Chain**: Score stored in `CarbonProject.methodology_score` (Rust struct)
-6. **Frontend**: Score displayed prominently with visual indicators
+7. **`src/mail/mail.processor.ts`**
+   - Replaced `console.log` and `console.error` with `LoggerService`
+   - Added structured logging for email sending
 
-### Acceptance Criteria Met ✅
-- ✅ Score < 70 → project registration rejected with clear error
-- ✅ Score stored on-chain with project record
-- ✅ Score visible on project detail page
-- ✅ Methodology scoring rubric documented
+8. **`src/mail/pdf.service.ts`**
+   - Replaced `console.log` with `LoggerService.log()`
+   - Added structured logging context
 
----
+### Indexer & Utilities
+9. **`src/indexer.ts`**
+   - Replaced `console.log` and `console.error` with `StructuredLogger`
+   - Added structured logging for indexing operations
 
-## Feature 2: IPFS Document Upload Service
+10. **`src/export-openapi.ts`**
+    - Replaced `console.log` with `StructuredLogger`
+    - Added structured logging for OpenAPI export
 
-### Architecture
-```
-Client Upload → API Gateway (NestJS) → Validation → Pinata Upload → CID Return → Async Pin → DB Record
-```
+### Filters & Interceptors
+11. **`src/common/throttler-exception.filter.ts`**
+    - Replaced `console.log` with `LoggerService.debug()`
+    - Added dependency injection for logger
 
-### Changes Made
+12. **`src/audit/audit.interceptor.ts`**
+    - Replaced `console.error` with `LoggerService.error()`
+    - Added structured logging for audit failures
 
-#### 1. Prisma Schema (`backend/prisma/schema.prisma`)
-Added `IPFSFile` model:
-- `id`: UUID primary key
-- `cid`: IPFS Content Identifier
-- `fileName`: Original filename
-- `fileType`: MIME type (PDF/JSON)
-- `fileSize`: Size in bytes
-- `pinStatus`: "pending" | "pinned" | "failed"
-- `linkedEntityType`: "project" | "certificate" | "batch"
-- `linkedEntityId`: Reference to parent entity
-- `uploadedAt`: Timestamp
-- `pinnedAt`: Timestamp (when pinned)
-- `projectId`, `batchId`, `retirementId`: Optional foreign keys
+### Database Seeds
+13. **`prisma/seed.ts`**
+    - Replaced `console.log` and `console.error` with `StructuredLogger`
+    - Added structured logging for seed operations
 
-Added relations to existing models:
-- `CarbonProject.ipfsFiles[]`
-- `CreditBatch.ipfsFiles[]`
-- `RetirementRecord.ipfsFiles[]`
+14. **`prisma/seed-staging.ts`**
+    - Replaced `console.log` and `console.error` with `StructuredLogger`
+    - Added structured logging for staging seed operations
 
-**Lines changed:** 26 lines added
+## Acceptance Criteria Met
 
-#### 2. Upload Module (`backend/src/uploads/`)
+✅ **Every request generates a unique correlation ID (UUID)**
+- Generated in `CorrelationIdMiddleware` or extracted from `X-Correlation-ID` header
 
-**uploads.dto.ts** (42 lines)
-- `UploadFileDto`: Validates file type (PDF/JSON) and size (≤50MB)
-- `UploadResponseDto`: Structured response format
-- `PinataWebhookDto`: Webhook payload structure
+✅ **Correlation ID is included in all log entries for that request**
+- Automatically added by `LoggerService` via `AsyncLocalStorage`
+- Propagated through async operations
 
-**uploads.controller.ts** (191 lines)
-- `POST /uploads/project/:projectId/documents`: Upload project documents
-- `POST /uploads/certificate/:retirementId/certificate`: Upload retirement certificates
-- `POST /uploads/webhook/pinata`: Handle Pinata status updates
-- `GET /uploads/files`: List uploaded files with filters
-- `GET /uploads/files/:cid`: Get file by CID
+✅ **Logs are structured JSON with required fields**
+- `timestamp`: ISO 8601 format
+- `level`: Log level (debug, info, warn, error)
+- `correlationId`: UUID for request tracing
+- `method`: HTTP method
+- `path`: Request path
+- `statusCode`: HTTP status code
+- `duration`: Request duration in milliseconds
 
-Features:
-- Multipart file upload handling
-- MIME type validation (application/pdf, application/json)
-- File size validation (max 50MB)
-- Returns CID immediately
-- Triggers async pinning
-- Links files to projects/certificates
+✅ **Correlation ID is returned in X-Correlation-ID response header**
+- Set by `CorrelationIdMiddleware` on all responses
 
-**ipfs-upload.service.ts** (236 lines)
-- `uploadToPinata()`: Uploads to Pinata, returns CID, triggers async pin
-- `pinFileAsync()`: Fire-and-forget async pinning with retry logic
-- `handlePinataWebhook()`: Processes Pinata webhook status updates
-- `getFileByCid()`: Retrieve file record by CID
-- `getFiles()`: List files with optional filters
+✅ **Log level is configurable via LOG_LEVEL environment variable**
+- Configured in `main.ts`
+- Respects standard log levels: debug, info, warn, error
+- Defaults to 'info'
 
-Features:
-- Pinata API integration via REST
-- FormData multipart upload
-- Automatic retry on failure
-- Status tracking (pending/pinned/failed)
-- Webhook support for real-time updates
-- CID-based retrieval
+## Key Features
 
-**uploads.module.ts** (11 lines)
-- NestJS module registration
-- Imports/exports for dependency injection
+### Request Tracing
+- Correlation IDs automatically propagate through entire request lifecycle
+- Clients can provide custom correlation IDs via `X-Correlation-ID` header
+- All logs for a request share the same correlation ID
 
-#### 3. App Module (`backend/src/app.module.ts`)
-- Added `UploadsModule` to imports
-- **Lines changed:** 2 lines
+### Structured Logging
+- All logs are emitted as single-line JSON objects
+- Includes timestamp, level, service name, and correlation ID
+- Optional fields for user_id, contract_id, error details, and custom context
 
-#### 4. Build Configuration (`backend/tsconfig.json`)
-- Added TypeScript configuration for NestJS compilation
-- **Lines changed:** 21 lines
+### Async Context Propagation
+- Uses Node.js `AsyncLocalStorage` for context management
+- Correlation ID maintained across async operations
+- No manual context passing required
 
-#### 5. Dependencies (`backend/package.json`)
-- Added: `axios`, `form-data`
-- Dev: `@types/express`, `@types/multer`
-- **Lines changed:** 5 packages
+### CloudWatch Integration
+- Optional CloudWatch integration (if `AWS_CLOUDWATCH_GROUP` set)
+- Logs automatically sent to CloudWatch with retention policy
+- JSON format compatible with CloudWatch Insights
 
-#### 6. API Documentation (`backend/src/uploads/API_DOCUMENTATION.md`)
-- Complete API reference with examples
-- Request/response schemas
-- Error codes
-- Database schema documentation
-- Integration guide
-
-### Acceptance Criteria Met ✅
-- ✅ Accepts PDF and JSON uploads
-- ✅ Returns CID immediately (<1s response time)
-- ✅ Pins asynchronously (fire-and-forget pattern)
-- ✅ File size limit: 50MB (enforced at API and service layers)
-- ✅ CID stored in DB linked to project/certificate record
-- ✅ Pinning status tracked (pending/pinned/failed)
-
-### Upload Flow
-
-1. **Client Request**: POST multipart/form-data with file
-2. **Validation**: Check MIME type (PDF/JSON) and size (≤50MB)
-3. **DB Record**: Create `IPFSFile` record with `pinStatus: "pending"`
-4. **Pinata Upload**: Upload to Pinata via `/pinning/pinFileToIPFS`
-5. **CID Response**: Return CID to client immediately
-6. **Async Pin**: Fire-and-forget request to pin file permanently
-7. **Status Update**: Update DB to `pinStatus: "pinned"` or `"failed"`
-8. **Webhook**: Pinata calls webhook with final status (real-time updates)
-
-### Database Queries
-
-```typescript
-// Get all pending pins
-await prisma.iPFSFile.findMany({ where: { pinStatus: "pending" } })
-
-// Get files for a project
-await prisma.iPFSFile.findMany({ 
-  where: { 
-    linkedEntityType: "project",
-    linkedEntityId: projectId 
-  } 
-})
-
-// Get file by CID
-await prisma.iPFSFile.findFirst({ where: { cid } })
-```
-
-### Environment Variables
-```bash
-IPFS_API_URL=https://api.pinata.cloud
-IPFS_API_KEY=your_pinata_api_key
-IPFS_SECRET_KEY=your_pinata_secret_key
-```
-
-### Security Considerations
-- File type validation (whitelist: PDF, JSON)
-- File size limit (50MB)
-- Authentication integration ready (check user access to project)
-- CID immutability (content-addressed storage)
-- No direct file system storage (all files go to IPFS)
-
----
+### Backward Compatibility
+- Existing code continues to work
+- All `console.log` calls replaced with structured logging
+- No breaking changes to API or service interfaces
 
 ## Testing
 
-### Backend Tests
+To verify the implementation:
+
+1. **Start the application**:
+   ```bash
+   npm run start:dev
+   ```
+
+2. **Make a request**:
+   ```bash
+   curl -v http://localhost:3001/api/v1/health
+   ```
+
+3. **Check response headers**:
+   - Look for `X-Correlation-ID` header in response
+
+4. **Check logs**:
+   - All logs should include `correlationId` field
+   - Logs should be valid JSON
+
+5. **Test with custom correlation ID**:
+   ```bash
+   curl -H "X-Correlation-ID: custom-id-123" \
+        http://localhost:3001/api/v1/health
+   ```
+
+## Environment Configuration
+
+Set these environment variables to control logging:
+
 ```bash
-cd /workspace/carbonledger/backend
-npm run test  # Jest with no tests (integration tests to be added)
-npm run build  # TypeScript compilation ✓
+# Log level (debug, info, warn, error)
+LOG_LEVEL=info
+
+# CloudWatch integration (optional)
+AWS_CLOUDWATCH_GROUP=carbonledger-backend
+AWS_REGION=us-east-1
 ```
 
-### Build Status
-- ✅ Backend: TypeScript compilation successful
-- ✅ Prisma: Schema validated and client generated
-- ✅ NestJS: Module imports verified
+## Migration Notes
 
----
-
-## Summary Statistics
-
-### Lines of Code
-- **Smart Contracts**: 15 lines modified
-- **Backend**: ~320 lines added (schema + service + controller + DTO)
-- **Frontend**: 21 lines modified
-- **Documentation**: ~7000 words (methodology rubric + API docs)
-
-### Files Modified
-- `contracts/carbon_registry/src/lib.rs`
-- `backend/prisma/schema.prisma`
-- `backend/src/projects/projects.dto.ts`
-- `backend/src/projects/projects.service.ts`
-- `backend/src/app.module.ts`
-- `backend/src/uploads/` (5 new files)
-- `backend/tsconfig.json` (new)
-- `frontend/app/projects/[id]/page.tsx`
-- `frontend/lib/api.ts`
-- `METHODOLOGY_SCORING_RUBRIC.md` (new)
-- `backend/src/uploads/API_DOCUMENTATION.md` (new)
-
-### Total Impact
-- **2 major features** implemented
-- **4 enforcement layers** for methodology score validation
-- **6 API endpoints** for IPFS upload service
-- **100% acceptance criteria** met for both features
-
----
+- No database migrations required
+- No breaking changes to existing APIs
+- All services automatically use structured logging
+- Existing log consumers should parse JSON format
 
 ## Future Enhancements
 
-### Methodology Scoring
-- [ ] On-chain score updates from oracle monitoring
-- [ ] Annual reassessment triggers
-- [ ] Score degradation alerts
-- [ ] Appeals process smart contract
-
-### IPFS Uploads
-- [ ] Batch upload endpoint
-- [ ] File encryption/decryption
-- [ ] Thumbnail generation for PDFs
-- [ ] Integration with certificate generator
-- [ ] Redis queue for pinning jobs (already available)
-- [ ] Retry logic with exponential backoff
-- [ ] Pin health monitoring
-- [ ] Automatic re-pinning before TTL expiry
-- [ ] File deduplication (check existing CID)
-- [ ] Upload progress tracking (chunked uploads)
-
-### Security
-- [ ] JWT authentication for upload endpoints
-- [ ] Project ownership verification
-- [ ] Role-based access control
-- [ ] Rate limiting
-- [ ] File virus scanning
-- [ ] Content validation (PDF structure, JSON schema)
+- Add OpenTelemetry integration for distributed tracing
+- Add request/response body logging with PII redaction
+- Add performance metrics collection
+- Add custom log formatters for different environments
+- Add log sampling for high-volume endpoints
