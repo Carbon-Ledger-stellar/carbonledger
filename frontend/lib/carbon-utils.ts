@@ -5,11 +5,13 @@ export function calculateCreditCost(amount: number, pricePerCreditStroops: bigin
   return BigInt(amount) * pricePerCreditStroops;
 }
 
-/** Format a tonne amount with CO2e suffix. */
-export function formatTonnes(tonnes: number | bigint): string {
-  const n = Number(tonnes);
+/** Format a tonne amount with CO2e suffix. Supports fractional values (e.g. 0.5 tCO₂e). */
+export function formatTonnes(tonnes: number | bigint | string): string {
+  const n = typeof tonnes === "string" ? parseFloat(tonnes) : Number(tonnes);
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M tCO₂e`;
   if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}K tCO₂e`;
+  // Show up to 2 decimal places for fractional amounts, no trailing zeros
+  if (n % 1 !== 0)    return `${n.toFixed(2).replace(/\.?0+$/, "")} tCO₂e`;
   return `${n.toLocaleString()} tCO₂e`;
 }
 
@@ -44,6 +46,24 @@ export function calculateCO2Equivalent(tonnes: number): {
     flights: Math.round(tonnes / 0.255),  // avg transatlantic flight = 0.255 tCO2
     homes:   Math.round(tonnes / 7.5),    // avg US home = 7.5 tCO2/year
   };
+}
+
+/** Get country flag emoji from country name. */
+export function getCountryFlag(country: string): string {
+  const flags: Record<string, string> = {
+    "United States": "🇺🇸",
+    "Brazil": "🇧🇷",
+    "India": "🇮🇳",
+    "China": "🇨🇳",
+    "Indonesia": "🇮🇩",
+    "Mexico": "🇲🇽",
+    "Peru": "🇵🇪",
+    "Colombia": "🇨🇴",
+    "Kenya": "🇰🇪",
+    "Ethiopia": "🇪🇹",
+    // Add more as needed
+  };
+  return flags[country] || "🏳️";
 }
 
 /** Format USDC amount from stroops for display. */

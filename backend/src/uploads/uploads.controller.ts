@@ -15,12 +15,14 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { IpfsUploadService } from "./ipfs-upload.service";
 import { UploadFileDto, UploadResponseDto } from "./uploads.dto";
 import { Request } from "express";
+import { Public, Roles } from "../auth/decorators";
 
 @Controller("uploads")
 export class UploadsController {
   constructor(private readonly ipfsUploadService: IpfsUploadService) {}
 
   @Post("project/:projectId/documents")
+  @Roles("project_developer", "admin")
   @UseInterceptors(FileInterceptor("file"))
   async uploadProjectDocument(
     @Param("projectId") projectId: string,
@@ -88,6 +90,7 @@ export class UploadsController {
   }
 
   @Post("certificate/:retirementId/certificate")
+  @Roles("corporation", "admin")
   @UseInterceptors(FileInterceptor("file"))
   async uploadCertificate(
     @Param("retirementId") retirementId: string,
@@ -151,6 +154,7 @@ export class UploadsController {
   }
 
   @Post("webhook/pinata")
+  @Public()
   async handlePinataWebhook(@Body() data: any) {
     try {
       await this.ipfsUploadService.handlePinataWebhook(data);
@@ -164,6 +168,7 @@ export class UploadsController {
   }
 
   @Get("files")
+  @Roles("admin")
   async getFiles(
     @Query("pinStatus") pinStatus?: string,
     @Query("linkedEntityType") linkedEntityType?: string,
@@ -178,6 +183,7 @@ export class UploadsController {
   }
 
   @Get("files/:cid")
+  @Public()
   async getFileByCid(@Param("cid") cid: string) {
     const file = await this.ipfsUploadService.getFileByCid(cid);
     if (!file) {

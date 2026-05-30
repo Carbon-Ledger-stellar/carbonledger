@@ -1,0 +1,11 @@
+[Unit]
+Description=CarbonLedger PostgreSQL Backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=carbonledger
+EnvironmentFile=/opt/carbonledger/.env
+ExecStart=/opt/carbonledger/scripts/backup-db.sh
+StandardOutput=append:/var/log/carbonledger/backup.log
+StandardError=append:/var/log/carbonledger/backup.log

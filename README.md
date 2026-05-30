@@ -29,7 +29,9 @@
 - [User Roles](#-user-roles)
 - [Credit Lifecycle](#-credit-lifecycle)
 - [Roadmap](#-roadmap)
+- [Changelog](#-changelog)
 - [Contributing](#-contributing)
+- [Security](#-security)
 - [License](#-license)
 
 ---
@@ -43,6 +45,8 @@
 - ✅ **[Setup Checklist](docs/SETUP_CHECKLIST.md)** - Verify your environment
 - 🔧 **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues solved
 - 📋 **[Quick Reference](docs/QUICK_REFERENCE.md)** - One-page command reference
+- 🔑 **[Configuration Guide](docs/configuration.md)** - Every environment variable explained
+- ♻️ **[Credit Lifecycle](docs/carbon-credit-lifecycle.md)** - Actors, contracts, data, and error conditions for each stage
 
 **Run this to verify your setup:**
 ```bash
@@ -439,8 +443,73 @@ Install [Freighter wallet](https://freighter.app) and switch to **Testnet**.
 
 ## 🐳 Run With Docker
 
+The complete development stack can be started with a single command:
+
 ```bash
 docker-compose up --build
+```
+
+This starts all services:
+- **PostgreSQL** (port 5432) - Database with health checks
+- **Redis** (port 6379) - Cache with Sentinel HA
+- **NestJS Backend** (port 3001) - API server with health checks
+- **Next.js Frontend** (port 3000) - Web application
+- **Oracle Services** (port 5001) - Verification, price, and satellite monitoring
+- **Observability Stack** - Loki, Promtail, and Grafana for logging
+
+### Environment Setup
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+cp .env.example .env
+```
+
+Key variables:
+- `POSTGRES_PASSWORD` - Database password
+- `REDIS_PASSWORD` - Redis password
+- `JWT_SECRET` - Backend JWT secret
+- `STELLAR_NETWORK` - testnet or public
+- Contract IDs for `CARBON_*_CONTRACT_ID`
+
+### Service Dependencies
+
+Services start in order with health checks:
+1. PostgreSQL and Redis start first
+2. Backend waits for database and Redis to be healthy
+3. Frontend waits for backend to be healthy
+4. Oracle services connect to database and blockchain
+
+### Development with Hot Reload
+
+Volume mounts enable hot reload:
+- Backend: `./backend` → `/app` (NestJS watches for changes)
+- Frontend: `./frontend` → `/app` (Next.js dev mode)
+- Oracle: `./oracle` → `/app` (Python auto-reload)
+
+### Viewing Logs
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f backend
+docker-compose logs -f frontend
+docker-compose logs -f oracle_verification
+
+# Grafana dashboards
+# Open http://localhost:3200 (default: admin/admin)
+```
+
+### Stopping Services
+
+```bash
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes
+docker-compose down -v
 ```
 
 ---
@@ -526,6 +595,8 @@ Purchased by Corporation → Retired On-Chain (irreversible) →
 Certificate Issued (permanent public URL) →
 ESG Report Filed 
 ```
+
+> For the full lifecycle reference — actors involved, contract functions called, on-chain and off-chain data, error conditions, and a sequence diagram — see **[docs/carbon-credit-lifecycle.md](docs/carbon-credit-lifecycle.md)**.
 
 ---
 
@@ -613,6 +684,22 @@ git push origin feat/your-feature-name
 - Update documentation
 
 **See:** [CONTRIBUTING.md](CONTRIBUTING.md) for complete guidelines
+
+---
+
+## 📜 Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for a full history of changes and releases.
+
+---
+
+## 🔒 Security
+
+We take security seriously. If you discover a vulnerability, please report it responsibly:
+
+- **Do not** open a public GitHub issue
+- **Email** security@carbonledger.io with details
+- See [SECURITY.md](./SECURITY.md) for our full security policy, threat model, and responsible disclosure process
 
 ---
 

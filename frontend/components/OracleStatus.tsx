@@ -1,80 +1,199 @@
 "use client";
 
-import { useOracleStatus } from "../lib/api";
-import { colors } from "../styles/design-system";
+import { useOracleHealth, OracleHealth } from "../lib/admin-api";
+import { colors, typography, spacing, borderRadius, shadows } from "../styles/design-system";
 
-interface Props {
-  projectId: string;
+// Spec thresholds
+const AMBER_DAYS = 300;
+const RED_DAYS   = 365;
+
+type Status = "green" | "amber" | "red";
+
+function getStatus(o: OracleHealth): Status {
+  if (o.daysSinceUpdate >= RED_DAYS)   return "red";
+  if (o.daysSinceUpdate >= AMBER_DAYS) return "amber";
+  return "green";
 }
 
-const STALE_DAYS = 365;
-const WARNING_THRESHOLD_DAYS = 60;
+const STATUS_STYLE: Record<Status, { bg: string; text: string; border: string; dot: string; label: string }> = {
+  green: { ...colors.verified,  dot: "#16a34a", label: "Current"  },
+  amber: { ...colors.pending,   dot: "#d97706", label: "Warning"  },
+  red:   { ...colors.suspended, dot: "#dc2626", label: "Stale"    },
+};
 
-export default function OracleStatus({ projectId }: Props) {
-  const { data, isLoading } = useOracleStatus(projectId);
-
-  if (isLoading) return (
-    <div style={{ padding: "0.75rem", background: colors.neutral[50], borderRadius: "0.5rem", fontSize: "0.8rem", color: colors.neutral[400] }}>
-      Checking oracle status…
-    </div>
+function Dot({ status }: { status: Status }) {
+  return (
+    <span style={{
+      display:      "inline-block",
+      width:        "8px",
+      height:       "8px",
+      borderRadius: borderRadius.full,
+      background:   STATUS_STYLE[status].dot,
+      flexShrink:   0,
+    }} />
   );
+}
 
-  const isCurrent = data?.isCurrent ?? false;
+export default function OracleStatus() {
+  const { data: oracles, isLoading, error } = useOracleHealth();
 
-  let daysSince: number | null = null;
-  let daysUntilStale: number | null = null;
-  if (data?.lastSubmittedAt) {
-    daysSince = Math.floor((Date.now() - new Date(data.lastSubmittedAt).getTime()) / 86_400_000);
-    daysUntilStale = STALE_DAYS - daysSince;
-  }
-
-  const isExpiringSoon = isCurrent && daysUntilStale !== null && daysUntilStale <= WARNING_THRESHOLD_DAYS;
-
-  const bg     = isCurrent ? colors.verified.bg     : colors.suspended.bg;
-  const text   = isCurrent ? colors.verified.text   : colors.suspended.text;
-  const border = isCurrent ? colors.verified.border : colors.suspended.border;
+  const counts = oracles
+    ? { green: 0, amber: 0, red: 0, ...Object.fromEntries(
+        (["green", "amber", "red"] as Status[]).map(s => [
+          s, oracles.filter(o => getStatus(o) === s).length,
+        ])
+      ) }
+    : null;
 
   return (
-    <div style={{
-      background: bg,
-      border: `1px solid ${border}`,
-      borderRadius: "0.5rem",
-      padding: "0.75rem 1rem",
-      display: "flex",
-      alignItems: "flex-start",
-      gap: "0.75rem",
+    <section style={{
+      background:   colors.surface,
+      border:       `1px solid ${colors.neutral[200]}`,
+      borderRadius: borderRadius.xl,
+      boxShadow:    shadows.sm,
+      overflow:     "hidden",
     }}>
-      <span style={{ fontSize: "1.1rem", marginTop: "0.05rem" }}>{isCurrent ? "🛰️" : "⚠️"}</span>
-      <div style={{ flex: 1 }}>
-        <p style={{ fontWeight: 600, fontSize: "0.8rem", color: text, margin: 0 }}>
-          {isCurrent ? "Monitoring Current" : "Monitoring Data Stale"}
-        </p>
-        {daysSince !== null ? (
-          <p style={{ fontSize: "0.7rem", color: text, margin: "0.1rem 0 0", opacity: 0.8 }}>
-            Last update: {daysSince === 0 ? "today" : `${daysSince} day${daysSince === 1 ? "" : "s"} ago`}
-            {data?.latestScore !== null && ` · Score: ${data.latestScore}/100`}
-          </p>
-        ) : (
-          <p style={{ fontSize: "0.7rem", color: text, margin: "0.1rem 0 0", opacity: 0.8 }}>
-            No monitoring data submitted yet
-          </p>
-        )}
-        {isExpiringSoon && daysUntilStale !== null && (
-          <span style={{
-            display: "inline-block",
-            marginTop: "0.35rem",
-            background: "#FEF3C7",
-            color: "#92400E",
-            border: "1px solid #FDE68A",
-            borderRadius: "9999px",
-            padding: "0.1rem 0.5rem",
-            fontSize: "0.65rem",
-            fontWeight: 700,
-          }}>
-            Expires in {daysUntilStale} day{daysUntilStale === 1 ? "" : "s"}
-          </span>
+      {/* Header */}
+      <div style={{
+        display:        "flex",
+        alignItems:     "center",
+        justifyContent: "space-between",
+        padding:        `${spacing[4]} ${spacing[5]}`,
+        borderBottom:   `1px solid ${colors.neutral[100]}`,
+        background:     colors.neutral[50],
+      }}>
+        <h2 style={{
+          fontFamily: typography.fontFamily.sans,
+          fontSize:   typography.fontSize.base,
+          fontWeight: typography.fontWeight.semibold,
+          color:      colors.neutral[900],
+          margin:     0,
+        }}>
+          Oracle Health
+        </h2>
+        {counts && (
+          <div style={{ display: "flex", gap: spacing[2] }}>
+            {(["green", "amber", "red"] as Status[]).map(s => counts[s] > 0 && (
+              <span key={s} style={{
+                display:      "inline-flex",
+                alignItems:   "center",
+                gap:          spacing[1],
+                fontFamily:   typography.fontFamily.sans,
+                fontSize:     typography.fontSize.xs,
+                fontWeight:   typography.fontWeight.medium,
+                color:        STATUS_STYLE[s].text,
+                background:   STATUS_STYLE[s].bg,
+                border:       `1px solid ${STATUS_STYLE[s].border}`,
+                padding:      `2px ${spacing[2]}`,
+                borderRadius: borderRadius.full,
+              }}>
+                <Dot status={s} />
+                {counts[s]}
+              </span>
+            ))}
+          </div>
         )}
       </div>
-    </div>
+
+      {/* Body */}
+      {isLoading && (
+        <div style={{ padding: spacing[5] }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} style={{
+              height:       "20px",
+              background:   colors.neutral[100],
+              borderRadius: borderRadius.sm,
+              marginBottom: spacing[3],
+              animation:    "cl-pulse 1.5s ease-in-out infinite",
+            }} />
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p style={{ padding: spacing[5], color: colors.suspended.text, fontFamily: typography.fontFamily.sans, fontSize: typography.fontSize.sm, margin: 0 }}>
+          Failed to load oracle health data.
+        </p>
+      )}
+
+      {!isLoading && !error && oracles && oracles.length === 0 && (
+        <p style={{ padding: spacing[5], color: colors.neutral[500], fontFamily: typography.fontFamily.sans, fontSize: typography.fontSize.sm, margin: 0 }}>
+          No projects monitored yet.
+        </p>
+      )}
+
+      {!isLoading && !error && oracles && oracles.length > 0 && (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {oracles.map((o, i) => {
+            const status = getStatus(o);
+            const st     = STATUS_STYLE[status];
+            return (
+              <li
+                key={o.projectId}
+                style={{
+                  display:      "flex",
+                  alignItems:   "center",
+                  gap:          spacing[3],
+                  padding:      `${spacing[3]} ${spacing[5]}`,
+                  borderBottom: i < oracles.length - 1 ? `1px solid ${colors.neutral[100]}` : "none",
+                }}
+              >
+                <Dot status={status} />
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{
+                    fontFamily:   typography.fontFamily.sans,
+                    fontSize:     typography.fontSize.sm,
+                    fontWeight:   typography.fontWeight.medium,
+                    color:        colors.neutral[900],
+                    margin:       0,
+                    overflow:     "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace:   "nowrap",
+                  }}>
+                    {o.projectName}
+                  </p>
+                  <p style={{
+                    fontFamily: typography.fontFamily.sans,
+                    fontSize:   typography.fontSize.xs,
+                    color:      colors.neutral[500],
+                    margin:     0,
+                  }}>
+                    {o.daysSinceUpdate}d ago · {new Date(o.lastMonitored).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </p>
+                </div>
+
+                <span style={{
+                  fontFamily:   typography.fontFamily.sans,
+                  fontSize:     typography.fontSize.xs,
+                  fontWeight:   typography.fontWeight.medium,
+                  color:        st.text,
+                  background:   st.bg,
+                  border:       `1px solid ${st.border}`,
+                  padding:      `2px ${spacing[2]}`,
+                  borderRadius: borderRadius.full,
+                  whiteSpace:   "nowrap",
+                }}>
+                  {st.label}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* Footer: last-refreshed hint */}
+      <p style={{
+        fontFamily: typography.fontFamily.sans,
+        fontSize:   typography.fontSize.xs,
+        color:      colors.neutral[400],
+        margin:     0,
+        padding:    `${spacing[2]} ${spacing[5]}`,
+        borderTop:  `1px solid ${colors.neutral[100]}`,
+        background: colors.neutral[50],
+      }}>
+        Auto-refreshes every 60 s
+      </p>
+    </section>
   );
 }
