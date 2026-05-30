@@ -25,6 +25,19 @@ const eventConfig: Record<ProvenanceEvent["type"], { icon: string; color: string
 };
 
 export default function ProvenanceTrail({ events }: Props) {
+  if (events.length === 0) {
+    return (
+      <div style={{ 
+        textAlign: "center", 
+        padding: "2rem", 
+        color: colors.neutral[400],
+        fontSize: "0.875rem"
+      }}>
+        No provenance events recorded
+      </div>
+    );
+  }
+
   return (
     <div style={{ position: "relative", paddingLeft: "2rem" }}>
       {/* Vertical line */}
