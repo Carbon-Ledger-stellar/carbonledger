@@ -241,73 +241,30 @@ pub enum CarbonError {
 
 ##  Project Structure
 
+> For the full annotated reference, see **[docs/folder-structure.md](docs/folder-structure.md)**.
+
 ```
 carbonledger/
-├── contracts/
-│   ├── carbon_registry/
-│   │   ├── src/lib.rs
-│   │   └── Cargo.toml
-│   ├── carbon_credit/
-│   │   ├── src/lib.rs
-│   │   └── Cargo.toml
-│   ├── carbon_marketplace/
-│   │   ├── src/lib.rs
-│   │   └── Cargo.toml
-│   └── carbon_oracle/
-│       ├── src/lib.rs
-│       └── Cargo.toml
-├── oracle/
-│   ├── verification_listener.py
-│   ├── price_oracle.py
-│   ├── satellite_monitor.py
-│   └── requirements.txt
-├── frontend/
-│   ├── app/
-│   │   ├── page.tsx
-│   │   ├── projects/
-│   │   ├── marketplace/
-│   │   ├── buy/
-│   │   ├── retire/
-│   │   ├── dashboard/
-│   │   ├── verify/
-│   │   └── audit/
-│   ├── components/
-│   │   ├── CreditCard.tsx
-│   │   ├── RetirementCertificate.tsx
-│   │   ├── ProvenanceTrail.tsx
-│   │   ├── MarketplaceFilter.tsx
-│   │   ├── BulkPurchaseCart.tsx
-│   │   ├── AuditExplorer.tsx
-│   │   ├── SerialNumberLookup.tsx
-│   │   ├── OracleStatus.tsx
-│   │   ├── Toast.tsx
-│   │   ├── LoadingSkeleton.tsx
-│   │   ├── ErrorBoundary.tsx
-│   │   └── TransactionStatus.tsx
-│   ├── lib/
-│   │   ├── stellar.ts
-│   │   ├── soroban.ts
-│   │   ├── freighter.ts
-│   │   ├── carbon-utils.ts
-│   │   ├── sdex.ts
-│   │   ├── api.ts
-│   │   └── wallet-errors.ts
-│   └── styles/
-│       └── design-system.ts
-├── backend/
-│   ├── src/
-│   │   ├── auth/
-│   │   ├── projects/
-│   │   ├── credits/
-│   │   ├── retirements/
-│   │   ├── marketplace/
-│   │   └── oracle/
-│   └── prisma/schema.prisma
-├── .github/
-│   └── workflows/ci.yml
-├── .env.example
-├── docker-compose.yml
-├── Stellar.toml
+├── .github/          # CI/CD workflows, issue templates, and PR template
+├── audit/            # Pre-audit checklist and security review artifacts
+├── backend/          # NestJS REST API — auth, projects, credits, retirements, marketplace, oracle
+│   └── prisma/
+│       └── schema.prisma  # Prisma database schema — all PostgreSQL models and relations
+├── components/       # Shared UI components used outside the Next.js app directory
+├── contracts/        # Soroban smart contracts written in Rust
+│   └── Cargo.toml    # Rust workspace manifest for all Soroban contract crates
+├── docs/             # Project documentation: guides, ADRs, runbooks, API references
+├── frontend/         # Next.js 14 (App Router) web application
+├── hooks/            # Shared React hooks used across the monorepo
+├── infra/            # Infrastructure-as-code (Terraform) for cloud provisioning
+├── load-tests/       # k6 load test scripts and results for the marketplace API
+├── logging/          # Observability stack configuration: Loki, Promtail, Grafana
+├── oracle/           # Python oracle bridge: verification listener, price feeds, satellite monitor
+├── scripts/          # Developer utility scripts: setup, deploy, test runners, DB backup
+├── tests/            # Cross-contract and upgrade path integration tests (Rust)
+├── .env.example      # Environment variable template — copy to .env before running locally
+├── docker-compose.yml  # Local development stack definition — starts all services with one command
+├── Stellar.toml      # SEP-0001 metadata file for the Stellar network
 └── README.md
 ```
 
