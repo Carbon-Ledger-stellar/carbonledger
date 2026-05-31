@@ -167,6 +167,18 @@ export function useOracleHistory(projectId: string) {
   );
 }
 
+export interface AggregateStats {
+  active_listings_count: number;
+  totalCreditsRetired: number;
+}
+
+export function useAggregateStats() {
+  return useSWR<AggregateStats>(`${API_URL}/stats/aggregate`, fetcher, {
+    ...swrConfig,
+    refreshInterval: 60_000,
+  });
+}
+
 export function usePlatformStats() {
   return useSWR<PlatformStats>(`${API_URL}/stats`, fetcher, {
     ...swrConfig,
