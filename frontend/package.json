@@ -33,7 +33,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.8.0",
-    "@playwright/test": "^1.40.0",
+    "@playwright/test": "^1.60.0",
     "@storybook/nextjs": "^10.4.1",
     "@storybook/react": "^10.3.6",
     "@testing-library/jest-dom": "^6",
