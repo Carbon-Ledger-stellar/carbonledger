@@ -78,7 +78,9 @@ function MarketplaceContent() {
 
         <div aria-live="polite">
           {isLoading ? (
-            <LoadingSkeleton rows={6} />
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
+              <LoadingSkeleton variant="MarketplaceItem" count={6} />
+            </div>
           ) : !listings?.length ? (
             <div style={{ textAlign: "center", padding: "4rem 2rem", background: colors.surfaceAlt, borderRadius: "1rem", marginTop: "1.5rem" }}>
               <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔍</div>
