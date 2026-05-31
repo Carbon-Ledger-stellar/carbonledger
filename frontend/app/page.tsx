@@ -1,10 +1,11 @@
 "use client";
 
-import { usePlatformStats, useRetirements } from "../lib/api";
+import { usePlatformStats, useRetirements, useAggregateStats } from "../lib/api";
 import { formatTonnes, formatStroops } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import ThemeToggle from "../components/ThemeToggle";
+import { useEffect, useRef, useState } from "react";
 
 function StatCard({ label, value, sub, icon }: { label: string; value: string; sub?: string; icon: string }) {
   return (
@@ -32,6 +33,49 @@ function StatCard({ label, value, sub, icon }: { label: string; value: string; s
 export default function HomePage() {
   const { data: stats, isLoading: statsLoading } = usePlatformStats();
   const { data: retirements, isLoading: retLoading } = useRetirements(10);
+  const { data: aggregateStats, error: listingError } = useAggregateStats();
+  const [activeListings, setActiveListings] = useState(0);
+  const [hasListCountEntered, setHasListCountEntered] = useState(false);
+  const countRef = useRef<HTMLDivElement>(null);
+  const ACTIVE_LISTINGS_FALLBACK = 12;
+
+  useEffect(() => {
+    if (!countRef.current) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setHasListCountEntered(true);
+        observer.disconnect();
+      }
+    }, { threshold: 0.2 });
+    observer.observe(countRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!hasListCountEntered || !aggregateStats) return;
+    const target = aggregateStats.active_listings_count;
+    if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setActiveListings(target);
+      return;
+    }
+
+    const start = activeListings;
+    const delta = target - start;
+    const duration = 500;
+    const begin = performance.now();
+    let frame = 0;
+
+    const step = (timestamp: number) => {
+      const progress = Math.min((timestamp - begin) / duration, 1);
+      setActiveListings(Math.round(start + delta * progress));
+      if (progress < 1) frame = requestAnimationFrame(step);
+    };
+
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [aggregateStats?.active_listings_count, hasListCountEntered]);
+
+  const activeListingsValue = listingError ? ACTIVE_LISTINGS_FALLBACK : activeListings;
 
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "3rem 2rem" }}>
@@ -91,6 +135,9 @@ export default function HomePage() {
             <StatCard label="Credits Issued"   value={formatTonnes(stats?.totalCreditsIssued ?? 0)}   icon="🌱" sub="Total CO₂e tokenized" />
             <StatCard label="Credits Retired"  value={formatTonnes(stats?.totalCreditsRetired ?? 0)}  icon="🔒" sub="Permanently retired on-chain" />
             <StatCard label="Active Projects"  value={String(stats?.activeProjects ?? 0)}             icon="🌍" sub="Verified projects" />
+            <div ref={countRef}>
+              <StatCard label="Active Listings" value={String(activeListingsValue)} icon="📈" sub="Active market listings" />
+            </div>
             <StatCard label="Market Volume"    value={`$${formatStroops(stats?.marketplaceVolume ?? "0")} USDC`} icon="💹" sub="Total traded" />
           </>
         )}
