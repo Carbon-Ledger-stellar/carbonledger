@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import OracleStatus from "../../../components/OracleStatus";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
@@ -30,6 +30,45 @@ export default function VerifierDashboardPage() {
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [docProject, setDocProject] = useState<Project | null>(null);
+  const pendingDialogRef = useRef<HTMLDivElement | null>(null);
+  const pendingTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const docTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  function closeModal() {
+    setPending(null);
+    setDocProject(null);
+    setRejectReason("");
+    (pendingTriggerRef.current ?? docTriggerRef.current)?.focus();
+  }
+
+  function handleDialogKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === "Escape") return closeModal();
+    if (e.key !== "Tab") return;
+    const dialog = pendingDialogRef.current;
+    if (!dialog) return;
+    const nodes = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ));
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    }
+    if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  useEffect(() => {
+    const dialog = pendingDialogRef.current;
+    const first = dialog?.querySelector<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    first?.focus();
+  }, [pending, docProject]);
 
   async function load() {
     if (!publicKey || !token) return;
@@ -110,37 +149,55 @@ export default function VerifierDashboardPage() {
           </div>
           <div style={{ display: "flex", gap: "0.5rem" }}>
             {p.documentCid && (
-              <button onClick={() => setDocProject(p)} style={docBtn}>
+              <button
+                onClick={e => { docTriggerRef.current = e.currentTarget; setDocProject(p); }}
+                style={docBtn}
+              >
                 📄 Docs
               </button>
             )}
-            <button onClick={() => setPending({ project: p, decision: "verify" })} style={approveBtn}>
+            <button
+              onClick={e => { pendingTriggerRef.current = e.currentTarget; setPending({ project: p, decision: "verify" }); }}
+              style={approveBtn}
+            >
               Approve
             </button>
-            <button onClick={() => openReject(p)} style={rejectBtn}>
+            <button
+              onClick={e => { pendingTriggerRef.current = e.currentTarget; openReject(p); }}
+              style={rejectBtn}
+            >
               Reject
             </button>
           </div>
         </div>
       ))}
 
-      <hr style={{ margin: "2rem 0" }} />
-      <OracleStatus />
-      <hr style={{ margin: "2rem 0" }} />
-      <p style={{ fontSize: "0.875rem", color: "#666" }}>
-        <strong>Attestation fee:</strong> verifiers earn a fee per approved project as documented in{" "}
-        <a href="/docs/verifier-onboarding.md">docs/verifier-onboarding.md</a>.
-      </p>
+      <div aria-hidden={!!pending || !!docProject}>
+        <hr style={{ margin: "2rem 0" }} />
+        <OracleStatus />
+        <hr style={{ margin: "2rem 0" }} />
+        <p style={{ fontSize: "0.875rem", color: "#666" }}>
+          <strong>Attestation fee:</strong> verifiers earn a fee per approved project as documented in{" "}
+          <a href="/docs/verifier-onboarding.md">docs/verifier-onboarding.md</a>.
+        </p>
+      </div>
 
       {/* Document viewer modal */}
       {docProject && (
-        <div style={overlayStyle} role="dialog" aria-modal="true" aria-label="Project documentation">
+        <div
+          ref={pendingDialogRef}
+          onKeyDown={handleDialogKeyDown}
+          style={overlayStyle}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Project documentation"
+        >
           <div style={{ ...dialogStyle, maxWidth: 720, width: "95vw" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
               <h2 style={{ margin: 0, fontSize: "1.125rem" }}>
                 📄 {docProject.name} — Documentation
               </h2>
-              <button onClick={() => setDocProject(null)} style={cancelBtn} aria-label="Close document viewer">
+              <button onClick={closeModal} style={cancelBtn} aria-label="Close document viewer">
                 ✕
               </button>
             </div>
@@ -165,7 +222,14 @@ export default function VerifierDashboardPage() {
 
       {/* Confirmation modal */}
       {pending && (
-        <div style={overlayStyle} role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div
+          ref={pendingDialogRef}
+          onKeyDown={handleDialogKeyDown}
+          style={overlayStyle}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-title"
+        >
           <div style={dialogStyle}>
             <h2 id="confirm-title" style={{ margin: "0 0 0.5rem", fontSize: "1.125rem" }}>
               {pending.decision === "verify" ? "✅ Approve Project" : "❌ Reject Project"}
@@ -211,10 +275,7 @@ export default function VerifierDashboardPage() {
             )}
 
             <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end", marginTop: "1.5rem" }}>
-              <button
-                onClick={() => { setPending(null); setRejectReason(""); }}
-                style={cancelBtn}
-              >
+              <button onClick={closeModal} style={cancelBtn}>
                 Cancel
               </button>
               <button
