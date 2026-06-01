@@ -25,6 +25,12 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
     console.error("ErrorBoundary caught:", error, info);
+    import("../lib/logger").then(({ clientLogger }) => {
+      clientLogger.error(error.message, {
+        stack: error.stack,
+        component_stack: info.componentStack,
+      });
+    });
   }
 
   render() {

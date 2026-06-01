@@ -1,10 +1,5 @@
-import {
-  getPublicKey as freighterGetPublicKey,
-  signTransaction as freighterSignTransaction,
-  isConnected,
-  isAllowed,
-  setAllowed,
   getNetworkDetails,
+  WatchWalletChanges,
 } from "@stellar/freighter-api";
 
 export type FreighterNetwork = "TESTNET" | "PUBLIC" | "FUTURENET";
@@ -49,3 +44,25 @@ export async function switchToTestnet(): Promise<void> {
     throw new Error("WRONG_NETWORK");
   }
 }
+
+export async function isFreighterInstalled(): Promise<boolean> {
+  const connected = await isConnected();
+  return !!connected.isConnected;
+}
+
+export async function isFreighterConnected(): Promise<boolean> {
+  if (!(await isFreighterInstalled())) return false;
+  const allowed = await isAllowed();
+  return !!allowed.isAllowed;
+}
+
+export async function isWrongNetwork(): Promise<boolean> {
+  try {
+    const network = await checkNetwork();
+    return network !== "TESTNET";
+  } catch {
+    return true;
+  }
+}
+
+export { WatchWalletChanges };

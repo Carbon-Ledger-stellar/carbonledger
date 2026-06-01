@@ -1,0 +1,208 @@
+openapi: 3.0.3
+info:
+  title: CarbonLedger Public API
+  description: |
+    Read-only API for third-party ESG platforms, registries, and data providers
+    to query CarbonLedger data without a wallet.
+
+    **Authentication**: Include your API key in the `X-Api-Key` request header.
+
+    **Rate limit**: 1000 requests per day per API key.
+
+    To obtain an API key, `POST /v1/api-keys` with your organization details.
+  version: 1.0.0
+  contact:
+    name: CarbonLedger
+    url: https://github.com/dev-fatima-24/carbonledger
+
+servers:
+  - url: https://api.carbonledger.io
+    description: Production
+  - url: http://localhost:3001
+    description: Local development
+
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+
+  schemas:
+    Project:
+      type: object
+      properties:
+        projectId:   { type: string, example: "proj-abc123" }
+        name:        { type: string, example: "Amazon Reforestation Initiative" }
+        methodology: { type: string, example: "VCS" }
+        country:     { type: string, example: "Brazil" }
+        projectType: { type: string, example: "Reforestation" }
+        vintageYear: { type: integer, example: 2023 }
+        methodologyScore: { type: integer, example: 85 }
+        totalCreditsIssued:  { type: string, example: "10000.00" }
+        totalCreditsRetired: { type: string, example: "3500.00" }
+        status:    { type: string, example: "Verified" }
+        createdAt: { type: string, format: date-time }
+
+    CreditBatch:
+      type: object
+      properties:
+        batchId:     { type: string, example: "batch-proj-abc123-2023-0001" }
+        projectId:   { type: string, example: "proj-abc123" }
+        vintageYear: { type: integer, example: 2023 }
+        amount:      { type: string, example: "5000.00" }
+        serialStart: { type: string, example: "1000001" }
+        serialEnd:   { type: string, example: "1005000" }
+        status:      { type: string, example: "Active" }
+        issuedAt:    { type: string, format: date-time }
+        project:
+          type: object
+          properties:
+            name:        { type: string }
+            methodology: { type: string }
+            country:     { type: string }
+
+    Certificate:
+      type: object
+      properties:
+        retirementId:     { type: string, example: "ret-batch-proj-abc123-2023-0001-1683000000" }
+        amount:           { type: string, example: "100.00" }
+        retiredBy:        { type: string, example: "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" }
+        beneficiary:      { type: string, example: "Acme Corp" }
+        retirementReason: { type: string, example: "2023 ESG offset" }
+        vintageYear:      { type: integer, example: 2023 }
+        serialNumbers:    { type: array, items: { type: string } }
+        txHash:           { type: string, example: "abc123..." }
+        retiredAt:        { type: string, format: date-time }
+        isValid:          { type: boolean, example: true }
+        certificateCid:   { type: string, nullable: true }
+        ipfsUrl:          { type: string, nullable: true }
+        project:
+          type: object
+          properties:
+            name:        { type: string }
+            methodology: { type: string }
+            country:     { type: string }
+
+    ApiKey:
+      type: object
+      properties:
+        id:               { type: string }
+        key:              { type: string, example: "cl_a1b2c3..." }
+        organizationName: { type: string }
+        contactEmail:     { type: string }
+        createdAt:        { type: string, format: date-time }
+
+    Error:
+      type: object
+      properties:
+        statusCode: { type: integer }
+        message:    { type: string }
+
+paths:
+  /v1/projects:
+    get:
+      summary: List verified carbon projects
+      operationId: listProjects
+      parameters:
+        - name: methodology
+          in: query
+          schema: { type: string }
+          description: Filter by methodology (e.g. VCS, Gold Standard)
+        - name: country
+          in: query
+          schema: { type: string }
+          description: Filter by country
+        - name: vintage
+          in: query
+          schema: { type: integer }
+          description: Filter by vintage year
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+          description: Pagination cursor (projectId of last item)
+      responses:
+        '200':
+          description: Paginated list of projects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Project' }
+                  meta:
+                    type: object
+                    properties:
+                      count:      { type: integer }
+                      nextCursor: { type: string, nullable: true }
+        '401': { description: Missing or invalid API key, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '429': { description: Rate limit exceeded }
+
+  /v1/credits/batch/{batchId}:
+    get:
+      summary: Get a credit batch by ID
+      operationId: getCreditBatch
+      parameters:
+        - name: batchId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Credit batch details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreditBatch' }
+        '401': { description: Missing or invalid API key }
+        '404': { description: Batch not found }
+        '429': { description: Rate limit exceeded }
+
+  /v1/certificates/{retirementId}:
+    get:
+      summary: Verify a retirement certificate
+      operationId: verifyCertificate
+      parameters:
+        - name: retirementId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Retirement certificate details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Certificate' }
+        '401': { description: Missing or invalid API key }
+        '404': { description: Certificate not found }
+        '429': { description: Rate limit exceeded }
+
+  /v1/api-keys:
+    post:
+      summary: Provision a new API key
+      operationId: createApiKey
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organizationName, contactEmail]
+              properties:
+                organizationName: { type: string, example: "Acme ESG Platform" }
+                contactEmail:     { type: string, format: email, example: "api@acme.com" }
+      responses:
+        '201':
+          description: API key created — store the key securely, it will not be shown again
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKey' }
+        '400': { description: Validation error }
