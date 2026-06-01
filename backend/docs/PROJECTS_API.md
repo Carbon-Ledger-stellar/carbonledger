@@ -230,7 +230,7 @@ CREATE INDEX idx_search_description ON carbon_projects USING gin(to_tsvector('en
 ```json
 {
   "statusCode": 422,
-  "message": ["vintageYear must be between 2000 and 2100"],
+  "message": ["vintageYear must be between 1990 and current year + 1"],
   "error": "Unprocessable Entity"
 }
 ```
@@ -247,7 +247,7 @@ CREATE INDEX idx_search_description ON carbon_projects USING gin(to_tsvector('en
 ### Validation Rules
 
 - `limit`: Must be between 1 and 100
-- `vintageYear`: Must be between 2000 and 2100
+- `vintageYear`: Must be between 1990 and current year + 1
 - `methodology`, `country`, `status`, `vintageYear`: Support multiple values
 - `cursor`: Must be a valid project ID if provided
 - `sortBy`: Must be one of allowed fields

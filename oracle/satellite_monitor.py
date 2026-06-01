@@ -16,8 +16,8 @@ from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scv
 from stellar_sdk.soroban_rpc import SendTransactionStatus
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
+from log import get_logger  # noqa: E402 — must come after load_dotenv
+log = get_logger("satellite_monitor")
 
 app = Flask(__name__)
 

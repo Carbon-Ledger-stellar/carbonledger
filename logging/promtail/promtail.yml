@@ -1,0 +1,113 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Enhanced log collection from all containers via Docker socket
+  # Supports correlation IDs, structured logging, and service-specific parsing
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=carbonledger"]
+    relabel_configs:
+      # Extract service name from container name
+      - source_labels: [__meta_docker_container_name]
+        regex:         "/carbonledger[_-]([^_-]+).*"
+        target_label:  service
+        replacement:   "${1}"
+      # Fallback for service name extraction
+      - source_labels: [__meta_docker_container_name]
+        regex:         "/(.*)"
+        target_label:  service
+        replacement:   "${1}"
+      # Add container ID for debugging
+      - source_labels: [__meta_docker_container_id]
+        target_label:  container_id
+      # Add log stream (stdout/stderr)
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label:  stream
+      # Add compose service label if available
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label:  compose_service
+    pipeline_stages:
+      # Enhanced JSON parsing with correlation ID and timestamp extraction
+      - json:
+          expressions:
+            level:          level
+            message:        message
+            service:        service
+            correlation_id: correlationId
+            request_id:     requestId
+            trace_id:       traceId
+            timestamp:      timestamp
+            context:        context
+            module:         module
+            method:         method
+            user_id:        userId
+            session_id:     sessionId
+            error_code:     errorCode
+            duration_ms:    durationMs
+      
+      # Normalize log levels (handle different formats)
+      - template:
+          source: level
+          template: '{{ if .level }}{{ .level | lower }}{{ else }}info{{ end }}'
+      
+      # Extract correlation ID from message if not in structured field
+      - regex:
+          expression: '.*correlation[_-]?id[:\s=]+([a-f0-9-]{36}|[a-zA-Z0-9]{8,32}).*'
+          source: message
+      - template:
+          source: correlation_id
+          template: '{{ if .correlation_id }}{{ .correlation_id }}{{ else if .correlation_id_1 }}{{ .correlation_id_1 }}{{ else }}{{ end }}'
+      
+      # Add labels for efficient querying
+      - labels:
+          level:
+          service:
+          correlation_id:
+          compose_service:
+          stream:
+      
+      # Add timestamp if available
+      - timestamp:
+          source: timestamp
+          format: RFC3339Nano
+          fallback_formats:
+            - "2006-01-02T15:04:05.000Z"
+            - "2006-01-02 15:04:05"
+      
+      # Drop noisy logs (optional - can be configured per environment)
+      - drop:
+          expression: '.*health.*check.*'
+          drop_counter_reason: health_check_noise
+      
+      # Rate limiting for high-volume services
+      - limit:
+          rate: 1000
+          burst: 2000
+          drop: true
+
+  # Separate configuration for system logs (if needed)
+  - job_name: syslog
+    syslog:
+      listen_address: 0.0.0.0:1514
+      label_structured_data: true
+    relabel_configs:
+      - source_labels: [__syslog_message_hostname]
+        target_label: host
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<timestamp>\S+\s+\S+\s+\S+)\s+(?P<host>\S+)\s+(?P<service>\S+).*'
+      - labels:
+          service:
+          host:

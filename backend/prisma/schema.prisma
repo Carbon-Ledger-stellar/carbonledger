@@ -19,8 +19,9 @@ model CarbonProject {
   projectType         String
   status              String   @default("Pending")
   vintageYear         Int
-  totalCreditsIssued  Int      @default(0)
-  totalCreditsRetired Int      @default(0)
+  methodologyScore    Int
+  totalCreditsIssued  Decimal  @default(0) @db.Decimal(18, 2)
+  totalCreditsRetired Decimal  @default(0) @db.Decimal(18, 2)
   metadataCid         String
   verifierAddress     String
   ownerAddress        String
@@ -28,6 +29,7 @@ model CarbonProject {
   lastMonitoringAt    DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+  ipfsFiles           IPFSFile[]
 
   batches     CreditBatch[]
   retirements RetirementRecord[]
@@ -48,16 +50,17 @@ model CreditBatch {
   batchId     String   @unique
   projectId   String
   vintageYear Int
-  amount      Int
+  amount      Decimal  @db.Decimal(18, 2)
   serialStart String
   serialEnd   String
   status      String   @default("Active")
   metadataCid String
-  issuedAt    DateTime @default(now())
+  issuedAt    DateTime @default(now()) @db.Timestamptz
 
   project     CarbonProject      @relation(fields: [projectId], references: [projectId])
   retirements RetirementRecord[]
   listings    MarketListing[]
+  ipfsFiles   IPFSFile[]
 }
 
 model RetirementRecord {
@@ -65,17 +68,43 @@ model RetirementRecord {
   retirementId     String   @unique
   batchId          String
   projectId        String
-  amount           Int
+  amount           Decimal  @db.Decimal(18, 2)
   retiredBy        String
   beneficiary      String
   retirementReason String
   vintageYear      Int
+  serialStart      String
+  serialEnd        String
   serialNumbers    String[]
   txHash           String
+  certificateCid   String?
+  isValid          Boolean  @default(true)
+  validatedAt      DateTime?
   retiredAt        DateTime @default(now())
 
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
   project CarbonProject @relation(fields: [projectId], references: [projectId])
+  ipfsFiles IPFSFile[]
+  certificates RetirementCertificate[]
+}
+
+model RetirementCertificate {
+  id          String   @id @default(cuid())
+  retirementId String
+  beneficiary String
+  amount      Decimal  @db.Decimal(18, 2)
+  projectName String
+  vintageYear Int
+  txHash      String
+  ipfsCid     String?
+  publicUrl   String?
+  createdAt   DateTime @default(now())
+
+  retirement RetirementRecord @relation(fields: [retirementId], references: [id], onDelete: Cascade)
+
+  @@index([retirementId])
+  @@index([beneficiary])
+  @@index([vintageYear])
 }
 
 model MarketListing {
@@ -84,7 +113,7 @@ model MarketListing {
   projectId       String
   batchId         String
   seller          String
-  amountAvailable Int
+  amountAvailable Decimal  @db.Decimal(18, 2)
   pricePerCredit  String
   vintageYear     Int
   methodology     String
@@ -101,7 +130,7 @@ model MonitoringData {
   id               String   @id @default(cuid())
   projectId        String
   period           String
-  tonnesVerified   Int
+  tonnesVerified   Decimal  @db.Decimal(18, 2)
   methodologyScore Int
   satelliteCid     String
   submittedBy      String
@@ -113,21 +142,98 @@ model MonitoringData {
 }
 
 model OracleUpdate {
-  id               String   @id @default(cuid())
-  projectId        String
-  period           String
-  tonnesVerified   Int
-  methodologyScore Int
-  txHash           String
-  status           String
-  submittedAt      DateTime @default(now())
+  id               String    @id @default(cuid())
+  idempotencyKey   String    @unique  // projectId:period or methodology:vintageYear
+  type             String    // "monitoring" | "price"
+  projectId        String?
+  period           String?
+  tonnesVerified   Decimal?  @db.Decimal(18, 2)
+  methodologyScore Int?
+  methodology      String?
+  vintageYear      Int?
+  priceUsdc        String?
+  txHash           String?
+  status           String    @default("pending")  // pending | submitted | failed
+  attempts         Int       @default(0)
+  lastError        String?
+  submittedAt      DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
+  @@index([projectId])
+}
+
+model OracleSyncState {
+  id                String   @id @default(cuid())
+  lastSyncedAt      DateTime @default(now())
+  lastSyncedBlock   Int      @default(0)
+  recordsSynced     Int      @default(0)
+  lastError         String?
+  lastErrorAt       DateTime?
+  syncStatus        String   @default("idle")  // idle | syncing | completed | failed
+  updatedAt         DateTime @updatedAt
+
+  @@unique([id])
 }
 
 model User {
-  id        String   @id @default(cuid())
-  publicKey String   @unique
-  role      String   @default("corporation")
-  createdAt DateTime @default(now())
+  id                      String                   @id @default(cuid())
+  publicKey               String                   @unique
+  email                   String?                  @unique
+  role                    String                   @default("corporation")
+  isSubscribed            Boolean                  @default(true)
+  createdAt               DateTime                 @default(now())
+  notificationPreferences NotificationPreference?
+}
+
+model NotificationPreference {
+  id                  String   @id @default(cuid())
+  userId              String   @unique
+  projectApproved     Boolean  @default(true)
+  creditsMinted       Boolean  @default(true)
+  purchaseConfirmed   Boolean  @default(true)
+  retirementConfirmed Boolean  @default(true)
+  updatedAt           DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model EmailLog {
+  id        String    @id @default(cuid())
+  to        String
+  subject   String
+  template  String
+  status    String    @default("Pending") // Pending | Sent | Failed
+  error     String?
+  txHash    String?   // If related to a transaction
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([to])
+  @@index([status])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  resourceId String?
+  ipAddress  String?
+  result     String?  // e.g., "Success", "Failure: <error>"
+  metadata   Json?    // Optional extra info
+  timestamp  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([resourceId])
+  @@index([timestamp])
+}
+
+model SyncMetadata {
+  id                String   @id @default("singleton")
+  lastIndexedLedger Int      @default(0)
+  updatedAt         DateTime @updatedAt
 }
 
 model Job {
@@ -144,4 +250,96 @@ model Job {
 
   @@index([queue, status])
   @@index([type])
+}
+
+model IPFSFile {
+  id              String   @id @default(cuid())
+  cid             String
+  fileName        String
+  fileType        String   // "application/pdf" or "application/json"
+  fileSize        Int      // in bytes
+  pinStatus       String   @default("pending")  // pending | pinned | failed
+  linkedEntityType String?  // "project" | "certificate" | "batch"
+  linkedEntityId  String?  // ID of the linked entity
+  uploadedAt      DateTime @default(now())
+  pinnedAt        DateTime?
+
+  project         CarbonProject?  @relation(fields: [projectId], references: [id])
+  projectId       String?
+  batch           CreditBatch?    @relation(fields: [batchId], references: [id])
+  batchId         String?
+  retirement      RetirementRecord? @relation(fields: [retirementId], references: [id])
+  retirementId    String?
+
+  @@index([cid])
+  @@index([pinStatus])
+}
+
+model VerifierApplication {
+  id               String    @id @default(cuid())
+  publicKey        String    @unique
+  organizationName String
+  accreditationBody String
+  accreditationId  String
+  contactEmail     String
+  documentsCid     String
+  status           String    @default("pending")  // pending | approved | rejected
+  approvedBy       String?
+  approvedAt       DateTime?
+  rejectionReason  String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model PriceApproval {
+  id           String   @id @default(cuid())
+  methodology  String
+  vintageYear  Int
+  priceStroops String
+  deviation    Float
+  status       String   @default("Pending")  // Pending | Approved | Rejected
+  reason       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AdminConfig {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model ApiKey {
+  id               String   @id @default(cuid())
+  key              String   @unique
+  organizationName String
+  contactEmail     String
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  @@index([key])
+}
+
+model SorobanSubmission {
+  id         String   @id @default(cuid())
+  contractId String
+  status     String   // "success" | "failed"
+  error      String?
+  createdAt  DateTime @default(now())
+
+  @@index([contractId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OracleUpdate {
+  id        String   @id @default(cuid())
+  dataType  String   // "verification" | "price" | "satellite"
+  success   Boolean
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@index([dataType])
+  @@index([success])
+  @@index([createdAt])
 }

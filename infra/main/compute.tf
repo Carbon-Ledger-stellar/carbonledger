@@ -82,3 +82,22 @@ resource "aws_instance" "app" {
 }
 
 output "app_public_ip" { value = aws_instance.app.public_ip }
+
+# ── IAM: allow app role to write backups to the backup bucket ─────────────────
+
+resource "aws_iam_role_policy" "app_db_backup" {
+  name = "${local.name}-app-db-backup"
+  role = aws_iam_role.app.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
+      Resource = [
+        aws_s3_bucket.db_backups.arn,
+        "${aws_s3_bucket.db_backups.arn}/*"
+      ]
+    }]
+  })
+}

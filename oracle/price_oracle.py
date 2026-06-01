@@ -15,8 +15,8 @@ from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scv
 from stellar_sdk.soroban_rpc import SendTransactionStatus
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
+from log import get_logger  # noqa: E402 — must come after load_dotenv
+log = get_logger("price_oracle")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +27,8 @@ NETWORK_PASSPHRASE   = os.environ.get("NETWORK_PASSPHRASE", Network.TESTNET_NETW
 XPANSIV_API_KEY      = os.environ.get("XPANSIV_API_KEY", "")
 TOUCAN_API_KEY       = os.environ.get("TOUCAN_API_KEY", "")
 ADMIN_ALERT_WEBHOOK  = os.environ.get("ADMIN_ALERT_WEBHOOK", "")
+BACKEND_API_URL      = os.environ.get("BACKEND_API_URL", "http://localhost:3001/api/v1")
+BACKEND_JWT_TOKEN    = os.environ.get("BACKEND_JWT_TOKEN", "") # Used for authenticated POSTs
 PRICE_DEVIATION_ALERT = 0.15  # 15%
 USDC_STROOPS         = 10_000_000  # 1 USDC = 10^7 stroops
 
@@ -149,6 +151,72 @@ def alert_admin(message: str):
     except Exception as e:
         log.error("Alert webhook failed: %s", e)
 
+def hold_price_update(methodology: str, vintage_year: int, stroops: int, deviation: float):
+    """Notify backend to hold a price update for admin approval."""
+    try:
+        resp = requests.post(
+            f"{BACKEND_API_URL}/oracle/price-approvals/hold",
+            json={
+                "methodology": methodology,
+                "vintageYear": vintage_year,
+                "priceStroops": str(stroops),
+                "deviation": deviation,
+            },
+            headers={"Authorization": f"Bearer {BACKEND_JWT_TOKEN}"} if BACKEND_JWT_TOKEN else {},
+            timeout=10,
+        )
+        if resp.status_code == 201:
+            log.info("Price update held in backend for approval: %s/%d", methodology, vintage_year)
+            alert_admin(f"🚨 Price update HELD for {methodology}/{vintage_year} due to {deviation:.1%} deviation.")
+        else:
+            log.error("Failed to hold price update in backend: %s", resp.text)
+    except Exception as e:
+        log.error("Failed to contact backend for hold: %s", e)
+
+def process_approved_prices():
+    """Poll backend for approved price updates and submit them on-chain."""
+    log.info("Checking for approved price updates...")
+    try:
+        resp = requests.get(
+            f"{BACKEND_API_URL}/oracle/price-approvals",
+            headers={"Authorization": f"Bearer {BACKEND_JWT_TOKEN}"} if BACKEND_JWT_TOKEN else {},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            log.error("Failed to fetch approvals: %s", resp.text)
+            return
+
+        server  = SorobanServer(STELLAR_RPC_URL)
+        keypair = Keypair.from_secret(ORACLE_SECRET_KEY)
+        approvals = resp.json()
+
+        for app in approvals:
+            if app["status"] == "Approved":
+                methodology = app["methodology"]
+                vintage_year = int(app["vintageYear"])
+                stroops = int(app["priceStroops"])
+                
+                log.info("Pushing APPROVED price: %s/%d", methodology, vintage_year)
+                try:
+                    tx_hash = build_and_submit(
+                        server, keypair,
+                        "update_credit_price",
+                        [
+                            scval.to_address(keypair.public_key),
+                            scval.to_string(methodology),
+                            scval.to_uint32(vintage_year),
+                            scval.to_int128(stroops),
+                        ],
+                    )
+                    log.info("Successfully pushed approved price: %s/%d (tx %s)", methodology, vintage_year, tx_hash)
+                    
+                    # Mark as finalized in backend (optional, but good practice)
+                    # For this simulation, we'll just log it.
+                except Exception as e:
+                    log.error("Failed to push approved price %s/%d: %s", methodology, vintage_year, e)
+    except Exception as e:
+        log.error("Failed to process approved prices: %s", e)
+
 # ── Core update logic ─────────────────────────────────────────────────────────
 
 def update_prices():
@@ -168,17 +236,13 @@ def update_prices():
         stroops = to_stroops(price_usd)
         key     = (methodology, vintage_year)
 
-        # Deviation check
         if key in _last_prices:
             last = _last_prices[key]
             deviation = abs(stroops - last) / last if last > 0 else 0
             if deviation > PRICE_DEVIATION_ALERT:
-                msg = (
-                    f"⚠️ Price deviation alert: {methodology} {vintage_year} "
-                    f"moved {deviation:.1%} (${price_usd:.2f} USD)"
-                )
-                log.warning(msg)
-                alert_admin(msg)
+                log.warning(f"⚠️ High price deviation detected for {methodology}/{vintage_year}: {deviation:.1%}")
+                hold_price_update(methodology, vintage_year, stroops, deviation)
+                continue # HOLD: do not submit on-chain
 
         try:
             tx_hash = build_and_submit(
@@ -205,6 +269,12 @@ if __name__ == "__main__":
     log.info("Price oracle starting — updating every 12 hours")
     update_prices()
     schedule.every(12).hours.do(update_prices)
+    
+    # Check for approvals more frequently (e.g. every 5 minutes)
+    log.info("Approval poller starting — checking every 5 minutes")
+    process_approved_prices()
+    schedule.every(5).minutes.do(process_approved_prices)
+
     while True:
         schedule.run_pending()
         time.sleep(60)
