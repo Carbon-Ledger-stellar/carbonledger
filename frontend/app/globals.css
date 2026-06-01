@@ -206,57 +206,25 @@ input[type="button"],
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-/* ─── Navbar nav links ─────────────────────────────────────────────────────── */
-
-/*
- * Base state: white text, subtle hover background.
- * The global touch-target rule already sets min-height/padding/display.
- */
-.nav-link {
-  color: rgba(255, 255, 255, 0.75);
-  text-decoration: none;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  font-weight: 500;
-  transition: background-color 0.15s ease, color 0.15s ease;
-  white-space: nowrap;
-}
-
-.nav-link:hover,
-.nav-link:focus-visible {
-  color: #ffffff;
-  background-color: rgba(255, 255, 255, 0.1);
-  outline: 2px solid rgba(255, 255, 255, 0.4);
+/* WCAG 2.1 AA — visible focus ring for all interactive elements (#312) */
+:focus-visible {
+  outline: 3px solid #2563eb;
   outline-offset: 2px;
+  border-radius: 3px;
 }
 
-/*
- * Active state: green accent background + bold text.
- * Uses the primary-500 token so it automatically inverts in dark mode.
- */
-.nav-link--active {
-  color: #ffffff;
-  font-weight: 700;
-  background-color: var(--color-primary-600);
+/* Screen-reader only utility */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
-
-.nav-link--active:hover,
-.nav-link--active:focus-visible {
-  background-color: var(--color-primary-500);
-  outline: 2px solid var(--color-primary-400);
-}
-
-/* Dark-mode override: slightly lighter accent so contrast stays WCAG AA */
-[data-theme="dark"] .nav-link--active {
-  background-color: var(--color-primary-700);
-}
-
-[data-theme="dark"] .nav-link--active:hover,
-[data-theme="dark"] .nav-link--active:focus-visible {
-  background-color: var(--color-primary-600);
-}
-
-/* ─── Skip link ─────────────────────────────────────────────────────────────── */
 
 /* Skip link */
 .skip-link {
