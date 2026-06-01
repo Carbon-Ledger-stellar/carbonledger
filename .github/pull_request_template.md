@@ -28,6 +28,7 @@ Describe the tests you ran and how to reproduce them:
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests passed locally with my changes
 - [ ] Any dependent changes have been merged and published
+- [ ] If I added a new top-level directory, I have updated `docs/folder-structure.md` and the README "Project Structure" section to include it
 
 ## Screenshots (if applicable)
 Add screenshots for UI changes.

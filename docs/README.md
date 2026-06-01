@@ -32,6 +32,7 @@ Understanding the system:
 |----------|-------------|----------|
 | **[Architecture Decision Records](adr/)** | Why we made key technical decisions | Developers |
 | **[Deployment Guide](deployment.md)** | Production deployment instructions | DevOps |
+| **[Full Stack Deployment Guide](FULL_STACK_DEPLOYMENT.md)** | Phase 4 Testnet & Mainnet VPS/Systemd deployment | DevOps |
 | **[TTL Cost Analysis](ttl-cost.md)** | Soroban storage cost analysis | Developers |
 | **[Verifier Onboarding](verifier-onboarding.md)** | Guide for carbon verifiers | Verifiers |
 

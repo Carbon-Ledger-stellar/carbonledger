@@ -11,6 +11,7 @@ import LoadingSkeleton from "../../components/LoadingSkeleton";
 import Toast, { useToast } from "../../components/Toast";
 import Highlight from "../../components/Highlight";
 import ErrorBoundary from "../../components/ErrorBoundary";
+import MarketplaceError from "../../components/MarketplaceError";
 
 function MarketplaceContent() {
   const searchParams = useSearchParams();
@@ -23,7 +24,7 @@ function MarketplaceContent() {
     if (vintage) setFilters(prev => ({ ...prev, vintageYear: vintage }));
   }, [searchParams]);
 
-  const { data: listings, isLoading } = useListings({
+  const { data: listings, isLoading, error, mutate } = useListings({
     methodology:  filters.methodology  || undefined,
     vintage:      filters.vintageYear  ? Number(filters.vintageYear) : undefined,
     country:      filters.country      || undefined,
@@ -35,6 +36,10 @@ function MarketplaceContent() {
 
   // Check if any filters are active
   const hasActiveFilters = Object.values(filters).some(v => v !== "");
+
+  useEffect(() => {
+    if (error) console.error("[Marketplace] listings fetch failed:", error);
+  }, [error]);
 
   const { addItem, items } = useCartStore();
   const { toasts, addToast, dismiss } = useToast();
@@ -77,8 +82,12 @@ function MarketplaceContent() {
         <MarketplaceFilter filters={filters} onChange={setFilters} />
 
         <div aria-live="polite">
-          {isLoading ? (
-            <LoadingSkeleton rows={6} />
+          {error ? (
+            <MarketplaceError error={error} onRetry={() => mutate()} />
+          ) : isLoading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
+              <LoadingSkeleton variant="MarketplaceItem" count={6} />
+            </div>
           ) : !listings?.length ? (
             <div style={{ textAlign: "center", padding: "4rem 2rem", background: colors.surfaceAlt, borderRadius: "1rem", marginTop: "1.5rem" }}>
               <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔍</div>

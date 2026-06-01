@@ -18,11 +18,14 @@ export default function RootLayout({
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes" />
       </head>
-      <body>
-        <ThemeProvider>
-          {children}
-        </ThemeProvider>
-      </body>
+       <body>
+         <a href="#main-content" className="skip-link">Skip to main content</a>
+         <ThemeProvider>
+           <main id="main-content">
+             {children}
+           </main>
+         </ThemeProvider>
+       </body>
     </html>
   );
 } 

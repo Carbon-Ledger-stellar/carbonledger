@@ -52,6 +52,10 @@ export default function CorporatePortfolioPage() {
   const [stats] = useState(mockStats);
   const [heldCredits] = useState(mockHeldCredits);
   const [pastRetirements] = useState(mockPastRetirements);
+  const retiredByVintage = mockPastRetirements.reduce<Record<number, number>>((acc, retirement) => {
+    acc[retirement.vintage] = (acc[retirement.vintage] ?? 0) + retirement.amount;
+    return acc;
+  }, {});
 
   const handleRetire = (creditId: string) => {
     // Implement retire logic
@@ -126,7 +130,17 @@ export default function CorporatePortfolioPage() {
             </thead>
             <tbody>
               {heldCredits.map((credit) => (
-                <tr key={credit.id} style={{ borderTop: `1px solid ${colors.neutral[200]}` }}>
+                <tr
+                  key={credit.id}
+                  tabIndex={0}
+                  title={`Vintage ${credit.vintage} — Issued ${credit.amount.toLocaleString()} tCO₂e — Retired ${(retiredByVintage[credit.vintage] ?? 0).toLocaleString()} tCO₂e — Available ${(credit.amount - (retiredByVintage[credit.vintage] ?? 0)).toLocaleString()} tCO₂e`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') e.currentTarget.blur();
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') (e.currentTarget.nextElementSibling as HTMLElement | null)?.focus();
+                    if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') (e.currentTarget.previousElementSibling as HTMLElement | null)?.focus();
+                  }}
+                  style={{ borderTop: `1px solid ${colors.neutral[200]}` }}
+                >
                   <td style={{ padding: "1rem", color: colors.neutral[900] }}>{credit.projectName}</td>
                   <td style={{ padding: "1rem", color: colors.neutral[700] }}>{credit.methodology}</td>
                   <td style={{ padding: "1rem", color: colors.neutral[700] }}>{credit.vintage}</td>

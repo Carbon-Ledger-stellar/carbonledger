@@ -3,7 +3,8 @@ import { PublicApiModule } from "./public-api/public-api.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule } from "@nestjs/common";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
-import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
+import { ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
 import { AuthModule } from "./auth/auth.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { CreditsModule } from "./credits/credits.module";
@@ -45,11 +46,18 @@ class HealthController {
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      { name: "default", ttl: 60_000, limit: 60 },   // 60 req/min for most endpoints
-      { name: "auth",    ttl: 60_000, limit: 5 },    // 5 req/min for login (brute-force protection)
-      { name: "retire",  ttl: 60_000, limit: 10 },   // 10 req/min for retire (business flow protection)
-    ]),
+    ThrottlerModule.forRoot({
+      throttlers: [
+        { name: "default",       ttl: 60_000, limit: 60   },  // 60 req/min for most endpoints
+        { name: "auth",          ttl: 60_000, limit: 5    },  // 5 req/min for login (brute-force protection)
+        { name: "retire",        ttl: 60_000, limit: 10   },  // 10 req/min for retire (business flow protection)
+        { name: "public",        ttl: 60_000, limit: 100  },  // 100 req/min per IP for unauthenticated public endpoints
+        { name: "authenticated", ttl: 60_000, limit: 1000 },  // 1000 req/min per user for authenticated endpoints
+      ],
+      storage: new ThrottlerStorageRedisService(
+        process.env.REDIS_URL ?? `redis://${process.env.REDIS_HOST ?? "localhost"}:${process.env.REDIS_PORT ?? "6379"}`,
+      ),
+    }),
     BullModule.forRoot({
       connection: process.env.REDIS_SENTINELS
         ? {
@@ -95,7 +103,7 @@ class HealthController {
     },
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,  // Apply rate limiting globally
+      useClass: CustomThrottlerGuard,  // Apply rate limiting globally
     },
     {
       provide: APP_INTERCEPTOR,
