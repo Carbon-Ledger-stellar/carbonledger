@@ -1,4 +1,5 @@
 import useSWR, { SWRConfiguration } from "swr";
+import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
@@ -288,6 +289,45 @@ export async function retireCredits(payload: {
   });
   if (!res.ok) throw new Error((await res.json()).message);
   return res.json();
+}
+
+export interface RegisterProjectPayload {
+  name: string;
+  methodology: string;
+  country: string;
+  projectType: string;
+  vintageYear: number;
+  coordinates: string;
+  metadataCid: string;
+}
+
+export interface FieldErrors {
+  [field: string]: string;
+}
+
+export async function registerProject(payload: RegisterProjectPayload): Promise<CarbonProject> {
+  const res = await fetch(`${API_URL}/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 400) {
+    const body = await res.json();
+    const err: any = new Error(body.message || "Validation error");
+    err.fieldErrors = body.errors ?? {};
+    throw err;
+  }
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Network error");
+  return res.json();
+}
+
+export async function uploadToIpfs(file: File): Promise<string> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_URL}/ipfs/upload`, { method: "POST", body: form });
+  if (!res.ok) throw new Error("IPFS upload failed");
+  const { cid } = await res.json();
+  return cid;
 }
 
 export async function generateCertificatePdf(retirementId: string): Promise<Blob> {

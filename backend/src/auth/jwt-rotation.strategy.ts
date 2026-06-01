@@ -15,14 +15,15 @@ export class JWTRotationStrategy extends PassportStrategy(Strategy, 'jwt-rotatio
         const secondarySecret = configService.get<string>('JWT_SECRET_NEW');
         
         // Try primary secret first
+        const issuer = configService.get<string>('JWT_ISSUER') || 'carbonledger';
         try {
-          const decoded = require('jsonwebtoken').verify(rawJwtToken, primarySecret);
+          const decoded = require('jsonwebtoken').verify(rawJwtToken, primarySecret, { issuer });
           return done(null, decoded);
         } catch (primaryError) {
           // Try secondary secret if it exists
           if (secondarySecret) {
             try {
-              const decoded = require('jsonwebtoken').verify(rawJwtToken, secondarySecret);
+              const decoded = require('jsonwebtoken').verify(rawJwtToken, secondarySecret, { issuer });
               return done(null, decoded);
             } catch (secondaryError) {
               return done(secondaryError, null);

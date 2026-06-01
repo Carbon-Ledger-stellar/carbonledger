@@ -9,11 +9,12 @@ import {
   Request,
   ForbiddenException,
   HttpCode,
+  Header,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { IsString } from 'class-validator';
 import { RetirementsService } from './retirements.service';
-import { ExportRetirementsDto } from './retirements.dto';
+import { ExportRetirementsDto, RetireCreditsDto } from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
 
 class VerifyCertificateDto {
@@ -35,6 +36,12 @@ export class RetirementsController {
     return this.retirementsService.findAll(cursor, limit ? Number(limit) : 20, req.user.publicKey);
   }
 
+  @Post()
+  @Roles('corporation', 'admin')
+  retireCredits(@Body() dto: RetireCreditsDto) {
+    return this.retirementsService.retireCredits(dto);
+  }
+
   // Fix IDOR: require auth; only the owner or admin may read a specific retirement
   @Get(':id')
   async findOne(@Param('id') id: string, @Request() req: any) {
@@ -43,6 +50,34 @@ export class RetirementsController {
       throw new ForbiddenException('Access denied');
     }
     return retirement;
+  }
+
+  @Get(':id/certificate')
+  @Public()
+  @Header('Cache-Control', 'public, max-age=31536000, immutable')
+  async getCertificate(@Param('id') id: string) {
+    const r = await this.retirementsService.findOne(id);
+    const stellarNetwork = process.env.STELLAR_NETWORK === 'public' ? 'public' : 'testnet';
+    const verificationUrl = r.txHash
+      ? `https://stellar.expert/explorer/${stellarNetwork}/tx/${r.txHash}`
+      : null;
+    return {
+      retirementId: r.retirementId,
+      beneficiary: r.beneficiary,
+      amount: r.amount.toString(),
+      projectName: r.project.name,
+      vintageYear: r.vintageYear,
+      txHash: r.txHash,
+      retiredAt: r.retiredAt,
+      retirementReason: r.retirementReason,
+      projectId: r.projectId,
+      batchId: r.batchId,
+      certificateCid: r.certificateCid,
+      verificationUrl,
+      ipfsUrl: r.certificateCid
+        ? `https://gateway.pinata.cloud/ipfs/${r.certificateCid}`
+        : null,
+    };
   }
 
   @Post('generate-pdf')

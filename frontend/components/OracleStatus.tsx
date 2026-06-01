@@ -95,7 +95,8 @@ export default function OracleStatus() {
         )}
       </div>
 
-      {/* Body */}
+      {/* Body — live region wraps all dynamic content */}
+      <div aria-live="polite" aria-atomic="false">
       {isLoading && (
         <div style={{ padding: spacing[5] }}>
           {Array.from({ length: 3 }).map((_, i) => (
@@ -111,7 +112,7 @@ export default function OracleStatus() {
       )}
 
       {error && (
-        <p style={{ padding: spacing[5], color: colors.suspended.text, fontFamily: typography.fontFamily.sans, fontSize: typography.fontSize.sm, margin: 0 }}>
+        <p role="alert" aria-live="assertive" style={{ padding: spacing[5], color: colors.suspended.text, fontFamily: typography.fontFamily.sans, fontSize: typography.fontSize.sm, margin: 0 }}>
           Failed to load oracle health data.
         </p>
       )}
@@ -181,6 +182,7 @@ export default function OracleStatus() {
           })}
         </ul>
       )}
+      </div>
 
       {/* Footer: last-refreshed hint */}
       <p style={{

@@ -23,9 +23,10 @@ describe('AuthService', () => {
   beforeEach(async () => {
     process.env.JWT_SECRET = TEST_SECRET;
     process.env.JWT_REFRESH_SECRET = TEST_SECRET;
+    process.env.JWT_ISSUER = 'carbonledger';
 
     const module: TestingModule = await Test.createTestingModule({
-      imports: [JwtModule.register({ secret: TEST_SECRET, signOptions: { expiresIn: '15m' } })],
+      imports: [JwtModule.register({ secret: TEST_SECRET, signOptions: { expiresIn: '15m', issuer: 'carbonledger' } })],
       providers: [
         AuthService,
         { provide: PrismaService, useValue: prismaMock },

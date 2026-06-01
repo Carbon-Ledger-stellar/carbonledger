@@ -41,10 +41,17 @@ export class IndexerService implements OnModuleInit {
         create: { id: 'singleton', lastIndexedLedger: 0 },
       });
 
-      const latestLedgerRes = await this.rpc.getLatestLedger();
-      const currentLedger = latestLedgerRes.sequence;
-      let startLedger = metadata.lastIndexedLedger + 1;
+      let currentLedger: number;
+      try {
+        const latestLedgerRes = await this.rpc.getLatestLedger();
+        currentLedger = latestLedgerRes.sequence;
+      } catch (error) {
+        const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
+        this.logger.error(`Soroban RPC getLatestLedger failed: ${errorDetails}`);
+        throw error;
+      }
 
+      let startLedger = metadata.lastIndexedLedger + 1;
       if (startLedger > currentLedger) {
         return;
       }
@@ -53,21 +60,29 @@ export class IndexerService implements OnModuleInit {
       // For now we just fetch what we can
       this.logger.log(`Syncing events from ledger ${startLedger} to ${currentLedger}`);
 
-      const eventsResponse = await this.rpc.getEvents({
-        startLedger,
-        filters: [
-          {
-            type: 'contract',
-            contractIds: [this.creditContractId],
-          },
-        ],
-      });
+      let eventsResponse: SorobanRpc.Api.GetEventsResponse;
+      try {
+        eventsResponse = await this.rpc.getEvents({
+          startLedger,
+          filters: [
+            {
+              type: 'contract',
+              contractIds: [this.creditContractId],
+            },
+          ],
+        });
+      } catch (error) {
+        const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
+        this.logger.error(`Soroban RPC getEvents failed: ${errorDetails}`);
+        throw error;
+      }
 
       for (const event of eventsResponse.events) {
         try {
           await this.processEvent(event);
         } catch (err) {
-          this.logger.error(`Failed to process event ${event.id}: ${err.message}`);
+          const details = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+          this.logger.error(`Failed to process event ${event.id}: ${details}`);
         }
       }
 
@@ -77,7 +92,8 @@ export class IndexerService implements OnModuleInit {
       });
 
     } catch (error) {
-      this.logger.error(`Indexing failed: ${error.message}`);
+      const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
+      this.logger.error(`Indexing failed: ${errorDetails}`);
     } finally {
       this.isIndexing = false;
     }

@@ -21,6 +21,8 @@ import { PrismaService } from "./prisma.service";
 import { VerifiersModule } from "./verifiers/verifiers.module";
 import { ThrottlerExceptionFilter, ResponseAlreadySentFilter } from "./common/throttler-exception.filter";
 import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
+import { StellarNetworkService } from './common/stellar-network.service';
+import { StellarUnavailableExceptionFilter } from './common/stellar-unavailable.filter';
 import { LoggerModule } from "./logger/logger.module";
 import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
@@ -92,9 +94,14 @@ class HealthController {
   controllers: [HealthController],
   providers: [
     PrismaService,
+    StellarNetworkService,
     {
       provide: APP_FILTER,
       useClass: ThrottlerExceptionFilter,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: StellarUnavailableExceptionFilter,
     },
     {
       provide: APP_FILTER,

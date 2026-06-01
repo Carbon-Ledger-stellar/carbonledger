@@ -22,6 +22,7 @@ export default function BuyPage() {
   const [txHash, setTxHash]     = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
   const { toasts, addToast, dismiss } = useToast();
+  const { state: buyState, errorMsg: buyError, run: runBuy } = useBuyButton();
   const { status: walletStatus, address: walletKey, refresh: refreshWallet } = useWalletStatus();
 
   const totalCost = listing
@@ -34,8 +35,8 @@ export default function BuyPage() {
 
   async function handlePurchase() {
     if (!walletKey || !listing) return;
-    setTxStatus("pending");
-    try {
+    await runBuy(async () => {
+      setTxStatus("pending");
       setTxStatus("submitted");
       const result = await purchaseCredits(listing.listingId, amount, walletKey);
       setTxHash(result.txHash);
@@ -44,15 +45,16 @@ export default function BuyPage() {
       if (retireAfter) {
         window.location.href = `/retire?batch=${result.batchId}`;
       }
-    } catch (e: any) {
+    });
+    if (txStatus !== "confirmed") {
       setTxStatus("failed");
-      addToast({ type: "error", title: "Purchase failed", message: e.message });
     }
   }
 
   return (
     <ErrorBoundary>
     <div style={{ maxWidth: "700px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <a href="/marketplace" style={{ fontSize: "0.875rem", color: colors.primary[600], textDecoration: "none" }}>
         ← Back to Marketplace
       </a>
@@ -151,16 +153,31 @@ export default function BuyPage() {
               disabled={txStatus === "submitted" || txStatus === "pending"}
               aria-disabled={txStatus === "submitted" || txStatus === "pending"}
               style={{
-                background: txStatus === "confirmed" ? colors.neutral[300] : colors.primary[600],
+                background:
+                  buyState === "success" ? colors.primary[700] :
+                  buyState === "error"   ? "#dc2626" :
+                  colors.primary[600],
                 color: "#fff", border: "none", borderRadius: "0.5rem",
                 padding: "0.875rem", fontSize: "1rem", fontWeight: 700,
-                cursor: txStatus === "submitted" ? "not-allowed" : "pointer",
+                cursor: buyState === "loading" || buyState === "success" ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+                opacity: buyState === "loading" || buyState === "success" ? 0.85 : 1,
+                transition: "background 0.2s",
               }}
             >
-              {txStatus === "pending"   ? "Preparing…"   :
-               txStatus === "submitted" ? "Confirming…"  :
-               txStatus === "confirmed" ? "Purchase Complete ✓" :
-               `Purchase ${formatTonnes(amount)} for $${formatStroops(totalCost)} USDC`}
+              {buyState === "loading" && (
+                <>
+                  <span style={{
+                    width: "1rem", height: "1rem", border: "2px solid #ffffff60",
+                    borderTopColor: "#fff", borderRadius: "50%",
+                    display: "inline-block", animation: "spin 0.7s linear infinite",
+                  }} />
+                  Processing…
+                </>
+              )}
+              {buyState === "success" && <>✓ Purchase Complete</>}
+              {buyState === "error"   && <>✕ {buyError || "Purchase failed"}</>}
+              {buyState === "idle"    && <>Buy Credits</>}
             </button>
           )}
         </div>

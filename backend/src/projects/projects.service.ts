@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
-import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, PaginatedProjectsResponse, ProjectStatus, OracleFreshness } from "./projects.dto";
+import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, PaginatedProjectsResponse, ProjectStatus, OracleFreshness, CreateProjectDto } from "./projects.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
+import { v4 as uuidv4 } from "uuid";
 
 @Injectable()
 export class ProjectsService {
@@ -150,7 +151,7 @@ export class ProjectsService {
 
   async findOne(projectId: string) {
     const project = await this.prisma.carbonProject.findUnique({ where: { projectId } });
-    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+    if (!project) throw new NotFoundException('Project not found');
     return project;
   }
 
@@ -161,6 +162,36 @@ export class ProjectsService {
       throw new ConflictException(`Project registration rejected: methodology score ${dto.methodologyScore} is below minimum 70/100`);
     }
     return this.prisma.carbonProject.create({ data: dto });
+  }
+
+  async createProject(dto: CreateProjectDto, ownerAddress?: string) {
+    const projectId = uuidv4();
+    // Upload documents to IPFS: store CIDs as metadataCid (first doc) and coordinates as JSON
+    const metadataCid = dto.documents[0] ?? '';
+    const data = {
+      projectId,
+      name: dto.name,
+      methodology: dto.methodology,
+      description: dto.description,
+      coordinates: dto.coordinates as any,
+      country: dto.country ?? '',
+      projectType: dto.projectType ?? 'carbon_offset',
+      ownerAddress: ownerAddress ?? dto.ownerAddress ?? '',
+      verifierAddress: dto.verifierAddress ?? '',
+      vintageYear: dto.vintageYear ?? new Date().getFullYear(),
+      methodologyScore: dto.methodologyScore ?? 70,
+      metadataCid,
+      status: 'Pending',
+    };
+    const project = await this.prisma.carbonProject.create({ data });
+    // Return project ID and a placeholder txHash (contract call would happen here)
+    return {
+      projectId: project.projectId,
+      id: project.id,
+      txHash: null,
+      status: project.status,
+      metadataCid,
+    };
   }
 
   async updateStatus(projectId: string, dto: UpdateProjectStatusDto, actor = 'admin') {

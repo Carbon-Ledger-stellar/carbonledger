@@ -1,5 +1,73 @@
-import { IsString, IsInt, IsOptional, Min, Max, IsBoolean, IsEnum, IsArray, Matches, Length, MaxLength } from "class-validator";
+import { IsString, IsInt, IsOptional, Min, Max, IsBoolean, IsEnum, IsArray, Matches, Length, MaxLength, IsNotEmpty, ValidateNested, IsObject } from "class-validator";
 import { Type, Transform } from "class-transformer";
+
+export class CoordinatesDto {
+  @IsNotEmpty()
+  lat: number;
+
+  @IsNotEmpty()
+  lng: number;
+}
+
+export class CreateProjectDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(128)
+  name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  methodology: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1024)
+  description: string;
+
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CoordinatesDto)
+  coordinates: CoordinatesDto;
+
+  @IsArray()
+  @IsString({ each: true })
+  documents: string[];
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(64)
+  country?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(64)
+  projectType?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(64)
+  ownerAddress?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(64)
+  verifierAddress?: string;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1990)
+  @Max(new Date().getFullYear() + 1)
+  @Type(() => Number)
+  vintageYear?: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  methodologyScore?: number;
+}
 
 // Valid IPFS CID: CIDv0 (Qm...) or CIDv1 (bafy...) — rejects URLs and arbitrary strings
 const CID_REGEX = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/;

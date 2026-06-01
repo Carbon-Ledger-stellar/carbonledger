@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { RolesGuard } from './roles.guard';
@@ -37,6 +37,7 @@ describe('RolesGuard', () => {
 
   beforeEach(async () => {
     process.env.JWT_SECRET = TEST_SECRET;
+    process.env.JWT_ISSUER = 'carbonledger';
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -55,13 +56,13 @@ describe('RolesGuard', () => {
   afterEach(() => jest.clearAllMocks());
 
   function signToken(payload: object) {
-    return jwt.sign(payload, { secret: TEST_SECRET });
+    return jwt.sign(payload, { issuer: 'carbonledger' });
   }
 
   function setupReflector(isPublic: boolean | undefined, roles: string[] | undefined) {
-    jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((key: string) => {
-      if (key === IS_PUBLIC_KEY) return isPublic;
-      if (key === ROLES_KEY) return roles;
+    jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((metadataKey: unknown) => {
+      if (metadataKey === IS_PUBLIC_KEY) return isPublic;
+      if (metadataKey === ROLES_KEY) return roles;
       return undefined;
     });
   }
@@ -72,31 +73,31 @@ describe('RolesGuard', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  it('throws 403 when no token is provided on a protected route', async () => {
+  it('throws 401 when no token is provided on a protected route', async () => {
     setupReflector(false, undefined);
     const ctx = makeContext({});
-    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  it('throws 403 for an invalid token', async () => {
+  it('throws 401 for an invalid token', async () => {
     setupReflector(false, undefined);
     const ctx = makeContext({ token: 'garbage.token' });
-    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  it('throws 403 when a refresh token is used as bearer', async () => {
+  it('throws 401 when a refresh token is used as bearer', async () => {
     setupReflector(false, undefined);
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'refresh' });
     const ctx = makeContext({ token });
-    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  it('throws 403 when user is not found in DB', async () => {
+  it('throws 401 when user is not found in DB', async () => {
     setupReflector(false, undefined);
     prismaMock.user.findUnique.mockResolvedValue(null);
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
-    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
   it('allows any authenticated user when no @Roles declared', async () => {

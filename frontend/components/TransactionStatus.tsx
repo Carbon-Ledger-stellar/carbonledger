@@ -51,10 +51,15 @@ export default function TransactionStatus({ status, txHash, message, onRetry }: 
       `}</style>
       
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <span style={{ fontSize: "1.25rem" }} className={cfg.spin ? "tx-spinner" : ""}>
+        <span style={{ fontSize: "1.25rem" }} className={cfg.spin ? "tx-spinner" : ""} aria-hidden="true">
           {cfg.spin ? "🔄" : cfg.icon}
         </span>
-        <div style={{ flex: 1 }}>
+        <div
+          role={status === "failed" ? "alert" : "status"}
+          aria-live={status === "failed" ? "assertive" : "polite"}
+          aria-atomic="true"
+          style={{ flex: 1 }}
+        >
           <p style={{ fontWeight: 700, fontSize: "0.875rem", color: cfg.text, margin: 0 }}>
             {cfg.label}
           </p>

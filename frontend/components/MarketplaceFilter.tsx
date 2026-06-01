@@ -33,8 +33,9 @@ export function filtersFromParams(params: URLSearchParams): FilterState {
 }
 
 interface Props {
-  filters:  FilterState;
-  onChange: (filters: FilterState) => void;
+  filters:      FilterState;
+  onChange:     (filters: FilterState) => void;
+  resultCount?: number;
 }
 
 const METHODOLOGIES  = ["", "VCS", "Gold Standard", "ACR", "CAR", "Plan Vivo"];
@@ -53,7 +54,7 @@ const controlStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-export default function MarketplaceFilter({ filters, onChange }: Props) {
+export default function MarketplaceFilter({ filters, onChange, resultCount }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [localSearch, setLocalSearch] = useState(filters.search);
@@ -88,7 +89,7 @@ export default function MarketplaceFilter({ filters, onChange }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem", position: "relative" }}>
       {/* Search Input */}
       <div style={{ position: "relative" }}>
         <label htmlFor="filter-search" className="sr-only">

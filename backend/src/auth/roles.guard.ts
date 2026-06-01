@@ -29,24 +29,28 @@ export class RolesGuard implements CanActivate {
     // 2. Extract and verify JWT
     const request = context.switchToHttp().getRequest();
     const token = this.extractToken(request);
-    if (!token) throw new ForbiddenException('Authentication required');
+    if (!token) throw new UnauthorizedException('Authorization header missing or malformed');
 
     let payload: { sub: string; type: string };
     try {
       payload = this.jwt.verify(token, {
         secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+        issuer: process.env.JWT_ISSUER || 'carbonledger',
       });
-    } catch {
-      throw new ForbiddenException('Invalid or expired token');
+    } catch (error: any) {
+      if (error?.name === 'TokenExpiredError') {
+        throw new UnauthorizedException('Token expired');
+      }
+      throw new UnauthorizedException('Invalid or expired token');
     }
 
     if (payload.type !== 'access') {
-      throw new ForbiddenException('Invalid token type');
+      throw new UnauthorizedException('Invalid token type');
     }
 
     // 3. Fetch role from DB — JWT payload alone is not trusted for role
     const user = await this.prisma.user.findUnique({ where: { publicKey: payload.sub } });
-    if (!user) throw new ForbiddenException('User not found');
+    if (!user) throw new UnauthorizedException('User not found');
 
     // Attach DB-sourced user to request for downstream use
     request.user = { publicKey: user.publicKey, role: user.role };

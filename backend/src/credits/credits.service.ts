@@ -145,7 +145,7 @@ export class CreditsService {
     const batch = await this.prisma.creditBatch.findFirst({
       where: { serialStart: { lte: serial }, serialEnd: { gte: serial } },
     });
-    if (!batch) throw new NotFoundException(`Serial number ${serial} not found`);
+    if (!batch) throw new NotFoundException('Credit not found');
     return batch;
   }
 }
