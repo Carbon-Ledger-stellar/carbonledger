@@ -5,22 +5,24 @@ import { useSearchParams } from "next/navigation";
 import { retireCredits } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { connectFreighter } from "../../lib/freighter";
-import { getWalletErrorMessage } from "../../lib/wallet-errors";
+import { getWalletErrorMessage, getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import Toast, { useToast } from "../../components/Toast";
+import RetireConfirmModal from "../../components/RetireConfirmModal";
 
 export default function RetirePage() {
   const searchParams = useSearchParams();
   const batchId      = searchParams.get("batch") ?? "";
 
-  const [amount, setAmount]         = useState(1);
+  const [amount, setAmount]           = useState(1);
   const [beneficiary, setBeneficiary] = useState("");
-  const [reason, setReason]         = useState("");
-  const [walletKey, setWalletKey]   = useState<string | null>(null);
-  const [txStatus, setTxStatus]     = useState<TxStatus | null>(null);
-  const [txHash, setTxHash]         = useState<string | null>(null);
+  const [reason, setReason]           = useState("");
+  const [walletKey, setWalletKey]     = useState<string | null>(null);
+  const [txStatus, setTxStatus]       = useState<TxStatus | null>(null);
+  const [txHash, setTxHash]           = useState<string | null>(null);
   const [retirementId, setRetirementId] = useState<string | null>(null);
+  const [showModal, setShowModal]     = useState(false);
   const { toasts, addToast, dismiss } = useToast();
 
   async function handleConnect() {
@@ -34,6 +36,7 @@ export default function RetirePage() {
 
   async function handleRetire() {
     if (!walletKey || !batchId || !beneficiary || !reason) return;
+    setShowModal(false);
     setTxStatus("pending");
     try {
       setTxStatus("submitted");
@@ -55,7 +58,7 @@ export default function RetirePage() {
       });
     } catch (e: any) {
       setTxStatus("failed");
-      addToast({ type: "error", title: "Retirement failed", message: e.message });
+      addToast({ type: "error", title: "Retirement failed", message: getContractErrorMessage(e) });
     }
   }
 
@@ -65,6 +68,9 @@ export default function RetirePage() {
     fontSize: "0.9rem", color: colors.neutral[900],
     boxSizing: "border-box",
   };
+
+  const canRetire = !!walletKey && !!beneficiary && !!reason
+    && txStatus !== "submitted" && txStatus !== "confirmed";
 
   return (
     <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 2rem" }}>
@@ -113,7 +119,6 @@ export default function RetirePage() {
           />
         </div>
 
-        {/* Warning */}
         <div style={{
           background: "#fef9c3", border: "1px solid #fde047",
           borderRadius: "0.5rem", padding: "0.875rem 1rem",
@@ -138,7 +143,7 @@ export default function RetirePage() {
               fontSize: "0.9rem", fontWeight: 700, textDecoration: "none",
             }}
           >
-            View & Download Certificate →
+            View &amp; Download Certificate →
           </a>
         )}
 
@@ -152,13 +157,13 @@ export default function RetirePage() {
           </button>
         ) : (
           <button
-            onClick={handleRetire}
-            disabled={!beneficiary || !reason || txStatus === "submitted" || txStatus === "confirmed"}
+            onClick={() => setShowModal(true)}
+            disabled={!canRetire}
             style={{
-              background: !beneficiary || !reason ? colors.neutral[300] : "#dc2626",
+              background: !canRetire ? colors.neutral[300] : "#dc2626",
               color: "#fff", border: "none", borderRadius: "0.5rem",
               padding: "0.875rem", fontSize: "1rem", fontWeight: 700,
-              cursor: !beneficiary || !reason ? "not-allowed" : "pointer",
+              cursor: !canRetire ? "not-allowed" : "pointer",
             }}
           >
             {txStatus === "pending"   ? "Preparing…"   :
@@ -168,6 +173,16 @@ export default function RetirePage() {
           </button>
         )}
       </div>
+
+      {showModal && (
+        <RetireConfirmModal
+          amount={amount}
+          beneficiary={beneficiary}
+          reason={reason}
+          onConfirm={handleRetire}
+          onCancel={() => setShowModal(false)}
+        />
+      )}
 
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
