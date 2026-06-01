@@ -197,6 +197,12 @@ services:
       NEXT_PUBLIC_USDC_CONTRACT:        ${USDC_CONTRACT_ID}
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     logging: *default-logging
 
   oracle_verification:
