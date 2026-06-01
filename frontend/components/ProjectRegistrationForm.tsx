@@ -47,31 +47,110 @@ export default function ProjectRegistrationForm() {
   const [errors, setErrors] = useState<Partial<FormState>>({});
 
   const set = (k: keyof FormState) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
-      setForm(f => ({ ...f, [k]: e.target.value }));
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+      const value = e.target.value;
+      setForm(f => {
+        const updated = { ...f, [k]: value };
+        // Clear error for this field when user starts typing
+        if (errors[k]) {
+          setErrors(prev => {
+            const next = { ...prev };
+            delete next[k];
+            return next;
+          });
+        }
+        return updated;
+      });
+    };
+
+  function validateField(field: keyof FormState, value: string): string | null {
+    switch (field) {
+      case 'name':
+        return !value.trim() ? 'Project name is required' : null;
+      case 'methodology':
+        return !value ? 'Please select a methodology' : null;
+      case 'projectType':
+        return !value ? 'Please select a project type' : null;
+      case 'country':
+        return !value ? 'Please select a country' : null;
+      case 'latitude': {
+        const lat = Number(value);
+        if (!value || isNaN(lat)) return 'Latitude is required';
+        if (lat < -90 || lat > 90) return 'Latitude must be between -90 and 90';
+        return null;
+      }
+      case 'longitude': {
+        const lng = Number(value);
+        if (!value || isNaN(lng)) return 'Longitude is required';
+        if (lng < -180 || lng > 180) return 'Longitude must be between -180 and 180';
+        return null;
+      }
+      case 'vintageYear':
+        return !value || isNaN(Number(value)) ? 'Please select a vintage year' : null;
+      case 'description':
+        return !value.trim() ? 'Project description is required' : null;
+      case 'contactEmail': {
+        if (!value) return 'Contact email is required';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return 'Please enter a valid email address';
+        return null;
+      }
+      case 'developerPublicKey':
+        return !value.trim() ? 'Developer Stellar public key is required' : null;
+      case 'documentsCid':
+        return !value.trim() && !docFile ? 'Upload a document or provide a CID' : null;
+      default:
+        return null;
+    }
+  }
+
+  function handleBlur(field: keyof FormState) {
+    const value = form[field];
+    const error = validateField(field, value);
+    if (error) {
+      setErrors(prev => ({ ...prev, [field]: error }));
+    }
+  }
 
   function validateStep0(): boolean {
     const e: Partial<FormState> = {};
-    if (!form.name.trim()) e.name = "Required";
-    if (!form.methodology) e.methodology = "Required";
-    if (!form.projectType) e.projectType = "Required";
-    if (!form.country) e.country = "Required";
-    if (!form.latitude || isNaN(Number(form.latitude)) || Math.abs(Number(form.latitude)) > 90)
-      e.latitude = "Valid latitude required (-90 to 90)";
-    if (!form.longitude || isNaN(Number(form.longitude)) || Math.abs(Number(form.longitude)) > 180)
-      e.longitude = "Valid longitude required (-180 to 180)";
-    if (!form.vintageYear || isNaN(Number(form.vintageYear)))
-      e.vintageYear = "Required";
-    if (!form.contactEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail))
-      e.contactEmail = "Valid email required";
-    if (!form.developerPublicKey.trim()) e.developerPublicKey = "Required";
+    const nameError = validateField('name', form.name);
+    if (nameError) e.name = nameError;
+    
+    const methodologyError = validateField('methodology', form.methodology);
+    if (methodologyError) e.methodology = methodologyError;
+    
+    const projectTypeError = validateField('projectType', form.projectType);
+    if (projectTypeError) e.projectType = projectTypeError;
+    
+    const countryError = validateField('country', form.country);
+    if (countryError) e.country = countryError;
+    
+    const latError = validateField('latitude', form.latitude);
+    if (latError) e.latitude = latError;
+    
+    const lngError = validateField('longitude', form.longitude);
+    if (lngError) e.longitude = lngError;
+    
+    const yearError = validateField('vintageYear', form.vintageYear);
+    if (yearError) e.vintageYear = yearError;
+    
+    const descError = validateField('description', form.description);
+    if (descError) e.description = descError;
+    
+    const emailError = validateField('contactEmail', form.contactEmail);
+    if (emailError) e.contactEmail = emailError;
+    
+    const keyError = validateField('developerPublicKey', form.developerPublicKey);
+    if (keyError) e.developerPublicKey = keyError;
+    
     setErrors(e);
     return Object.keys(e).length === 0;
   }
 
   function validateStep1(): boolean {
     const e: Partial<FormState> = {};
-    if (!form.documentsCid.trim() && !docFile) e.documentsCid = "Upload a document or provide a CID";
+    const docError = validateField('documentsCid', form.documentsCid);
+    if (docError) e.documentsCid = docError;
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -168,17 +247,20 @@ export default function ProjectRegistrationForm() {
           <h2 style={headingStyle}>Project Metadata</h2>
           <Field label="Project Name" error={errors.name}>
             <input style={inputStyle(!!errors.name)} value={form.name} onChange={set("name")}
+              onBlur={() => handleBlur('name')}
               placeholder="Amazon Reforestation Initiative" />
           </Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Methodology" error={errors.methodology}>
-              <select style={inputStyle(!!errors.methodology)} value={form.methodology} onChange={set("methodology")}>
+              <select style={inputStyle(!!errors.methodology)} value={form.methodology} onChange={set("methodology")}
+                onBlur={() => handleBlur('methodology')}>
                 <option value="">Select...</option>
                 {METHODOLOGIES.map(m => <option key={m}>{m}</option>)}
               </select>
             </Field>
             <Field label="Project Type" error={errors.projectType}>
-              <select style={inputStyle(!!errors.projectType)} value={form.projectType} onChange={set("projectType")}>
+              <select style={inputStyle(!!errors.projectType)} value={form.projectType} onChange={set("projectType")}
+                onBlur={() => handleBlur('projectType')}>
                 <option value="">Select...</option>
                 {PROJECT_TYPES.map(t => <option key={t}>{t}</option>)}
               </select>
@@ -186,13 +268,15 @@ export default function ProjectRegistrationForm() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Country" error={errors.country}>
-              <select style={inputStyle(!!errors.country)} value={form.country} onChange={set("country")}>
+              <select style={inputStyle(!!errors.country)} value={form.country} onChange={set("country")}
+                onBlur={() => handleBlur('country')}>
                 <option value="">Select...</option>
                 {COUNTRIES.map(c => <option key={c}>{c}</option>)}
               </select>
             </Field>
             <Field label="Vintage Year" error={errors.vintageYear}>
-              <select style={inputStyle(!!errors.vintageYear)} value={form.vintageYear} onChange={set("vintageYear")}>
+              <select style={inputStyle(!!errors.vintageYear)} value={form.vintageYear} onChange={set("vintageYear")}
+                onBlur={() => handleBlur('vintageYear')}>
                 <option value="">Select...</option>
                 {["2020","2021","2022","2023","2024","2025"].map(y => <option key={y}>{y}</option>)}
               </select>
@@ -201,25 +285,32 @@ export default function ProjectRegistrationForm() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Latitude" error={errors.latitude}>
               <input style={inputStyle(!!errors.latitude)} value={form.latitude} onChange={set("latitude")}
+                onBlur={() => handleBlur('latitude')}
                 placeholder="-3.4653" type="number" step="any" />
             </Field>
             <Field label="Longitude" error={errors.longitude}>
               <input style={inputStyle(!!errors.longitude)} value={form.longitude} onChange={set("longitude")}
+                onBlur={() => handleBlur('longitude')}
                 placeholder="-62.2159" type="number" step="any" />
             </Field>
           </div>
-          <Field label="Description (optional)">
-            <textarea style={{ ...inputStyle(false), minHeight: 80, resize: "vertical" }}
+          <Field label="Description" error={errors.description}>
+            <textarea style={{ ...inputStyle(!!errors.description), minHeight: 80, resize: "vertical" }}
               value={form.description} onChange={set("description")}
+              onBlur={() => handleBlur('description')}
               placeholder="Brief description of the project and its impact..." />
           </Field>
           <Field label="Contact Email" error={errors.contactEmail}>
             <input style={inputStyle(!!errors.contactEmail)} type="email"
-              value={form.contactEmail} onChange={set("contactEmail")} placeholder="you@example.com" />
+              value={form.contactEmail} onChange={set("contactEmail")}
+              onBlur={() => handleBlur('contactEmail')}
+              placeholder="you@example.com" />
           </Field>
           <Field label="Developer Stellar Public Key" error={errors.developerPublicKey}>
             <input style={inputStyle(!!errors.developerPublicKey)}
-              value={form.developerPublicKey} onChange={set("developerPublicKey")} placeholder="G..." />
+              value={form.developerPublicKey} onChange={set("developerPublicKey")}
+              onBlur={() => handleBlur('developerPublicKey')}
+              placeholder="G..." />
           </Field>
         </div>
       )}
