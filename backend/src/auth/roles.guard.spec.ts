@@ -59,7 +59,8 @@ describe('RolesGuard', () => {
   }
 
   function setupReflector(isPublic: boolean | undefined, roles: string[] | undefined) {
-    jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((key: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((key: any) => {
       if (key === IS_PUBLIC_KEY) return isPublic;
       if (key === ROLES_KEY) return roles;
       return undefined;
@@ -121,6 +122,26 @@ describe('RolesGuard', () => {
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('throws 403 with "Verifier role required" when verifier role is required', async () => {
+    setupReflector(false, ['verifier', 'admin']);
+    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(
+      new ForbiddenException('Verifier role required'),
+    );
+  });
+
+  it('throws 403 with "Insufficient permissions" for non-verifier role mismatch', async () => {
+    setupReflector(false, ['admin']);
+    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(
+      new ForbiddenException('Insufficient permissions'),
+    );
   });
 
   it('uses DB role, not JWT role claim', async () => {

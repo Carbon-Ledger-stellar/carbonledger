@@ -59,7 +59,10 @@ export class RolesGuard implements CanActivate {
     if (!requiredRoles || requiredRoles.length === 0) return true;
 
     if (!requiredRoles.includes(user.role as UserRole)) {
-      throw new ForbiddenException('Insufficient permissions');
+      const message = requiredRoles.includes('verifier')
+        ? 'Verifier role required'
+        : 'Insufficient permissions';
+      throw new ForbiddenException(message);
     }
 
     return true;
