@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Patch, Param, Body, Query, Request } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
-import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto } from './projects.dto';
+import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, CreateProjectDto } from './projects.dto';
 import { IsString } from 'class-validator';
 import { Public, Roles } from '../auth/decorators';
 
@@ -47,6 +47,12 @@ export class ProjectsController {
   }
 
   // ── Project developer actions ────────────────────────────────────────────
+
+  @Post()
+  @Roles('project_developer', 'admin')
+  create(@Body() dto: CreateProjectDto, @Request() req: any) {
+    return this.projectsService.createProject(dto, req.user?.publicKey);
+  }
 
   @Post('register')
   @Roles('project_developer', 'admin')
