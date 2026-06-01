@@ -1,0 +1,17 @@
+[Unit]
+Description=CarbonLedger Price Oracle
+After=network.target
+
+[Service]
+Type=simple
+User=carbonledger
+WorkingDirectory=/opt/carbonledger/oracle
+EnvironmentFile=/opt/carbonledger/.env
+ExecStart=/opt/carbonledger/venv/bin/python3 price_oracle.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/carbonledger/price_oracle.log
+StandardError=append:/var/log/carbonledger/price_oracle.log
+
+[Install]
+WantedBy=multi-user.target

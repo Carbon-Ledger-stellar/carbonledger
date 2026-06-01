@@ -2,8 +2,8 @@
 
 import { colors } from "../styles/design-system";
 
-export interface ProvenanceEvent {
-  type: "registered" | "verified" | "minted" | "listed" | "purchased" | "retired";
+interface ProvenanceEvent {
+  type: "registered" | "verified" | "minted" | "listed" | "purchased" | "transferred" | "retired";
   label: string;
   timestamp: string;
   actor?: string;
@@ -12,7 +12,7 @@ export interface ProvenanceEvent {
 }
 
 interface Props {
-  events: ProvenanceEvent[];
+  events: ProvenanceEvent[] | null;
 }
 
 const eventConfig: Record<ProvenanceEvent["type"], { icon: string; color: string }> = {
@@ -21,7 +21,8 @@ const eventConfig: Record<ProvenanceEvent["type"], { icon: string; color: string
   minted:     { icon: "🌱", color: colors.primary[700] },
   listed:     { icon: "🏪", color: "#2563eb" },
   purchased:  { icon: "💼", color: "#7c3aed" },
-  retired:    { icon: "🔒", color: "#dc2626" },
+  transferred:{ icon: "↔️", color: "#0891b2" },
+  retired:    { icon: "🔒", color: colors.primary[800] },
 };
 
 function truncateAddress(addr: string) {
@@ -32,6 +33,15 @@ function truncateAddress(addr: string) {
 export default function ProvenanceTrail({ events }: Props) {
   if (!events || events.length === 0) {
     return (
+      <p style={{ fontSize: "0.875rem", color: colors.neutral[400], padding: "1rem 0" }}>
+        No provenance events recorded yet.
+      </p>
+    );
+  }
+
+  return (
+    <div style={{ position: "relative", paddingLeft: "2rem" }}>
+      {/* Vertical line */}
       <div style={{
         textAlign: "center", padding: "2.5rem 1rem",
         border: `1px dashed ${colors.neutral[300]}`,
@@ -105,17 +115,49 @@ export default function ProvenanceTrail({ events }: Props) {
                   </p>
                 )}
 
-                {event.txHash && (
-                  <a
-                    href={`https://stellar.expert/explorer/testnet/tx/${event.txHash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ fontSize: "0.7rem", color: colors.primary[600], fontFamily: "monospace", display: "inline-block", marginTop: "0.25rem" }}
-                  >
-                    {event.txHash.slice(0, 16)}… ↗
-                  </a>
-                )}
+            <div style={{
+              background: event.type === "retired" ? "#f0fdf4" : colors.surface,
+              border: `1px solid ${event.type === "retired" ? colors.primary[300] : colors.neutral[200]}`,
+              borderRadius: "0.5rem",
+              padding: "0.75rem 1rem",
+              opacity: 1,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontWeight: 600, fontSize: "0.875rem", color: event.type === "retired" ? colors.primary[800] : colors.neutral[800] }}>
+                  {event.label}
+                  {event.type === "retired" && (
+                    <span aria-label="Finalized" style={{ marginLeft: "0.4rem", fontSize: "0.75rem", background: colors.primary[100], color: colors.primary[700], borderRadius: "0.25rem", padding: "0.1rem 0.4rem", fontWeight: 700 }}>
+                      FINALIZED
+                    </span>
+                  )}
+                </span>
+                <span style={{ fontSize: "0.75rem", color: colors.neutral[400] }}>
+                  {new Date(event.timestamp).toLocaleDateString("en-US", {
+                    year: "numeric", month: "short", day: "numeric",
+                  })}
+                </span>
               </div>
+              {event.actor && (
+                <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.2rem 0 0", fontFamily: "monospace" }}>
+                  by {event.actor}
+                </p>
+              )}
+              {event.detail && (
+                <p style={{ fontSize: "0.8rem", color: colors.neutral[600], margin: "0.25rem 0 0" }}>
+                  {event.detail}
+                </p>
+              )}
+              {event.txHash && (
+                <a
+                  href={`https://stellar.expert/explorer/testnet/tx/${event.txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`View ${event.label} transaction on Stellar Explorer (opens in new tab)`}
+                  style={{ fontSize: "0.7rem", color: colors.primary[600], fontFamily: "monospace" }}
+                >
+                  {event.txHash.slice(0, 16)}…
+                </a>
+              )}
             </div>
           );
         })}

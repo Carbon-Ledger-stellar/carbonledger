@@ -1,27 +1,64 @@
-import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { MintCreditsDto, RetireCreditsDto } from "./credits.dto";
+import { MailService } from "../mail/mail.service";
+import { MailEvent } from "../mail/mail.constants";
 import { randomBytes } from "crypto";
+
+/**
+ * Serial numbers are stored as fixed-point integers scaled by 100.
+ * 1 tCO₂e = 100 serial units, 0.5 tCO₂e = 50 serial units, 0.01 tCO₂e = 1 serial unit.
+ * This allows fractional batches while keeping serial arithmetic in integers.
+ */
+const SERIAL_SCALE = 100;
+
+function toSerialUnits(tonnes: number): bigint {
+  return BigInt(Math.round(tonnes * SERIAL_SCALE));
+}
 
 @Injectable()
 export class CreditsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailService: MailService,
+    private readonly ipfsService: IpfsService,
+  ) {}
 
   async mintCredits(dto: MintCreditsDto) {
     const existing = await this.prisma.creditBatch.findUnique({ where: { batchId: dto.batchId } });
     if (existing) throw new BadRequestException(`Batch ${dto.batchId} already exists`);
 
-    // Check serial range overlap
+    if (!/^[0-9]+$/.test(dto.serialStart) || !/^[0-9]+$/.test(dto.serialEnd)) {
+      throw new BadRequestException("serialStart and serialEnd must be positive integer strings");
+    }
+
+    const serialStartUnits = BigInt(dto.serialStart);
+    const serialEndUnits = BigInt(dto.serialEnd);
+    if (serialStartUnits <= 0n || serialEndUnits <= 0n || serialEndUnits <= serialStartUnits) {
+      throw new BadRequestException("serialEnd must be greater than serialStart and both must be positive");
+    }
+
+    // Check serial range overlap (prevents double counting)
     const overlap = await this.prisma.creditBatch.findFirst({
       where: {
-        OR: [
-          { serialStart: { lte: dto.serialEnd }, serialEnd: { gte: dto.serialStart } },
-        ],
+        OR: [{ serialStart: { lte: dto.serialEnd }, serialEnd: { gte: dto.serialStart } }],
       },
     });
     if (overlap) throw new BadRequestException("Serial number range overlaps existing batch — double counting prevented");
 
-    return this.prisma.creditBatch.create({ data: dto });
+    const batch = await this.prisma.creditBatch.create({ data: dto });
+
+    // Notify project owner (respects per-event preferences)
+    const project = await this.prisma.carbonProject.findUnique({ where: { projectId: dto.projectId } });
+    if (project?.ownerAddress) {
+      await this.mailService.sendIfEnabled(project.ownerAddress, MailEvent.CREDITS_MINTED, {
+        batchId: batch.batchId,
+        amount: batch.amount,
+        vintageYear: batch.vintageYear,
+      });
+    }
+
+    return batch;
   }
 
   async getBatch(batchId: string) {
@@ -34,14 +71,23 @@ export class CreditsService {
     const batch = await this.getBatch(dto.batchId);
 
     if (batch.status === "FullyRetired") {
-      throw new BadRequestException("Credits are already fully retired — retirement is irreversible");
+      throw new ConflictException("Credits are already fully retired — retirement is irreversible");
+    }
+
+    const batchAmount = Number(batch.amount);
+    if (dto.amount > batchAmount) {
+      throw new UnprocessableEntityException(`Cannot retire ${dto.amount} tCO₂e — only ${batchAmount} tCO₂e available`);
     }
 
     const retirementId = `ret-${dto.batchId}-${Date.now()}`;
-    const serialStart  = Number(batch.serialStart);
-    const serialNumbers = Array.from({ length: dto.amount }, (_, i) => String(serialStart + i));
 
-    // Create retirement record
+    // Assign serial numbers using fixed-point scaling (0.01 tCO₂e = 1 serial unit)
+    const serialStartUnits = BigInt(batch.serialStart);
+    const retireUnits = toSerialUnits(dto.amount);
+    const serialNumbers = Array.from({ length: Number(retireUnits) }, (_, i) =>
+      String(serialStartUnits + BigInt(i)),
+    );
+
     const retirement = await this.prisma.retirementRecord.create({
       data: {
         retirementId,
@@ -53,24 +99,35 @@ export class CreditsService {
         retirementReason: dto.retirementReason,
         vintageYear:      batch.vintageYear,
         serialNumbers,
-        txHash:           randomBytes(32).toString("hex"), // In production: actual Stellar tx hash
+        txHash:           randomBytes(32).toString("hex"),
+        isValid:          true,
       },
     });
 
-    // Update batch status
-    const newStatus = dto.amount >= batch.amount ? "FullyRetired" : "PartiallyRetired";
+    const newStatus = dto.amount >= batchAmount ? "FullyRetired" : "PartiallyRetired";
     await this.prisma.creditBatch.update({
       where: { batchId: dto.batchId },
       data:  { status: newStatus },
     });
 
-    // Update project totals
     await this.prisma.carbonProject.update({
       where: { projectId: batch.projectId },
       data:  { totalCreditsRetired: { increment: dto.amount } },
     });
 
-    return retirement;
+    // Notify holder (respects per-event preferences)
+    await this.mailService.sendIfEnabled(dto.holderPublicKey, MailEvent.RETIREMENT_CONFIRMED, {
+      retirementId: retirement.retirementId,
+      beneficiary: retirement.beneficiary,
+      amount: retirement.amount,
+    });
+
+    return {
+      ...retirement,
+      certificateUrl: retirement.certificateCid 
+        ? `https://gateway.pinata.cloud/ipfs/${retirement.certificateCid}` 
+        : null
+    };
   }
 
   async getRetirement(retirementId: string) {
@@ -80,19 +137,13 @@ export class CreditsService {
   }
 
   async lookupSerial(serial: string) {
-    // Check if serial is in a retirement
     const retirement = await this.prisma.retirementRecord.findFirst({
       where: { serialNumbers: { has: serial } },
     });
     if (retirement) return retirement;
 
-    // Otherwise find the batch containing this serial
-    const serialNum = Number(serial);
     const batch = await this.prisma.creditBatch.findFirst({
-      where: {
-        serialStart: { lte: serial },
-        serialEnd:   { gte: serial },
-      },
+      where: { serialStart: { lte: serial }, serialEnd: { gte: serial } },
     });
     if (!batch) throw new NotFoundException(`Serial number ${serial} not found`);
     return batch;

@@ -30,6 +30,7 @@ pub enum CarbonError {
     ZeroAmountNotAllowed  = 16,
     ProjectAlreadyExists  = 17,
     InvalidSerialRange    = 18,
+    Arithmetic            = 20,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -118,7 +119,10 @@ impl CarbonRegistryContractV1 {
         if env.storage().persistent().has(&DataKey::Project(project_id.clone())) {
             return Err(CarbonError::ProjectAlreadyExists);
         }
-        if vintage_year < 2000 || vintage_year > 2100 {
+        
+        // Enforce vintage year range: 1990 to current_year + 1
+        let current_year = Self::get_current_year(&env);
+        if vintage_year < 1990 || vintage_year > current_year + 1 {
             return Err(CarbonError::InvalidVintageYear);
         }
 
@@ -194,7 +198,7 @@ impl CarbonRegistryContractV1 {
             return Err(CarbonError::InsufficientCredits);
         }
 
-        project.total_credits_retired += amount;
+        project.total_credits_retired = project.total_credits_retired.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
         env.storage().persistent().set(&DataKey::Project(project_id.clone()), &project);
 
         env.events().publish(
@@ -222,7 +226,7 @@ impl CarbonRegistryContractV1 {
         oracle_address.require_auth();
         Self::require_oracle(&env, &oracle_address)?;
         let mut project = Self::load_project(&env, &project_id)?;
-        project.total_credits_issued += amount;
+        project.total_credits_issued = project.total_credits_issued.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
         env.storage().persistent().set(&DataKey::Project(project_id), &project);
         Ok(())
     }
@@ -246,6 +250,24 @@ impl CarbonRegistryContractV1 {
             return Err(CarbonError::UnauthorizedVerifier);
         }
         Ok(())
+    }
+
+    fn get_current_year(env: &Env) -> u32 {
+        let timestamp = env.ledger().timestamp();
+        let seconds_in_day = 86400;
+        let mut days = (timestamp / seconds_in_day) as i64;
+        let mut year = 1970;
+
+        loop {
+            let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            let days_in_year = if is_leap { 366 } else { 365 };
+            if days < days_in_year {
+                break;
+            }
+            days -= days_in_year;
+            year += 1;
+        }
+        year as u32
     }
 
     fn require_verifier(env: &Env, caller: &Address) -> Result<(), CarbonError> {

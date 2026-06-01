@@ -37,47 +37,29 @@ VERSION = "2.0.0"
 # Testnet:  "Test SDF Network ; September 2015"
 # Mainnet:  "Public Global Stellar Network ; September 2015"
 NETWORK_PASSPHRASE = "Test SDF Network ; September 2015"
+HORIZON_URL        = "https://horizon-testnet.stellar.org"
+FEDERATION_SERVER  = "https://carbonledger.io/federation"
+AUTH_SERVER        = "https://carbonledger.io/auth"
+TRANSFER_SERVER    = "https://carbonledger.io/transfer"
+WEB_AUTH_ENDPOINT  = "https://carbonledger.io/auth"
+SIGNING_KEY        = "REPLACE_WITH_SIGNING_PUBLIC_KEY"
+URI_REQUEST_SIGNING_KEY = "REPLACE_WITH_SIGNING_PUBLIC_KEY"
+ACCOUNTS           = ["REPLACE_WITH_ISSUER_PUBLIC_KEY"]
 
-# HORIZON_URL (optional but recommended)
-# The Horizon API endpoint clients should use to submit transactions and query
-# ledger data for this deployment.
-HORIZON_URL = "https://horizon-testnet.stellar.org"
+SUPPORTED_SEPS = [1, 30]
 
-# FEDERATION_SERVER (optional — SEP-0002)
-# Resolves human-readable Stellar addresses (e.g. user*carbonledger.io) to
-# account IDs. Required if you support federation lookups.
-FEDERATION_SERVER = "https://carbonledger.io/federation"
+# ── Soroban Contract Addresses ────────────────────────────────────────────────
+# Fill in after running `stellar contract deploy` for each contract.
+# See contracts/README.md and the deployment section of the project README.
 
-# AUTH_SERVER (optional — SEP-0010)
-# Web Authentication endpoint. Clients POST here to obtain a JWT proving
-# ownership of a Stellar keypair. Required for authenticated SEP flows.
-AUTH_SERVER = "https://carbonledger.io/auth"
+[SOROBAN_CONTRACTS]
+CARBON_REGISTRY_CONTRACT_ID    = "REPLACE_AFTER_DEPLOYMENT"
+CARBON_CREDIT_CONTRACT_ID      = "REPLACE_AFTER_DEPLOYMENT"
+CARBON_MARKETPLACE_CONTRACT_ID = "REPLACE_AFTER_DEPLOYMENT"
+CARBON_ORACLE_CONTRACT_ID      = "REPLACE_AFTER_DEPLOYMENT"
+ORACLE_PUBLIC_KEY              = "REPLACE_WITH_ORACLE_PUBLIC_KEY"
 
-# TRANSFER_SERVER (optional — SEP-0006)
-# Anchor transfer endpoint for deposit/withdrawal flows. Not used for pure
-# on-chain credit trading but included for future fiat on-ramp support.
-TRANSFER_SERVER = "https://carbonledger.io/transfer"
-
-# WEB_AUTH_ENDPOINT (required for SEP-0010)
-# Canonical URL for the SEP-0010 challenge/response authentication flow.
-# Must match the endpoint that issues JWTs.
-WEB_AUTH_ENDPOINT = "https://carbonledger.io/auth"
-
-# SIGNING_KEY (required)
-# The Stellar public key (G...) used to sign SEP-0010 challenges and
-# SEP-0012 KYC responses. Must NOT be an issuer key — use a dedicated signer.
-# Replace with your actual signing public key before going to mainnet.
-SIGNING_KEY = "REPLACE_WITH_SIGNING_PUBLIC_KEY"
-
-# ACCOUNTS (required)
-# List of all Stellar public keys that issue assets on behalf of CarbonLedger.
-# Wallets use this to verify that a CBON token was issued by a trusted key.
-ACCOUNTS = ["REPLACE_WITH_ISSUER_PUBLIC_KEY"]
-
-# ── DOCUMENTATION ─────────────────────────────────────────────────────────────
-# Required section. Provides human-readable information about the organisation
-# operating this Stellar deployment. All fields are optional individually but
-# the section itself is expected by SEP-0001 validators.
+# ── Organization ──────────────────────────────────────────────────────────────
 
 [DOCUMENTATION]
 

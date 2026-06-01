@@ -1,0 +1,17 @@
+[Unit]
+Description=CarbonLedger Satellite Monitor (Gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=carbonledger
+WorkingDirectory=/opt/carbonledger/oracle
+EnvironmentFile=/opt/carbonledger/.env
+ExecStart=/opt/carbonledger/venv/bin/gunicorn \
+    --config /opt/carbonledger/oracle/gunicorn.conf.py \
+    satellite_monitor:app
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

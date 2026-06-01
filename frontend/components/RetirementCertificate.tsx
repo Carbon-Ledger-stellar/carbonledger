@@ -41,8 +41,8 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
         position: "relative",
         overflow: "hidden",
       }}>
-        {/* Watermark */}
-        <div style={{
+        {/* Watermark — decorative, hidden from AT */}
+        <div aria-hidden="true" style={{
           position: "absolute", top: "50%", left: "50%",
           transform: "translate(-50%, -50%) rotate(-30deg)",
           fontSize: "8rem", fontWeight: 900, color: `${colors.primary[600]}08`,
@@ -54,7 +54,7 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: "2rem" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
-            <span style={{ fontSize: "2rem" }}>🌿</span>
+            <span aria-hidden="true" style={{ fontSize: "2rem" }}>🌿</span>
             <span style={{ fontSize: "1.1rem", fontWeight: 700, color: colors.primary[700], letterSpacing: "0.15em" }}>
               CARBONLEDGER
             </span>
@@ -89,11 +89,11 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
         {/* Details grid */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1.5rem", marginBottom: "2rem" }}>
           {[
-            { label: "Project", value: retirement.projectId },
+            { label: "Project", value: retirement.project?.name ?? retirement.projectName ?? retirement.projectId },
             { label: "Vintage Year", value: `${retirement.vintageYear}` },
             { label: "Retirement Reason", value: retirement.retirementReason },
             { label: "Retirement Date", value: new Date(retirement.retiredAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) },
-            { label: "Serial Numbers", value: `${retirement.serialNumbers[0]} – ${retirement.serialNumbers[retirement.serialNumbers.length - 1]}` },
+            { label: "Serial Range", value: `${retirement.serialNumbers[0]} – ${retirement.serialNumbers[retirement.serialNumbers.length - 1]}` },
             { label: "Certificate ID", value: retirement.retirementId },
           ].map(({ label, value }) => (
             <div key={label} style={{ borderLeft: `3px solid ${colors.primary[300]}`, paddingLeft: "0.75rem" }}>
@@ -120,13 +120,19 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
               href={`https://stellar.expert/explorer/testnet/tx/${retirement.txHash}`}
               target="_blank"
               rel="noopener noreferrer"
+              aria-label="View retirement transaction on Stellar Explorer (opens in new tab)"
               style={{ fontSize: "0.75rem", color: colors.primary[600], textDecoration: "none" }}
             >
               View on Stellar Explorer →
             </a>
           </div>
           <div style={{ textAlign: "center", marginLeft: "2rem" }}>
-            <QRCodeSVG value={url} size={80} fgColor={colors.primary[800]} />
+            <QRCodeSVG
+              value={url}
+              size={80}
+              fgColor={colors.primary[800]}
+              aria-label={`QR code to verify certificate at ${url}`}
+            />
             <p style={{ fontSize: "0.65rem", color: colors.neutral[400], margin: "0.25rem 0 0" }}>
               Verify online
             </p>
@@ -134,10 +140,12 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
         </div>
       </div>
 
-      {/* Download button */}
+      {/* Action buttons */}
       <div style={{ textAlign: "center", marginTop: "1.5rem" }}>
         <button
+          type="button"
           onClick={downloadPdf}
+          aria-label={`Download PDF certificate for ${retirement.beneficiary}`}
           style={{
             background: colors.primary[600],
             color: "#fff",
@@ -153,7 +161,9 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
           Download PDF Certificate
         </button>
         <button
+          type="button"
           onClick={() => navigator.clipboard.writeText(url)}
+          aria-label="Copy shareable certificate link to clipboard"
           style={{
             background: "transparent",
             color: colors.primary[700],

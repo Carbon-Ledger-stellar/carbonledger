@@ -1,0 +1,100 @@
+name: E2E Oracle Tests (Nightly)
+
+on:
+  schedule:
+    # Run nightly at 2 AM UTC (10 PM EST)
+    - cron: "0 2 * * *"
+  # Allow manual trigger for debugging
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: "Enable debug logging"
+        required: false
+        default: "false"
+
+jobs:
+  e2e-oracle-soroban:
+    name: E2E Oracle → Soroban Integration Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    environment:
+      name: soroban-testnet
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        working-directory: oracle
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Display test configuration
+        run: |
+          echo "E2E Oracle → Soroban Integration Test"
+          echo "======================================="
+          echo "Network: Stellar Testnet"
+          echo "Test Project ID: e2e-test-proj-\${{ github.run_id }}"
+          echo "Timestamp: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Run E2E tests against Testnet
+        working-directory: oracle
+        env:
+          # Soroban RPC and network configuration
+          STELLAR_RPC_URL: https://soroban-testnet.stellar.org
+          NETWORK_PASSPHRASE: Test SDF Network ; September 2015
+
+          # Contract addresses (must be deployed on Testnet)
+          ORACLE_CONTRACT_ID: ${{ secrets.ORACLE_CONTRACT_ID }}
+          REGISTRY_CONTRACT_ID: ${{ secrets.REGISTRY_CONTRACT_ID }}
+
+          # Oracle and test accounts (Testnet keypairs)
+          ORACLE_SECRET_KEY: ${{ secrets.TESTNET_ORACLE_SECRET_KEY }}
+          ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
+          VERIFIER_SECRET_KEY: ${{ secrets.TESTNET_VERIFIER_SECRET_KEY }}
+
+          # Debug flag
+          DEBUG: ${{ github.event.inputs.debug_enabled }}
+        run: |
+          python3 test_oracle_e2e.py
+        continue-on-error: false
+
+      - name: Test passed notification
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = {
+              text: `✅ E2E Oracle Tests PASSED\n\nRun: ${context.runId}\nBranch: ${context.ref}`,
+              mrkdwn: true
+            };
+            console.log('Test passed');
+
+      - name: Test failed notification
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const payload = {
+              text: `❌ E2E Oracle Tests FAILED\n\nRun: ${context.runId}\nBranch: ${context.ref}\n\nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
+            };
+            console.log('Test failed');
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-logs
+          path: oracle/test_oracle_e2e.py
+          retention-days: 7
+
+concurrency:
+  group: e2e-oracle-tests
+  cancel-in-progress: false

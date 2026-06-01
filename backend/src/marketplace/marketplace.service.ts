@@ -1,22 +1,64 @@
-import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
-import { CreateListingDto, PurchaseDto, BulkPurchaseDto } from "./marketplace.dto";
+import { CreateListingDto, PurchaseDto, BulkPurchaseDto, ListingsQueryDto, PaginatedListingsResponse } from "./marketplace.dto";
 import { randomBytes } from "crypto";
+import { ListingsCacheService } from "./listings-cache.service";
+import { MarketplaceContractService } from "./marketplace-contract.service";
 
 @Injectable()
 export class MarketplaceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: ListingsCacheService,
+    private readonly contractService: MarketplaceContractService,
+  ) {}
 
-  async findAll(filters: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string }) {
-    return this.prisma.marketListing.findMany({
-      where: {
-        status: { in: ["Active", "PartiallyFilled"] },
-        ...(filters.methodology && { methodology: filters.methodology }),
-        ...(filters.vintage     && { vintageYear: filters.vintage }),
-        ...(filters.country     && { country: filters.country }),
-      },
-      orderBy: { createdAt: "desc" },
-    });
+  async findAll(query: ListingsQueryDto): Promise<PaginatedListingsResponse> {
+    const cacheKey = JSON.stringify(query);
+    const cached = await this.cache.get<PaginatedListingsResponse>(cacheKey);
+    if (cached) return cached;
+
+    const { methodology, vintage, country, minPrice, maxPrice, search, cursor, limit = 20 } = query;
+
+    const where: any = {
+      status: { in: ["Active", "PartiallyFilled"] },
+      ...(methodology && { methodology }),
+      ...(vintage     && { vintageYear: vintage }),
+      ...(country     && { country }),
+      ...(minPrice    && { pricePerCredit: { gte: minPrice } }),
+      ...(maxPrice    && { pricePerCredit: { lte: maxPrice } }),
+    };
+
+    if (search) {
+      where.OR = [
+        { project: { name: { contains: search, mode: "insensitive" } } },
+        { methodology: { contains: search, mode: "insensitive" } },
+        { country: { contains: search, mode: "insensitive" } },
+        { projectId: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const [listings, total_count] = await Promise.all([
+      this.prisma.marketListing.findMany({
+        where,
+        orderBy: [
+          { vintageYear: "desc" },
+          { createdAt: "desc" },
+        ],
+        take: limit + 1,
+        cursor: cursor ? { id: cursor } : undefined,
+        skip: cursor ? 1 : 0,
+      }),
+      this.prisma.marketListing.count({ where }),
+    ]);
+
+    const hasMore = listings.length > limit;
+    const next_cursor = hasMore ? listings[listings.length - 2].id : undefined;
+    if (hasMore) listings.pop();
+
+    const result = { listings, next_cursor, total_count };
+    await this.cache.set(cacheKey, result);
+    return result;
   }
 
   async findOne(listingId: string) {
@@ -25,16 +67,54 @@ export class MarketplaceService {
     return l;
   }
 
-  async createListing(dto: CreateListingDto) {
-    return this.prisma.marketListing.create({ data: dto });
+  async createListing(dto: CreateListingDto & { seller: string }) {
+    // Verify the caller owns the credit batch via contract read
+    const ownsBatch = await this.contractService.verifyCreditBatchOwnership(dto.credit_batch_id, dto.seller);
+    if (!ownsBatch) {
+      throw new ForbiddenException('You do not own the specified credit batch');
+    }
+
+    // Call list_credits on the carbon_marketplace contract
+    const txHash = await this.contractService.listCredits(
+      dto.listingId,
+      dto.credit_batch_id,
+      dto.amount,
+      dto.price_per_tonne,
+    );
+
+    // Fix mass assignment (API3): explicitly pick only allowed fields — never trust the full DTO object
+    const result = await this.prisma.marketListing.create({
+      data: {
+        listingId:       dto.listingId,
+        projectId:       dto.projectId,
+        batchId:         dto.credit_batch_id,  // Map credit_batch_id to batchId
+        seller:          dto.seller,          // always from req.user.publicKey via controller
+        amountAvailable: dto.amount,          // Map amount to amountAvailable
+        pricePerCredit:  dto.price_per_tonne, // Map price_per_tonne to pricePerCredit
+        vintageYear:     dto.vintageYear,
+        methodology:     dto.methodology,
+        country:         dto.country,
+        status:          "Active",            // status is never accepted from the client
+      },
+    });
+    await this.cache.invalidateAll();
+    return { ...result, txHash };
   }
 
   async delistListing(listingId: string) {
     await this.findOne(listingId);
-    return this.prisma.marketListing.update({
+    
+    // Call delist_credits on the carbon_marketplace contract
+    const txHash = await this.contractService.delistCredits(listingId);
+    
+    // Update the listing status to delisted in PostgreSQL
+    const result = await this.prisma.marketListing.update({
       where: { listingId },
       data:  { status: "Delisted" },
     });
+    await this.cache.invalidateAll();
+    
+    return { ...result, txHash };
   }
 
   async purchase(dto: PurchaseDto) {
@@ -62,6 +142,10 @@ export class MarketplaceService {
   }
 
   async bulkPurchase(dto: BulkPurchaseDto) {
+    // Fix API4: enforce cap at service layer in case DTO validation is bypassed
+    if (dto.listingIds.length > 50) {
+      throw new BadRequestException("Bulk purchase is limited to 50 listings per request");
+    }
     const results = [];
     for (let i = 0; i < dto.listingIds.length; i++) {
       const result = await this.purchase({
