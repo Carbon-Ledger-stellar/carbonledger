@@ -1,6 +1,37 @@
-import { IsOptional, IsString, IsNumber, IsDate, IsInt, Min, Max } from "class-validator";
+import { IsOptional, IsString, IsNumber, IsDate, IsInt, Min, Max, IsNotEmpty, IsPositive } from "class-validator";
 import { Type } from "class-transformer";
 import { IsISO8601 } from "class-validator";
+
+export class RetireCreditsDto {
+  @IsString()
+  @IsNotEmpty()
+  batchId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  projectId: string;
+
+  @IsNumber()
+  @IsPositive()
+  @Type(() => Number)
+  amount: number;
+
+  @IsString()
+  @IsNotEmpty()
+  beneficiary: string;
+
+  @IsString()
+  @IsNotEmpty()
+  retirementReason: string;
+
+  @IsString()
+  @IsNotEmpty()
+  retiredBy: string;
+
+  @IsString()
+  @IsNotEmpty()
+  txHash: string;
+}
 
 export class ExportRetirementsDto {
   @IsOptional()
