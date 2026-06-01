@@ -118,7 +118,27 @@ function MarketplaceContent() {
               )}
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
+            <div className="marketplace-listings" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
+              <style>{`
+                .marketplace-listings {
+                  display: flex;
+                  flex-direction: column;
+                  gap: 0.75rem;
+                  margin-top: 1.5rem;
+                }
+                @media (min-width: 640px) {
+                  .marketplace-listings {
+                    display: grid;
+                    grid-template-columns: repeat(2, 1fr);
+                    gap: 1rem;
+                  }
+                }
+                @media (min-width: 1024px) {
+                  .marketplace-listings {
+                    grid-template-columns: repeat(3, 1fr);
+                  }
+                }
+              `}</style>
               {listings.map(listing => {
                 const inCart = items.some(i => i.listing.listingId === listing.listingId);
                 return (
