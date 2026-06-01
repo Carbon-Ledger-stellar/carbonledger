@@ -1,4 +1,5 @@
 import useSWR, { SWRConfiguration } from "swr";
+import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
