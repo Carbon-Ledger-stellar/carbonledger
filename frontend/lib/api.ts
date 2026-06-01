@@ -1,4 +1,5 @@
 import useSWR, { SWRConfiguration } from "swr";
+import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
@@ -117,9 +118,34 @@ export function useProject(id: string) {
   return useSWR<CarbonProject>(id ? `${API_URL}/projects/${id}` : null, fetcher, swrConfig);
 }
 
+export interface PaginatedListingsResponse {
+  listings: MarketListing[];
+  next_cursor?: string;
+  total_count: number;
+}
+
 export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string }) {
-  const query = new URLSearchParams(params as Record<string, string>).toString();
-  return useSWR<MarketListing[]>(`${API_URL}/marketplace/listings?${query}`, fetcher, swrConfig);
+  const baseQuery = new URLSearchParams(
+    Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]))
+  ).toString();
+
+  const getKey = (pageIndex: number, prev: PaginatedListingsResponse | null) => {
+    if (prev && !prev.next_cursor) return null;
+    const cursor = prev?.next_cursor;
+    const q = cursor ? `${baseQuery ? baseQuery + "&" : ""}cursor=${cursor}` : baseQuery;
+    return `${API_URL}/marketplace/listings?${q}`;
+  };
+
+  const swr = useSWRInfinite<PaginatedListingsResponse>(getKey, fetcher, {
+    ...swrConfig,
+    refreshInterval: 60_000,
+  });
+
+  const listings = swr.data?.flatMap(p => p.listings) ?? [];
+  const total_count = swr.data?.[0]?.total_count ?? 0;
+  const hasMore = !!swr.data?.[swr.data.length - 1]?.next_cursor;
+
+  return { ...swr, listings, total_count, hasMore };
 }
 
 export function useListing(id: string) {
