@@ -1,7 +1,9 @@
 import { SorobanRpc, Contract, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { PrismaClient } from '@prisma/client';
+import { StructuredLogger } from './logger/structured-logger';
 
 const prisma = new PrismaClient();
+const logger = new StructuredLogger('carbonledger-indexer');
 const server = new SorobanRpc.Server(process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org');
 
 const contracts = {
@@ -267,15 +269,22 @@ function mapStatus(status: any) {
 }
 
 async function main() {
-  console.log('Starting indexer from genesis...');
+  logger.info('Starting indexer from genesis');
   const startTime = Date.now();
   const events = await getAllEvents();
-  console.log(`Fetched ${events.length} events`);
+  logger.info(`Fetched ${events.length} events`, { eventCount: events.length });
   for (const event of events) {
     await indexEvent(event);
   }
   const endTime = Date.now();
-  console.log(`Indexing completed in ${(endTime - startTime) / 1000} seconds`);
+  const duration = (endTime - startTime) / 1000;
+  logger.info(`Indexing completed`, { duration, durationSeconds: duration });
 }
 
-main().catch(console.error).finally(() => prisma.$disconnect());
+main()
+  .catch((error) => {
+    logger.error('Indexer failed', error instanceof Error ? error : new Error(String(error)), {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  })
+  .finally(() => prisma.$disconnect());

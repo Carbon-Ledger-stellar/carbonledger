@@ -9,7 +9,8 @@ const meta: Meta<typeof CreditCard> = {
     layout: 'padded',
   },
   argTypes: {
-    onBuy: { action: 'onBuy' },
+    onAddToCart: { action: 'onAddToCart' },
+    onBuyNow: { action: 'onBuyNow' },
   },
 };
 
@@ -29,13 +30,15 @@ const sampleListing: MarketListing = {
   methodology: 'VCS',
   country: 'Brazil',
   status: 'Active',
+  oracleDaysSinceUpdate: 150,
   createdAt: '2024-01-01T00:00:00Z',
 };
 
 export const Active: Story = {
   args: {
     listing: sampleListing,
-    onBuy: (listing) => console.log('Buy', listing),
+    onAddToCart: (listing) => console.log('Add to Cart', listing),
+    onBuyNow: (listing) => console.log('Buy Now', listing),
   },
 };
 
@@ -45,6 +48,17 @@ export const Delisted: Story = {
       ...sampleListing,
       status: 'Delisted',
     },
+  },
+};
+
+export const StaleOracle: Story = {
+  args: {
+    listing: {
+      ...sampleListing,
+      oracleDaysSinceUpdate: 350,
+    },
+    onAddToCart: (listing) => console.log('Add to Cart', listing),
+    onBuyNow: (listing) => console.log('Buy Now', listing),
   },
 };
 

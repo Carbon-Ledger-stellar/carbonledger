@@ -3,6 +3,7 @@
  * All admin-scoped API calls. Attaches JWT from localStorage on every request.
  * A 401 redirects to /login automatically.
  */
+import useSWR from 'swr';
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -101,3 +102,27 @@ export const suspendProject = (payload: SuspendProjectPayload) =>
     method: 'POST',
     body:   JSON.stringify(payload),
   });
+
+// ─── SWR Hooks ────────────────────────────────────────────────────────────────
+
+async function authedFetcher<T>(url: string): Promise<T> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('cl_jwt') : null;
+  const res = await fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 401) {
+    if (typeof window !== 'undefined') window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+/** Auto-refreshes every 60 s. Returns all projects' oracle health. */
+export function useOracleHealth() {
+  return useSWR<OracleHealth[]>(
+    `${BASE}/admin/oracle-health`,
+    authedFetcher,
+    { refreshInterval: 60_000, revalidateOnFocus: true },
+  );
+}

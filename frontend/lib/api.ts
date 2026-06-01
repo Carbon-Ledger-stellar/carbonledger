@@ -19,6 +19,8 @@ export interface CarbonProject {
   totalCreditsRetired: number;
   metadataCid: string;
   methodologyScore: number;
+  latitude?: number;
+  longitude?: number;
   createdAt: string;
 }
 
@@ -27,6 +29,7 @@ export interface CreditBatch {
   batchId: string;
   projectId: string;
   vintageYear: number;
+  /** Fractional tonnes supported, e.g. 0.5 tCO₂e. Minimum 0.01. */
   amount: number;
   serialStart: string;
   serialEnd: string;
@@ -42,12 +45,14 @@ export interface MarketListing {
   projectName: string;
   batchId: string;
   seller: string;
+  /** Fractional tonnes supported, e.g. 0.5 tCO₂e. Minimum 0.01. */
   amountAvailable: number;
   pricePerCredit: string;
   vintageYear: number;
   methodology: string;
   country: string;
   status: string;
+  oracleDaysSinceUpdate?: number;
   createdAt: string;
 }
 
@@ -57,6 +62,7 @@ export interface RetirementRecord {
   batchId: string;
   projectId: string;
   projectName?: string;
+  /** Fractional tonnes supported, e.g. 0.5 tCO₂e. */
   amount: number;
   retiredBy: string;
   beneficiary: string;
@@ -83,11 +89,22 @@ export interface OracleStatus {
   latestScore: number | null;
 }
 
+export interface OracleHistoryEntry {
+  submittedAt: string;
+  score: number;
+}
+
 export interface PlatformStats {
   totalCreditsIssued: number;
   totalCreditsRetired: number;
   activeProjects: number;
   marketplaceVolume: string;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  beneficiary: string;
+  totalTonnes: number;
 }
 
 // ── Fetcher ───────────────────────────────────────────────────────────────────
@@ -118,34 +135,9 @@ export function useProject(id: string) {
   return useSWR<CarbonProject>(id ? `${API_URL}/projects/${id}` : null, fetcher, swrConfig);
 }
 
-export interface PaginatedListingsResponse {
-  listings: MarketListing[];
-  next_cursor?: string;
-  total_count: number;
-}
-
-export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string }) {
-  const baseQuery = new URLSearchParams(
-    Object.fromEntries(Object.entries(params ?? {}).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]))
-  ).toString();
-
-  const getKey = (pageIndex: number, prev: PaginatedListingsResponse | null) => {
-    if (prev && !prev.next_cursor) return null;
-    const cursor = prev?.next_cursor;
-    const q = cursor ? `${baseQuery ? baseQuery + "&" : ""}cursor=${cursor}` : baseQuery;
-    return `${API_URL}/marketplace/listings?${q}`;
-  };
-
-  const swr = useSWRInfinite<PaginatedListingsResponse>(getKey, fetcher, {
-    ...swrConfig,
-    refreshInterval: 60_000,
-  });
-
-  const listings = swr.data?.flatMap(p => p.listings) ?? [];
-  const total_count = swr.data?.[0]?.total_count ?? 0;
-  const hasMore = !!swr.data?.[swr.data.length - 1]?.next_cursor;
-
-  return { ...swr, listings, total_count, hasMore };
+export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string; projectType?: string; search?: string }) {
+  const query = new URLSearchParams(params as Record<string, string>).toString();
+  return useSWR<MarketListing[]>(`${API_URL}/marketplace/listings?${query}`, fetcher, swrConfig);
 }
 
 export function useListing(id: string) {
@@ -168,11 +160,60 @@ export function useOracleStatus(projectId: string) {
   );
 }
 
+export function useOracleHistory(projectId: string) {
+  return useSWR<OracleHistoryEntry[]>(
+    projectId ? `${API_URL}/oracle/history/${projectId}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
+export interface AggregateStats {
+  active_listings_count: number;
+  totalCreditsRetired: number;
+}
+
+export function useAggregateStats() {
+  return useSWR<AggregateStats>(`${API_URL}/stats/aggregate`, fetcher, {
+    ...swrConfig,
+    refreshInterval: 60_000,
+  });
+}
+
 export function usePlatformStats() {
   return useSWR<PlatformStats>(`${API_URL}/stats`, fetcher, {
     ...swrConfig,
     refreshInterval: 30_000,
   });
+}
+
+export interface ProvenanceEvent {
+  type: "registered" | "verified" | "minted" | "listed" | "purchased" | "transferred" | "retired";
+  label: string;
+  timestamp: string;
+  actor?: string;
+  txHash?: string;
+  detail?: string;
+}
+
+export interface SerialLookupResult {
+  serialNumber: string;
+  batchId: string;
+  projectId: string;
+  projectName?: string;
+  vintageYear: number;
+  methodology?: string;
+  country?: string;
+  currentOwner?: string;
+  status: "active" | "retired";
+  // Retirement fields (present when status === "retired")
+  retirementId?: string;
+  beneficiary?: string;
+  retirementReason?: string;
+  retiredAt?: string;
+  txHash?: string;
+  // Chain of custody
+  provenance: ProvenanceEvent[];
 }
 
 export function useSerialLookup(serial: string) {
@@ -183,9 +224,47 @@ export function useSerialLookup(serial: string) {
   );
 }
 
+export function useSerialRangeLookup(start: string, end: string) {
+  const key = start && end ? `${API_URL}/credits/lookup?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}` : null;
+  return useSWR<SerialLookupResult[]>(key, fetcher, swrConfig);
+}
+
+export function useSerialSingleLookup(serial: string) {
+  return useSWR<SerialLookupResult>(
+    serial ? `${API_URL}/credits/lookup/${encodeURIComponent(serial)}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
+export interface BulkPurchaseItem {
+  listingId: string;
+  amount: number;
+}
+
+export interface BulkPurchaseResult {
+  txHash: string;
+  batchIds: string[];
+}
+
+export async function bulkPurchase(
+  items: BulkPurchaseItem[],
+  buyerPublicKey: string,
+): Promise<BulkPurchaseResult> {
+  if (items.length === 0) throw new Error("Cart is empty");
+  const res = await fetch(`${API_URL}/marketplace/bulk-purchase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items, buyerPublicKey }),
+  });
+  if (!res.ok) throw new Error((await res.json()).message);
+  return res.json();
+}
+
 export async function purchaseCredits(listingId: string, amount: number, buyerPublicKey: string) {
+  if (amount < 0.01) throw new Error("Minimum purchase is 0.01 tCO₂e");
   const res = await fetch(`${API_URL}/marketplace/purchase`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -202,6 +281,7 @@ export async function retireCredits(payload: {
   retirementReason: string;
   holderPublicKey: string;
 }) {
+  if (payload.amount < 0.01) throw new Error("Minimum retirement is 0.01 tCO₂e");
   const res = await fetch(`${API_URL}/credits/retire`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

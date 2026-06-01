@@ -1,12 +1,13 @@
 "use client";
 
 import { MarketListing } from "../lib/api";
-import { formatStroops, formatTonnes } from "../lib/carbon-utils";
+import { formatStroops, formatTonnes, getCountryFlag } from "../lib/carbon-utils";
 import { statusBadge, colors } from "../styles/design-system";
 
 interface Props {
   listing: MarketListing;
-  onBuy?: (listing: MarketListing) => void;
+  onAddToCart?: (listing: MarketListing) => void;
+  onBuyNow?: (listing: MarketListing) => void;
 }
 
 const methodologyColors: Record<string, string> = {
@@ -16,13 +17,14 @@ const methodologyColors: Record<string, string> = {
   CAR:           "#7c3aed",
 };
 
-export default function CreditCard({ listing, onBuy }: Props) {
+export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
   const badge = statusBadge(listing.status);
   const methodColor = methodologyColors[listing.methodology] ?? "#6b7280";
   const priceUSDC = formatStroops(listing.pricePerCredit);
+  const projectLabel = listing.projectName || listing.projectId;
 
   return (
-    <div style={{
+    <article aria-label={`${projectLabel} — ${listing.methodology} ${listing.vintageYear}`} style={{
       background: colors.surface,
       border: `1px solid ${colors.neutral[200]}`,
       borderRadius: "0.75rem",
@@ -37,10 +39,10 @@ export default function CreditCard({ listing, onBuy }: Props) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <p style={{ fontSize: "0.75rem", color: colors.neutral[500], marginBottom: "0.25rem" }}>
-            {listing.country} · {listing.vintageYear} Vintage
+            {getCountryFlag(listing.country)} {listing.country} · {listing.vintageYear} Vintage
           </p>
           <h3 style={{ fontSize: "1rem", fontWeight: 600, color: colors.neutral[900], margin: 0 }}>
-            {listing.projectName || listing.projectId}
+            {projectLabel}
           </h3>
         </div>
         <span style={{
@@ -72,6 +74,23 @@ export default function CreditCard({ listing, onBuy }: Props) {
         {listing.methodology}
       </span>
 
+      {/* Oracle status badge */}
+      {listing.oracleDaysSinceUpdate !== undefined && listing.oracleDaysSinceUpdate !== null && (
+        <span style={{
+          display: "inline-block",
+          background: listing.oracleDaysSinceUpdate <= 300 ? colors.verified.bg : colors.suspended.bg,
+          color: listing.oracleDaysSinceUpdate <= 300 ? colors.verified.text : colors.suspended.text,
+          border: `1px solid ${listing.oracleDaysSinceUpdate <= 300 ? colors.verified.border : colors.suspended.border}`,
+          borderRadius: "0.375rem",
+          padding: "0.2rem 0.5rem",
+          fontSize: "0.75rem",
+          fontWeight: 600,
+          width: "fit-content",
+        }}>
+          {listing.oracleDaysSinceUpdate <= 300 ? "Verified" : "Stale Oracle"}
+        </span>
+      )}
+
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
         <div>
@@ -96,6 +115,7 @@ export default function CreditCard({ listing, onBuy }: Props) {
       {onBuy && listing.status === "Active" && (
         <button
           onClick={() => onBuy(listing)}
+          aria-label={`Purchase carbon credits from ${projectLabel}`}
           style={{
             background: colors.primary[600],
             color: "#fff",
@@ -111,6 +131,6 @@ export default function CreditCard({ listing, onBuy }: Props) {
           Purchase Carbon Credits
         </button>
       )}
-    </div>
+    </article>
   );
 }

@@ -1,21 +1,79 @@
 "use client";
 
-import { useProject, useRetirements } from "../../../lib/api";
+import { useProject, useRetirements, useCreditBatches } from "../../../lib/api";
 import { formatTonnes } from "../../../lib/carbon-utils";
 import { colors, statusBadge } from "../../../styles/design-system";
 import OracleStatus from "../../../components/OracleStatus";
+import OracleHistory from "../../../components/OracleHistory";
+import ProjectMap from "../../../components/ProjectMap";
+import ProjectOracleStatus from "../../../components/ProjectOracleStatus";
 import ProvenanceTrail from "../../../components/ProvenanceTrail";
 import LoadingSkeleton from "../../../components/LoadingSkeleton";
 
 export default function ProjectDetailPage({ params }: { params: { id: string } }) {
   const { data: project, isLoading } = useProject(params.id);
   const { data: retirements } = useRetirements(50);
+  const { data: creditBatches } = useCreditBatches(params.id);
 
   const projectRetirements = (retirements ?? []).filter(r => r.projectId === params.id);
 
   if (isLoading) return (
-    <div style={{ maxWidth: "900px", margin: "2rem auto", padding: "0 2rem" }}>
-      <LoadingSkeleton variant="CreditCard" count={3} />
+    <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+      {/* Header Skeleton */}
+      <div style={{ marginBottom: "2rem" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          <div style={{ width: "100px", height: "14px", background: colors.neutral[100], borderRadius: "4px" }} />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", width: "100%" }}>
+              <div style={{ width: "40%", height: "32px", background: colors.neutral[100], borderRadius: "4px" }} />
+              <div style={{ width: "60%", height: "16px", background: colors.neutral[100], borderRadius: "4px" }} />
+            </div>
+            <div style={{ width: "80px", height: "24px", background: colors.neutral[100], borderRadius: "9999px" }} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "2rem" }}>
+        {/* Left column */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+          {/* Stats Skeleton */}
+          <div style={{
+            background: colors.surface, border: `1px solid ${colors.neutral[200]}`,
+            borderRadius: "0.75rem", padding: "1.5rem",
+          }}>
+            <div style={{ width: "120px", height: "16px", background: colors.neutral[100], borderRadius: "4px", marginBottom: "1rem" }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "1rem" }}>
+              {[1, 2, 3, 4].map(i => (
+                <div key={i}>
+                  <div style={{ width: "60px", height: "10px", background: colors.neutral[100], borderRadius: "4px", marginBottom: "0.4rem" }} />
+                  <div style={{ width: "80px", height: "24px", background: colors.neutral[100], borderRadius: "4px" }} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Provenance Skeleton */}
+          <div style={{
+            background: colors.surface, border: `1px solid ${colors.neutral[200]}`,
+            borderRadius: "0.75rem", padding: "1.5rem",
+          }}>
+            <div style={{ width: "120px", height: "16px", background: colors.neutral[100], borderRadius: "4px", marginBottom: "1.5rem" }} />
+            <LoadingSkeleton variant="ProvenanceTrail" count={1} />
+          </div>
+        </div>
+
+        {/* Right column */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+          <div style={{
+            background: colors.surface, border: `1px solid ${colors.neutral[200]}`,
+            borderRadius: "0.75rem", padding: "1.5rem",
+          }}>
+            <div style={{ width: "150px", height: "16px", background: colors.neutral[100], borderRadius: "4px", marginBottom: "1rem" }} />
+            <div style={{ width: "100%", height: "40px", background: colors.neutral[100], borderRadius: "4px" }} />
+          </div>
+          <div style={{ width: "100%", height: "48px", background: colors.neutral[100], borderRadius: "8px" }} />
+        </div>
+      </div>
     </div>
   );
 
@@ -61,6 +119,16 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         </div>
       </div>
 
+      {/* Map */}
+      {project.latitude && project.longitude && (
+        <div style={{ marginBottom: "2rem" }}>
+          <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: colors.neutral[900], marginBottom: "1rem" }}>
+            Project Location
+          </h2>
+          <ProjectMap latitude={project.latitude} longitude={project.longitude} projectName={project.name} />
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "2rem" }}>
         {/* Left column */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
@@ -99,6 +167,43 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
               </p>
             </div>
           </div>
+
+          {/* Credit Batches */}
+          {creditBatches && creditBatches.length > 0 && (
+            <div style={{
+              background: colors.surface, border: `1px solid ${colors.neutral[200]}`,
+              borderRadius: "0.75rem", padding: "1.5rem",
+            }}>
+              <h2 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[800], margin: "0 0 1rem" }}>
+                Credit Batches
+              </h2>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                {creditBatches.map(batch => (
+                  <div key={batch.id} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "0.75rem", background: colors.neutral[50], borderRadius: "0.5rem",
+                  }}>
+                    <div>
+                      <p style={{ fontWeight: 600, fontSize: "0.875rem", color: colors.neutral[800], margin: 0 }}>
+                        Batch {batch.batchId}
+                      </p>
+                      <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
+                        Serial: {batch.serialStart} - {batch.serialEnd}
+                      </p>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <p style={{ fontWeight: 700, color: colors.primary[700], margin: 0 }}>
+                        {formatTonnes(batch.amount)}
+                      </p>
+                      <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
+                        {batch.vintageYear}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Provenance */}
           <div style={{
@@ -143,7 +248,22 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
 
         {/* Right column */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          <OracleStatus projectId={project.projectId} />
+          {/* Oracle Monitoring */}
+          <div style={{
+            background: colors.surface, border: `1px solid ${colors.neutral[200]}`,
+            borderRadius: "0.75rem", padding: "1.5rem",
+          }}>
+            <h2 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[800], margin: "0 0 1rem" }}>
+              Oracle Monitoring
+            </h2>
+            <ProjectOracleStatus projectId={project.projectId} />
+            <div style={{ marginTop: "1.5rem" }}>
+              <h3 style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], margin: "0 0 0.75rem" }}>
+                Monitoring History
+              </h3>
+              <OracleHistory projectId={project.projectId} />
+            </div>
+          </div>
 
           {/* IPFS docs */}
           {project.metadataCid && (

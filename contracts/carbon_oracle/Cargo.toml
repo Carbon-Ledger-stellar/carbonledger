@@ -7,10 +7,12 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-soroban-sdk = { version = "20.0.0", features = ["alloc"] }
+soroban-sdk = { version = "21.7.7", features = ["alloc"] }
 
 [dev-dependencies]
-soroban-sdk = { version = "20.0.0", features = ["testutils", "alloc"] }
+ed25519-dalek = "2"
+rand = "0.9"
+soroban-sdk = { version = "21.7.7", features = ["testutils", "alloc"] }
 
 [profile.release]
 opt-level = "z"

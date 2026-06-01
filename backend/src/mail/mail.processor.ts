@@ -3,6 +3,7 @@ import { Job } from 'bullmq';
 import { MAIL_QUEUE, MailEvent } from './mail.constants';
 import { PrismaService } from '../prisma.service';
 import { PdfService } from './pdf.service';
+import { LoggerService } from '../logger/logger.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -11,6 +12,7 @@ export class MailProcessor extends WorkerHost {
   constructor(
     private prisma: PrismaService,
     private pdfService: PdfService,
+    private logger: LoggerService,
   ) {
     super();
   }
@@ -36,7 +38,11 @@ export class MailProcessor extends WorkerHost {
       }
 
       // 3. Send via provider (Mocking SendGrid/SES logic)
-      console.log(`Sending email to ${to} for event ${event}`);
+      this.logger.log(`Sending email to ${to} for event ${event}`, {
+        logId,
+        to,
+        event,
+      });
       // await this.provider.send({ to, from: process.env.EMAIL_FROM, html, attachments });
 
       // 4. Update log status
@@ -46,10 +52,15 @@ export class MailProcessor extends WorkerHost {
       });
 
     } catch (error) {
-      console.error(`Failed to send email ${logId}:`, error);
+      this.logger.error(`Failed to send email ${logId}`, error instanceof Error ? error.stack : String(error), {
+        logId,
+        to,
+        event,
+        error: error instanceof Error ? error.message : String(error),
+      });
       await this.prisma.emailLog.update({
         where: { id: logId },
-        data: { status: 'Failed', error: error.message },
+        data: { status: 'Failed', error: error instanceof Error ? error.message : String(error) },
       });
       throw error;
     }
