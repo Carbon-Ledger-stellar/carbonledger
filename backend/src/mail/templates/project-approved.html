@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f6; margin: 0; padding: 40px; }
+        .container { max-width: 600px; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+        .header { background: linear-gradient(135deg, #00b894, #00cec9); padding: 40px; text-align: center; color: white; }
+        .content { padding: 40px; line-height: 1.6; color: #2d3436; }
+        .btn { display: inline-block; padding: 12px 24px; background: #00b894; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+        .footer { padding: 20px; text-align: center; font-size: 12px; color: #b2bec3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Project Approved!</h1>
+        </div>
+        <div class="content">
+            <p>Hello,</p>
+            <p>We are excited to inform you that your carbon project <strong>{{projectName}}</strong> (ID: {{projectId}}) has been successfully verified and approved by our accredited verifiers.</p>
+            <p>You can now proceed with credit issuance and start contributing to global decarbonization.</p>
+            <a href="{{projectLink}}" class="btn">View Project Dashboard</a>
+        </div>
+        <div class="footer">
+            <p>&copy; 2026 CarbonLedger. All rights reserved.</p>
+            <p><a href="{{unsubscribe_link}}">Unsubscribe</a> from these notifications.</p>
+        </div>
+    </div>
+</body>
+</html>
