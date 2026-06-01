@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
+import * as jwt from 'jsonwebtoken';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
 
@@ -87,6 +88,7 @@ export class AuthService {
     try {
       payload = this.jwt.verify(refreshToken, {
         secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'dev-refresh-secret',
+        issuer: process.env.JWT_ISSUER || 'carbonledger',
       });
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
@@ -119,18 +121,24 @@ export class AuthService {
     publicKey: string,
     role: UserRole,
   ): { access_token: string; refresh_token: string } {
-    const access_token = this.jwt.sign(
+    const issuer = process.env.JWT_ISSUER || 'carbonledger';
+    const accessExpiresIn = (process.env.JWT_EXPIRY || '15m') as jwt.SignOptions['expiresIn'];
+    const refreshExpiresIn = (process.env.JWT_REFRESH_EXPIRY || '7d') as jwt.SignOptions['expiresIn'];
+
+    const access_token = jwt.sign(
       { sub: publicKey, role, type: 'access' },
+      process.env.JWT_SECRET || 'dev-secret-change-in-production',
       {
-        secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
-        expiresIn: process.env.JWT_EXPIRY || '15m',
+        expiresIn: accessExpiresIn,
+        issuer,
       },
     );
-    const refresh_token = this.jwt.sign(
+    const refresh_token = jwt.sign(
       { sub: publicKey, role, type: 'refresh' },
+      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'dev-refresh-secret',
       {
-        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'dev-refresh-secret',
-        expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d',
+        expiresIn: refreshExpiresIn,
+        issuer,
       },
     );
     return { access_token, refresh_token };

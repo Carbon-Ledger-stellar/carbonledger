@@ -16,7 +16,10 @@ import { PrismaService } from '../prisma.service';
     PassportModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
-      signOptions: { expiresIn: process.env.JWT_EXPIRY || '15m' },
+      signOptions: {
+        expiresIn: process.env.JWT_EXPIRY || '15m',
+        issuer: process.env.JWT_ISSUER || 'carbonledger',
+      },
     }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 20 }]),
   ],
