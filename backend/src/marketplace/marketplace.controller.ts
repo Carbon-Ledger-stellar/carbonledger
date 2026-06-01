@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Delete, Param, Body, Query, Request, ForbiddenException } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { MarketplaceService } from './marketplace.service';
 import { CreateListingDto, PurchaseDto, BulkPurchaseDto, ListingsQueryDto } from './marketplace.dto';
 import { Public, Roles } from '../auth/decorators';
@@ -11,12 +12,14 @@ export class MarketplaceController {
 
   @Get('listings')
   @Public()
+  @Throttle({ public: { ttl: 60_000, limit: 100 } })
   findAll(@Query() query: ListingsQueryDto) {
     return this.marketplaceService.findAll(query);
   }
 
   @Get('listings/:id')
   @Public()
+  @Throttle({ public: { ttl: 60_000, limit: 100 } })
   findOne(@Param('id') id: string) {
     return this.marketplaceService.findOne(id);
   }

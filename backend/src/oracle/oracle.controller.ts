@@ -11,7 +11,11 @@ import { Public, Roles } from '../auth/decorators';
 
 @Controller('oracle')
 export class OracleController {
-  constructor(private readonly oracleService: OracleService) {}
+  constructor(
+    private readonly oracleService: OracleService,
+    private readonly oracleSyncService: OracleSyncService,
+    private readonly oracleSchedulerService: OracleSchedulerService
+  ) {}
 
   // ── Public status read ───────────────────────────────────────────────────
 

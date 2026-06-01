@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { retireCredits } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { connectFreighter } from "../../lib/freighter";
-import { getWalletErrorMessage } from "../../lib/wallet-errors";
+import { getWalletErrorMessage, getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import Toast, { useToast } from "../../components/Toast";
@@ -396,12 +396,13 @@ export default function RetirePage() {
   const searchParams = useSearchParams();
   const batchId      = searchParams.get("batch") ?? "";
 
-  const [amount, setAmount]         = useState(1);
+  const [amount, setAmount]           = useState(1);
   const [beneficiary, setBeneficiary] = useState("");
   const [reason, setReason]         = useState("");
   const [txStatus, setTxStatus]     = useState<TxStatus | null>(null);
   const [txHash, setTxHash]         = useState<string | null>(null);
   const [retirementId, setRetirementId] = useState<string | null>(null);
+  const [showModal, setShowModal]     = useState(false);
   const { toasts, addToast, dismiss } = useToast();
   const { status: walletStatus, address: walletKey, refresh: refreshWallet } = useWalletStatus();
 
@@ -437,7 +438,7 @@ export default function RetirePage() {
       });
     } catch (e: any) {
       setTxStatus("failed");
-      addToast({ type: "error", title: "Retirement failed", message: e.message });
+      addToast({ type: "error", title: "Retirement failed", message: getContractErrorMessage(e) });
     }
   }
 
@@ -533,7 +534,7 @@ export default function RetirePage() {
               fontSize: "0.9rem", fontWeight: 700, textDecoration: "none",
             }}
           >
-            View & Download Certificate →
+            View &amp; Download Certificate →
           </a>
         )}
 
@@ -559,6 +560,16 @@ export default function RetirePage() {
           </button>
         )}
       </div>
+
+      {showModal && (
+        <RetireConfirmModal
+          amount={amount}
+          beneficiary={beneficiary}
+          reason={reason}
+          onConfirm={handleRetire}
+          onCancel={() => setShowModal(false)}
+        />
+      )}
 
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>

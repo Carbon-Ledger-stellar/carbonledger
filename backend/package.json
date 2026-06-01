@@ -7,8 +7,9 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
-    "test": "jest --passWithNoTests",
+    "test": "jest --passWithNoTests --coverage",
     "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "test:e2e:watch": "jest --config ./test/jest-e2e.json --watch --runInBand",
@@ -39,8 +40,10 @@
     "testEnvironment": "node"
   },
   "dependencies": {
+    "@nest-lab/throttler-storage-redis": "1.2.0",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.1.24",
+    "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.21",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
@@ -55,18 +58,23 @@
     "class-validator": "^0.15.1",
     "form-data": "^4.0.5",
     "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
-    "pdfkit": "^0.18.0",
+    "pdfkit": "^0.13.0",
+    "pinata": "^2.1.0",
+    "qrcode": "^1.5.3",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "uuid": "^9.0.1",
+    "winston": "^3.14.2",
+    "winston-cloudwatch": "^6.3.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.21",
     "@nestjs/testing": "^11.1.21",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
-    "@types/multer": "^2.1.0",
     "@types/node": "^25.8.0",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^7.2.0",
@@ -74,7 +82,6 @@
     "prisma": "^5.22.0",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.9",
-    "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   }
 }

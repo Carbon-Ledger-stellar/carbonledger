@@ -154,6 +154,7 @@ services:
       DATABASE_URL:      postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@postgres:5432/carbonledger
       JWT_SECRET:        ${JWT_SECRET}
       JWT_EXPIRY:        7d
+      REDIS_URL:         redis://redis:6379
       STELLAR_NETWORK:   ${STELLAR_NETWORK:-testnet}
       STELLAR_RPC_URL:   ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
       FRONTEND_URL:      http://localhost:3000

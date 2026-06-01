@@ -3,6 +3,7 @@ import { ConsoleLogger, ForbiddenException, LogLevel, ValidationPipe, Versioning
 import { AppModule } from './app.module';
 import { PrismaService } from './prisma.service';
 import { CorrelationIdContext } from './logger/correlation-id.context';
+import { validateEnv } from './env.validation';
 import * as express from 'express';
 
 /**
@@ -33,6 +34,8 @@ class JsonLogger extends ConsoleLogger {
 }
 
 async function bootstrap() {
+  validateEnv();
+
   const logLevel = (process.env.LOG_LEVEL ?? 'info').toLowerCase() as LogLevel;
 
   const app = await NestFactory.create(AppModule, {
