@@ -38,12 +38,13 @@ export class BulkPurchaseDto {
 
 export class ListingsQueryDto {
   @IsString() @IsOptional() @MaxLength(64) methodology?: string;
-  @IsInt() @IsOptional() @Type(() => Number) vintage?: number;
+  @IsInt() @Min(1990) @Max(new Date().getFullYear() + 5) @IsOptional() @Type(() => Number) vintage?: number;
   @IsString() @IsOptional() @MaxLength(64) country?: string;
   @IsString() @IsOptional() @MaxLength(32) minPrice?: string;
   @IsString() @IsOptional() @MaxLength(32) maxPrice?: string;
   @IsString() @IsOptional() @MaxLength(128) search?: string;
   @IsString() @IsOptional() @MaxLength(128) cursor?: string;
+  @IsInt() @Min(1) @Max(1000) @IsOptional() @Type(() => Number) page?: number;
   @IsInt() @Min(1) @Max(100) @Type(() => Number) @IsOptional() limit?: number = 20;
 }
 
@@ -51,4 +52,6 @@ export class PaginatedListingsResponse {
   listings: any[];
   next_cursor?: string;
   total_count: number;
+  page?: number;
+  total_pages?: number;
 }

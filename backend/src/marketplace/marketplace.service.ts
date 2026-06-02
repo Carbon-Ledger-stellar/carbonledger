@@ -18,7 +18,18 @@ export class MarketplaceService {
     const cached = await this.cache.get<PaginatedListingsResponse>(cacheKey);
     if (cached) return cached;
 
-    const { methodology, vintage, country, minPrice, maxPrice, search, cursor, limit = 20 } = query;
+    const { methodology, vintage, country, minPrice, maxPrice, search, cursor, page, limit = 20 } = query;
+
+    // Validate price range values
+    if (minPrice !== undefined && isNaN(parseFloat(minPrice))) {
+      throw new BadRequestException("minPrice must be a valid numeric string");
+    }
+    if (maxPrice !== undefined && isNaN(parseFloat(maxPrice))) {
+      throw new BadRequestException("maxPrice must be a valid numeric string");
+    }
+    if (minPrice !== undefined && maxPrice !== undefined && parseFloat(minPrice) > parseFloat(maxPrice)) {
+      throw new BadRequestException("minPrice must be less than or equal to maxPrice");
+    }
 
     const where: any = {
       status: { in: ["Active", "PartiallyFilled"] },
@@ -38,13 +49,29 @@ export class MarketplaceService {
       ];
     }
 
+    const orderBy = [{ vintageYear: "desc" as const }, { createdAt: "desc" as const }];
+
+    // Support both page-based and cursor-based pagination
+    if (page !== undefined) {
+      const skip = (page - 1) * limit;
+      const [listings, total_count] = await Promise.all([
+        this.prisma.marketListing.findMany({ where, orderBy, take: limit, skip }),
+        this.prisma.marketListing.count({ where }),
+      ]);
+      const result: PaginatedListingsResponse = {
+        listings,
+        total_count,
+        page,
+        total_pages: Math.ceil(total_count / limit),
+      };
+      await this.cache.set(cacheKey, result);
+      return result;
+    }
+
     const [listings, total_count] = await Promise.all([
       this.prisma.marketListing.findMany({
         where,
-        orderBy: [
-          { vintageYear: "desc" },
-          { createdAt: "desc" },
-        ],
+        orderBy,
         take: limit + 1,
         cursor: cursor ? { id: cursor } : undefined,
         skip: cursor ? 1 : 0,
@@ -56,7 +83,7 @@ export class MarketplaceService {
     const next_cursor = hasMore ? listings[listings.length - 2].id : undefined;
     if (hasMore) listings.pop();
 
-    const result = { listings, next_cursor, total_count };
+    const result: PaginatedListingsResponse = { listings, next_cursor, total_count };
     await this.cache.set(cacheKey, result);
     return result;
   }
