@@ -4,13 +4,21 @@ import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, Paginate
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
+import { RedisService } from "../redis.service";
+import { RegistryContractClient } from "./registry-contract.client";
+import { OracleContractClient } from "../oracle/oracle-contract.client";
 
 @Injectable()
 export class ProjectsService {
+  private readonly PROJECT_CACHE_TTL = 60; // seconds
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
+    private readonly redis: RedisService,
+    private readonly registryClient: RegistryContractClient,
+    private readonly oracleClient: OracleContractClient,
   ) {}
 
   async findAll(filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number }) {
@@ -149,9 +157,34 @@ export class ProjectsService {
   }
 
   async findOne(projectId: string) {
+    const cacheKey = `project:${projectId}`;
+    const cached = await this.redis.get(cacheKey);
+    if (cached) return cached;
+
     const project = await this.prisma.carbonProject.findUnique({ where: { projectId } });
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
-    return project;
+
+    // Aggregate from registry and oracle contracts in parallel
+    const [registryData, monitoringCurrent] = await Promise.all([
+      this.registryClient.getProject(projectId),
+      this.oracleClient.isMonitoringCurrent(projectId),
+    ]);
+
+    const result = {
+      ...project,
+      onChain: {
+        status:           registryData?.status           ?? null,
+        methodologyScore: registryData?.methodologyScore ?? null,
+        isVerified:       registryData?.isVerified       ?? null,
+        verifierAddress:  registryData?.verifierAddress  ?? null,
+      },
+      oracle: {
+        monitoringCurrent,
+      },
+    };
+
+    await this.redis.set(cacheKey, result, this.PROJECT_CACHE_TTL);
+    return result;
   }
 
   async register(dto: RegisterProjectDto) {
