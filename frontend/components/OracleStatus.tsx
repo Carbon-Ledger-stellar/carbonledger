@@ -2,12 +2,19 @@
 
 import { useOracleHealth, OracleHealth } from "../lib/admin-api";
 import { colors, typography, spacing, borderRadius, shadows } from "../styles/design-system";
+import Tooltip from "./Tooltip";
 
 // Spec thresholds
 const AMBER_DAYS = 300;
 const RED_DAYS   = 365;
 
 type Status = "green" | "amber" | "red";
+
+const TOOLTIP_TEXT: Record<Status, string> = {
+  green: "Healthy — monitoring data is within the last 365 days.\nNew credit issuance is not affected.",
+  amber: "Warning — monitoring data is approaching the 365-day limit.\nIssuance may be blocked soon if data is not refreshed.",
+  red:   "Stale — monitoring data is older than 365 days.\nNew credit issuance is blocked until fresh data is submitted.",
+};
 
 function getStatus(o: OracleHealth): Status {
   if (o.daysSinceUpdate >= RED_DAYS)   return "red";
@@ -164,19 +171,22 @@ export default function OracleStatus() {
                   </p>
                 </div>
 
-                <span style={{
-                  fontFamily:   typography.fontFamily.sans,
-                  fontSize:     typography.fontSize.xs,
-                  fontWeight:   typography.fontWeight.medium,
-                  color:        st.text,
-                  background:   st.bg,
-                  border:       `1px solid ${st.border}`,
-                  padding:      `2px ${spacing[2]}`,
-                  borderRadius: borderRadius.full,
-                  whiteSpace:   "nowrap",
-                }}>
-                  {st.label}
-                </span>
+                <Tooltip content={TOOLTIP_TEXT[status]}>
+                  <span style={{
+                    fontFamily:   typography.fontFamily.sans,
+                    fontSize:     typography.fontSize.xs,
+                    fontWeight:   typography.fontWeight.medium,
+                    color:        st.text,
+                    background:   st.bg,
+                    border:       `1px solid ${st.border}`,
+                    padding:      `2px ${spacing[2]}`,
+                    borderRadius: borderRadius.full,
+                    whiteSpace:   "nowrap",
+                    cursor:       "default",
+                  }}>
+                    {st.label}
+                  </span>
+                </Tooltip>
               </li>
             );
           })}
