@@ -142,7 +142,7 @@ Plus complete testnet setup including:
    - Better test documentation
    - Enhanced contributing section
 
-2. **backend/docs/PROJECTS_API.md** (referenced)
+2. **backend/docs/API_REFERENCE.md** (referenced)
    - Existing API documentation
 
 ## 🎯 Key Features

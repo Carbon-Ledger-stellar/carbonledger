@@ -3,15 +3,23 @@ import {
   UseGuards, Request,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import { RolesGuard, Roles } from '../auth/roles.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/decorators';
 import { AdminService } from './admin.service';
-import { VerifierWhitelistDto, UpdateTreasuryDto } from './admin.dto';
+import { VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto } from './admin.dto';
 
 @Controller('admin')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Roles('admin')
 export class AdminController {
   constructor(private readonly admin: AdminService) {}
+
+  // ── Role assignment ─────────────────────────────────────────────────────────
+
+  @Post('users/:publicKey/role')
+  assignRole(@Param('publicKey') publicKey: string, @Body() dto: AssignRoleDto) {
+    return this.admin.assignRole(publicKey, dto.role);
+  }
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
 

@@ -9,6 +9,7 @@ import { IpfsService } from "../common/ipfs.service";
 import { CertificatesModule } from "./certificates.module";
 import { UploadsModule } from "../uploads/uploads.module";
 import { QueueModule } from "../queue/queue.module";
+import { CertificateService } from "./certificate.service";
 
 @Module({
   imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule],
@@ -18,6 +19,7 @@ import { QueueModule } from "../queue/queue.module";
     PrismaService,
     IpfsService,
     RetirementIndexerService,
+    CertificateService,
   ],
 })
 export class RetirementsModule {}

@@ -3,6 +3,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma.service';
 import { QUEUE_NAME, JobType } from '../queue/queue.constants';
+import { RedisService } from '../redis.service';
+import { projectDetailCacheKey } from '../cache/cache.constants';
 import {
     IsString, IsInt, IsPositive, Min, Max, Length, Matches, IsNumber, MaxLength,
 } from 'class-validator';
@@ -44,6 +46,7 @@ export class OracleService {
   constructor(
     private readonly prisma: PrismaService,
     @InjectQueue(QUEUE_NAME) private readonly queue: Queue,
+    private readonly redisService: RedisService,
   ) {}
 
   /**
@@ -178,6 +181,7 @@ export class OracleService {
       where: { projectId: dto.projectId },
       data:  { status: 'Suspended' },
     });
+    await this.redisService.del(projectDetailCacheKey(dto.projectId));
     this.logger.warn(
       `Project flagged projectId=${dto.projectId} reason="${dto.reason}" at=${new Date().toISOString()}`,
     );

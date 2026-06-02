@@ -1,5 +1,7 @@
 # Projects API Documentation
 
+> For the full backend API reference including auth, marketplace, credits, oracle, retirements, and admin endpoints, see [API_REFERENCE.md](./API_REFERENCE.md).
+
 ## Overview
 
 The Projects API provides comprehensive search and filtering capabilities for carbon offset projects. It supports full-text search, multi-criteria filtering, and cursor-based pagination with sub-200ms response times.

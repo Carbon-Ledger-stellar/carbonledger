@@ -9,6 +9,7 @@ export default function AuditPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isNotFound, setIsNotFound] = useState(false);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,11 +18,18 @@ export default function AuditPage() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setIsNotFound(false);
 
     try {
       // Call your backend API (no wallet required)
       const response = await fetch(`/api/audit/search?type=${searchType}&q=${encodeURIComponent(searchTerm)}`);
       
+      if (response.status === 404) {
+        setIsNotFound(true);
+        setLoading(false);
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`Search failed: ${response.statusText}`);
       }
@@ -94,9 +102,30 @@ export default function AuditPage() {
         )}
 
         {/* Error State */}
-        {error && (
+        {error && !isNotFound && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-8">
             <p className="text-red-700">{error}</p>
+          </div>
+        )}
+
+        {/* Empty State / Not Found */}
+        {isNotFound && (
+          <div 
+            className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow-sm border border-gray-100 text-center mb-8"
+            role="alert" 
+            aria-live="polite"
+          >
+            <div className="text-6xl mb-4">🔍</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">No Records Found</h2>
+            <p className="text-gray-600 max-w-md mb-6">
+              We couldn't find any records matching your search. Please check for typos and try again.
+            </p>
+            <a 
+              href="/projects" 
+              className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-semibold"
+            >
+              Browse All Projects
+            </a>
           </div>
         )}
 
@@ -156,7 +185,7 @@ export default function AuditPage() {
         )}
 
         {/* Help Section */}
-        {!result && !loading && (
+        {!result && !loading && !isNotFound && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mt-8">
             <h3 className="text-lg font-semibold text-blue-900 mb-2">How to use the audit explorer</h3>
             <ul className="space-y-2 text-blue-800">

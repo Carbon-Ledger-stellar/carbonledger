@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { ThemeProvider } from '../lib/theme-context';
+import Navbar from '../components/Navbar';
 
 export const metadata: Metadata = {
   title: 'Carbon Ledger',
@@ -21,6 +22,7 @@ export default function RootLayout({
        <body>
          <a href="#main-content" className="skip-link">Skip to main content</a>
          <ThemeProvider>
+           <Navbar />
            <main id="main-content">
              {children}
            </main>

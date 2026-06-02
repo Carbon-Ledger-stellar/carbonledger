@@ -193,7 +193,7 @@ docker-compose up --build
 - **Full Setup Guide:** [CONTRIBUTING.md](../CONTRIBUTING.md)
 - **Troubleshooting:** [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - **Architecture:** [docs/adr/](adr/)
-- **API Documentation:** [backend/docs/PROJECTS_API.md](../backend/docs/PROJECTS_API.md)
+- **API Documentation:** [backend/docs/API_REFERENCE.md](../backend/docs/API_REFERENCE.md)
 
 ---
 

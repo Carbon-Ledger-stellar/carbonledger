@@ -2,8 +2,10 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma.service';
+import { RedisService } from '../redis.service';
 import { WEBHOOK_QUEUE_NAME } from '../queue/queue.constants';
 import { HorizonEvent } from './horizon.listener';
+import { projectDetailCacheKey } from '../cache/cache.constants';
 
 /**
  * Processes HORIZON_EVENT jobs dequeued from the webhook queue.
@@ -16,7 +18,10 @@ import { HorizonEvent } from './horizon.listener';
 export class WebhookProcessor extends WorkerHost {
   private readonly logger = new Logger(WebhookProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redisService: RedisService,
+  ) {
     super();
   }
 
@@ -103,6 +108,7 @@ export class WebhookProcessor extends WorkerHost {
       where: { projectId: String(project_id) },
       data:  { status: 'Verified' },
     });
+    await this.redisService.del(projectDetailCacheKey(String(project_id)));
 
     this.logger.log(`DB updated: project_verified project=${project_id}`);
     return { project_id };

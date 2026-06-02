@@ -21,21 +21,70 @@ import { PrismaService } from "./prisma.service";
 import { VerifiersModule } from "./verifiers/verifiers.module";
 import { ThrottlerExceptionFilter, ResponseAlreadySentFilter } from "./common/throttler-exception.filter";
 import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
+import { StellarNetworkService } from './common/stellar-network.service';
+import { StellarUnavailableExceptionFilter } from './common/stellar-unavailable.filter';
 import { LoggerModule } from "./logger/logger.module";
 import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
+
+import { Res, HttpStatus } from "@nestjs/common";
+import { Response } from "express";
+import { Server } from "@stellar/stellar-sdk";
+import { Redis } from "ioredis";
 
 @Controller("health")
 class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  check() {
-    return {
-      status: "ok",
+  async check(@Res() res: Response) {
+    const checks = {
+      postgres: "down",
+      redis: "down",
+      stellar: "down",
+    };
+    let allUp = true;
+
+    // Check Postgres
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+      checks.postgres = "up";
+    } catch (e) {
+      allUp = false;
+    }
+
+    // Check Redis
+    try {
+      const redis = new Redis(process.env.REDIS_URL ?? `redis://${process.env.REDIS_HOST ?? "localhost"}:${process.env.REDIS_PORT ?? "6379"}`);
+      await redis.ping();
+      redis.disconnect();
+      checks.redis = "up";
+    } catch (e) {
+      allUp = false;
+    }
+
+    // Check Stellar
+    try {
+      const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
+      const server = new Server(horizonUrl);
+      await server.root();
+      checks.stellar = "up";
+    } catch (e) {
+      allUp = false;
+    }
+
+    const payload = {
+      status: allUp ? "ok" : "error",
       stellar_network: process.env.STELLAR_NETWORK || "testnet",
       timestamp: new Date().toISOString(),
+      checks,
     };
+
+    if (allUp) {
+      return res.status(HttpStatus.OK).json(payload);
+    } else {
+      return res.status(HttpStatus.SERVICE_UNAVAILABLE).json(payload);
+    }
   }
 
   @Get("pool")
@@ -88,13 +137,19 @@ class HealthController {
     VerifiersModule,
     AdminModule,
     PublicApiModule,
+    RedisModule,
   ],
   controllers: [HealthController],
   providers: [
     PrismaService,
+    StellarNetworkService,
     {
       provide: APP_FILTER,
       useClass: ThrottlerExceptionFilter,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: StellarUnavailableExceptionFilter,
     },
     {
       provide: APP_FILTER,

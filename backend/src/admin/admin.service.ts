@@ -33,6 +33,14 @@ export class AdminService {
     return this.prisma.user.findMany({ where: { role: 'verifier' } });
   }
 
+  assignRole(publicKey: string, role: string) {
+    return this.prisma.user.upsert({
+      where:  { publicKey },
+      update: { role },
+      create: { publicKey, role },
+    });
+  }
+
   // ── Treasury ────────────────────────────────────────────────────────────────
 
   async updateTreasury(address: string) {

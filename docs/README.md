@@ -48,7 +48,7 @@ Technical references:
 
 | Document | Description | Audience |
 |----------|-------------|----------|
-| **[Projects API](../backend/docs/PROJECTS_API.md)** | Backend API endpoints | Frontend devs |
+| **[Backend API Reference](../backend/docs/API_REFERENCE.md)** | Backend API endpoints and auth flow | Frontend devs, integrators |
 | **[Error Code Reference](error-codes.md)** | All 23 contract error codes with causes, resolutions, and frontend mapping | Frontend devs, integrators |
 
 ---

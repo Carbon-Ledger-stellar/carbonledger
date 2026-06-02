@@ -543,7 +543,7 @@ export default function RetirePage() {
         ) : (
           <button
             type="button"
-            onClick={handleRetire}
+            onClick={() => setShowModal(true)}
             disabled={isDisabled}
             aria-disabled={isDisabled}
             aria-describedby="retire-warning"
@@ -566,7 +566,7 @@ export default function RetirePage() {
           amount={amount}
           beneficiary={beneficiary}
           reason={reason}
-          onConfirm={handleRetire}
+          onConfirm={() => { setShowModal(false); handleRetire(); }}
           onCancel={() => setShowModal(false)}
         />
       )}

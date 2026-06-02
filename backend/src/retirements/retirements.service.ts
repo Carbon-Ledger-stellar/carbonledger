@@ -1,6 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { IpfsService } from "../common/ipfs.service";
+import { RetireCreditsDto } from "./retirements.dto";
+import { CertificateService } from "./certificate.service";
+import { v4 as uuidv4 } from "uuid";
 
 export interface PaginatedRetirementsResponse {
   retirements: any[];
@@ -15,7 +18,57 @@ export class RetirementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ipfsService: IpfsService,
+    private readonly certificateService: CertificateService,
   ) {}
+
+  async retireCredits(dto: RetireCreditsDto) {
+    // Check if already retired (same batchId + retiredBy combination)
+    const existing = await this.prisma.retirementRecord.findFirst({
+      where: { batchId: dto.batchId, retiredBy: dto.retiredBy },
+    });
+    if (existing) {
+      throw new ConflictException('Credits already retired (AlreadyRetired)');
+    }
+
+    const batch = await this.prisma.creditBatch.findUnique({ where: { batchId: dto.batchId } });
+    if (!batch) throw new NotFoundException(`Credit batch ${dto.batchId} not found`);
+
+    const retirementId = uuidv4();
+    const retirement = await this.prisma.retirementRecord.create({
+      data: {
+        retirementId,
+        batchId: dto.batchId,
+        projectId: dto.projectId,
+        amount: dto.amount,
+        retiredBy: dto.retiredBy,
+        beneficiary: dto.beneficiary,
+        retirementReason: dto.retirementReason,
+        vintageYear: batch.vintageYear,
+        serialStart: batch.serialStart,
+        serialEnd: batch.serialEnd,
+        serialNumbers: [],
+        txHash: dto.txHash,
+      },
+    });
+
+    // Generate and pin certificate to IPFS
+    let certificateCid: string | null = null;
+    try {
+      const result = await this.certificateService.generateAndPinCertificate(retirementId);
+      certificateCid = result.cid;
+    } catch (err) {
+      this.logger.warn(`Certificate generation failed for ${retirementId}: ${err.message}`);
+    }
+
+    return {
+      retirementId: retirement.retirementId,
+      txHash: retirement.txHash,
+      certificateCid,
+      certificateUrl: certificateCid
+        ? `https://gateway.pinata.cloud/ipfs/${certificateCid}`
+        : null,
+    };
+  }
 
   async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
     const take = Math.min(Math.max(limit, 1), 100);
@@ -44,7 +97,7 @@ export class RetirementsService {
       where: { retirementId },
       include: { project: true, batch: true },
     });
-    if (!r) throw new NotFoundException(`Retirement ${retirementId} not found`);
+    if (!r) throw new NotFoundException('Retirement not found');
     return r;
   }
 

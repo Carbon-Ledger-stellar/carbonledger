@@ -5,6 +5,7 @@ import { PrismaService } from './prisma.service';
 import { CorrelationIdContext } from './logger/correlation-id.context';
 import { validateEnv } from './env.validation';
 import * as express from 'express';
+import { StellarNetworkService } from './common/stellar-network.service';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -86,12 +87,13 @@ async function bootstrap() {
      optionsSuccessStatus: 204,
    });
 
+  const stellarNetwork = app.get(StellarNetworkService);
   const httpAdapter = app.getHttpAdapter();
   httpAdapter.get("/health", (_req: any, res: any) => {
     res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Readiness — DB and Redis must be reachable
+  // Readiness — DB, Redis and Stellar connectivity must be reachable
   httpAdapter.get('/health/ready', async (_req: any, res: any) => {
     const checks: Record<string, string> = {};
     let healthy = true;
@@ -125,6 +127,20 @@ async function bootstrap() {
       healthy = false;
     }
 
+    // Stellar Horizon / Soroban RPC check
+    try {
+      const stellarCheck = await stellarNetwork.checkConnectivity();
+      if (!stellarCheck.healthy) {
+        healthy = false;
+        checks.stellar = `horizon: ${stellarCheck.horizon.details ?? 'ok'}, rpc: ${stellarCheck.rpc.details ?? 'ok'}`;
+      } else {
+        checks.stellar = 'ok';
+      }
+    } catch (err: any) {
+      checks.stellar = `error: ${err.message}`;
+      healthy = false;
+    }
+
     res.status(healthy ? 200 : 503).json({
       status: healthy ? 'ok' : 'degraded',
       checks,
@@ -134,4 +150,13 @@ async function bootstrap() {
 
   await app.listen(process.env.PORT ?? 3001);
 }
+
+process.on('unhandledRejection', (reason) => {
+  console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event: 'unhandledRejection',
+    reason: reason instanceof Error ? reason.stack || reason.message : reason,
+  }));
+});
+
 bootstrap();

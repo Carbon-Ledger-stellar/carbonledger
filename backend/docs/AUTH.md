@@ -116,6 +116,62 @@ Client                          Backend
 
 ---
 
+## Auth API schema
+
+### `GET /api/v1/auth/challenge`
+
+**Request**
+```http
+GET /api/v1/auth/challenge?publicKey=GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+```
+
+**Response**
+```json
+{
+  "nonce": "carbonledger:abc123-def456",
+  "expiresAt": "2026-06-01T12:34:56.000Z"
+}
+```
+
+### `POST /api/v1/auth/verify`
+
+**Request**
+```json
+{
+  "publicKey": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "signature": "MEUCIQD...",
+  "nonce": "carbonledger:abc123-def456",
+  "role": "project_developer"
+}
+```
+
+**Response**
+```json
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "eyJhbGci..."
+}
+```
+
+### `POST /api/v1/auth/refresh`
+
+**Request**
+```json
+{
+  "refreshToken": "eyJhbGci..."
+}
+```
+
+**Response**
+```json
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "eyJhbGci..."
+}
+```
+
+---
+
 ## Token Details
 
 | Token | Lifetime | Secret env var |
@@ -131,9 +187,9 @@ Both tokens carry `{ sub: publicKey, role, type }`. The `type` claim (`"access"`
 
 | Endpoint | Limit |
 |----------|-------|
-| `GET /auth/challenge` | 10 requests / minute / IP |
-| `POST /auth/verify` | 5 requests / minute / IP |
-| `POST /auth/refresh` | 10 requests / minute / IP |
+| `GET /api/v1/auth/challenge` | 10 requests / minute / IP |
+| `POST /api/v1/auth/verify` | 5 requests / minute / IP |
+| `POST /api/v1/auth/refresh` | 10 requests / minute / IP |
 
 Exceeding the limit returns `429 Too Many Requests`.
 

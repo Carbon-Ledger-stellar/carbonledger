@@ -1,24 +1,20 @@
-import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
-import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, PaginatedProjectsResponse, ProjectStatus, OracleFreshness } from "./projects.dto";
+import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, PaginatedProjectsResponse, ProjectStatus, OracleFreshness, CreateProjectDto } from "./projects.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
-import { RedisService } from "../redis.service";
-import { RegistryContractClient } from "./registry-contract.client";
-import { OracleContractClient } from "../oracle/oracle-contract.client";
+import { v4 as uuidv4 } from "uuid";
 
 @Injectable()
 export class ProjectsService {
-  private readonly PROJECT_CACHE_TTL = 60; // seconds
+  private readonly logger = new Logger(ProjectsService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
-    private readonly redis: RedisService,
-    private readonly registryClient: RegistryContractClient,
-    private readonly oracleClient: OracleContractClient,
+    private readonly redisService: RedisService,
   ) {}
 
   async findAll(filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number }) {
@@ -157,34 +153,21 @@ export class ProjectsService {
   }
 
   async findOne(projectId: string) {
-    const cacheKey = `project:${projectId}`;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) return cached;
+    const cacheKey = projectDetailCacheKey(projectId);
+    const cachedProject = await this.redisService.get<any>(cacheKey);
+
+    if (cachedProject) {
+      return cachedProject;
+    }
+
+    this.logger.log(`Project detail cache miss: ${cacheKey}`);
 
     const project = await this.prisma.carbonProject.findUnique({ where: { projectId } });
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
 
-    // Aggregate from registry and oracle contracts in parallel
-    const [registryData, monitoringCurrent] = await Promise.all([
-      this.registryClient.getProject(projectId),
-      this.oracleClient.isMonitoringCurrent(projectId),
-    ]);
-
-    const result = {
-      ...project,
-      onChain: {
-        status:           registryData?.status           ?? null,
-        methodologyScore: registryData?.methodologyScore ?? null,
-        isVerified:       registryData?.isVerified       ?? null,
-        verifierAddress:  registryData?.verifierAddress  ?? null,
-      },
-      oracle: {
-        monitoringCurrent,
-      },
-    };
-
-    await this.redis.set(cacheKey, result, this.PROJECT_CACHE_TTL);
-    return result;
+    await this.redisService.set(cacheKey, project, PROJECT_DETAIL_CACHE_TTL_SECONDS);
+    if (!project) throw new NotFoundException('Project not found');
+    return project;
   }
 
   async register(dto: RegisterProjectDto) {
@@ -196,6 +179,36 @@ export class ProjectsService {
     return this.prisma.carbonProject.create({ data: dto });
   }
 
+  async createProject(dto: CreateProjectDto, ownerAddress?: string) {
+    const projectId = uuidv4();
+    // Upload documents to IPFS: store CIDs as metadataCid (first doc) and coordinates as JSON
+    const metadataCid = dto.documents[0] ?? '';
+    const data = {
+      projectId,
+      name: dto.name,
+      methodology: dto.methodology,
+      description: dto.description,
+      coordinates: dto.coordinates as any,
+      country: dto.country ?? '',
+      projectType: dto.projectType ?? 'carbon_offset',
+      ownerAddress: ownerAddress ?? dto.ownerAddress ?? '',
+      verifierAddress: dto.verifierAddress ?? '',
+      vintageYear: dto.vintageYear ?? new Date().getFullYear(),
+      methodologyScore: dto.methodologyScore ?? 70,
+      metadataCid,
+      status: 'Pending',
+    };
+    const project = await this.prisma.carbonProject.create({ data });
+    // Return project ID and a placeholder txHash (contract call would happen here)
+    return {
+      projectId: project.projectId,
+      id: project.id,
+      txHash: null,
+      status: project.status,
+      metadataCid,
+    };
+  }
+
   async updateStatus(projectId: string, dto: UpdateProjectStatusDto, actor = 'admin') {
     const project = await this.findOne(projectId);
     await this.stateMachine.transition(
@@ -205,10 +218,12 @@ export class ProjectsService {
       actor,
       dto.reason,
     );
-    return this.prisma.carbonProject.update({
+    const updated = await this.prisma.carbonProject.update({
       where: { projectId },
       data:  { status: dto.status },
     });
+    await this.invalidateProjectCache(projectId);
+    return updated;
   }
 
   async verify(projectId: string, verifierPublicKey: string) {
@@ -234,6 +249,7 @@ export class ProjectsService {
       });
     }
 
+    await this.invalidateProjectCache(projectId);
     return updated;
   }
 
@@ -246,9 +262,11 @@ export class ProjectsService {
       verifierPublicKey,
       reason,
     );
-    return this.prisma.carbonProject.update({
+    const updated = await this.prisma.carbonProject.update({
       where: { projectId },
       data:  { status: 'Rejected' },
     });
+    await this.invalidateProjectCache(projectId);
+    return updated;
   }
 }
