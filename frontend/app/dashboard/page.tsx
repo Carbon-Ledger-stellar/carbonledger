@@ -1,10 +1,19 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import ErrorBoundary from '../../components/ErrorBoundary';
+import LoadingSkeleton from '../../components/LoadingSkeleton';
 
 export default function DashboardPage() {
   const isMobile = useIsMobile();
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Simulate async data fetch; replace with real API call when available
+    const t = setTimeout(() => setIsLoading(false), 0);
+    return () => clearTimeout(t);
+  }, []);
 
   const stats = [
     { label: 'Total Credits', value: '1,250 tons' },
@@ -28,7 +37,22 @@ export default function DashboardPage() {
         Dashboard
       </h1>
 
-      {hasData ? (
+      {isLoading ? (
+        <>
+          <div className="dashboard-grid" style={{ marginBottom: '32px' }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="card" style={{ height: '96px' }}>
+                <LoadingSkeleton variant="PoolStats" />
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} style={{ height: '48px', borderRadius: '8px', background: '#f3f4f6', animation: 'cl-pulse 1.5s ease-in-out infinite' }} />
+            ))}
+          </div>
+        </>
+      ) : hasData ? (
         <>
           {/* Stats Grid */}
           <div className="dashboard-grid" style={{ marginBottom: '32px' }}>
