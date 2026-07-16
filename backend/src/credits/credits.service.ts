@@ -4,6 +4,8 @@ import { MintCreditsDto, RetireCreditsDto } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { randomBytes } from "crypto";
+import { EventSourcingService } from "../events/event-sourcing.service";
+import { CreditEventType } from "../events/credit-event.types";
 
 /**
  * Serial numbers are stored as fixed-point integers scaled by 100.
@@ -24,7 +26,7 @@ export class CreditsService {
     private readonly ipfsService: IpfsService,
   ) {}
 
-  async mintCredits(dto: MintCreditsDto) {
+  async mintCredits(dto: MintCreditsDto, actor?: string) {
     const existing = await this.prisma.creditBatch.findUnique({ where: { batchId: dto.batchId } });
     if (existing) throw new BadRequestException(`Batch ${dto.batchId} already exists`);
 

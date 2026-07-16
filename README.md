@@ -11,6 +11,19 @@
 ![Status](https://img.shields.io/badge/Status-In_Development-yellow?style=for-the-badge)
 
 ---
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/4b0f600a-b771-4a4f-949b-d5516055bccb" />
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/84e0166c-abcb-434b-9cb5-d43c6150bb42" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/7c302ff7-779a-4d69-9201-bd049246061b" />
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/31782501-adce-4a49-8674-bbe7b96be905" />
+
+
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/6820e80e-389f-4769-b440-94be5077adf1" />
+
+
+website https://carbon-truth-chain.lovable.app/
+website https://v0.app/dev-fatima-24s-projects/chat/frontend-build-rJlPO6dX1jO?f=1
 
 ##  Table of Contents
 

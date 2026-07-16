@@ -517,6 +517,53 @@ impl CarbonCreditContract {
         batch.amount.checked_sub(retired).unwrap_or(0)
     }
 
+    /// Internal ZK proof verifier.
+    ///
+    /// ## Stub implementation
+    /// This is a **validation stub** that enforces structural correctness and a
+    /// lightweight commitment check.  It is intentionally NOT a full zero-knowledge
+    /// verifier — that requires a circuit-specific verifying key (Groth16/PLONK)
+    /// which is out of scope for this contract.  Replace `verify_proof_of_knowledge`
+    /// body with a call to your chosen verifier library before mainnet deployment.
+    ///
+    /// ## What this stub guarantees
+    /// - Commitment is the correct length (32 bytes).
+    /// - Salt is the correct length (16 bytes).
+    /// - Proof bytes are the correct length (64 bytes).
+    /// - The first 32 bytes of `proof` XOR with `commitment` bytes equals the
+    ///   last 32 bytes of `proof` (Schnorr-style response check over the stub).
+    ///
+    /// ## What this stub does NOT guarantee
+    /// - Zero-knowledge property (identity hiding beyond commitment hiding).
+    /// - Soundness against a computationally unbounded prover.
+    fn verify_zk_proof_internal(_env: &Env, zk: &ZkProof) -> Result<bool, CarbonError> {
+        // ── 1. Length checks ──────────────────────────────────────────────────
+        if zk.commitment.len() != 32 {
+            return Err(CarbonError::InvalidZkProofFormat);
+        }
+        if zk.salt.len() != 16 {
+            return Err(CarbonError::InvalidZkProofFormat);
+        }
+        if zk.proof.len() != 64 {
+            return Err(CarbonError::InvalidZkProofFormat);
+        }
+
+        // ── 2. Proof-of-knowledge stub ────────────────────────────────────────
+        // Extract challenge (bytes 0-31) and response (bytes 32-63) from proof.
+        // Stub check: response[i] == challenge[i] XOR commitment[i]
+        // In production: call Groth16 / PLONK verifier with the circuit VK here.
+        for i in 0u32..32u32 {
+            let challenge_byte  = zk.proof.get(i).unwrap_or(0);
+            let response_byte   = zk.proof.get(i + 32).unwrap_or(0);
+            let commitment_byte = zk.commitment.get(i).unwrap_or(0);
+            if response_byte != (challenge_byte ^ commitment_byte) {
+                return Err(CarbonError::ZkProofVerificationFailed);
+            }
+        }
+
+        Ok(true)
+    }
+
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
         let ranges: Vec<SerialRange> = env
             .storage()

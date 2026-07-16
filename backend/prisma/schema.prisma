@@ -343,3 +343,22 @@ model OracleUpdate {
   @@index([success])
   @@index([createdAt])
 }
+
+/// Append-only credit event log — never updated or deleted.
+/// Every mutation to a CreditBatch (mint / transfer / retire / list / delist)
+/// produces one row here.  The `signature` field holds an HMAC-SHA256 digest
+/// over the canonical payload so consumers can detect tampering.
+model CreditEvent {
+  id           String   @id @default(cuid())
+  creditBatchId String
+  eventType    String   /// mint | transfer | retire | list | delist
+  actor        String   /// public key of the account that triggered the event
+  oldState     Json?    /// snapshot of relevant fields before the mutation
+  newState     Json?    /// snapshot of relevant fields after the mutation
+  timestamp    DateTime @default(now())
+  txHash       String   /// Stellar transaction hash (or deterministic stub for off-chain ops)
+  signature    String   /// HMAC-SHA256(id + creditBatchId + eventType + actor + timestamp + txHash)
+
+  @@index([creditBatchId])
+  @@index([timestamp])
+}
