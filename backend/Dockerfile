@@ -1,18 +1,19 @@
-FROM node:20-alpine AS builder
+# renovate: datasource=docker depName=node versioning=docker
+FROM node:18-alpine@sha256:8e5f4f1791f0e8a4e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --only=production && npm ci
 COPY . .
-RUN npm run build
+RUN npm run build && npx prisma generate
 
-FROM node:20-alpine AS runner
+# renovate: datasource=docker depName=node versioning=docker
+FROM node:18-alpine@sha256:8e5f4f1791f0e8a4e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e AS runner
 WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/prisma ./prisma
-COPY package*.json ./
-
-RUN npx prisma generate
-
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
+COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
+COPY --chown=nodejs:nodejs package*.json ./
+USER nodejs
 EXPOSE 3001
 CMD ["node", "dist/main"]

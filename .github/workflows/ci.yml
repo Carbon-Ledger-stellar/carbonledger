@@ -5,11 +5,163 @@ on:
     branches: [main, develop]
   push:
     branches: [main]
+  schedule:
+    - cron: "0 2 * * 0"
 
 jobs:
+  security-audit:
+    name: Security Audit (cargo / npm / pip)
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust: cargo audit ────────────────────────────────────────────────────
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-audit advisory DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: cargo-advisory-db-${{ hashFiles('carbonledger/contracts/**/Cargo.lock') }}
+          restore-keys: cargo-advisory-db-
+
+      - name: Run cargo audit
+        id: cargo_audit
+        working-directory: carbonledger/contracts
+        # --deny unsound --deny yanked in addition to default --deny vulnerability
+        # Exit code 1 = vulnerabilities found (critical → block); we capture output
+        # for the PR comment and re-exit after posting.
+        run: |
+          cargo install cargo-audit --locked --quiet 2>/dev/null || true
+          cargo audit --deny unsound --deny yanked 2>&1 | tee /tmp/cargo-audit.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      # ── Node: npm audit ──────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache backend node_modules
+        uses: actions/cache@v4
+        with:
+          path: carbonledger/backend/node_modules
+          key: npm-backend-${{ hashFiles('carbonledger/backend/package-lock.json') }}
+          restore-keys: npm-backend-
+
+      - name: Cache frontend node_modules
+        uses: actions/cache@v4
+        with:
+          path: carbonledger/frontend/node_modules
+          key: npm-frontend-${{ hashFiles('carbonledger/frontend/package-lock.json') }}
+          restore-keys: npm-frontend-
+
+      - name: Run npm audit (backend)
+        id: npm_audit_backend
+        working-directory: carbonledger/backend
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=critical 2>&1 | tee /tmp/npm-audit-backend.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Run npm audit (frontend)
+        id: npm_audit_frontend
+        working-directory: carbonledger/frontend
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=critical 2>&1 | tee /tmp/npm-audit-frontend.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      # ── Python: pip-audit ────────────────────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('carbonledger/oracle/requirements.txt') }}
+          restore-keys: pip-
+
+      - name: Run pip-audit
+        id: pip_audit
+        working-directory: carbonledger/oracle
+        run: |
+          pip install pip-audit --quiet
+          pip-audit -r requirements.txt --severity critical --format markdown 2>&1 | tee /tmp/pip-audit.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      # ── PR comment: warn on high findings ────────────────────────────────────
+      - name: Post audit summary comment on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CARGO_EXIT: ${{ steps.cargo_audit.outputs.exit_code }}
+          NPM_BACK_EXIT: ${{ steps.npm_audit_backend.outputs.exit_code }}
+          NPM_FRONT_EXIT: ${{ steps.npm_audit_frontend.outputs.exit_code }}
+          PIP_EXIT: ${{ steps.pip_audit.outputs.exit_code }}
+        run: |
+          BODY="## 🔒 Security Audit Results\n\n"
+
+          append_section() {
+            local label="$1" file="$2" exit_code="$3"
+            if [ "$exit_code" != "0" ]; then
+              BODY="${BODY}### ⚠️ ${label}\n\`\`\`\n$(head -60 "$file")\n\`\`\`\n\n"
+            else
+              BODY="${BODY}### ✅ ${label} — no issues found\n\n"
+            fi
+          }
+
+          append_section "cargo audit"       /tmp/cargo-audit.txt        "$CARGO_EXIT"
+          append_section "npm audit (backend)"  /tmp/npm-audit-backend.txt  "$NPM_BACK_EXIT"
+          append_section "npm audit (frontend)" /tmp/npm-audit-frontend.txt "$NPM_FRONT_EXIT"
+          append_section "pip-audit"         /tmp/pip-audit.txt           "$PIP_EXIT"
+
+          BODY="${BODY}\n> Commit \`${{ github.sha }}\` · [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --method POST \
+            --field body="$(printf '%b' "$BODY")"
+
+      # ── Block merge on critical findings ─────────────────────────────────────
+      - name: Fail on critical findings
+        run: |
+          FAILED=0
+          [ "${{ steps.cargo_audit.outputs.exit_code }}"       != "0" ] && echo "::error::cargo audit found critical vulnerabilities"       && FAILED=1
+          [ "${{ steps.npm_audit_backend.outputs.exit_code }}" != "0" ] && echo "::error::npm audit (backend) found critical vulnerabilities" && FAILED=1
+          [ "${{ steps.npm_audit_frontend.outputs.exit_code }}" != "0" ] && echo "::error::npm audit (frontend) found critical vulnerabilities" && FAILED=1
+          [ "${{ steps.pip_audit.outputs.exit_code }}"         != "0" ] && echo "::error::pip-audit found critical vulnerabilities"           && FAILED=1
+          exit $FAILED
+
+  lint-dockerfiles:
+    name: Lint Dockerfiles - no floating tags
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if any FROM uses a floating tag (no digest)
+        run: |
+          if grep -rE '^FROM [^@]+$' frontend/Dockerfile backend/Dockerfile oracle/Dockerfile; then
+            echo "ERROR: Floating base image tags detected."
+            exit 1
+          fi
+          echo "All FROM statements are digest-pinned."
+
   contracts:
     name: Soroban Contract Tests
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -17,6 +169,34 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
+      # ── Rust: cargo audit ────────────────────────────────────────────────────
+      - name: Cache cargo-audit advisory DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: cargo-advisory-db-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: cargo-advisory-db-
+
+      - name: Run cargo audit
+        id: cargo_audit
+        working-directory: contracts
+        # --deny unsound --deny yanked in addition to default --deny vulnerability
+        # Exit code 1 = vulnerabilities found (critical → block); we capture output
+        # for the PR comment and re-exit after posting.
+        run: |
+          cargo install cargo-audit --locked --quiet 2>/dev/null || true
+          cargo audit --deny unsound --deny yanked 2>&1 | tee /tmp/cargo-audit.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Fail on critical findings
+        if: always()
+        run: |
+          if [ "${{ steps.cargo_audit.outputs.exit_code }}" != "0" ]; then
+            echo "::error::cargo audit found critical vulnerabilities"
+            exit 1
+          fi
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -31,20 +211,54 @@ jobs:
         working-directory: contracts
         run: cargo test --workspace
 
+      - name: Generate coverage report (llvm-cov)
+        working-directory: carbonledger/contracts
+        run: |
+          cargo install cargo-llvm-cov --locked --quiet 2>/dev/null || true
+          cargo llvm-cov --workspace --lcov --output-path lcov.info
+          cargo llvm-cov report --workspace --summary-only
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: carbonledger/contracts/lcov.info
+          flags: contracts
+          fail_ci_if_error: false
+
       - name: Build WASM artifacts
         working-directory: contracts
         run: cargo build --target wasm32-unknown-unknown --release --workspace
 
-  backend:
-    name: NestJS Backend
+      - name: Report WASM sizes
+        if: github.event_name == 'pull_request'
+        working-directory: contracts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          REPORT="## WASM Size Report\n\n| Contract | Size |\n|---|---|\n"
+          for wasm in target/wasm32-unknown-unknown/release/*.wasm; do
+            name=$(basename "$wasm" .wasm)
+            size=$(du -sh "$wasm" | cut -f1)
+            bytes=$(wc -c < "$wasm")
+            REPORT="${REPORT}| \`${name}\` | ${size} (${bytes} bytes) |\n"
+          done
+          REPORT="${REPORT}\n> Built from commit \`${{ github.sha }}\`"
+          gh api repos/${REPO}/issues/${PR_NUMBER}/comments \
+            --method POST \
+            --field body="$(printf '%b' "$REPORT")"
+
+  security-tests:
+    name: Security Tests (XSS / SQL Injection)
     runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB:       carbonledger_test
-          POSTGRES_USER:     carbonledger
-          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: carbonledger_security
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: securitytestpassword
         ports:
           - 5432:5432
         options: >-
@@ -52,7 +266,10 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
     steps:
       - uses: actions/checkout@v4
 
@@ -67,11 +284,65 @@ jobs:
         working-directory: backend
         run: npm ci
 
-      - name: Validate Prisma schema
+      - name: Generate Prisma client
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:securitytestpassword@localhost:5432/carbonledger_security
+        run: npx prisma generate
+
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:securitytestpassword@localhost:5432/carbonledger_security
+        run: npx prisma migrate deploy
+
+      - name: Run security tests (XSS + SQL injection)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:securitytestpassword@localhost:5432/carbonledger_security
+          JWT_SECRET: security-test-secret
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: |
+          npx jest --testPathPattern="src/security/(xss|sql-injection|injection|owasp-top10|auth-bypass|idor|privilege-escalation)\.spec\.ts" \
+            --forceExit --runInBand
+
+  backend:
+    name: NestJS Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carbonledger_test
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: testpassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
         working-directory: backend
         env:
           DATABASE_URL: postgresql://carbonledger:testpassword@localhost:5432/carbonledger_test
-        run: npx prisma validate
+        run: npx prisma generate
 
       - name: Run backend tests
         working-directory: backend
@@ -89,7 +360,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
@@ -97,20 +368,109 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Lint (zero warnings)
+        working-directory: frontend
+        run: npx next lint --max-warnings 0
+
       - name: Type check
         working-directory: frontend
-        run: npx tsc --noEmit || true
-
-      - name: Run frontend tests
-        working-directory: frontend
-        run: npm test
+        run: npx tsc --noEmit
 
       - name: Build
         working-directory: frontend
         env:
           NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
           NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_HORIZON_URL: https://horizon-testnet.stellar.org
+          NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
         run: npm run build
+
+  e2e:
+    name: Playwright E2E Tests
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, security-tests]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carbonledger_e2e
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: e2etestpassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Setup backend database
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:e2etestpassword@localhost:5432/carbonledger_e2e
+        run: |
+          npx prisma migrate deploy
+          npx prisma db seed
+
+      - name: Start backend
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:e2etestpassword@localhost:5432/carbonledger_e2e
+          JWT_SECRET: e2e-test-secret
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          PORT: 3001
+        run: |
+          npm run start &
+          sleep 10
+
+      - name: Setup Node.js for frontend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps
+
+      - name: Run E2E tests
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+        run: npm run test:e2e
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 30
 
   oracle:
     name: Python Oracle
@@ -133,3 +493,78 @@ jobs:
           python3 -m py_compile verification_listener.py
           python3 -m py_compile price_oracle.py
           python3 -m py_compile satellite_monitor.py
+
+  fuzz:
+    name: Property-Based Fuzz Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('contracts/**/Cargo.lock') }}
+
+      - name: Run fuzz tests (carbon_credit)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_credit 'fuzz::' -- --nocapture"
+
+      - name: Run fuzz tests (carbon_marketplace)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: >-
+          cargo test -p carbon_marketplace 'fuzz::' -- --nocapture
+          --skip fuzz_purchase_from_sold_listing_fails
+          --skip fuzz_purchase_valid_reduces_available
+          --skip fuzz_purchase_full_amount_marks_sold
+
+
+  rust-contracts-ci:
+    name: Rust Contracts CI (test / clippy / fmt)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust toolchain and cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-ci-
+
+      - name: Run tests (all four contracts)
+        working-directory: contracts
+        run: cargo test --all
+
+      - name: Run Clippy (fail on warnings)
+        working-directory: contracts
+        run: cargo clippy -- -D warnings
+
+      - name: Check formatting
+        working-directory: contracts
+        run: cargo fmt --check

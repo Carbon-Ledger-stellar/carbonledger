@@ -1,0 +1,178 @@
+name: Redeploy Contracts to Testnet
+
+# Triggered on merge to develop only when contract source changes
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "contracts/**/*.rs"
+      - "contracts/**/*.toml"
+
+concurrency:
+  group: contract-deploy
+  cancel-in-progress: false   # never cancel an in-flight deploy
+
+jobs:
+  # ── 1. Build & test contracts ─────────────────────────────────────────────────
+  build:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    outputs:
+      wasm_changed: ${{ steps.diff.outputs.changed }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need parent commit to diff
+
+      - name: Detect WASM-affecting changes
+        id: diff
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1 HEAD -- 'contracts/**/*.rs' 'contracts/**/*.toml' | wc -l)
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/**/Cargo.lock') }}
+
+      - name: Run contract tests
+        working-directory: contracts
+        run: cargo test --workspace
+
+      - name: Build WASM artifacts
+        working-directory: contracts
+        run: cargo build --target wasm32-unknown-unknown --release --workspace
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-artifacts
+          path: contracts/target/wasm32-unknown-unknown/release/*.wasm
+          retention-days: 7
+
+  # ── 2. Deploy to Testnet & update staging secrets ─────────────────────────────
+  deploy:
+    name: Deploy to Testnet
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+    outputs:
+      registry_id:    ${{ steps.deploy_registry.outputs.contract_id }}
+      credit_id:      ${{ steps.deploy_credit.outputs.contract_id }}
+      marketplace_id: ${{ steps.deploy_marketplace.outputs.contract_id }}
+      oracle_id:      ${{ steps.deploy_oracle.outputs.contract_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-artifacts
+          path: wasm/
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install stellar-cli --locked --version 21.0.1
+        env:
+          CARGO_NET_RETRY: "3"
+
+      - name: Deploy carbon_registry
+        id: deploy_registry
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm wasm/carbon_registry.wasm \
+            --source-account "${{ secrets.STAGING_ADMIN_SECRET_KEY }}" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015")
+          echo "contract_id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy carbon_credit
+        id: deploy_credit
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm wasm/carbon_credit.wasm \
+            --source-account "${{ secrets.STAGING_ADMIN_SECRET_KEY }}" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015")
+          echo "contract_id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy carbon_marketplace
+        id: deploy_marketplace
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm wasm/carbon_marketplace.wasm \
+            --source-account "${{ secrets.STAGING_ADMIN_SECRET_KEY }}" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015")
+          echo "contract_id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy carbon_oracle
+        id: deploy_oracle
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm wasm/carbon_oracle.wasm \
+            --source-account "${{ secrets.STAGING_ADMIN_SECRET_KEY }}" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015")
+          echo "contract_id=$ID" >> "$GITHUB_OUTPUT"
+
+      - name: Update staging environment secrets
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_SECRETS }}
+          REPO:     ${{ github.repository }}
+        run: |
+          gh secret set STAGING_REGISTRY_CONTRACT_ID    --env staging --body "${{ steps.deploy_registry.outputs.contract_id }}"    --repo "$REPO"
+          gh secret set STAGING_CREDIT_CONTRACT_ID      --env staging --body "${{ steps.deploy_credit.outputs.contract_id }}"      --repo "$REPO"
+          gh secret set STAGING_MARKETPLACE_CONTRACT_ID --env staging --body "${{ steps.deploy_marketplace.outputs.contract_id }}" --repo "$REPO"
+          gh secret set STAGING_ORACLE_CONTRACT_ID      --env staging --body "${{ steps.deploy_oracle.outputs.contract_id }}"      --repo "$REPO"
+
+      - name: Summary
+        run: |
+          echo "### Contract Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract | ID |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| carbon_registry    | ${{ steps.deploy_registry.outputs.contract_id }} |"    >> "$GITHUB_STEP_SUMMARY"
+          echo "| carbon_credit      | ${{ steps.deploy_credit.outputs.contract_id }} |"      >> "$GITHUB_STEP_SUMMARY"
+          echo "| carbon_marketplace | ${{ steps.deploy_marketplace.outputs.contract_id }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| carbon_oracle      | ${{ steps.deploy_oracle.outputs.contract_id }} |"      >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 3. Smoke test new contract IDs ────────────────────────────────────────────
+  smoke:
+    name: Smoke Test Contracts
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Stellar CLI
+        run: cargo install stellar-cli --locked --version 21.0.1
+
+      - name: Verify registry contract responds
+        run: |
+          # Invoking with a nonexistent project should return ProjectNotFound (error code 1)
+          # which confirms the contract is live and callable
+          stellar contract invoke \
+            --id "${{ needs.deploy.outputs.registry_id }}" \
+            --network testnet \
+            --rpc-url https://soroban-testnet.stellar.org \
+            --network-passphrase "Test SDF Network ; September 2015" \
+            -- get_project \
+            --project_id "smoke-test-nonexistent" 2>&1 | grep -qE "ProjectNotFound|error.*1" \
+            && echo "Registry contract is live ✓" \
+            || (echo "Registry contract smoke test failed" && exit 1)

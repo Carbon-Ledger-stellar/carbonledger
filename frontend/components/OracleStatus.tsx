@@ -1,53 +1,211 @@
 "use client";
 
-import { useOracleStatus } from "../lib/api";
-import { colors } from "../styles/design-system";
+import { useOracleHealth, OracleHealth } from "../lib/admin-api";
+import { colors, typography, spacing, borderRadius, shadows } from "../styles/design-system";
+import Tooltip from "./Tooltip";
 
-interface Props {
-  projectId: string;
+// Spec thresholds
+const AMBER_DAYS = 300;
+const RED_DAYS   = 365;
+
+type Status = "green" | "amber" | "red";
+
+const TOOLTIP_TEXT: Record<Status, string> = {
+  green: "Healthy — monitoring data is within the last 365 days.\nNew credit issuance is not affected.",
+  amber: "Warning — monitoring data is approaching the 365-day limit.\nIssuance may be blocked soon if data is not refreshed.",
+  red:   "Stale — monitoring data is older than 365 days.\nNew credit issuance is blocked until fresh data is submitted.",
+};
+
+function getStatus(o: OracleHealth): Status {
+  if (o.daysSinceUpdate >= RED_DAYS)   return "red";
+  if (o.daysSinceUpdate >= AMBER_DAYS) return "amber";
+  return "green";
 }
 
-export default function OracleStatus({ projectId }: Props) {
-  const { data, isLoading } = useOracleStatus(projectId);
+const STATUS_STYLE: Record<Status, { bg: string; text: string; border: string; dot: string; label: string }> = {
+  green: { ...colors.verified,  dot: "#16a34a", label: "Current"  },
+  amber: { ...colors.pending,   dot: "#d97706", label: "Warning"  },
+  red:   { ...colors.suspended, dot: "#dc2626", label: "Stale"    },
+};
 
-  if (isLoading) return (
-    <div style={{ padding: "0.75rem", background: colors.neutral[50], borderRadius: "0.5rem", fontSize: "0.8rem", color: colors.neutral[400] }}>
-      Checking oracle status…
-    </div>
+function Dot({ status }: { status: Status }) {
+  return (
+    <span style={{
+      display:      "inline-block",
+      width:        "8px",
+      height:       "8px",
+      borderRadius: borderRadius.full,
+      background:   STATUS_STYLE[status].dot,
+      flexShrink:   0,
+    }} />
   );
+}
 
-  const isCurrent = data?.isCurrent ?? false;
-  const bg     = isCurrent ? colors.verified.bg     : colors.suspended.bg;
-  const text   = isCurrent ? colors.verified.text   : colors.suspended.text;
-  const border = isCurrent ? colors.verified.border : colors.suspended.border;
+export default function OracleStatus() {
+  const { data: oracles, isLoading, error } = useOracleHealth();
+
+  const counts = oracles
+    ? { green: 0, amber: 0, red: 0, ...Object.fromEntries(
+        (["green", "amber", "red"] as Status[]).map(s => [
+          s, oracles.filter(o => getStatus(o) === s).length,
+        ])
+      ) }
+    : null;
 
   return (
-    <div style={{
-      background: bg,
-      border: `1px solid ${border}`,
-      borderRadius: "0.5rem",
-      padding: "0.75rem 1rem",
-      display: "flex",
-      alignItems: "center",
-      gap: "0.75rem",
+    <section style={{
+      background:   colors.surface,
+      border:       `1px solid ${colors.neutral[200]}`,
+      borderRadius: borderRadius.xl,
+      boxShadow:    shadows.sm,
+      overflow:     "hidden",
     }}>
-      <span style={{ fontSize: "1.1rem" }}>{isCurrent ? "🛰️" : "⚠️"}</span>
-      <div>
-        <p style={{ fontWeight: 600, fontSize: "0.8rem", color: text, margin: 0 }}>
-          {isCurrent ? "Monitoring Current" : "Monitoring Data Stale"}
-        </p>
-        {data?.lastSubmittedAt && (
-          <p style={{ fontSize: "0.7rem", color: text, margin: "0.1rem 0 0", opacity: 0.8 }}>
-            Last update: {new Date(data.lastSubmittedAt).toLocaleDateString()}
-            {data.latestScore !== null && ` · Score: ${data.latestScore}/100`}
-          </p>
-        )}
-        {!data?.lastSubmittedAt && (
-          <p style={{ fontSize: "0.7rem", color: text, margin: "0.1rem 0 0", opacity: 0.8 }}>
-            No monitoring data submitted yet
-          </p>
+      {/* Header */}
+      <div style={{
+        display:        "flex",
+        alignItems:     "center",
+        justifyContent: "space-between",
+        padding:        `${spacing[4]} ${spacing[5]}`,
+        borderBottom:   `1px solid ${colors.neutral[100]}`,
+        background:     colors.neutral[50],
+      }}>
+        <h2 style={{
+          fontFamily: typography.fontFamily.sans,
+          fontSize:   typography.fontSize.base,
+          fontWeight: typography.fontWeight.semibold,
+          color:      colors.neutral[900],
+          margin:     0,
+        }}>
+          Oracle Health
+        </h2>
+        {counts && (
+          <div style={{ display: "flex", gap: spacing[2] }}>
+            {(["green", "amber", "red"] as Status[]).map(s => counts[s] > 0 && (
+              <span key={s} style={{
+                display:      "inline-flex",
+                alignItems:   "center",
+                gap:          spacing[1],
+                fontFamily:   typography.fontFamily.sans,
+                fontSize:     typography.fontSize.xs,
+                fontWeight:   typography.fontWeight.medium,
+                color:        STATUS_STYLE[s].text,
+                background:   STATUS_STYLE[s].bg,
+                border:       `1px solid ${STATUS_STYLE[s].border}`,
+                padding:      `2px ${spacing[2]}`,
+                borderRadius: borderRadius.full,
+              }}>
+                <Dot status={s} />
+                {counts[s]}
+              </span>
+            ))}
+          </div>
         )}
       </div>
-    </div>
+
+      {/* Body — live region wraps all dynamic content */}
+      <div aria-live="polite" aria-atomic="false">
+      {isLoading && (
+        <div style={{ padding: spacing[5] }}>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} style={{
+              height:       "20px",
+              background:   colors.neutral[100],
+              borderRadius: borderRadius.sm,
+              marginBottom: spacing[3],
+              animation:    "cl-pulse 1.5s ease-in-out infinite",
+            }} />
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" aria-live="assertive" style={{ padding: spacing[5], color: colors.suspended.text, fontFamily: typography.fontFamily.sans, fontSize: typography.fontSize.sm, margin: 0 }}>
+          Failed to load oracle health data.
+        </p>
+      )}
+
+      {!isLoading && !error && oracles && oracles.length === 0 && (
+        <p style={{ padding: spacing[5], color: colors.neutral[500], fontFamily: typography.fontFamily.sans, fontSize: typography.fontSize.sm, margin: 0 }}>
+          No projects monitored yet.
+        </p>
+      )}
+
+      {!isLoading && !error && oracles && oracles.length > 0 && (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {oracles.map((o, i) => {
+            const status = getStatus(o);
+            const st     = STATUS_STYLE[status];
+            return (
+              <li
+                key={o.projectId}
+                style={{
+                  display:      "flex",
+                  alignItems:   "center",
+                  gap:          spacing[3],
+                  padding:      `${spacing[3]} ${spacing[5]}`,
+                  borderBottom: i < oracles.length - 1 ? `1px solid ${colors.neutral[100]}` : "none",
+                }}
+              >
+                <Dot status={status} />
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{
+                    fontFamily:   typography.fontFamily.sans,
+                    fontSize:     typography.fontSize.sm,
+                    fontWeight:   typography.fontWeight.medium,
+                    color:        colors.neutral[900],
+                    margin:       0,
+                    overflow:     "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace:   "nowrap",
+                  }}>
+                    {o.projectName}
+                  </p>
+                  <p style={{
+                    fontFamily: typography.fontFamily.sans,
+                    fontSize:   typography.fontSize.xs,
+                    color:      colors.neutral[500],
+                    margin:     0,
+                  }}>
+                    {o.daysSinceUpdate}d ago · {new Date(o.lastMonitored).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </p>
+                </div>
+
+                <Tooltip content={TOOLTIP_TEXT[status]}>
+                  <span style={{
+                    fontFamily:   typography.fontFamily.sans,
+                    fontSize:     typography.fontSize.xs,
+                    fontWeight:   typography.fontWeight.medium,
+                    color:        st.text,
+                    background:   st.bg,
+                    border:       `1px solid ${st.border}`,
+                    padding:      `2px ${spacing[2]}`,
+                    borderRadius: borderRadius.full,
+                    whiteSpace:   "nowrap",
+                    cursor:       "default",
+                  }}>
+                    {st.label}
+                  </span>
+                </Tooltip>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      </div>
+
+      {/* Footer: last-refreshed hint */}
+      <p style={{
+        fontFamily: typography.fontFamily.sans,
+        fontSize:   typography.fontSize.xs,
+        color:      colors.neutral[400],
+        margin:     0,
+        padding:    `${spacing[2]} ${spacing[5]}`,
+        borderTop:  `1px solid ${colors.neutral[100]}`,
+        background: colors.neutral[50],
+      }}>
+        Auto-refreshes every 60 s
+      </p>
+    </section>
   );
 }

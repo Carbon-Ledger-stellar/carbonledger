@@ -1,8 +1,14 @@
 [workspace]
 members = [
-    "contracts/carbon_registry",
-    "contracts/carbon_credit",
-    "contracts/carbon_marketplace",
-    "contracts/carbon_oracle",
+    "carbon_registry",
+    "carbon_credit",
+    "carbon_marketplace",
+    "carbon_oracle",
 ]
 resolver = "2"
+
+# Pin `arbitrary` to 1.3.x — stellar-xdr 20.1.0 uses `try_size_hint` which
+# was removed in arbitrary ≥ 1.4.0, causing compilation failures.
+[workspace.dependencies]
+arbitrary = "=1.3.2"
+

@@ -4,43 +4,86 @@
 export const colors = {
   // Primary greens
   primary: {
-    50:  "#f0fdf4",
-    100: "#dcfce7",
-    200: "#bbf7d0",
-    300: "#86efac",
-    400: "#4ade80",
-    500: "#22c55e",
-    600: "#16a34a",
-    700: "#15803d",
-    800: "#166534",
-    900: "#14532d",
-    950: "#052e16",
+    50:  "var(--color-primary-50)",
+    100: "var(--color-primary-100)",
+    200: "var(--color-primary-200)",
+    300: "var(--color-primary-300)",
+    400: "var(--color-primary-400)",
+    500: "var(--color-primary-500)",
+    600: "var(--color-primary-600)",
+    700: "var(--color-primary-700)",
+    800: "var(--color-primary-800)",
+    900: "var(--color-primary-900)",
+    950: "var(--color-primary-950)",
   },
   // Neutral grays
   neutral: {
-    50:  "#f9fafb",
-    100: "#f3f4f6",
-    200: "#e5e7eb",
-    300: "#d1d5db",
-    400: "#9ca3af",
-    500: "#6b7280",
-    600: "#4b5563",
-    700: "#374151",
-    800: "#1f2937",
-    900: "#111827",
-    950: "#030712",
+    50:  "var(--color-neutral-50)",
+    100: "var(--color-neutral-100)",
+    200: "var(--color-neutral-200)",
+    300: "var(--color-neutral-300)",
+    400: "var(--color-neutral-400)",
+    500: "var(--color-neutral-500)",
+    600: "var(--color-neutral-600)",
+    700: "var(--color-neutral-700)",
+    800: "var(--color-neutral-800)",
+    900: "var(--color-neutral-900)",
+    950: "var(--color-neutral-950)",
   },
   // Semantic
-  verified:  { bg: "#dcfce7", text: "#15803d", border: "#86efac" },
-  pending:   { bg: "#fef9c3", text: "#854d0e", border: "#fde047" },
-  suspended: { bg: "#fee2e2", text: "#991b1b", border: "#fca5a5" },
-  rejected:  { bg: "#fce7f3", text: "#9d174d", border: "#f9a8d4" },
-  completed: { bg: "#ede9fe", text: "#5b21b6", border: "#c4b5fd" },
+  verified:  { bg: "var(--color-verified-bg)", text: "var(--color-verified-text)", border: "var(--color-verified-border)" },
+  pending:   { bg: "var(--color-pending-bg)", text: "var(--color-pending-text)", border: "var(--color-pending-border)" },
+  suspended: { bg: "var(--color-suspended-bg)", text: "var(--color-suspended-text)", border: "var(--color-suspended-border)" },
+  rejected:  { bg: "var(--color-rejected-bg)", text: "var(--color-rejected-text)", border: "var(--color-rejected-border)" },
+  completed: { bg: "var(--color-completed-bg)", text: "var(--color-completed-text)", border: "var(--color-completed-border)" },
   // USDC blue
-  usdc: "#2775CA",
+  usdc: "var(--color-usdc)",
   // White / surface
-  surface: "#ffffff",
-  surfaceAlt: "#f9fafb",
+  surface: "var(--color-surface)",
+  surfaceAlt: "var(--color-surface-alt)",
+} as const;
+
+// Dark mode variants
+export const darkColors = {
+  // Primary greens (slightly adjusted for dark backgrounds)
+  primary: {
+    50:  "#052e16",
+    100: "#14532d",
+    200: "#166534",
+    300: "#15803d",
+    400: "#16a34a",
+    500: "#22c55e",
+    600: "#4ade80",
+    700: "#86efac",
+    800: "#bbf7d0",
+    900: "#dcfce7",
+    950: "#f0fdf4",
+  },
+  // Neutral grays (inverted for dark mode)
+  neutral: {
+    50:  "#030712",
+    100: "#111827",
+    200: "#1f2937",
+    300: "#374151",
+    400: "#4b5563",
+    500: "#6b7280",
+    600: "#9ca3af",
+    700: "#d1d5db",
+    800: "#e5e7eb",
+    900: "#f3f4f6",
+    950: "#f9fafb",
+  },
+  // Semantic (dark mode variants)
+  verified:  { bg: "#14532d", text: "#86efac", border: "#15803d" },
+  pending:   { bg: "#451a03", text: "#fde047", border: "#854d0e" },
+  suspended: { bg: "#450a0a", text: "#fca5a5", border: "#991b1b" },
+  rejected:  { bg: "#500724", text: "#f9a8d4", border: "#9d174d" },
+  completed: { bg: "#2e1065", text: "#c4b5fd", border: "#5b21b6" },
+  // USDC blue (same)
+  usdc: "#2775CA",
+  // Dark surfaces
+  surface: "#111827",
+  surfaceAlt: "#1f2937",
 } as const;
 
 export const typography = {
