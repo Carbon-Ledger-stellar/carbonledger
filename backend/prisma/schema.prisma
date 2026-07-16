@@ -309,6 +309,31 @@ model AdminConfig {
   updatedAt DateTime @updatedAt
 }
 
+/// Stores idempotency records for critical mutating endpoints.
+/// A record is keyed by (idempotencyKey, endpoint) to allow the same key
+/// to be reused across different endpoints without collision.
+/// Cached responses are kept for 24 hours (86400 seconds) after creation.
+model IdempotencyRecord {
+  id             String   @id @default(cuid())
+  /// Client-supplied Idempotency-Key header value (UUID v4 recommended)
+  idempotencyKey String
+  /// Normalised endpoint path, e.g. "POST:/api/v1/credits/mint"
+  endpoint       String
+  /// SHA-256 hash of the serialised request body to detect body mismatch
+  requestHash    String
+  /// HTTP status code of the first successful response
+  responseStatus Int
+  /// Serialised response body (JSON string)
+  responseBody   String   @db.Text
+  /// Stellar transaction hash if the operation produced one
+  txHash         String?
+  /// When this record was first created (used to enforce 24-hour TTL)
+  createdAt      DateTime @default(now())
+
+  @@unique([idempotencyKey, endpoint])
+  @@index([createdAt])
+}
+
 model ApiKey {
   id               String   @id @default(cuid())
   key              String   @unique
