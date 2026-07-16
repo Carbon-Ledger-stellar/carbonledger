@@ -1,6 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
-import { Module, Controller, Get, MiddlewareConsumer, NestModule } from "@nestjs/common";
+import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -28,6 +28,9 @@ import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
+// Idempotency support for critical POST endpoints (issue #539)
+import { IdempotencyModule } from "./idempotency/idempotency.module";
+import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -144,6 +147,7 @@ class HealthController {
     AdminModule,
     PublicApiModule,
     RedisModule,
+    IdempotencyModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -188,5 +192,15 @@ class HealthController {
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+
+    // Apply idempotency enforcement to the three critical mutating endpoints.
+    // The Idempotency-Key header is optional; omitting it simply bypasses the check.
+    consumer
+      .apply(IdempotencyMiddleware)
+      .forRoutes(
+        { path: 'credits/mint',           method: RequestMethod.POST },
+        { path: 'marketplace/purchase',   method: RequestMethod.POST },
+        { path: 'retirements',            method: RequestMethod.POST },
+      );
   }
 }
