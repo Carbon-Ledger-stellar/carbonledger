@@ -168,6 +168,44 @@ impl CarbonRegistryContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
+    // ── Vintage year validation helpers ───────────────────────────────────────
+    //
+    // These centralise all vintage-year logic so no ad-hoc comparisons against
+    // raw year constants can creep in elsewhere.  Every function that touches a
+    // vintage_year field MUST call one of these two helpers instead of writing
+    // its own range check.
+    //
+    // Valid range  : [MIN_VINTAGE_YEAR, current_year + 1]   (inclusive)
+    // Expired range: vintage_year + VINTAGE_EXPIRY_YEARS < current_year
+    //                i.e. the credit is more than VINTAGE_EXPIRY_YEARS old
+
+    /// Earliest vintage year accepted by the protocol (first recognised
+    /// voluntary carbon market year).
+    pub const MIN_VINTAGE_YEAR: u32 = 1990;
+
+    /// Credits older than this many years are considered expired and cannot
+    /// be used in new project registrations.
+    pub const VINTAGE_EXPIRY_YEARS: u32 = 30;
+
+    /// Validate that `vintage_year` is within the acceptable issuance window:
+    ///   `MIN_VINTAGE_YEAR <= vintage_year <= current_year + 1`
+    ///
+    /// Returns `Err(CarbonError::InvalidVintageYear)` when out of range.
+    fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
+        let current_year = Self::current_year(env);
+        if vintage_year < Self::MIN_VINTAGE_YEAR || vintage_year > current_year + 1 {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        Ok(())
+    }
+
+    /// Returns `true` when the credit vintage has expired
+    /// (i.e. `vintage_year + VINTAGE_EXPIRY_YEARS < current_year`).
+    fn is_vintage_expired(env: &Env, vintage_year: u32) -> bool {
+        let current_year = Self::current_year(env);
+        vintage_year + Self::VINTAGE_EXPIRY_YEARS < current_year
+    }
+
     pub fn register_project(
         env: Env,
         admin: Address,
@@ -202,10 +240,7 @@ impl CarbonRegistryContract {
             return Err(CarbonError::ProjectNotFound);
         }
 
-        let current_year = Self::current_year(&env);
-        if vintage_year < 1990 || vintage_year > current_year + 1 {
-            return Err(CarbonError::InvalidVintageYear);
-        }
+        Self::validate_vintage_year(&env, vintage_year)?;
 
         if methodology_score < 70 {
             return Err(CarbonError::MethodologyScoreLow);
