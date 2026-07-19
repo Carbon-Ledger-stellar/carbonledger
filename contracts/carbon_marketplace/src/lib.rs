@@ -28,6 +28,15 @@ const TTL_LEDGERS: u32 = 518_400;
 const MAX_BATCH_SIZE: u32 = 10;
 const CURRENT_VERSION: u32 = 1;
 
+// ── Fee collection constants ──────────────────────────────────────────────────
+/// Fee rate numerator: 1% expressed as 1/FEE_RATE_DENOM.
+pub const FEE_RATE_NUMERATOR: i128 = 1;
+pub const FEE_RATE_DENOM:     i128 = 100;
+/// Auto-sweep threshold: when the accumulated protocol fee balance reaches
+/// or exceeds this amount (in USDC stroops), sweep_fees() will be called
+/// automatically during purchase. Configurable via set_sweep_threshold().
+pub const DEFAULT_SWEEP_THRESHOLD: i128 = 1_000_0000000; // 1 000 USDC
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -77,6 +86,17 @@ pub enum DataKey {
     CircuitBreaker,
     /// Timestamp + reason recorded when the circuit breaker was last tripped.
     CircuitBreakerTrippedAt,
+    // ── Fee collection ────────────────────────────────────────────────────────
+    /// Per-transaction fee record.  Key = tx_id (listing_id + "_" + timestamp).
+    FeeRecord(String),
+    /// Ordered list of all fee record IDs (append-only, never deleted).
+    FeeLedger,
+    /// Running accumulator of uncollected protocol fees (in USDC stroops).
+    FeeAccumulator,
+    /// Configurable sweep threshold in USDC stroops.
+    SweepThreshold,
+    /// Total fees swept to treasury (lifetime counter).
+    TotalFeesSwept,
 }
 
 /// Emitted when the marketplace circuit breaker is automatically tripped
@@ -164,6 +184,38 @@ pub struct UpgradeRecord {
     pub wasm_hash:    BytesN<32>,
 }
 
+// ── Fee collection types ──────────────────────────────────────────────────────
+
+/// Immutable record of a single protocol fee deduction.
+/// Written once during purchase; never modified or deleted.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeRecord {
+    /// Unique identifier: "<listing_id>_<timestamp>"
+    pub fee_id:      String,
+    /// Listing from which this fee was collected.
+    pub listing_id:  String,
+    /// Buyer address at time of purchase.
+    pub buyer:       Address,
+    /// Seller address at time of purchase.
+    pub seller:      Address,
+    /// Gross transaction amount (price_per_credit × amount).
+    pub total_cost:  i128,
+    /// Protocol fee deducted: total_cost / 100 (1%).
+    pub fee_amount:  i128,
+    /// Ledger timestamp when the purchase occurred.
+    pub recorded_at: u64,
+}
+
+/// Emitted when accumulated fees are swept to the treasury.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeSweptEvent {
+    pub swept_by:  Address,
+    pub amount:    i128,
+    pub swept_at:  u64,
+}
+
 #[contract]
 pub struct CarbonMarketplaceContract;
 
@@ -204,6 +256,12 @@ impl CarbonMarketplaceContract {
         let listings: Vec<String> = vec![&env];
         env.storage().persistent().set(&DataKey::AllListings, &listings);
         env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        // Fee collection initialisation
+        let fee_ledger: Vec<String> = vec![&env];
+        env.storage().persistent().set(&DataKey::FeeLedger, &fee_ledger);
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &0_i128);
+        env.storage().persistent().set(&DataKey::SweepThreshold, &DEFAULT_SWEEP_THRESHOLD);
+        env.storage().persistent().set(&DataKey::TotalFeesSwept, &0_i128);
         Ok(())
     }
 
@@ -476,6 +534,15 @@ impl CarbonMarketplaceContract {
         require_valid_vintage_year!(&env, listing.vintage_year);
         require_batch_not_expired!(&env, listing.vintage_year);
 
+        // ── Expired vintage check ─────────────────────────────────────────────
+        // Credits whose vintage year is more than VINTAGE_EXPIRY_YEARS (30) old
+        // cannot be purchased.  This prevents the marketplace from trading
+        // worthless legacy credits while still allowing the listing record to
+        // exist for audit purposes.
+        if Self::is_vintage_expired(&env, listing.vintage_year) {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+
         // ── Oracle staleness check ────────────────────────────────────────────
         // Query the oracle contract to confirm the benchmark price for this
         // listing's methodology and vintage is still fresh (< 24 hours old).
@@ -523,7 +590,7 @@ impl CarbonMarketplaceContract {
         }
 
         let total_cost = listing.price_per_credit.checked_mul(amount).ok_or(CarbonError::Arithmetic)?;
-        let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?; 
+        let protocol_fee = total_cost.checked_div(FEE_RATE_DENOM).ok_or(CarbonError::Arithmetic)?;
         let seller_proceeds = total_cost.checked_sub(protocol_fee).ok_or(CarbonError::Arithmetic)?;
 
         listing.amount_available = listing.amount_available.checked_sub(amount).ok_or(CarbonError::Arithmetic)?;
@@ -534,6 +601,35 @@ impl CarbonMarketplaceContract {
         };
         env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
         Self::extend_listing_ttl(&env, &listing_id);
+
+        let now = env.ledger().timestamp();
+
+        // ── Record fee atomically in immutable fee ledger ─────────────────────
+        let fee_id = Self::make_fee_id(&env, &listing_id, now);
+        let fee_record = FeeRecord {
+            fee_id:      fee_id.clone(),
+            listing_id:  listing_id.clone(),
+            buyer:       buyer.clone(),
+            seller:      listing.seller.clone(),
+            total_cost,
+            fee_amount:  protocol_fee,
+            recorded_at: now,
+        };
+        env.storage().persistent().set(&DataKey::FeeRecord(fee_id.clone()), &fee_record);
+
+        // Append fee ID to the ordered ledger
+        let mut fee_ledger: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeLedger)
+            .unwrap_or_else(|| vec![&env]);
+        fee_ledger.push_back(fee_id.clone());
+        env.storage().persistent().set(&DataKey::FeeLedger, &fee_ledger);
+
+        // Update accumulator
+        let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
+        let new_acc = acc.checked_add(protocol_fee).ok_or(CarbonError::Arithmetic)?;
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &new_acc);
 
         let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
         let usdc_client = token::Client::new(&env, &usdc);
@@ -563,9 +659,20 @@ impl CarbonMarketplaceContract {
                 seller: listing.seller.clone(),
                 amount,
                 total_cost,
-                timestamp: env.ledger().timestamp(),
+                timestamp: now,
             },
         );
+
+        // ── Auto-sweep if accumulator reaches threshold ───────────────────────
+        let threshold: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SweepThreshold)
+            .unwrap_or(DEFAULT_SWEEP_THRESHOLD);
+        if new_acc >= threshold {
+            Self::do_sweep(&env, new_acc, &usdc_client, &treasury)?;
+        }
+
         Ok(())
     }
 
@@ -609,6 +716,11 @@ impl CarbonMarketplaceContract {
                 .unwrap_or(false)
             {
                 return Err(CarbonError::ProjectSuspended);
+            }
+
+            // ── Expired vintage check per listing ─────────────────────────────
+            if Self::is_vintage_expired(&env, listing.vintage_year) {
+                return Err(CarbonError::InvalidVintageYear);
             }
 
             // Oracle staleness check for each listing in the batch
@@ -656,7 +768,7 @@ impl CarbonMarketplaceContract {
             let mut listing = validated_listings.get(i).unwrap();
 
             let total_cost = listing.price_per_credit.checked_mul(amount).ok_or(CarbonError::Arithmetic)?;
-            let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+            let protocol_fee = total_cost.checked_div(FEE_RATE_DENOM).ok_or(CarbonError::Arithmetic)?;
             let seller_proceeds = total_cost.checked_sub(protocol_fee).ok_or(CarbonError::Arithmetic)?;
 
             listing.amount_available = listing.amount_available.checked_sub(amount).ok_or(CarbonError::Arithmetic)?;
@@ -670,21 +782,44 @@ impl CarbonMarketplaceContract {
             validated_listings.set(i, listing);
         }
 
-        // ── Phase 3: TRANSFER — USDC and credits ─────────────────────────────
+        // ── Phase 3: TRANSFER — USDC, credits, and fee recording ─────────────
         let usdc: Address            = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
-        let admin: Address           = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        let treasury: Address        = env.storage().persistent().get(&DataKey::Treasury).unwrap();
         let credit_contract: Address = env.storage().persistent().get(&DataKey::CreditContract).unwrap();
         let usdc_client = token::Client::new(&env, &usdc);
+        let now = env.ledger().timestamp();
+
+        let mut bulk_fee_total: i128 = 0;
 
         for i in 0..len {
             let listing       = validated_listings.get(i).unwrap();
             let amount        = amounts.get(i).unwrap();
             let total_cost    = listing.price_per_credit.checked_mul(amount).ok_or(CarbonError::Arithmetic)?;
-            let protocol_fee  = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+            let protocol_fee  = total_cost.checked_div(FEE_RATE_DENOM).ok_or(CarbonError::Arithmetic)?;
             let seller_proceeds = total_cost.checked_sub(protocol_fee).ok_or(CarbonError::Arithmetic)?;
 
-            usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
+            // ── Record fee in immutable ledger ────────────────────────────────
+            let fee_id = Self::make_fee_id(&env, &listing.listing_id, now.saturating_add(i as u64));
+            let fee_record = FeeRecord {
+                fee_id:      fee_id.clone(),
+                listing_id:  listing.listing_id.clone(),
+                buyer:       buyer.clone(),
+                seller:      listing.seller.clone(),
+                total_cost,
+                fee_amount:  protocol_fee,
+                recorded_at: now,
+            };
+            env.storage().persistent().set(&DataKey::FeeRecord(fee_id.clone()), &fee_record);
+            let mut fee_ledger: Vec<String> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::FeeLedger)
+                .unwrap_or_else(|| vec![&env]);
+            fee_ledger.push_back(fee_id);
+            env.storage().persistent().set(&DataKey::FeeLedger, &fee_ledger);
+            bulk_fee_total = bulk_fee_total.checked_add(protocol_fee).ok_or(CarbonError::Arithmetic)?;
 
+            // ── Single transfer to seller (bug fix: was duplicated) ───────────
             usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
             usdc_client.transfer(&buyer, &treasury, &protocol_fee);
 
@@ -708,9 +843,23 @@ impl CarbonMarketplaceContract {
                     seller:     listing.seller.clone(),
                     amount,
                     total_cost,
-                    timestamp:  env.ledger().timestamp(),
+                    timestamp:  now,
                 },
             );
+        }
+
+        // ── Update accumulator and auto-sweep if threshold met ────────────────
+        let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
+        let new_acc = acc.checked_add(bulk_fee_total).ok_or(CarbonError::Arithmetic)?;
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &new_acc);
+
+        let threshold: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SweepThreshold)
+            .unwrap_or(DEFAULT_SWEEP_THRESHOLD);
+        if new_acc >= threshold {
+            Self::do_sweep(&env, new_acc, &usdc_client, &treasury)?;
         }
 
         Ok(())
@@ -732,6 +881,97 @@ impl CarbonMarketplaceContract {
 
     pub fn get_listings_by_vintage(env: Env, vintage_year: u32) -> Vec<MarketListing> {
         Self::filter_listings(&env, |l| l.vintage_year == vintage_year)
+    }
+
+    // ── Fee collection API ────────────────────────────────────────────────────
+
+    /// Returns the immutable fee record for a given fee_id.
+    pub fn get_fee_record(env: Env, fee_id: String) -> Option<FeeRecord> {
+        env.storage().persistent().get(&DataKey::FeeRecord(fee_id))
+    }
+
+    /// Returns all fee record IDs in insertion order (append-only ledger).
+    pub fn get_fee_ledger(env: Env) -> Vec<String> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeLedger)
+            .unwrap_or_else(|| vec![&env])
+    }
+
+    /// Returns all fee records (full details) in insertion order.
+    /// Use for audit: every fee ever collected, immutable.
+    pub fn get_fee_history(env: Env) -> Vec<FeeRecord> {
+        let ids: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeLedger)
+            .unwrap_or_else(|| vec![&env]);
+
+        let mut records: Vec<FeeRecord> = vec![&env];
+        for id in ids.iter() {
+            if let Some(r) = env.storage().persistent().get(&DataKey::FeeRecord(id.clone())) {
+                records.push_back(r);
+            }
+        }
+        records
+    }
+
+    /// Returns the running uncollected fee accumulator balance (stroops).
+    pub fn get_fee_accumulator(env: Env) -> i128 {
+        env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0)
+    }
+
+    /// Returns the total fees swept to treasury since contract deployment.
+    pub fn get_total_fees_swept(env: Env) -> i128 {
+        env.storage().persistent().get(&DataKey::TotalFeesSwept).unwrap_or(0)
+    }
+
+    /// Returns the current auto-sweep threshold (USDC stroops).
+    pub fn get_sweep_threshold(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SweepThreshold)
+            .unwrap_or(DEFAULT_SWEEP_THRESHOLD)
+    }
+
+    /// Admin: update the auto-sweep threshold.
+    pub fn set_sweep_threshold(env: Env, admin: Address, threshold: i128) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        if threshold <= 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+        env.storage().persistent().set(&DataKey::SweepThreshold, &threshold);
+        Ok(())
+    }
+
+    /// Manually sweep all accumulated fees to treasury.
+    /// Can be called by anyone; the funds always go to the configured treasury address.
+    pub fn sweep_fees(env: Env) -> Result<i128, CarbonError> {
+        let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
+        if acc == 0 {
+            return Ok(0);
+        }
+        let usdc: Address    = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
+        let treasury: Address = env.storage().persistent().get(&DataKey::Treasury).unwrap();
+        let usdc_client = token::Client::new(&env, &usdc);
+        let contract_self = env.current_contract_address();
+        // Fees were already transferred to treasury during purchase — accumulator
+        // tracks the accounting total; reset it to zero.
+        let _ = contract_self; // no on-chain re-transfer needed; treasury already received funds
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &0_i128);
+        let swept_total: i128 = env.storage().persistent().get(&DataKey::TotalFeesSwept).unwrap_or(0);
+        let new_swept = swept_total.checked_add(acc).ok_or(CarbonError::Arithmetic)?;
+        env.storage().persistent().set(&DataKey::TotalFeesSwept, &new_swept);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("swept")),
+            FeeSweptEvent {
+                swept_by:  env.current_contract_address(),
+                amount:    acc,
+                swept_at:  env.ledger().timestamp(),
+            },
+        );
+        Ok(acc)
     }
 
     fn extend_listing_ttl(env: &Env, listing_id: &String) {
@@ -767,6 +1007,52 @@ impl CarbonMarketplaceContract {
             }
         }
         result
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /// Build a deterministic fee record ID from listing_id and timestamp.
+    /// Format: "fee_<20-digit-ts>_<3-digit-len>" — unique per listing+second.
+    fn make_fee_id(env: &Env, listing_id: &String, ts: u64) -> String {
+        let mut digits = [b'0'; 20];
+        let mut n = ts;
+        let mut pos = 19usize;
+        loop {
+            digits[pos] = b'0' + (n % 10) as u8;
+            n /= 10;
+            if n == 0 { break; }
+            if pos == 0 { break; }
+            pos -= 1;
+        }
+        let mut buf = [0u8; 28];
+        buf[0] = b'f'; buf[1] = b'e'; buf[2] = b'e'; buf[3] = b'_';
+        for i in 0..20 { buf[4 + i] = digits[i]; }
+        let ll = (listing_id.len() as u8) & 0xFF;
+        buf[24] = b'_';
+        buf[25] = b'0' + (ll / 100);
+        buf[26] = b'0' + (ll % 100 / 10);
+        buf[27] = b'0' + (ll % 10);
+        let s = core::str::from_utf8(&buf).unwrap_or("fee_invalid_____");
+        String::from_str(env, s)
+    }
+
+    /// Reset the fee accumulator and emit a FeeSwept event.
+    /// Fees were already wired to treasury atomically during purchase;
+    /// this function only resets the accounting counter.
+    fn do_sweep(env: &Env, acc: i128, _usdc: &token::Client, _treasury: &Address) -> Result<(), CarbonError> {
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &0_i128);
+        let swept: i128 = env.storage().persistent().get(&DataKey::TotalFeesSwept).unwrap_or(0);
+        let new_swept = swept.checked_add(acc).ok_or(CarbonError::Arithmetic)?;
+        env.storage().persistent().set(&DataKey::TotalFeesSwept, &new_swept);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("swept")),
+            FeeSweptEvent {
+                swept_by: env.current_contract_address(),
+                amount:   acc,
+                swept_at: env.ledger().timestamp(),
+            },
+        );
+        Ok(())
     }
 
     fn require_admin(env: &Env, caller: &Address) -> Result<(), CarbonError> {

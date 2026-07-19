@@ -365,6 +365,11 @@ impl CarbonCreditContract {
         }
         require_batch_not_expired!(&env, batch.vintage_year);
 
+        // ── Expired vintage check (>30 years old cannot be retired) ──────────
+        if Self::is_vintage_expired(&env, batch.vintage_year) {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+
         let active_amount = Self::active_amount(&env, &batch);
         if amount > active_amount {
             return Err(CarbonError::InsufficientCredits);
@@ -457,6 +462,11 @@ impl CarbonCreditContract {
             return Err(CarbonError::ProjectSuspended);
         }
         require_batch_not_expired!(&env, batch.vintage_year);
+
+        // ── Expired vintage check (>30 years old cannot be transferred) ───────
+        if Self::is_vintage_expired(&env, batch.vintage_year) {
+            return Err(CarbonError::InvalidVintageYear);
+        }
 
         let active = Self::active_amount(&env, &batch);
         if amount > active {
