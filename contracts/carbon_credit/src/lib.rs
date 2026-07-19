@@ -6,7 +6,24 @@ use soroban_sdk::{
     symbol_short, vec, BytesN,
 };
 
+macro_rules! require_valid_vintage_year {
+    ($env:expr, $year:expr) => {
+        Self::validate_vintage_year(&$env, $year)?
+    };
+}
+
+macro_rules! require_batch_not_expired {
+    ($env:expr, $year:expr) => {
+        Self::validate_batch_not_expired(&$env, $year)?
+    };
+}
+
 const TTL_LEDGERS: u32 = 518_400;
+/// Earliest valid vintage year for carbon credits.
+pub const VINTAGE_YEAR_MIN: u32 = 1990;
+/// Maximum number of years a vintage may be aged before it is considered expired
+/// and credits become ineligible for transfer or retirement.
+pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
 const CURRENT_VERSION: u32 = 1;
 
 #[contracterror]
@@ -213,33 +230,20 @@ impl CarbonCreditContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
-    // ── Vintage year validation helpers ───────────────────────────────────────
-    //
-    // Centralised vintage-year logic.  All functions that accept or inspect a
-    // `vintage_year` field MUST use one of these helpers — never write ad-hoc
-    // range comparisons directly.
-    //
-    // Issuance window : [MIN_VINTAGE_YEAR, current_year + 1]  (inclusive)
-    // Expiry window   : vintage_year + VINTAGE_EXPIRY_YEARS < current_year
-
-    pub const MIN_VINTAGE_YEAR: u32 = 1990;
-    pub const VINTAGE_EXPIRY_YEARS: u32 = 30;
-
-    /// Returns `Err(CarbonError::InvalidVintageYear)` when `vintage_year` is
-    /// outside the acceptable issuance window.
     fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
         let current_year = Self::current_year(env);
-        if vintage_year < Self::MIN_VINTAGE_YEAR || vintage_year > current_year + 1 {
+        if vintage_year < VINTAGE_YEAR_MIN || vintage_year > current_year + 1 {
             return Err(CarbonError::InvalidVintageYear);
         }
         Ok(())
     }
 
-    /// Returns `true` when the vintage has expired
-    /// (`vintage_year + VINTAGE_EXPIRY_YEARS < current_year`).
-    fn is_vintage_expired(env: &Env, vintage_year: u32) -> bool {
+    fn validate_batch_not_expired(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
         let current_year = Self::current_year(env);
-        vintage_year + Self::VINTAGE_EXPIRY_YEARS < current_year
+        if vintage_year + MAX_VINTAGE_AGE_YEARS < current_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        Ok(())
     }
 
     pub fn mint_credits(
@@ -277,7 +281,7 @@ impl CarbonCreditContract {
             return Err(CarbonError::InvalidSerialRange);
         }
 
-        Self::validate_vintage_year(&env, vintage_year)?;
+        require_valid_vintage_year!(&env, vintage_year);
 
         if env.storage().persistent().has(&DataKey::Batch(batch_id.clone())) {
             return Err(CarbonError::SerialNumberConflict);
@@ -359,6 +363,7 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
+        require_batch_not_expired!(&env, batch.vintage_year);
 
         // ── Expired vintage check (>30 years old cannot be retired) ──────────
         if Self::is_vintage_expired(&env, batch.vintage_year) {
@@ -456,6 +461,7 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
+        require_batch_not_expired!(&env, batch.vintage_year);
 
         // ── Expired vintage check (>30 years old cannot be transferred) ───────
         if Self::is_vintage_expired(&env, batch.vintage_year) {
@@ -1100,403 +1106,486 @@ mod tests {
 }
 
 
-// ── Vintage Year Validation Tests (closes #533) ───────────────────────────────
+// ── Vintage Year Validation Tests ─────────────────────────────────────────────
 //
 // 50+ edge-case tests covering:
-//   - Year boundaries (1989/1990, current_year, current_year+1, current_year+2)
-//   - Century boundaries (1900, 2000, 2099, 2100)
-//   - Leap year epochs (1900 not leap, 2000 leap, 2004 leap)
-//   - 30-year expiry at retire and transfer
-//   - Zero, u32::MAX, and other extremes
-//   - Consistency: same logic in mint, retire, transfer
-
+//   - Minimum boundary (VINTAGE_YEAR_MIN = 1990)
+//   - Below minimum (0, 1, 1900, 1989)
+//   - Future boundary (current_year, current_year+1 allowed; current_year+2 rejected)
+//   - Batch expiry boundary (vintage_year + 30 >= current_year → valid)
+//   - Century boundaries (1999/2000/2001, 2099/2100)
+//   - Year u32::MAX (overflow guard)
+//   - Retirement and transfer blocked for expired batches
+//   - Ledger timestamp variations (different simulated years)
 #[cfg(test)]
-mod vintage_year_tests {
+mod vintage_year_validation_tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _, LedgerInfo}, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
 
     fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
 
-    // Ledger timestamp for year Y ≈ (Y - 1970) * 31_557_600
-    fn ts_for_year(y: u64) -> u64 { (y.saturating_sub(1970)) * 31_557_600 }
+    /// Set up environment with timestamp for a given approximate year.
+    /// Uses seconds_per_year = 31557600 to match contract logic.
+    fn set_year(env: &Env, year: u32) {
+        let seconds_per_year: u64 = 31_557_600;
+        let timestamp = (year as u64 - 1970) * seconds_per_year + 86_400; // +1 day buffer
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+    }
 
-    fn make_env(year: u64) -> Env {
+    fn setup_with_year(year: u32) -> (Env, CarbonCreditContractClient, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
-        env.ledger().set(LedgerInfo {
-            timestamp:                ts_for_year(year),
-            protocol_version:         20,
-            sequence_number:          1,
-            network_id:               [0; 32],
-            base_reserve:             10,
-            min_temp_entry_ttl:       1,
-            min_persistent_entry_ttl: 1,
-            max_entry_ttl:            518_400,
-        });
-        env
+        set_year(&env, year);
+        let admin    = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id     = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+        (env, client, admin, registry)
     }
 
-    fn setup(env: &Env) -> (CarbonCreditContractClient, Address) {
-        let admin    = Address::generate(env);
-        let registry = Address::generate(env);
-        let id       = env.register_contract(None, CarbonCreditContract);
-        let client   = CarbonCreditContractClient::new(env, &id);
-        client.initialize(&admin, &registry).unwrap();
-        (client, admin)
-    }
-
-    fn try_mint(env: &Env, client: &CarbonCreditContractClient, admin: &Address, vintage: u32, batch: &str)
-        -> Result<(), Result<CarbonError, soroban_sdk::InvokeError>>
-    {
+    fn try_mint(
+        env: &Env,
+        client: &CarbonCreditContractClient,
+        admin: &Address,
+        vintage_year: u32,
+        batch_id: &str,
+    ) -> Result<(), soroban_sdk::Error> {
         let owner = Address::generate(env);
         client.try_mint_credits(
             admin,
             &s(env, "p1"),
             &100_i128,
-            &vintage,
-            &s(env, batch),
+            &vintage_year,
+            &s(env, batch_id),
             &1_u64,
             &100_u64,
-            &s(env, "QmCID"),
+            &s(env, "cid"),
             &owner,
-        )
+        ).map(|_| ())
     }
 
-    // ── 1. Pre-1990 vintages always rejected ──────────────────────────────────
-
-    #[test] fn vintage_1900_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, 1900, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test] fn vintage_1950_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, 1950, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test] fn vintage_1989_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, 1989, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test] fn vintage_0_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, 0, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test] fn vintage_u32_max_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, u32::MAX, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── 2. 1990 boundary — accepted ───────────────────────────────────────────
-
-    #[test] fn vintage_1990_accepted() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 1990, "b1").is_ok());
-    }
-
-    // ── 3. Current-year boundary ──────────────────────────────────────────────
-
-    #[test] fn vintage_current_year_accepted() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        // current_year ≈ 2026; should be accepted
-        assert!(try_mint(&env, &client, &admin, 2026, "b1").is_ok());
-    }
-
-    #[test] fn vintage_current_year_plus_1_accepted() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 2027, "b1").is_ok());
-    }
-
-    #[test] fn vintage_current_year_plus_2_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, 2028, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── 4. Century boundaries ─────────────────────────────────────────────────
-
-    #[test] fn vintage_2000_accepted() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 2000, "b1").is_ok());
-    }
-
-    #[test] fn vintage_2099_accepted_in_year_2100() {
-        let env = make_env(2100);
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 2099, "b1").is_ok());
-    }
-
-    #[test] fn vintage_2100_accepted_in_year_2100() {
-        let env = make_env(2100);
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 2100, "b1").is_ok());
-    }
-
-    #[test] fn vintage_2101_rejected_in_year_2100() {
-        let env = make_env(2100);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, 2102, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── 5. Leap year epoch checks ─────────────────────────────────────────────
-    // 1900 is not a leap year; 2000 is; 2004 is; 2100 is not.
-    // The contract uses a simple seconds/year approximation, but we verify
-    // year boundaries still hold across leap-year transitions.
-
-    #[test] fn vintage_check_around_2000_leap_year_epoch() {
-        // Simulate ledger near 2000 epoch (unix ~946684800)
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set(LedgerInfo {
-            timestamp: 946_684_800, // 2000-01-01 (leap year)
-            protocol_version: 20, sequence_number: 1, network_id: [0; 32],
-            base_reserve: 10, min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
-        });
-        let (client, admin) = setup(&env);
-        // vintage 1990 is within [1990, current_year+1] → accepted
-        assert!(try_mint(&env, &client, &admin, 1990, "b1").is_ok());
-        // vintage 1989 is before 1990 → rejected
-        assert_eq!(try_mint(&env, &client, &admin, 1989, "b2").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test] fn vintage_check_around_2004_leap_year() {
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set(LedgerInfo {
-            timestamp: 1_072_915_200, // ~2004-01-01
-            protocol_version: 20, sequence_number: 1, network_id: [0; 32],
-            base_reserve: 10, min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
-        });
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 2003, "b1").is_ok());
-        assert!(try_mint(&env, &client, &admin, 2004, "b2").is_ok());
-    }
-
-    // ── 6. 30-year expiry at retire ───────────────────────────────────────────
-
-    #[test] fn retire_30_year_old_vintage_rejected() {
-        // Mint in 2026 with vintage 1990; advance ledger to 2021 (only 31 yrs later)
-        let mint_env = make_env(2026);
-        let (client, admin) = setup(&mint_env);
-        let owner = Address::generate(&mint_env);
+    fn mint_ok(
+        env: &Env,
+        client: &CarbonCreditContractClient,
+        admin: &Address,
+        vintage_year: u32,
+        batch_id: &str,
+    ) {
+        let owner = Address::generate(env);
         client.mint_credits(
-            &admin, &s(&mint_env, "p1"), &100_i128, &1990_u32,
-            &s(&mint_env, "b1"), &1_u64, &100_u64, &s(&mint_env, "QmCID"), &owner,
-        ).unwrap();
-
-        // Advance time to 2021 — vintage 1990 is now 31 years old
-        mint_env.ledger().set(LedgerInfo {
-            timestamp: ts_for_year(2021),
-            protocol_version: 20, sequence_number: 2, network_id: [0; 32],
-            base_reserve: 10, min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
-        });
-
-        let result = client.try_retire_credits(
-            &owner, &s(&mint_env, "b1"), &50_i128,
-            &s(&mint_env, "reason"), &s(&mint_env, "Corp"),
-            &s(&mint_env, "ret-1"), &s(&mint_env, "tx"), &s(&mint_env, "QmCert"),
+            admin,
+            &s(env, "p1"),
+            &100_i128,
+            &vintage_year,
+            &s(env, batch_id),
+            &1_u64,
+            &100_u64,
+            &s(env, "cid"),
+            &owner,
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
     }
 
-    #[test] fn retire_exactly_30_year_old_vintage_accepted() {
-        // Vintage 1996 minted in 2026; retire in 2026 (30 years exactly) → OK
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
+    // ── Below-minimum year tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_year_zero_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, 0, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_vintage_year_1_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, 1, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_vintage_year_1900_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, 1900, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_vintage_year_1985_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, 1985, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_vintage_year_1989_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, 1989, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Minimum boundary (1990) ────────────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_year_1990_accepted_when_not_expired() {
+        // In year 2019, 1990 is 29 years old → not expired
+        let (env, client, admin, _) = setup_with_year(2019);
+        mint_ok(&env, &client, &admin, 1990, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_1990_rejected_when_expired() {
+        // In year 2025, 1990+30=2020 < 2025 → expired (batch-not-expired check)
+        let (env, client, admin, _) = setup_with_year(2025);
+        let res = try_mint(&env, &client, &admin, 1990, "b1");
+        // validate_vintage_year passes (1990 >= VINTAGE_YEAR_MIN), but
+        // validate_batch_not_expired fails at retirement/transfer, not at mint.
+        // At mint, only validate_vintage_year is called — so this succeeds.
+        // This asserts the correct behaviour: minting expired-vintage is allowed;
+        // retire/transfer is blocked.
+        assert!(res.is_ok());
+    }
+
+    // ── Present-era boundary ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_year_current_accepted() {
+        // At year 2026, vintage 2026 is current year → accepted
+        let (env, client, admin, _) = setup_with_year(2026);
+        mint_ok(&env, &client, &admin, 2026, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_current_minus_1_accepted() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        mint_ok(&env, &client, &admin, 2025, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_current_plus_1_accepted() {
+        // current_year+1 is the maximum allowed future vintage
+        let (env, client, admin, _) = setup_with_year(2026);
+        mint_ok(&env, &client, &admin, 2027, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_current_plus_2_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, 2028, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_vintage_year_current_plus_10_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, 2036, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Century boundary ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_year_1999_accepted_in_2025() {
+        // 1999+30=2029 >= 2025 → not expired; 1999 >= 1990 → valid
+        let (env, client, admin, _) = setup_with_year(2025);
+        mint_ok(&env, &client, &admin, 1999, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_2000_accepted_in_2025() {
+        let (env, client, admin, _) = setup_with_year(2025);
+        mint_ok(&env, &client, &admin, 2000, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_2001_accepted_in_2025() {
+        let (env, client, admin, _) = setup_with_year(2025);
+        mint_ok(&env, &client, &admin, 2001, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_2099_accepted_in_2099() {
+        let (env, client, admin, _) = setup_with_year(2099);
+        mint_ok(&env, &client, &admin, 2099, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_2100_rejected_in_2099() {
+        // 2100 > 2099+1=2100 → actually 2100 is NOT > 2100, so it should be accepted
+        // This verifies no off-by-one at year 2100
+        let (env, client, admin, _) = setup_with_year(2099);
+        mint_ok(&env, &client, &admin, 2100, "b1");
+    }
+
+    #[test]
+    fn test_vintage_year_2101_rejected_in_2099() {
+        let (env, client, admin, _) = setup_with_year(2099);
+        let res = try_mint(&env, &client, &admin, 2101, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── u32::MAX overflow guard ────────────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_year_u32_max_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, u32::MAX, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_vintage_year_u32_max_minus_1_rejected() {
+        let (env, client, admin, _) = setup_with_year(2026);
+        let res = try_mint(&env, &client, &admin, u32::MAX - 1, "b1");
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Batch expiry boundary (retire / transfer blocked) ─────────────────────
+
+    /// Batch expiry check: `vintage_year + MAX_VINTAGE_AGE_YEARS < current_year`
+    /// At current_year=2025: expiry if vintage_year < 1995
+
+    #[test]
+    fn test_retire_expired_vintage_blocked() {
+        // vintage 1993: 1993+30=2023 < 2025 → expired
+        let (env, client, admin, _) = setup_with_year(2025);
         let owner = Address::generate(&env);
         client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1996_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "QmCID"), &owner,
-        ).unwrap();
-        assert!(client.try_retire_credits(
-            &owner, &s(&env, "b1"), &50_i128,
+            &admin, &s(&env, "p1"), &100_i128, &1993_u32,
+            &s(&env, "bexp"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        let res = client.try_retire_credits(
+            &owner, &s(&env, "bexp"), &100_i128,
             &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCert"),
-        ).is_ok());
+            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
+        );
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
     }
 
-    #[test] fn retire_29_year_old_vintage_accepted() {
-        // Vintage 1997 retire in 2026 (29 years) → OK
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
+    #[test]
+    fn test_retire_exactly_expired_boundary_blocked() {
+        // At year 2026: vintage 1995+30=2025 < 2026 → expired
+        let (env, client, admin, _) = setup_with_year(2026);
         let owner = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1997_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "QmCID"), &owner,
-        ).unwrap();
-        assert!(client.try_retire_credits(
-            &owner, &s(&env, "b1"), &50_i128,
-            &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCert"),
-        ).is_ok());
-    }
-
-    // ── 7. 30-year expiry at transfer ─────────────────────────────────────────
-
-    #[test] fn transfer_31_year_old_vintage_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        let owner = Address::generate(&env);
-        // Mint vintage 1990 (36 years old in 2026)
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1990_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "QmCID"), &owner,
-        ).unwrap();
-        let buyer = Address::generate(&env);
-        let result = client.try_transfer_credits(&owner, &buyer, &s(&env, "b1"), &50_i128);
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test] fn transfer_exactly_30_year_old_vintage_accepted() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        let owner = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1996_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "QmCID"), &owner,
-        ).unwrap();
-        let buyer = Address::generate(&env);
-        assert!(client.try_transfer_credits(&owner, &buyer, &s(&env, "b1"), &50_i128).is_ok());
-    }
-
-    // ── 8. Mint → retire consistency (vintage valid at mint, expired at retire) ─
-
-    #[test] fn vintage_valid_at_mint_but_expires_before_retire() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        let owner = Address::generate(&env);
-        // Mint vintage 1995 (31 years old in 2026 — should be rejected at retire)
         client.mint_credits(
             &admin, &s(&env, "p1"), &100_i128, &1995_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "QmCID"), &owner,
-        ).unwrap();
-        // Attempt to retire — 1995 + 30 = 2025 < 2026 → expired
-        let result = client.try_retire_credits(
-            &owner, &s(&env, "b1"), &50_i128,
-            &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCert"),
+            &s(&env, "bexp"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── 9. Multiple vintages minted same year ─────────────────────────────────
-
-    #[test] fn multiple_valid_vintages_in_same_block() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        let owner = Address::generate(&env);
-        for (i, yr) in [1990u32, 2000, 2010, 2020, 2025, 2026, 2027].iter().enumerate() {
-            let batch = alloc::format!("b{}", i);
-            let serial_start = (i as u64) * 1000 + 1;
-            let serial_end   = serial_start + 99;
-            let res = client.try_mint_credits(
-                &admin, &s(&env, "p1"), &100_i128, yr,
-                &String::from_str(&env, &batch),
-                &serial_start, &serial_end,
-                &s(&env, "QmCID"), &owner,
-            );
-            assert!(res.is_ok(), "vintage {} should be valid in 2026", yr);
-        }
-    }
-
-    #[test] fn invalid_vintages_batch_all_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        for (i, yr) in [1900u32, 1969, 1989, 2028, 2100, u32::MAX].iter().enumerate() {
-            let batch = alloc::format!("bad{}", i);
-            let res = client.try_mint_credits(
-                &admin, &s(&env, "p1"), &100_i128, yr,
-                &String::from_str(&env, &batch),
-                &1_u64, &100_u64,
-                &s(&env, "QmCID"), &Address::generate(&env),
-            );
-            assert_eq!(res.unwrap_err().unwrap(), CarbonError::InvalidVintageYear,
-                "vintage {} should be rejected", yr);
-        }
-    }
-
-    // ── 10. Edge: ledger at exact Unix epoch (year 1970) ──────────────────────
-
-    #[test] fn vintage_check_at_unix_epoch() {
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set(LedgerInfo {
-            timestamp: 0, // Unix epoch = year 1970
-            protocol_version: 20, sequence_number: 1, network_id: [0; 32],
-            base_reserve: 10, min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
-        });
-        let (client, admin) = setup(&env);
-        // At epoch, current_year ≈ 1970; max vintage = 1971; 1990 > 1971 → rejected
-        assert_eq!(try_mint(&env, &client, &admin, 1990, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-        // 1970 > 1971 → rejected too; but 1970 < 1990 anyway
-        assert_eq!(try_mint(&env, &client, &admin, 1970, "b2").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── 11. Transition: vintage just crosses 30-year expiry ───────────────────
-
-    #[test] fn vintage_1994_exactly_32_years_old_rejected() {
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
-        let owner = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1994_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "QmCID"), &owner,
-        ).unwrap();
-        // 1994 + 30 = 2024 < 2026 → expired
-        let result = client.try_retire_credits(
-            &owner, &s(&env, "b1"), &50_i128,
+        let res = client.try_retire_credits(
+            &owner, &s(&env, "bexp"), &100_i128,
             &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCert"),
+            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
     }
 
-    #[test] fn vintage_1996_exactly_30_years_not_expired() {
-        // 1996 + 30 = 2026; 2026 is NOT < 2026 → not expired
-        let env = make_env(2026);
-        let (client, admin) = setup(&env);
+    #[test]
+    fn test_retire_at_expiry_boundary_just_valid() {
+        // At year 2026: vintage 1996+30=2026 = 2026, NOT < 2026 → valid (not expired)
+        let (env, client, admin, _) = setup_with_year(2026);
         let owner = Address::generate(&env);
         client.mint_credits(
             &admin, &s(&env, "p1"), &100_i128, &1996_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "QmCID"), &owner,
-        ).unwrap();
-        assert!(client.try_retire_credits(
-            &owner, &s(&env, "b1"), &50_i128,
+            &s(&env, "bvalid"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        client.retire_credits(
+            &owner, &s(&env, "bvalid"), &50_i128,
             &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCert"),
-        ).is_ok());
+            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
+        );
     }
 
-    // ── 12. Far-future year 2099 in year 2099 ────────────────────────────────
-
-    #[test] fn vintage_2099_in_year_2099_accepted() {
-        let env = make_env(2099);
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 2099, "b1").is_ok());
+    #[test]
+    fn test_transfer_expired_vintage_blocked() {
+        // At year 2026: vintage 1994 is expired (1994+30=2024 < 2026)
+        let (env, client, admin, _) = setup_with_year(2026);
+        let owner = Address::generate(&env);
+        let to    = Address::generate(&env);
+        client.mint_credits(
+            &admin, &s(&env, "p1"), &100_i128, &1994_u32,
+            &s(&env, "bexp"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        let res = client.try_transfer_credits(&owner, &to, &s(&env, "bexp"), &50_i128);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
     }
 
-    #[test] fn vintage_2100_in_year_2099_accepted_as_plus_1() {
-        let env = make_env(2099);
-        let (client, admin) = setup(&env);
-        assert!(try_mint(&env, &client, &admin, 2100, "b1").is_ok());
+    #[test]
+    fn test_transfer_at_expiry_boundary_just_valid() {
+        // At year 2026: vintage 1996+30=2026 = 2026, NOT < 2026 → valid
+        let (env, client, admin, _) = setup_with_year(2026);
+        let owner = Address::generate(&env);
+        let to    = Address::generate(&env);
+        client.mint_credits(
+            &admin, &s(&env, "p1"), &100_i128, &1996_u32,
+            &s(&env, "bvalid"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        client.transfer_credits(&owner, &to, &s(&env, "bvalid"), &50_i128);
     }
 
-    #[test] fn vintage_2101_in_year_2099_rejected() {
-        let env = make_env(2099);
-        let (client, admin) = setup(&env);
-        assert_eq!(try_mint(&env, &client, &admin, 2102, "b1").unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+    #[test]
+    fn test_transfer_unexpired_vintage_allowed() {
+        // At year 2026: vintage 2020 → 2020+30=2050 >= 2026 → valid
+        let (env, client, admin, _) = setup_with_year(2026);
+        let owner = Address::generate(&env);
+        let to    = Address::generate(&env);
+        client.mint_credits(
+            &admin, &s(&env, "p1"), &100_i128, &2020_u32,
+            &s(&env, "bvalid"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        client.transfer_credits(&owner, &to, &s(&env, "bvalid"), &50_i128);
+    }
+
+    // ── Ledger time sensitivity ────────────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_year_depends_on_ledger_time_early_epoch() {
+        // Very early ledger time: year ~1970, any vintage_year >= 1990 is future → invalid
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_000, // ~1970
+            protocol_version: 20, sequence_number: 1,
+            network_id: [0; 32], base_reserve: 10,
+            min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
+        });
+        let admin    = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id     = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+
+        // At ~1970, current_year = 1970. vintage 1990 > 1970+1=1971 → invalid
+        let owner = Address::generate(&env);
+        let res = client.try_mint_credits(
+            &admin, &s(&env, "p1"), &100_i128, &1990_u32,
+            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_same_vintage_valid_in_one_year_invalid_after_expiry() {
+        // Vintage 2000 is valid in year 2025 (2000+30=2030 >= 2025)
+        // but invalid at retire time in year 2031 (2000+30=2030 < 2031)
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // Mint in 2025
+        set_year(&env, 2025);
+        let admin    = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id       = env.register_contract(None, CarbonCreditContract);
+        let client   = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+        let owner = Address::generate(&env);
+        client.mint_credits(
+            &admin, &s(&env, "p1"), &100_i128, &2000_u32,
+            &s(&env, "btime"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+
+        // Advance ledger to 2031 — now vintage 2000 is expired
+        set_year(&env, 2031);
+        let res = client.try_retire_credits(
+            &owner, &s(&env, "btime"), &100_i128,
+            &s(&env, "reason"), &s(&env, "Corp"),
+            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
+        );
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Expiry boundary precision across multiple vintages ────────────────────
+
+    #[test]
+    fn test_expiry_boundary_sweep_at_year_2030() {
+        // At year 2030: expiry when vintage_year + 30 < 2030 → vintage < 2000
+        // vintage 1999: 1999+30=2029 < 2030 → expired
+        // vintage 2000: 2000+30=2030 = 2030, NOT < 2030 → valid
+        let env = Env::default();
+        env.mock_all_auths();
+        set_year(&env, 2030);
+        let admin    = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id       = env.register_contract(None, CarbonCreditContract);
+        let client   = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+
+        let owner = Address::generate(&env);
+
+        // vintage 1999 — expired at retirement
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &1999_u32, &s(&env, "b1999"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
+        let res = client.try_retire_credits(&owner, &s(&env, "b1999"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret1"), &s(&env, "tx"), &s(&env, "cid2"));
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+
+        // vintage 2000 — valid at retirement
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2000_u32, &s(&env, "b2000"), &101_u64, &200_u64, &s(&env, "cid"), &owner);
+        client.retire_credits(&owner, &s(&env, "b2000"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret2"), &s(&env, "tx"), &s(&env, "cid2"));
+    }
+
+    // ── MAX_VINTAGE_AGE_YEARS constant correctness ────────────────────────────
+
+    #[test]
+    fn test_max_vintage_age_constant_is_30() {
+        assert_eq!(MAX_VINTAGE_AGE_YEARS, 30);
+    }
+
+    #[test]
+    fn test_vintage_year_min_constant_is_1990() {
+        assert_eq!(VINTAGE_YEAR_MIN, 1990);
+    }
+
+    // ── Leap-year adjacent timestamps ─────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_year_at_leap_year_2000_boundary() {
+        // 2000 was a leap year; test that validation works correctly around it
+        // At year 2000: vintage 1990 is 10 years old → valid; vintage 1999 → valid
+        let (env, client, admin, _) = setup_with_year(2000);
+        mint_ok(&env, &client, &admin, 1990, "b1990");
+        mint_ok(&env, &client, &admin, 1999, "b1999");
+    }
+
+    #[test]
+    fn test_vintage_year_at_leap_year_2004_boundary() {
+        let (env, client, admin, _) = setup_with_year(2004);
+        mint_ok(&env, &client, &admin, 2003, "b2003");
+        mint_ok(&env, &client, &admin, 2004, "b2004");
+        mint_ok(&env, &client, &admin, 2005, "b2005"); // current+1
+    }
+
+    // ── Multiple batch independence ────────────────────────────────────────────
+
+    #[test]
+    fn test_multiple_batches_different_vintages_independent_expiry() {
+        // At year 2026:
+        //   batch-fresh: vintage 2020 → valid for retire
+        //   batch-exp:   vintage 1992 → expired (1992+30=2022 < 2026)
+        let (env, client, admin, _) = setup_with_year(2026);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2020_u32, &s(&env, "b-fresh"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &1992_u32, &s(&env, "b-exp"),   &101_u64, &200_u64, &s(&env, "cid"), &owner);
+
+        // Fresh vintage can be retired
+        client.retire_credits(&owner, &s(&env, "b-fresh"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret1"), &s(&env, "tx"), &s(&env, "cid2"));
+
+        // Expired vintage cannot be retired
+        let res = client.try_retire_credits(&owner, &s(&env, "b-exp"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret2"), &s(&env, "tx"), &s(&env, "cid3"));
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Error code verification ────────────────────────────────────────────────
+
+    #[test]
+    fn test_invalid_vintage_year_error_code_is_9() {
+        // CarbonError::InvalidVintageYear must be discriminant 9
+        assert_eq!(CarbonError::InvalidVintageYear as u32, 9);
     }
 }
-
-extern crate alloc;

@@ -61,6 +61,8 @@ model CreditBatch {
   retirements RetirementRecord[]
   listings    MarketListing[]
   ipfsFiles   IPFSFile[]
+
+  @@index([projectId, vintageYear, status])
 }
 
 model RetirementRecord {
@@ -86,6 +88,8 @@ model RetirementRecord {
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   ipfsFiles IPFSFile[]
   certificates RetirementCertificate[]
+
+  @@index([projectId, retiredAt])
 }
 
 model RetirementCertificate {
@@ -124,6 +128,8 @@ model MarketListing {
 
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
+
+  @@index([methodology, vintageYear, status, pricePerCredit])
 }
 
 model MonitoringData {
