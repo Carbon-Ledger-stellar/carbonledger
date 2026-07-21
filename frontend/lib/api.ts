@@ -237,6 +237,95 @@ export function useSerialSingleLookup(serial: string) {
   );
 }
 
+export interface ProvenanceTransfer {
+  eventType: string;
+  actor: string;
+  from: string | null;
+  to: string | null;
+  txHash: string;
+  timestamp: string;
+}
+
+export interface SerialProvenanceResult {
+  serialNumber: string;
+  batch: {
+    batchId: string;
+    vintageYear: number;
+    amount: number;
+    serialStart: string;
+    serialEnd: string;
+    status: string;
+    issuedAt: string;
+    metadataCid: string;
+  };
+  project: {
+    projectId: string;
+    name: string;
+    methodology: string;
+    country: string;
+    vintageYear: number;
+  };
+  currentOwner: string | null;
+  status: "active" | "retired";
+  transfers: ProvenanceTransfer[];
+  provenance: Array<{ eventType: string; actor: string; txHash: string; timestamp: string }>;
+  retirement: {
+    retirementId: string;
+    retiredBy: string;
+    beneficiary: string;
+    retirementReason: string;
+    vintageYear: number;
+    txHash: string;
+    retiredAt: string;
+    certificateUrl: string | null;
+  } | null;
+}
+
+/**
+ * useSerialProvenance — full provenance for a single serial number.
+ * Returns credit batch details, project info, all transfer events in
+ * chronological order, and retirement details if retired.
+ * Accessible without authentication (public audit endpoint).
+ */
+export function useSerialProvenance(serial: string) {
+  return useSWR<SerialProvenanceResult>(
+    serial ? `${API_URL}/credits/provenance/${encodeURIComponent(serial)}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
+export interface OracleServiceStatus {
+  status: "healthy" | "stale" | "offline";
+  lastSubmissionAt: string | null;
+  staleThresholdDays?: number;
+  staleThresholdHours?: number;
+}
+
+export interface OracleServicesHealth {
+  services: {
+    verification_listener: OracleServiceStatus;
+    price_oracle:          OracleServiceStatus;
+    satellite_monitor:     OracleServiceStatus;
+  };
+  generatedAt: string;
+}
+
+/**
+ * useOracleServicesHealth — aggregate health of all oracle services.
+ * Returns status (healthy | stale | offline) + last submission timestamp
+ * for each of the three oracle services.
+ * Always returns 200; stale/offline status is encoded in the response body.
+ * Refreshes every 30 seconds to match the server-side cache TTL.
+ */
+export function useOracleServicesHealth() {
+  return useSWR<OracleServicesHealth>(
+    `${API_URL}/oracle/services/health`,
+    fetcher,
+    { ...swrConfig, refreshInterval: 30_000 },
+  );
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
 export interface BulkPurchaseItem {
