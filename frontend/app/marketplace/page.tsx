@@ -168,6 +168,12 @@ function MarketplaceContent() {
                     <div style={{ display: "flex", gap: "0.5rem" }}>
                       <a
                         href={`/buy?listing=${listing.listingId}`}
+                        onKeyDown={(e) => {
+                          if (e.key === " ") {
+                            e.preventDefault();
+                            window.location.href = `/buy?listing=${listing.listingId}`;
+                          }
+                        }}
                         style={{
                           padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
                           border: `1px solid ${colors.primary[300]}`, borderRadius: "0.375rem",
