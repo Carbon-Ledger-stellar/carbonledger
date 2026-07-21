@@ -18,7 +18,7 @@ export class RetireCreditsDto {
   @IsString() @Length(1, 64) batchId: string;
   /** Supports fractional tonnes, e.g. 0.5. Minimum 0.01 tCO₂e. */
   @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Type(() => Number) amount: number;
-  @IsString() @Length(1, 64) beneficiary: string;
-  @IsString() @MaxLength(256) retirementReason: string;
+  @IsString() @Length(1, 100) beneficiary: string;
+  @IsString() @Length(1, 500) retirementReason: string;
   @IsString() @Length(1, 64) holderPublicKey: string;
 }

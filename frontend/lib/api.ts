@@ -370,7 +370,13 @@ export async function retireCredits(payload: {
   retirementReason: string;
   holderPublicKey: string;
 }) {
+  // Frontend validation should prevent these from reaching this point
   if (payload.amount < 0.01) throw new Error("Minimum retirement is 0.01 tCO₂e");
+  if (!payload.beneficiary?.trim()) throw new Error("Beneficiary name is required");
+  if (payload.beneficiary.length > 100) throw new Error("Beneficiary name must not exceed 100 characters");
+  if (!payload.retirementReason?.trim()) throw new Error("Retirement reason is required");
+  if (payload.retirementReason.length > 500) throw new Error("Retirement reason must not exceed 500 characters");
+  
   const res = await fetch(`${API_URL}/credits/retire`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
