@@ -7,6 +7,18 @@ use soroban_sdk::{
 };
 use soroban_sdk::xdr::ToXdr;
 
+macro_rules! require_valid_vintage_year {
+    ($env:expr, $year:expr) => {
+        Self::validate_vintage_year(&$env, $year)?
+    };
+}
+
+macro_rules! require_batch_not_expired {
+    ($env:expr, $year:expr) => {
+        Self::validate_batch_not_expired(&$env, $year)?
+    };
+}
+
 // -- Error Enum ---------------------------------------------------------------
 
 #[contracterror]
@@ -40,7 +52,15 @@ pub enum CarbonError {
 
 // -- Constants ----------------------------------------------------------------
 
+/// Earliest valid vintage year for carbon credits.
+pub const VINTAGE_YEAR_MIN: u32 = 1990;
+/// Maximum number of years a vintage may be aged before it is considered expired.
+pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
+
 const MONITORING_FRESHNESS_SECS: u64 = 365 * 24 * 60 * 60;
+/// Maximum age of a benchmark price before it is considered stale (24 hours).
+/// Marketplace circuit breaker halts purchases when price data exceeds this threshold.
+pub const PRICE_STALENESS_SECS: u64 = 24 * 60 * 60;
 const PRICE_CACHE_TTL_LEDGERS: u32 = 17_280;
 const CURRENT_VERSION: u32 = 1;
 
@@ -52,6 +72,10 @@ pub enum DataKey {
     MonitoringData(String, String),
     LatestMonitoring(String),
     BenchmarkPrice(String, u32),
+    /// Unix timestamp of when BenchmarkPrice(methodology, vintage_year) was last updated.
+    /// Stored in persistent storage (unlike the price itself which uses temporary storage)
+    /// so that staleness can be checked even after the TTL-based price entry expires.
+    PriceUpdatedAt(String, u32),
     FlaggedProject(String),
     OracleAddress,
     OraclePublicKey,
@@ -256,14 +280,19 @@ impl CarbonOracleContract {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let current_year = Self::get_current_year(&env);
-        if vintage_year < 1990 || vintage_year > current_year + 1 {
-            return Err(CarbonError::InvalidVintageYear);
-        }
+        require_valid_vintage_year!(&env, vintage_year);
+        require_batch_not_expired!(&env, vintage_year);
+
+        let now = env.ledger().timestamp();
 
         let key = DataKey::BenchmarkPrice(methodology.clone(), vintage_year);
         env.storage().temporary().set(&key, &price_usdc);
         env.storage().temporary().extend_ttl(&key, PRICE_CACHE_TTL_LEDGERS, PRICE_CACHE_TTL_LEDGERS);
+
+        // Store the update timestamp persistently so staleness can be checked
+        // even if the temporary price entry has expired.
+        let ts_key = DataKey::PriceUpdatedAt(methodology.clone(), vintage_year);
+        env.storage().persistent().set(&ts_key, &now);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("price_upd")),
@@ -336,6 +365,27 @@ impl CarbonOracleContract {
         }
     }
 
+    /// Returns true if the benchmark price for (methodology, vintage_year) was
+    /// updated within the last 24 hours.  Returns false if the price was never
+    /// set or was last updated more than PRICE_STALENESS_SECS (24 h) ago.
+    ///
+    /// This is the primary gate used by the marketplace circuit breaker:
+    /// purchase_credits() calls this before allowing any trade to proceed.
+    pub fn is_price_current(env: Env, methodology: String, vintage_year: u32) -> bool {
+        let ts: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceUpdatedAt(methodology, vintage_year));
+
+        match ts {
+            None => false,
+            Some(updated_at) => {
+                let now = env.ledger().timestamp();
+                now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS
+            }
+        }
+    }
+
     fn require_oracle(env: &Env, caller: &Address) -> Result<(), CarbonError> {
         let oracle: Address = env
             .storage()
@@ -399,6 +449,22 @@ impl CarbonOracleContract {
             year += 1;
         }
         year as u32
+    }
+
+    fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
+        let current_year = Self::get_current_year(env);
+        if vintage_year < VINTAGE_YEAR_MIN || vintage_year > current_year + 1 {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        Ok(())
+    }
+
+    fn validate_batch_not_expired(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
+        let current_year = Self::get_current_year(env);
+        if vintage_year + MAX_VINTAGE_AGE_YEARS < current_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        Ok(())
     }
 }
 
@@ -556,5 +622,445 @@ mod tests {
         ).unwrap_err();
         
         assert_eq!(err.unwrap(), CarbonError::InvalidNonce);
+    }
+}
+
+// ── Circuit breaker / staleness tests ─────────────────────────────────────────
+
+#[cfg(test)]
+mod staleness_tests {
+    //! Tests for is_price_current() and the price-staleness circuit breaker
+    //! mechanism (closes #534).
+    //!
+    //! Scenarios covered:
+    //!  1. is_price_current returns false when no price has ever been set.
+    //!  2. is_price_current returns true immediately after update_credit_price.
+    //!  3. is_price_current returns false after advancing ledger time > 24 hours.
+    //!  4. is_price_current returns true after a fresh price update following staleness.
+    //!  5. is_monitoring_current returns false if no data in > 365 days (regression).
+    //!  6. Different (methodology, vintage_year) pairs are tracked independently.
+
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger, LedgerInfo},
+        Env, String, BytesN,
+    };
+    use ed25519_dalek::{SigningKey, Signer};
+    use rand::rngs::OsRng;
+    use soroban_sdk::xdr::ToXdr;
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn setup(env: &Env) -> (CarbonOracleContractClient, Address, Address, SigningKey) {
+        env.mock_all_auths();
+        env.ledger().set(LedgerInfo {
+            timestamp:           1_735_689_600, // 2025-01-01 00:00:00 UTC
+            protocol_version:    20,
+            sequence_number:     1,
+            network_id:          [0; 32],
+            base_reserve:        10,
+            min_temp_entry_ttl:  1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl:       518_400,
+        });
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let pub_bytes = signing_key.verifying_key().to_bytes();
+        let pub_key = BytesN::from_array(env, &pub_bytes);
+        let admin  = Address::generate(env);
+        let oracle = Address::generate(env);
+        let id     = env.register_contract(None, CarbonOracleContract);
+        let client = CarbonOracleContractClient::new(env, &id);
+        client.initialize(&admin, &oracle, &pub_key);
+        (client, admin, oracle, signing_key)
+    }
+
+    fn sign_price(
+        env: &Env,
+        key: &SigningKey,
+        methodology: &String,
+        vintage_year: u32,
+        price: i128,
+    ) -> BytesN<64> {
+        let payload = (methodology.clone(), vintage_year, price).to_xdr(env);
+        let sig = key.sign(payload.to_alloc_vec().as_slice());
+        BytesN::from_array(env, &sig.to_bytes())
+    }
+
+    fn advance_time(env: &Env, secs: u64) {
+        let ts  = env.ledger().timestamp();
+        let seq = env.ledger().sequence();
+        env.ledger().set(LedgerInfo {
+            timestamp:           ts + secs,
+            protocol_version:    20,
+            sequence_number:     seq + 1,
+            network_id:          [0; 32],
+            base_reserve:        10,
+            min_temp_entry_ttl:  1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl:       518_400,
+        });
+    }
+
+    // ── 1. No price set → stale ───────────────────────────────────────────────
+
+    #[test]
+    fn test_is_price_current_false_when_never_set() {
+        let env = Env::default();
+        let (client, _, _, _) = setup(&env);
+        assert!(
+            !client.is_price_current(&s(&env, "VCS"), &2023_u32),
+            "price should not be current when never set"
+        );
+    }
+
+    // ── 2. Fresh price → current ──────────────────────────────────────────────
+
+    #[test]
+    fn test_is_price_current_true_immediately_after_update() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price  = 25_0000000_i128;
+        let sig    = sign_price(&env, &key, &method, 2023, price);
+        client.update_credit_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+        assert!(
+            client.is_price_current(&method, &2023_u32),
+            "price should be current immediately after update"
+        );
+    }
+
+    // ── 3. Price becomes stale after >24 h ────────────────────────────────────
+
+    #[test]
+    fn test_is_price_current_false_after_24_hours() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price  = 25_0000000_i128;
+        let sig    = sign_price(&env, &key, &method, 2023, price);
+        client.update_credit_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Advance past the 24-hour staleness threshold
+        advance_time(&env, 24 * 60 * 60 + 1);
+
+        assert!(
+            !client.is_price_current(&method, &2023_u32),
+            "price should be stale after 24 h + 1 s"
+        );
+    }
+
+    // ── 4. Stale price recovers after fresh update ────────────────────────────
+
+    #[test]
+    fn test_is_price_current_true_after_refresh_following_staleness() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+
+        // First update
+        let price1 = 25_0000000_i128;
+        let sig1   = sign_price(&env, &key, &method, 2023, price1);
+        client.update_credit_price(&oracle, &method, &2023_u32, &price1, &sig1, &0_u64);
+
+        // Advance to stale
+        advance_time(&env, 25 * 60 * 60);
+        assert!(!client.is_price_current(&method, &2023_u32), "should be stale after 25 h");
+
+        // Oracle submits a fresh price
+        let price2 = 26_0000000_i128;
+        let sig2   = sign_price(&env, &key, &method, 2023, price2);
+        client.update_credit_price(&oracle, &method, &2023_u32, &price2, &sig2, &1_u64);
+
+        assert!(
+            client.is_price_current(&method, &2023_u32),
+            "price should be current again after fresh update"
+        );
+    }
+
+    // ── 5. is_monitoring_current regression ───────────────────────────────────
+
+    #[test]
+    fn test_is_monitoring_current_false_after_365_days() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+
+        let project_id = s(&env, "proj-stale");
+        let period     = s(&env, "2023-Q1");
+        let payload = (
+            project_id.clone(), period.clone(),
+            5000_i128, 85_u32, s(&env, "QmCID"),
+        ).to_xdr(&env);
+        let sig = key.sign(payload.to_alloc_vec().as_slice());
+        let signature = BytesN::from_array(&env, &sig.to_bytes());
+
+        client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &s(&env, "QmCID"),
+            &signature, &0_u64,
+        );
+        assert!(client.is_monitoring_current(&project_id), "should be current just after submit");
+
+        // Advance by 366 days — past the 365-day monitoring freshness window
+        advance_time(&env, 366 * 24 * 60 * 60);
+        assert!(
+            !client.is_monitoring_current(&project_id),
+            "monitoring should be stale after 366 days"
+        );
+    }
+
+    // ── 6. Independent per-(methodology, vintage_year) tracking ──────────────
+
+    #[test]
+    fn test_price_staleness_independent_per_methodology_vintage() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+
+        let vcs = s(&env, "VCS");
+        let gs  = s(&env, "Gold Standard");
+        let price = 25_0000000_i128;
+
+        // Only set VCS 2023
+        let sig = sign_price(&env, &key, &vcs, 2023, price);
+        client.update_credit_price(&oracle, &vcs, &2023_u32, &price, &sig, &0_u64);
+
+        // Advance 13 h — VCS 2023 still fresh
+        advance_time(&env, 13 * 60 * 60);
+        assert!(client.is_price_current(&vcs, &2023_u32),  "VCS 2023 fresh at 13 h");
+        assert!(!client.is_price_current(&gs,  &2023_u32), "GS 2023 never set → stale");
+        assert!(!client.is_price_current(&vcs, &2022_u32), "VCS 2022 never set → stale");
+
+        // Advance another 13 h — VCS 2023 now stale (26 h total)
+        advance_time(&env, 13 * 60 * 60);
+        assert!(!client.is_price_current(&vcs, &2023_u32), "VCS 2023 stale after 26 h");
+    }
+}
+
+// ── Vintage Year Validation Tests (Oracle) ────────────────────────────────────
+//
+// Tests covering vintage year validation on update_credit_price.
+// Validates that the oracle rejects invalid vintage years and expired batches.
+#[cfg(test)]
+mod vintage_year_validation_tests {
+    use super::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger, LedgerInfo}, Env, String, BytesN};
+    use ed25519_dalek::{SigningKey, Signer};
+    use rand::rngs::OsRng;
+    use soroban_sdk::xdr::ToXdr;
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn set_year(env: &Env, year: u32) {
+        let seconds_per_year: u64 = 31_557_600;
+        let timestamp = (year as u64 - 1970) * seconds_per_year + 86_400;
+        env.ledger().set(LedgerInfo {
+            timestamp,
+            protocol_version: 20, sequence_number: 1,
+            network_id: [0; 32], base_reserve: 10,
+            min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
+        });
+    }
+
+    fn setup_at_year(year: u32) -> (Env, CarbonOracleContractClient, Address, Address, SigningKey) {
+        let env = Env::default();
+        env.mock_all_auths();
+        set_year(&env, year);
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let pub_bytes = signing_key.verifying_key().to_bytes();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let admin  = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let id     = env.register_contract(None, CarbonOracleContract);
+        let client = CarbonOracleContractClient::new(&env, &id);
+        client.initialize(&admin, &oracle, &pub_key);
+        (env, client, admin, oracle, signing_key)
+    }
+
+    fn sign_price(env: &Env, key: &SigningKey, methodology: &String, vintage_year: u32, price: i128, nonce: u64) -> BytesN<64> {
+        let payload = (methodology.clone(), vintage_year, price).to_xdr(env);
+        let sig = key.sign(payload.to_alloc_vec().as_slice());
+        BytesN::from_array(env, &sig.to_bytes())
+    }
+
+    fn try_update_price(
+        env: &Env,
+        client: &CarbonOracleContractClient,
+        oracle: &Address,
+        key: &SigningKey,
+        vintage_year: u32,
+        nonce: u64,
+    ) -> Result<(), soroban_sdk::Error> {
+        let method = s(env, "VCS");
+        let price = 25_0000000_i128;
+        let sig = sign_price(env, key, &method, vintage_year, price, nonce);
+        client.try_update_credit_price(oracle, &method, &vintage_year, &price, &sig, &nonce)
+            .map(|_| ())
+    }
+
+    fn update_price_ok(
+        env: &Env,
+        client: &CarbonOracleContractClient,
+        oracle: &Address,
+        key: &SigningKey,
+        vintage_year: u32,
+        nonce: u64,
+    ) {
+        let method = s(env, "VCS");
+        let price = 25_0000000_i128;
+        let sig = sign_price(env, key, &method, vintage_year, price, nonce);
+        client.update_credit_price(oracle, &method, &vintage_year, &price, &sig, &nonce);
+    }
+
+    // ── Below-minimum year tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_oracle_price_vintage_0_rejected() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 0, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_1_rejected() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 1, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_1900_rejected() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 1900, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_1989_rejected() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 1989, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Minimum boundary (1990) ────────────────────────────────────────────────
+
+    #[test]
+    fn test_oracle_price_vintage_1990_accepted_when_not_expired() {
+        // At year 2019: 1990+30=2020 >= 2019 → not expired; 1990 >= 1990 → valid
+        let (env, client, _, oracle, key) = setup_at_year(2019);
+        update_price_ok(&env, &client, &oracle, &key, 1990, 0);
+    }
+
+    // ── Current year boundary ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_oracle_price_vintage_current_accepted() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        update_price_ok(&env, &client, &oracle, &key, 2026, 0);
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_current_plus_1_accepted() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        update_price_ok(&env, &client, &oracle, &key, 2027, 0);
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_current_plus_2_rejected() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 2028, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_u32_max_rejected() {
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, u32::MAX, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Batch expiry ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_oracle_price_expired_vintage_rejected() {
+        // At year 2026: 1994+30=2024 < 2026 → expired
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 1994, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_oracle_price_at_exact_expiry_boundary_rejected() {
+        // At year 2026: vintage 1995+30=2025 < 2026 → expired
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 1995, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    #[test]
+    fn test_oracle_price_just_inside_expiry_boundary_accepted() {
+        // At year 2026: vintage 1996+30=2026 = 2026, NOT < 2026 → valid
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        update_price_ok(&env, &client, &oracle, &key, 1996, 0);
+    }
+
+    #[test]
+    fn test_oracle_price_far_past_expiry_rejected() {
+        // At year 2026: vintage 1990+30=2020 < 2026 → expired
+        let (env, client, _, oracle, key) = setup_at_year(2026);
+        let res = try_update_price(&env, &client, &oracle, &key, 1990, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Century boundaries ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_oracle_price_vintage_1999_accepted_in_2025() {
+        // 1999+30=2029 >= 2025 → valid
+        let (env, client, _, oracle, key) = setup_at_year(2025);
+        update_price_ok(&env, &client, &oracle, &key, 1999, 0);
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_2000_accepted_in_2025() {
+        let (env, client, _, oracle, key) = setup_at_year(2025);
+        update_price_ok(&env, &client, &oracle, &key, 2000, 0);
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_2099_accepted_in_2099() {
+        let (env, client, _, oracle, key) = setup_at_year(2099);
+        update_price_ok(&env, &client, &oracle, &key, 2099, 0);
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_2100_accepted_in_2099() {
+        // 2100 = 2099+1 → valid future vintage
+        let (env, client, _, oracle, key) = setup_at_year(2099);
+        update_price_ok(&env, &client, &oracle, &key, 2100, 0);
+    }
+
+    #[test]
+    fn test_oracle_price_vintage_2101_rejected_in_2099() {
+        let (env, client, _, oracle, key) = setup_at_year(2099);
+        let res = try_update_price(&env, &client, &oracle, &key, 2101, 0);
+        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+    }
+
+    // ── Constant correctness ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_oracle_vintage_year_min_constant() {
+        assert_eq!(VINTAGE_YEAR_MIN, 1990);
+    }
+
+    #[test]
+    fn test_oracle_max_vintage_age_constant() {
+        assert_eq!(MAX_VINTAGE_AGE_YEARS, 30);
+    }
+
+    #[test]
+    fn test_oracle_invalid_vintage_error_code() {
+        assert_eq!(CarbonError::InvalidVintageYear as u32, 9);
     }
 }
