@@ -12,6 +12,24 @@ import { Type } from 'class-transformer';
 
 const CID_REGEX = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/;
 
+// ── Response shape for the /oracle/services/health endpoint ──────────────────
+
+export interface OracleServiceStatus {
+  status: 'healthy' | 'stale' | 'offline';
+  lastSubmissionAt: Date | null;
+  staleThresholdDays?: number;
+  staleThresholdHours?: number;
+}
+
+export interface OracleServicesHealth {
+  services: {
+    verification_listener: OracleServiceStatus;
+    price_oracle:          OracleServiceStatus;
+    satellite_monitor:     OracleServiceStatus;
+  };
+  generatedAt: Date;
+}
+
 export class SubmitMonitoringDto {
   @IsString() @Length(1, 64) projectId: string;
   @IsString() @Length(1, 32) period: string;
@@ -173,6 +191,76 @@ export class OracleService {
       lastSubmittedAt: latest?.submittedAt ?? null,
       isCurrent,
       latestScore: latest?.methodologyScore ?? null,
+    };
+  }
+
+  /**
+   * Aggregate health status for all three oracle services.
+   *
+   * Freshness thresholds (per spec):
+   *   - verification_listener / satellite_monitor → stale after 365 days
+   *   - price_oracle                              → stale after 24 hours
+   *
+   * Returns 200 even when services are stale; callers inspect the `status`
+   * field per service.  The response is intended to be cached for 30 seconds
+   * by the controller.
+   */
+  async getServicesHealth(): Promise<OracleServicesHealth> {
+    const now = Date.now();
+
+    const MONITORING_STALE_MS = 365 * 24 * 60 * 60 * 1000; // 365 days
+    const PRICE_STALE_MS      =       24 * 60 * 60 * 1000; // 24 hours
+
+    // ── Verification listener: last 'monitoring' oracle update ──────────────
+    const lastMonitoring = await this.prisma.oracleUpdate.findFirst({
+      where:   { type: 'monitoring' },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // ── Price oracle: last 'price' oracle update ─────────────────────────────
+    const lastPrice = await this.prisma.oracleUpdate.findFirst({
+      where:   { type: 'price' },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // ── Satellite monitor: last monitoring data submission (satellite data
+    //    arrives via the monitoring pipeline and carries a satelliteCid) ──────
+    const lastSatellite = await this.prisma.monitoringData.findFirst({
+      where:   { satelliteCid: { not: '' } },
+      orderBy: { submittedAt: 'desc' },
+    });
+
+    const deriveStatus = (
+      lastTs: Date | null,
+      staleMs: number,
+    ): 'healthy' | 'stale' | 'offline' => {
+      if (!lastTs) return 'offline';
+      return now - lastTs.getTime() <= staleMs ? 'healthy' : 'stale';
+    };
+
+    const verificationLastAt = lastMonitoring?.updatedAt ?? null;
+    const priceLastAt        = lastPrice?.updatedAt      ?? null;
+    const satelliteLastAt    = lastSatellite?.submittedAt ?? null;
+
+    return {
+      services: {
+        verification_listener: {
+          status:              deriveStatus(verificationLastAt, MONITORING_STALE_MS),
+          lastSubmissionAt:    verificationLastAt,
+          staleThresholdDays:  365,
+        },
+        price_oracle: {
+          status:              deriveStatus(priceLastAt, PRICE_STALE_MS),
+          lastSubmissionAt:    priceLastAt,
+          staleThresholdHours: 24,
+        },
+        satellite_monitor: {
+          status:              deriveStatus(satelliteLastAt, MONITORING_STALE_MS),
+          lastSubmissionAt:    satelliteLastAt,
+          staleThresholdDays:  365,
+        },
+      },
+      generatedAt: new Date(),
     };
   }
 
