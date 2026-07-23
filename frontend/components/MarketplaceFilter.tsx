@@ -112,12 +112,57 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [localSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close modal on Escape
+  // Focus trap, Escape close, and return focus on close for Mobile Filter Modal
   useEffect(() => {
     if (!mobileOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMobileOpen(false); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+
+    const trigger = document.activeElement as HTMLElement | null;
+
+    // Focus the close button or first focusable element inside the modal
+    const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable && focusable.length > 0) {
+      requestAnimationFrame(() => {
+        focusable[0].focus();
+      });
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMobileOpen(false);
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      const focusableElements = modalRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusableElements || focusableElements.length === 0) return;
+
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      requestAnimationFrame(() => {
+        trigger?.focus();
+      });
+    };
   }, [mobileOpen]);
 
   const handleClear = () => {

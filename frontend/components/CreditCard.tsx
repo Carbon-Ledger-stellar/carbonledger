@@ -153,6 +153,12 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
           {onBuyNow && (
             <button
               onClick={() => onBuyNow(listing)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onBuyNow(listing);
+                }
+              }}
               aria-label={`Purchase carbon credits from ${projectLabel}`}
               style={{
                 flex: 1,
@@ -172,6 +178,12 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
           {onAddToCart && (
             <button
               onClick={() => onAddToCart(listing)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onAddToCart(listing);
+                }
+              }}
               aria-label={`Add ${projectLabel} to cart`}
               style={{
                 flex: 1,
