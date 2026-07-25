@@ -2,8 +2,7 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror,
-    Address, Env, String, Vec,
-    symbol_short, vec, BytesN,
+    Address, Env, String, Symbol, symbol_short, vec, BytesN, Vec, IntoVal
 };
 
 macro_rules! require_valid_vintage_year {
@@ -56,6 +55,8 @@ pub enum CarbonError {
     /// the oracle-verified tonnes for this project.  Re-check oracle data
     /// before retrying.
     IssuanceExceedsVerified = 23,
+    InvalidZkProofFormat    = 24,
+    ZkProofVerificationFailed = 25,
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
@@ -166,6 +167,14 @@ pub struct UpgradeRecord {
     pub timestamp:    u64,
     pub upgraded_by:  Address,
     pub wasm_hash:    BytesN<32>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZkProof {
+    pub commitment: soroban_sdk::Bytes,
+    pub salt: soroban_sdk::Bytes,
+    pub proof: soroban_sdk::Bytes,
 }
 
 #[contract]
@@ -316,7 +325,7 @@ impl CarbonCreditContract {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
-        if project_id.is_empty() || project_id.chars().count() > 64 {
+        if project_id.len() == 0 || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
         if batch_id.len() == 0 || batch_id.len() > 64 {
@@ -415,7 +424,7 @@ impl CarbonCreditContract {
             if total_after_mint > total_verified {
                 // Emit monitoring alert for over-issuance attempt
                 env.events().publish(
-                    (symbol_short!("c_ledger"), symbol_short!("over_issue")),
+                    (symbol_short!("c_ledger"), symbol_short!("overissu")),
                     (project_id.clone(), total_after_mint, total_verified),
                 );
                 return Err(CarbonError::IssuanceExceedsVerified);
@@ -529,7 +538,7 @@ impl CarbonCreditContract {
         require_batch_not_expired!(&env, batch.vintage_year);
 
         // ── Expired vintage check (>30 years old cannot be retired) ──────────
-        if Self::is_vintage_expired(&env, batch.vintage_year) {
+        if Self::validate_batch_not_expired(&env, batch.vintage_year).is_err() {
             return Err(CarbonError::InvalidVintageYear);
         }
 
@@ -627,7 +636,7 @@ impl CarbonCreditContract {
         require_batch_not_expired!(&env, batch.vintage_year);
 
         // ── Expired vintage check (>30 years old cannot be transferred) ───────
-        if Self::is_vintage_expired(&env, batch.vintage_year) {
+        if Self::validate_batch_not_expired(&env, batch.vintage_year).is_err() {
             return Err(CarbonError::InvalidVintageYear);
         }
 
