@@ -12,11 +12,13 @@ export interface FilterState {
   maxPrice:     string;
   projectType:  string;
   search:       string;
+  /** "true" when the "Available now" checkbox is checked, "" otherwise (kept as a string like the other fields for URL-param round-tripping). */
+  availableOnly: string;
 }
 
 export const EMPTY_FILTERS: FilterState = {
   methodology: "", vintageYear: "", country: "",
-  minPrice: "", maxPrice: "", projectType: "", search: "",
+  minPrice: "", maxPrice: "", projectType: "", search: "", availableOnly: "",
 };
 
 export function filtersFromParams(params: URLSearchParams): FilterState {
@@ -28,6 +30,7 @@ export function filtersFromParams(params: URLSearchParams): FilterState {
     maxPrice:    params.get("maxPrice")     ?? "",
     projectType: params.get("projectType")  ?? "",
     search:      params.get("search")       ?? "",
+    availableOnly: params.get("availableOnly") ?? "",
   };
 }
 
@@ -80,6 +83,18 @@ function FilterFields({ filters, onChange }: { filters: FilterState; onChange: (
       <div>
         <label htmlFor="filter-max-price" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>Max Price (USDC)</label>
         <input id="filter-max-price" type="number" style={controlStyle} placeholder="Any" value={filters.maxPrice} onChange={e => onChange("maxPrice", e.target.value)} min="0" aria-label="Maximum price in USDC" />
+      </div>
+      <div style={{ display: "flex", alignItems: "flex-end" }}>
+        <label htmlFor="filter-available-only" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", color: colors.neutral[700], cursor: "pointer" }}>
+          <input
+            id="filter-available-only"
+            type="checkbox"
+            checked={filters.availableOnly === "true"}
+            onChange={e => onChange("availableOnly", e.target.checked ? "true" : "")}
+            aria-label="Show only credits available now"
+          />
+          Available now
+        </label>
       </div>
     </div>
   );

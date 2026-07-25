@@ -18,7 +18,12 @@ export interface CarbonProject {
   totalCreditsIssued: number;
   totalCreditsRetired: number;
   metadataCid: string;
-  methodologyScore: number;
+  /**
+   * Raw shape returned by the API for the Prisma `coordinates: Json?` field.
+   * `latitude`/`longitude` below are kept for existing call sites but are
+   * never actually populated by the API — use `coordinates` for new code.
+   */
+  coordinates?: { lat: number; lng: number } | null;
   latitude?: number;
   longitude?: number;
   createdAt: string;
@@ -129,6 +134,26 @@ const swrConfig: SWRConfiguration = {
 export function useProjects(params?: { methodology?: string; country?: string; vintage?: number }) {
   const query = new URLSearchParams(params as Record<string, string>).toString();
   return useSWR<CarbonProject[]>(`${API_URL}/projects?${query}`, fetcher, swrConfig);
+}
+
+/**
+ * GET /projects actually returns a paginated wrapper
+ * ({ projects, nextCursor, hasMore, total }), not a bare array — unlike
+ * the `useProjects` hook above, which mistypes it as `CarbonProject[]`.
+ * This hook types and unwraps it correctly. Used by the marketplace map
+ * to fetch project coordinates for pin placement without touching the
+ * existing (mistyped) `useProjects` hook or its current call site.
+ */
+export interface PaginatedProjectsResponse {
+  projects: CarbonProject[];
+  nextCursor?: string;
+  hasMore: boolean;
+  total: number;
+}
+
+export function useProjectsForMap(params?: { methodology?: string; country?: string; vintage?: number; limit?: number }) {
+  const query = new URLSearchParams(params as Record<string, string>).toString();
+  return useSWR<PaginatedProjectsResponse>(`${API_URL}/projects?${query}`, fetcher, swrConfig);
 }
 
 export function useProject(id: string) {
