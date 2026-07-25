@@ -4,10 +4,11 @@ import { AdminService } from './admin.service';
 import { IndexerModule } from '../indexer/indexer.module';
 import { OracleModule } from '../oracle/oracle.module';
 import { PrismaService } from '../prisma.service';
+import { StellarNetworkService } from '../common/stellar-network.service';
 
 @Module({
   imports: [IndexerModule, OracleModule],
   controllers: [AdminController],
-  providers: [AdminService, PrismaService],
+  providers: [AdminService, PrismaService, StellarNetworkService],
 })
 export class AdminModule {}

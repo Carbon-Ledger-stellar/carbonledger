@@ -1,12 +1,12 @@
 import {
   Controller, Get, Post, Delete, Body, Param, Query,
-  UseGuards, Request,
+  UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/decorators';
 import { AdminService } from './admin.service';
-import { VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto } from './admin.dto';
+import { VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto, UpdateCanaryDto } from './admin.dto';
 
 @Controller('admin')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
