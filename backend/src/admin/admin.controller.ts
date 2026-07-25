@@ -75,38 +75,8 @@ export class AdminController {
     return this.admin.getAuditLogs({ limit, offset, action });
   }
 
-  // ── Canary deployment ───────────────────────────────────────────────────────
-
-  /**
-   * GET /api/v1/admin/canary
-   *
-   * Returns the current canary routing configuration and live error rates for
-   * both the primary and canary contract targets.
-   */
-  @Get('canary')
-  getCanary() {
-    return this.admin.getCanaryStatus();
-  }
-
-  /**
-   * POST /api/v1/admin/canary
-   *
-   * Adjust the canary traffic split or contract address at runtime.
-   *
-   * Body:
-   *   { "trafficPct": 10 }         — route 10% of calls to canary
-   *   { "trafficPct": 0 }          — disable canary (rollback)
-   *   { "canaryContractId": "C..." } — set/change the canary contract
-   *
-   * This endpoint is also called by the Grafana alert webhook for automated
-   * rollback: POST { "trafficPct": 0 } when canary_error_rate > threshold.
-   */
-  @Post('canary')
-  @HttpCode(HttpStatus.OK)
-  updateCanary(@Body() dto: UpdateCanaryDto) {
-    return this.admin.updateCanary({
-      canaryContractId: dto.canaryContractId,
-      trafficPct:       dto.trafficPct,
-    });
+  @Get('abuse-log')
+  getAbuseLog() {
+    return this.admin.getAbuseLog();
   }
 }
