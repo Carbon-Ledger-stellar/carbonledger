@@ -386,6 +386,41 @@ impl CarbonOracleContract {
         }
     }
 
+    /// Returns the cumulative verified tonnes for a project across all monitoring
+    /// periods recorded by the oracle.
+    ///
+    /// This is called by `carbon_credit::mint_credits` to enforce the cross-contract
+    /// invariant: `total_credits_issued + new_amount <= total_verified_tonnes`.
+    ///
+    /// # Trust model
+    /// - The oracle is assumed trusted (see ADR-004 and PR #530 spec doc).
+    /// - This function sums all periods stored under MonitoringData(project_id, *).
+    /// - Only periods explicitly recorded via `submit_monitoring_data` are counted.
+    /// - Oracle data freshness (365-day staleness) is checked separately via
+    ///   `is_monitoring_current`; this function returns the raw cumulative total
+    ///   regardless of age, allowing the caller to decide on freshness policy.
+    ///
+    /// # Monitoring alert
+    /// Callers should emit an event when this check fails so that off-chain
+    /// monitoring can alert on attempted over-issuance:
+    ///   event topic: ("c_ledger", "over_issue")
+    ///   payload: (project_id, attempted_total, verified_total)
+    pub fn get_total_verified_tonnes(
+        env: Env,
+        project_id: String,
+        periods: Vec<String>,
+    ) -> i128 {
+        let mut total: i128 = 0;
+        for period in periods.iter() {
+            if let Some(data) = env.storage().persistent().get::<DataKey, MonitoringData>(
+                &DataKey::MonitoringData(project_id.clone(), period.clone()),
+            ) {
+                total = total.saturating_add(data.tonnes_verified);
+            }
+        }
+        total
+    }
+
     fn require_oracle(env: &Env, caller: &Address) -> Result<(), CarbonError> {
         let oracle: Address = env
             .storage()
