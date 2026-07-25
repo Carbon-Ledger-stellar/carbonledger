@@ -74,4 +74,9 @@ export class AdminController {
   ) {
     return this.admin.getAuditLogs({ limit, offset, action });
   }
+
+  @Get('abuse-log')
+  getAbuseLog() {
+    return this.admin.getAbuseLog();
+  }
 }
