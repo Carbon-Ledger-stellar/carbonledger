@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
+import { StellarNetworkService, CanaryConfig } from '../common/stellar-network.service';
 
 @Injectable()
 export class AdminService {
@@ -9,6 +10,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly indexer: IndexerService,
     private readonly oracle: OracleService,
+    private readonly stellarNetwork: StellarNetworkService,
   ) {}
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
@@ -96,5 +98,57 @@ export class AdminService {
       skip:    Number(query.offset) || 0,
       orderBy: { timestamp: 'desc' },
     });
+  }
+
+  // ── Canary deployment ───────────────────────────────────────────────────────
+
+  /**
+   * Return the current canary routing configuration together with live error-rate
+   * metrics so operators can see the health of both contract targets at a glance.
+   */
+  getCanaryStatus(): {
+    config: Readonly<CanaryConfig>;
+    errorRates: { primary: number; canary: number };
+  } {
+    return {
+      config:     this.stellarNetwork.getCanaryConfig(),
+      errorRates: this.stellarNetwork.getErrorRates(),
+    };
+  }
+
+  /**
+   * Update the canary routing configuration at runtime.
+   *
+   * This is the programmatic counterpart of the POST /api/v1/admin/canary endpoint.
+   * Grafana's alert-based auto-rollback also calls this path (trafficPct = 0).
+   */
+  updateCanary(config: Partial<CanaryConfig>): {
+    config: Readonly<CanaryConfig>;
+    errorRates: { primary: number; canary: number };
+  } {
+    const updated = this.stellarNetwork.setCanaryConfig(config);
+    // Persist the new traffic percentage to AdminConfig so it survives restarts.
+    this.prisma.adminConfig
+      .upsert({
+        where:  { key: 'canary_traffic_pct' },
+        update: { value: String(updated.trafficPct) },
+        create: { key: 'canary_traffic_pct', value: String(updated.trafficPct) },
+      })
+      .catch(() => null); // non-blocking — in-memory state is authoritative
+
+    if (updated.canaryContractId !== null) {
+      this.prisma.adminConfig
+        .upsert({
+          where:  { key: 'canary_contract_id' },
+          update: { value: updated.canaryContractId },
+          create: { key: 'canary_contract_id', value: updated.canaryContractId },
+        })
+        .catch(() => null);
+    }
+
+    return {
+      config:     updated,
+      errorRates: this.stellarNetwork.getErrorRates(),
+    };
   }
 }
