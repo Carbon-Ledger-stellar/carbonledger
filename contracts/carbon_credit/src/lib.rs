@@ -1,8 +1,9 @@
 #![no_std]
+extern crate alloc;
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror,
-    Address, Env, String, Symbol, symbol_short, vec, BytesN, Vec, IntoVal
+    Address, Env, String, Symbol, symbol_short, vec, Bytes, BytesN, Vec, IntoVal,
 };
 
 macro_rules! require_valid_vintage_year {
@@ -78,6 +79,9 @@ pub enum DataKey {
     /// Per-project list of monitoring period strings used to sum verified tonnes.
     /// Key = project_id; Value = Vec<String> of period identifiers.
     VerifiedPeriods(String),
+    UserBatches(Address),
+    TotalSupply,
+    Allowance(Address, Address),
 }
 
 #[contracttype]
@@ -172,9 +176,9 @@ pub struct UpgradeRecord {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZkProof {
-    pub commitment: soroban_sdk::Bytes,
-    pub salt: soroban_sdk::Bytes,
-    pub proof: soroban_sdk::Bytes,
+    pub commitment: Bytes,
+    pub salt: Bytes,
+    pub proof: Bytes,
 }
 
 #[contract]
@@ -224,7 +228,7 @@ impl CarbonCreditContract {
         env.storage().persistent().set(&DataKey::UpgradeHistory, &record);
 
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("upgraded")),
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "upgraded")),
             (current_version, next_version, admin),
         );
         Ok(())
@@ -255,7 +259,7 @@ impl CarbonCreditContract {
         Self::require_admin(&env, &admin)?;
         env.storage().persistent().set(&DataKey::OracleContract, &oracle);
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("ora_set")),
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "ora_set")),
             (admin, oracle),
         );
         Ok(())
@@ -277,7 +281,7 @@ impl CarbonCreditContract {
         Self::require_admin(&env, &admin)?;
         env.storage().persistent().set(&DataKey::VerifiedPeriods(project_id.clone()), &periods);
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("per_set")),
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "per_set")),
             (project_id, periods.len()),
         );
         Ok(())
@@ -355,53 +359,27 @@ impl CarbonCreditContract {
             return Err(CarbonError::DoubleCountingDetected);
         }
 
-        // ── Cross-contract invariant: issued <= verified (PR #530) ────────────
-        //
-        // Before minting, query the oracle to confirm that the total credits
-        // already issued for this project plus the new `amount` do not exceed
-        // the cumulative oracle-verified tonnes.
-        //
-        // Trust model:
-        //   - The oracle is assumed trusted (authorised oracle address set at init).
-        //   - Oracle data freshness is governed by is_monitoring_current(); this
-        //     check does NOT enforce freshness — the admin is responsible for
-        //     ensuring monitoring data is current before calling mint_credits.
-        //   - If no oracle contract is configured, the check is skipped (permissive
-        //     mode for initial deployment before oracle integration).
-        //
-        // Ordering guarantees:
-        //   1. Oracle submits monitoring data (tonnes_verified) via submit_monitoring_data().
-        //   2. Admin calls set_verified_periods() to register which periods count.
-        //   3. Admin calls mint_credits() — this check fires atomically before any write.
-        //   4. If issued + amount > verified, the mint is rejected with IssuanceExceedsVerified.
-        //
-        // Monitoring alert:
-        //   An ("c_ledger", "over_issue") event is emitted when the invariant fails,
-        //   enabling external alerting systems to detect attempted over-issuance.
         if let Some(oracle_addr) = env
             .storage()
             .persistent()
             .get::<DataKey, Address>(&DataKey::OracleContract)
         {
-            // Load the registered monitoring periods for this project
             let periods: Vec<String> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::VerifiedPeriods(project_id.clone()))
                 .unwrap_or_else(|| vec![&env]);
 
-            // Cross-contract call to oracle: get cumulative verified tonnes
             let total_verified: i128 = env.invoke_contract(
                 &oracle_addr,
-                &soroban_sdk::Symbol::new(&env, "get_total_verified_tonnes"),
-                soroban_sdk::vec![
+                &Symbol::new(&env, "get_total_verified_tonnes"),
+                vec![
                     &env,
                     project_id.clone().into_val(&env),
                     periods.into_val(&env),
                 ],
             );
 
-            // Sum all previously issued batches for this project
             let already_issued: i128 = {
                 let batch_ids: Vec<String> = env
                     .storage()
@@ -422,15 +400,13 @@ impl CarbonCreditContract {
             let total_after_mint = already_issued.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
 
             if total_after_mint > total_verified {
-                // Emit monitoring alert for over-issuance attempt
                 env.events().publish(
-                    (symbol_short!("c_ledger"), symbol_short!("overissu")),
+                    (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "overissu")),
                     (project_id.clone(), total_after_mint, total_verified),
                 );
                 return Err(CarbonError::IssuanceExceedsVerified);
             }
         }
-        // ── End invariant check ───────────────────────────────────────────────
 
         let mut ranges: Vec<SerialRange> = env
             .storage()
@@ -455,6 +431,12 @@ impl CarbonCreditContract {
         env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
+        Self::add_user_batch(&env, &initial_owner, &batch_id);
+
+        let mut total_supply: i128 = env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0);
+        total_supply = total_supply.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
+        env.storage().instance().set(&DataKey::TotalSupply, &total_supply);
+
         let mut project_batches: Vec<String> = env
             .storage()
             .persistent()
@@ -464,7 +446,7 @@ impl CarbonCreditContract {
         env.storage().persistent().set(&DataKey::ProjectBatches(project_id.clone()), &project_batches);
 
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("minted")),
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "minted")),
             CreditMintedEvent {
                 batch_id: batch_id.clone(),
                 project_id: project_id.clone(),
@@ -491,53 +473,35 @@ impl CarbonCreditContract {
         cert_cid: String,
     ) -> Result<RetirementCertificate, CarbonError> {
         holder.require_auth();
+        Self::retire_credits_internal(&env, &holder, &batch_id, amount, &reason, &beneficiary, &retire_id, &tx_hash, &cert_cid)
+    }
 
+    fn retire_credits_internal(
+        env: &Env,
+        holder: &Address,
+        batch_id: &String,
+        amount: i128,
+        reason: &String,
+        beneficiary: &String,
+        retire_id: &String,
+        tx_hash: &String,
+        cert_cid: &String,
+    ) -> Result<RetirementCertificate, CarbonError> {
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
         let mut batch = Self::load_batch(&env, &batch_id)?;
 
-        // ── Retirement state machine guard assertions ──────────────────────────
-        //
-        // State diagram (PR #528):
-        //
-        //   [Active] ──retire partial──► [PartiallyRetired]
-        //   [Active] ──retire all──────► [FullyRetired]
-        //   [PartiallyRetired] ──retire remaining──► [FullyRetired]
-        //   [PartiallyRetired] ──retire partial──►  [PartiallyRetired]
-        //   [FullyRetired] ──ANY attempt──► ERROR: AlreadyRetired  (TERMINAL)
-        //   [Suspended] ──ANY attempt──►   ERROR: ProjectSuspended (BLOCKED)
-        //
-        // Illegal transitions (must never succeed):
-        //   FullyRetired  → Active           (irreversibility guarantee)
-        //   FullyRetired  → PartiallyRetired (irreversibility guarantee)
-        //   FullyRetired  → FullyRetired     (no re-retirement)
-        //   Suspended     → any retirement   (project blocked by admin)
-        //
-        // These guards implement the formal proof that retirement is irreversible:
-        //   Once batch.status == FullyRetired, no function in this contract can
-        //   transition it to any other state.  The only writer of batch.status is
-        //   retire_credits (sets PartiallyRetired or FullyRetired) and
-        //   transfer_credits / mint_credits never touch the retired flag.
-        //
-        // Guard 1: FullyRetired is a terminal state — no further retirement allowed
         if batch.status == CreditStatus::FullyRetired {
             return Err(CarbonError::AlreadyRetired);
         }
-        // Guard 2: Suspended batches cannot be retired until admin lifts suspension
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
-        // Guard 3 (implicit): Only Active and PartiallyRetired pass through;
-        //   both are valid source states for a retirement transition.
-        //   Encoded as: assert state ∈ {Active, PartiallyRetired}
-        //   (any future CreditStatus variant added to the enum will be rejected
-        //    at compile time if the match is exhaustive, preventing silent bypass)
 
         require_batch_not_expired!(&env, batch.vintage_year);
 
-        // ── Expired vintage check (>30 years old cannot be retired) ──────────
         if Self::validate_batch_not_expired(&env, batch.vintage_year).is_err() {
             return Err(CarbonError::InvalidVintageYear);
         }
@@ -570,12 +534,17 @@ impl CarbonCreditContract {
 
         let new_active = batch.amount.checked_sub(new_retired).ok_or(CarbonError::Arithmetic)?;
         batch.status = if new_active == 0 {
+            Self::remove_user_batch(&env, &holder, &batch_id);
             CreditStatus::FullyRetired
         } else {
             CreditStatus::PartiallyRetired
         };
         env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
+
+        let mut total_supply: i128 = env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0);
+        total_supply = total_supply.checked_sub(amount).unwrap_or(0);
+        env.storage().instance().set(&DataKey::TotalSupply, &total_supply);
 
         let cert = RetirementCertificate {
             retirement_id:     retire_id.clone(),
@@ -594,7 +563,7 @@ impl CarbonCreditContract {
         env.storage().persistent().set(&DataKey::Retirement(retire_id.clone()), &cert);
 
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("retired")),
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "retired")),
             CreditRetiredEvent {
                 retirement_id: retire_id.clone(),
                 batch_id: batch_id.clone(),
@@ -616,20 +585,30 @@ impl CarbonCreditContract {
         amount: i128,
     ) -> Result<(), CarbonError> {
         from.require_auth();
+        Self::transfer_credits_internal(&env, &from, &to, &batch_id, amount)
+    }
 
+    fn transfer_credits_internal(
+        env: &Env,
+        from: &Address,
+        to: &Address,
+        batch_id: &String,
+        amount: i128,
+    ) -> Result<(), CarbonError> {
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
         let mut batch = Self::load_batch(&env, &batch_id)?;
 
-        if batch.owner != from {
+        if batch.owner != *from {
             return Err(CarbonError::UnauthorizedVerifier);
         }
 
         if batch.status == CreditStatus::FullyRetired {
             return Err(CarbonError::AlreadyRetired);
         }
+
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
@@ -645,13 +624,53 @@ impl CarbonCreditContract {
             return Err(CarbonError::InsufficientCredits);
         }
 
-        batch.owner = to.clone();
-        env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
-        Self::extend_batch_ttl(&env, &batch_id);
+        if amount == active {
+            batch.owner = to.clone();
+            env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+            Self::extend_batch_ttl(&env, &batch_id);
+            Self::remove_user_batch(&env, &from, &batch_id);
+            Self::add_user_batch(&env, &to, &batch_id);
+        } else {
+            let split_amount_u64 = u64::try_from(amount).map_err(|_| CarbonError::Arithmetic)?;
+            let new_serial_start = batch.serial_end - split_amount_u64 + 1;
+            let new_serial_end = batch.serial_end;
+            
+            let new_batch_id = Self::generate_split_batch_id(&env);
+
+            let new_batch = CreditBatch {
+                batch_id: new_batch_id.clone(),
+                project_id: batch.project_id.clone(),
+                vintage_year: batch.vintage_year,
+                amount: amount,
+                serial_start: new_serial_start,
+                serial_end: new_serial_end,
+                issued_at: batch.issued_at,
+                status: CreditStatus::Active,
+                metadata_cid: batch.metadata_cid.clone(),
+                owner: to.clone(),
+            };
+
+            batch.amount = batch.amount.checked_sub(amount).ok_or(CarbonError::Arithmetic)?;
+            batch.serial_end = batch.serial_end.checked_sub(split_amount_u64).ok_or(CarbonError::Arithmetic)?;
+            
+            env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+            env.storage().persistent().set(&DataKey::Batch(new_batch_id.clone()), &new_batch);
+            Self::extend_batch_ttl(&env, &batch_id);
+            Self::extend_batch_ttl(&env, &new_batch_id);
+            
+            Self::add_user_batch(&env, &to, &new_batch_id);
+            let mut project_batches: Vec<String> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ProjectBatches(batch.project_id.clone()))
+                .unwrap_or_else(|| vec![&env]);
+            project_batches.push_back(new_batch_id.clone());
+            env.storage().persistent().set(&DataKey::ProjectBatches(batch.project_id.clone()), &project_batches);
+        }
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("transfer")),
-            (batch_id, from, to, amount),
+            (batch_id.clone(), from.clone(), to.clone(), amount),
         );
         Ok(())
     }
@@ -695,6 +714,57 @@ impl CarbonCreditContract {
         if env.storage().persistent().has(&key) {
             env.storage().persistent().extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
         }
+    }
+
+    fn add_user_batch(env: &Env, user: &Address, batch_id: &String) {
+        let mut batches: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserBatches(user.clone()))
+            .unwrap_or_else(|| vec![env]);
+        batches.push_back(batch_id.clone());
+        env.storage().persistent().set(&DataKey::UserBatches(user.clone()), &batches);
+    }
+
+    fn remove_user_batch(env: &Env, user: &Address, batch_id: &String) {
+        let mut batches: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserBatches(user.clone()))
+            .unwrap_or_else(|| vec![env]);
+        if let Some(idx) = batches.first_index_of(batch_id.clone()) {
+            batches.remove(idx);
+            env.storage().persistent().set(&DataKey::UserBatches(user.clone()), &batches);
+        }
+    }
+
+    fn get_and_increment_nonce(env: &Env) -> u32 {
+        let key = soroban_sdk::symbol_short!("nonce");
+        let mut nonce: u32 = env.storage().instance().get(&key).unwrap_or(0);
+        nonce += 1;
+        env.storage().instance().set(&key, &nonce);
+        nonce
+    }
+
+    fn generate_split_batch_id(env: &Env) -> String {
+        let ts = env.ledger().timestamp();
+        let nonce = Self::get_and_increment_nonce(env);
+        let mut buf = soroban_sdk::Bytes::new(env);
+        for i in 0..8 {
+            buf.push_back((ts >> ((7 - i) * 8)) as u8);
+        }
+        for i in 0..4 {
+            buf.push_back((nonce >> ((3 - i) * 8)) as u8);
+        }
+        let hash = env.crypto().sha256(&buf);
+        
+        let mut hex_str = alloc::string::String::new();
+        let chars = b"0123456789abcdef";
+        for b in hash.to_array().iter() {
+            hex_str.push(chars[(*b >> 4) as usize] as char);
+            hex_str.push(chars[(*b & 0x0f) as usize] as char);
+        }
+        String::from_str(env, &hex_str)
     }
 
     fn load_batch(env: &Env, batch_id: &String) -> Result<CreditBatch, CarbonError> {
@@ -791,6 +861,177 @@ impl CarbonCreditContract {
             }
         }
         true
+    }
+}
+
+#[cfg(feature = "sep-0041")]
+#[contractimpl]
+impl CarbonCreditContract {
+    pub fn allowance(env: Env, from: Address, spender: Address) -> i128 {
+        env.storage().persistent().get(&DataKey::Allowance(from, spender)).unwrap_or(0)
+    }
+
+    pub fn approve(env: Env, from: Address, spender: Address, amount: i128, expiration_ledger: u32) {
+        from.require_auth();
+        if amount < 0 {
+            panic!("Negative amount not allowed");
+        }
+        env.storage().persistent().set(&DataKey::Allowance(from.clone(), spender.clone()), &amount);
+        let key = DataKey::Allowance(from, spender);
+        let current_ledger = env.ledger().sequence();
+        if expiration_ledger > current_ledger {
+            env.storage().persistent().extend_ttl(&key, expiration_ledger - current_ledger, expiration_ledger - current_ledger);
+        }
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        let batches: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserBatches(id))
+            .unwrap_or_else(|| vec![&env]);
+        
+        let mut total: i128 = 0;
+        for batch_id in batches.iter() {
+            if let Ok(b) = Self::load_batch(&env, &batch_id) {
+                if b.status == CreditStatus::Active || b.status == CreditStatus::PartiallyRetired {
+                    if Self::validate_batch_not_expired(&env, b.vintage_year).is_ok() {
+                        total += Self::active_amount(&env, &b);
+                    }
+                }
+            }
+        }
+        total
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        Self::do_transfer(&env, &from, &to, amount);
+    }
+
+    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
+        spender.require_auth();
+        let mut allowance: i128 = env.storage().persistent().get(&DataKey::Allowance(from.clone(), spender.clone())).unwrap_or(0);
+        if allowance < amount {
+            panic!("Insufficient allowance");
+        }
+        allowance -= amount;
+        env.storage().persistent().set(&DataKey::Allowance(from.clone(), spender.clone()), &allowance);
+        
+        Self::do_transfer(&env, &from, &to, amount);
+    }
+
+    pub fn burn(env: Env, from: Address, amount: i128) {
+        from.require_auth();
+        Self::do_burn(&env, &from, amount);
+    }
+
+    pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) {
+        spender.require_auth();
+        let mut allowance: i128 = env.storage().persistent().get(&DataKey::Allowance(from.clone(), spender.clone())).unwrap_or(0);
+        if allowance < amount {
+            panic!("Insufficient allowance");
+        }
+        allowance -= amount;
+        env.storage().persistent().set(&DataKey::Allowance(from.clone(), spender.clone()), &allowance);
+        
+        Self::do_burn(&env, &from, amount);
+    }
+
+    pub fn decimals(_env: Env) -> u32 {
+        7
+    }
+
+    pub fn name(env: Env) -> String {
+        String::from_str(&env, "Carbon Credit")
+    }
+
+    pub fn symbol(env: Env) -> String {
+        String::from_str(&env, "CREDIT")
+    }
+
+    pub fn total_supply(env: Env) -> i128 {
+        env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0)
+    }
+
+    pub fn mint(_env: Env, _to: Address, _amount: i128) {
+        panic!("SEP-0041 generic mint is unsupported. Use mint_credits.");
+    }
+}
+
+#[cfg(feature = "sep-0041")]
+impl CarbonCreditContract {
+    fn do_transfer(env: &Env, from: &Address, to: &Address, mut remaining: i128) {
+        if remaining <= 0 {
+            panic!("Invalid amount");
+        }
+        let batches: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserBatches(from.clone()))
+            .unwrap_or_else(|| vec![env]);
+            
+        for batch_id in batches.iter() {
+            if remaining == 0 { break; }
+            if let Ok(b) = Self::load_batch(env, &batch_id) {
+                if b.status == CreditStatus::Active || b.status == CreditStatus::PartiallyRetired {
+                    if Self::validate_batch_not_expired(env, b.vintage_year).is_ok() {
+                        let active = Self::active_amount(env, &b);
+                        if active > 0 {
+                            let transfer_amt = if active > remaining { remaining } else { active };
+                            if let Err(_) = Self::transfer_credits_internal(env, from, to, &batch_id, transfer_amt) {
+                                panic!("Transfer failed");
+                            }
+                            remaining -= transfer_amt;
+                        }
+                    }
+                }
+            }
+        }
+        if remaining > 0 {
+            panic!("Insufficient balance");
+        }
+    }
+
+    fn do_burn(env: &Env, from: &Address, mut remaining: i128) {
+        if remaining <= 0 {
+            panic!("Invalid amount");
+        }
+        let batches: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::UserBatches(from.clone()))
+            .unwrap_or_else(|| vec![env]);
+            
+        let reason = String::from_str(env, "SEP-0041 Burn");
+        let beneficiary = String::from_str(env, "BurnAddress");
+        let tx_hash = String::from_str(env, "0x0");
+        let cert_cid = String::from_str(env, "none");
+        
+        for batch_id in batches.iter() {
+            if remaining == 0 { break; }
+            if let Ok(b) = Self::load_batch(env, &batch_id) {
+                if b.status == CreditStatus::Active || b.status == CreditStatus::PartiallyRetired {
+                    if Self::validate_batch_not_expired(env, b.vintage_year).is_ok() {
+                        let active = Self::active_amount(env, &b);
+                        if active > 0 {
+                            let burn_amt = if active > remaining { remaining } else { active };
+                            let retire_id = Self::generate_split_batch_id(env);
+                            if let Err(_) = Self::retire_credits_internal(
+                                env, from, &batch_id, burn_amt, 
+                                &reason, &beneficiary, &retire_id, &tx_hash, &cert_cid
+                            ) {
+                                panic!("Burn failed");
+                            }
+                            remaining -= burn_amt;
+                        }
+                    }
+                }
+            }
+        }
+        if remaining > 0 {
+            panic!("Insufficient balance");
+        }
     }
 }
 
