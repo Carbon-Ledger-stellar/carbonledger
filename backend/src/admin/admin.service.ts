@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
+import { RedisService } from '../redis.service';
 
 @Injectable()
 export class AdminService {
@@ -9,6 +10,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly indexer: IndexerService,
     private readonly oracle: OracleService,
+    private readonly redis: RedisService,
   ) {}
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
@@ -96,5 +98,15 @@ export class AdminService {
       skip:    Number(query.offset) || 0,
       orderBy: { timestamp: 'desc' },
     });
+  }
+
+  // ── Abuse Log ───────────────────────────────────────────────────────────────
+
+  async getAbuseLog() {
+    const client = this.redis.getClient();
+    if (!client) return [];
+    
+    const logs = await client.lrange('abuse:log', 0, -1);
+    return logs.map(log => JSON.parse(log));
   }
 }
