@@ -1,3 +1,9 @@
+import {
+  isConnected,
+  isAllowed,
+  setAllowed,
+  getPublicKey as freighterGetPublicKey,
+  signTransaction as freighterSignTransaction,
   getNetworkDetails,
   WatchWalletChanges,
 } from "@stellar/freighter-api";
