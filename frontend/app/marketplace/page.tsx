@@ -2,9 +2,11 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
-import { useListings, MarketListing } from "../../lib/api";
+import dynamic from "next/dynamic";
+import { useListings, useProjectsForMap, MarketListing } from "../../lib/api";
 import { useCartStore } from "../../lib/use-cart-store";
 import { formatStroops, formatTonnes } from "../../lib/carbon-utils";
+import { joinListingsWithProjects } from "../../lib/map-utils";
 import { colors } from "../../styles/design-system";
 import MarketplaceFilter, { FilterState, EMPTY_FILTERS } from "../../components/MarketplaceFilter";
 import LoadingSkeleton from "../../components/LoadingSkeleton";
@@ -13,10 +15,14 @@ import Highlight from "../../components/Highlight";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import MarketplaceError from "../../components/MarketplaceError";
 
+// Leaflet touches `window` at import time, so it must never be pulled into
+// the server bundle — ssr: false keeps it out entirely.
+const ProjectMap = dynamic(() => import("../../components/ProjectMap"), { ssr: false });
+
 function MarketplaceContent() {
   const searchParams = useSearchParams();
   const [filters, setFilters] = useState<FilterState>({
-    methodology: "", vintageYear: "", country: "", minPrice: "", maxPrice: "", projectType: "", search: "",
+    methodology: "", vintageYear: "", country: "", minPrice: "", maxPrice: "", projectType: "", search: "", availableOnly: "",
   });
 
   useEffect(() => {
@@ -33,6 +39,20 @@ function MarketplaceContent() {
     projectType:  filters.projectType  || undefined,
     search:       filters.search       || undefined,
   });
+
+  // "Available now" isn't a backend query param — applied client-side here so
+  // it's a single source of truth shared by both the listings grid and the map.
+  const visibleListings = (listings ?? []).filter(
+    l => filters.availableOnly !== "true" || l.amountAvailable > 0
+  );
+
+  // GET /marketplace/listings doesn't include project coordinates, so they're
+  // fetched separately and joined client-side for the map (see lib/map-utils.ts).
+  const { data: projectsData } = useProjectsForMap({ limit: 100 });
+  const { pins, missingCoordinatesCount } = joinListingsWithProjects(
+    visibleListings,
+    projectsData?.projects ?? []
+  );
 
   // Check if any filters are active
   const hasActiveFilters = Object.values(filters).some(v => v !== "");
@@ -81,6 +101,20 @@ function MarketplaceContent() {
 
         <MarketplaceFilter filters={filters} onChange={setFilters} />
 
+        {!isLoading && !error && (
+          <div style={{ marginTop: "1.5rem" }}>
+            <h2 style={{ fontSize: "1.125rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 0.75rem" }}>
+              Browse by location
+            </h2>
+            <ProjectMap pins={pins} />
+            {missingCoordinatesCount > 0 && (
+              <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.5rem 0 0" }}>
+                {missingCoordinatesCount} listing{missingCoordinatesCount === 1 ? "" : "s"} not shown on the map (no location on file).
+              </p>
+            )}
+          </div>
+        )}
+
         <div aria-live="polite">
           {error ? (
             <MarketplaceError error={error} onRetry={() => mutate()} />
@@ -88,7 +122,7 @@ function MarketplaceContent() {
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
               <LoadingSkeleton variant="MarketplaceItem" count={6} />
             </div>
-          ) : !listings?.length ? (
+          ) : !visibleListings.length ? (
             <div style={{ textAlign: "center", padding: "4rem 2rem", background: colors.surfaceAlt, borderRadius: "1rem", marginTop: "1.5rem" }}>
               <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔍</div>
               <p style={{ color: colors.neutral[900], fontWeight: 700, fontSize: "1.25rem", margin: "0 0 0.5rem" }}>
@@ -133,7 +167,7 @@ function MarketplaceContent() {
                   }
                 }
               `}</style>
-              {listings.map(listing => {
+              {visibleListings.map(listing => {
                 const inCart = items.some(i => i.listing.listingId === listing.listingId);
                 return (
                   <div key={listing.listingId} style={{
