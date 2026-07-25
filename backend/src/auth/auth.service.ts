@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
+import { TokenFamilyService } from './token-family.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
 
@@ -22,6 +23,7 @@ export class AuthService {
   constructor(
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
+    private readonly tokenFamily: TokenFamilyService,
   ) {}
 
   /** Issue a one-time challenge nonce for the given Stellar public key. */
@@ -38,6 +40,9 @@ export class AuthService {
    * The client must sign the exact string: `carbonledger:${nonce}`
    * Role is NEVER accepted from the request body for existing users —
    * new users default to "corporation"; existing users keep their DB role.
+   *
+   * On success a new token family is created in Redis and a raw (opaque)
+   * refresh token is returned instead of a signed JWT refresh token.
    */
   async verifySignatureAndLogin(
     publicKey: string,
@@ -71,7 +76,12 @@ export class AuthService {
         update: {},
         create: { publicKey, role },
       });
-      return this.issueTokenPair(user.publicKey, user.role as UserRole);
+
+      // 4. Create a fresh token family in Redis
+      const { rawToken } = await this.tokenFamily.createFamily(user.publicKey);
+      const access_token = this.signAccessToken(user.publicKey, user.role as UserRole);
+
+      return { access_token, refresh_token: rawToken };
     } catch (error: any) {
       if (error?.code === 'P2024') {
         throw new ServiceUnavailableException('Service temporarily unavailable — please retry');
@@ -80,34 +90,41 @@ export class AuthService {
     }
   }
 
-  /** Rotate refresh token. */
+  /**
+   * Rotate refresh token using token family tracking.
+   *
+   * Validates the incoming opaque refresh token against the Redis family store,
+   * issues a new access + refresh token pair and retires the old refresh token.
+   * If the same token is presented twice (reuse detection), the entire family
+   * is invalidated and an error is thrown.
+   */
   async refresh(
     refreshToken: string,
   ): Promise<{ access_token: string; refresh_token: string }> {
-    let payload: { sub: string; role: string; type: string };
     try {
-      payload = this.jwt.verify(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'dev-refresh-secret',
-        issuer: process.env.JWT_ISSUER || 'carbonledger',
-      });
-    } catch {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
+      const { newRawToken, userId } = await this.tokenFamily.rotateToken(refreshToken);
 
-    if (payload.type !== 'refresh') {
-      throw new UnauthorizedException('Not a refresh token');
-    }
-
-    try {
-      const user = await this.prisma.user.findUnique({ where: { publicKey: payload.sub } });
+      const user = await this.prisma.user.findUnique({ where: { publicKey: userId } });
       if (!user) throw new UnauthorizedException('User not found');
-      return this.issueTokenPair(user.publicKey, user.role as UserRole);
+
+      const access_token = this.signAccessToken(user.publicKey, user.role as UserRole);
+      return { access_token, refresh_token: newRawToken };
     } catch (error: any) {
+      if (error instanceof UnauthorizedException) throw error;
       if (error?.code === 'P2024') {
         throw new ServiceUnavailableException('Service temporarily unavailable — please retry');
       }
       throw error;
     }
+  }
+
+  /**
+   * Logout — invalidate the full token family so every device using the
+   * same refresh token chain is signed out immediately.
+   */
+  async logout(refreshToken: string): Promise<{ message: string }> {
+    await this.tokenFamily.invalidateFamilyByToken(refreshToken);
+    return { message: 'Logged out successfully' };
   }
 
   async validateUser(publicKey: string): Promise<{ publicKey: string; role: string } | null> {
@@ -117,31 +134,19 @@ export class AuthService {
 
   // ── Private helpers ──────────────────────────────────────────────────────
 
-  private issueTokenPair(
-    publicKey: string,
-    role: UserRole,
-  ): { access_token: string; refresh_token: string } {
+  /**
+   * Sign a short-lived JWT access token.
+   * Refresh tokens are now opaque strings managed by TokenFamilyService.
+   */
+  private signAccessToken(publicKey: string, role: UserRole): string {
     const issuer = process.env.JWT_ISSUER || 'carbonledger';
-    const accessExpiresIn = (process.env.JWT_EXPIRY || '15m') as jwt.SignOptions['expiresIn'];
-    const refreshExpiresIn = (process.env.JWT_REFRESH_EXPIRY || '7d') as jwt.SignOptions['expiresIn'];
+    const expiresIn = (process.env.JWT_EXPIRY || '15m') as jwt.SignOptions['expiresIn'];
 
-    const access_token = jwt.sign(
+    return jwt.sign(
       { sub: publicKey, role, type: 'access' },
       process.env.JWT_SECRET || 'dev-secret-change-in-production',
-      {
-        expiresIn: accessExpiresIn,
-        issuer,
-      },
+      { expiresIn, issuer },
     );
-    const refresh_token = jwt.sign(
-      { sub: publicKey, role, type: 'refresh' },
-      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'dev-refresh-secret',
-      {
-        expiresIn: refreshExpiresIn,
-        issuer,
-      },
-    );
-    return { access_token, refresh_token };
   }
 
   private validatePublicKey(publicKey: string): void {
