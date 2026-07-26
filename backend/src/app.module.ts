@@ -1,6 +1,7 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -31,6 +32,7 @@ import { ThrottleModule, RoleLimitGuard } from "./throttle";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+import { RedisModule } from "./redis.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -100,6 +102,7 @@ class HealthController {
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     // Built-in NestJS throttler (IP-based, Redis-backed) — handles burst/DDoS at infra level
     ThrottlerModule.forRoot({
       throttlers: [

@@ -70,6 +70,13 @@ export class CreditsService {
     return batch;
   }
 
+  async getBatchesByProject(projectId: string) {
+    return this.prisma.creditBatch.findMany({
+      where: { projectId },
+      orderBy: { issuedAt: 'desc' },
+    });
+  }
+
   async retireCredits(dto: RetireCreditsDto) {
     const batch = await this.getBatch(dto.batchId);
 
