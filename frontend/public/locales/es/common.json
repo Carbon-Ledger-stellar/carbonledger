@@ -128,7 +128,8 @@
     "walletErrorTitle": "Error de billetera",
     "purchaseConfirmedTitle": "¡Compra confirmada!",
     "purchaseConfirmedMessage": "{tonnes} adquiridas",
-    "purchaseFailedTitle": "Compra fallida"
+    "purchaseFailedTitle": "Compra fallida",
+    "purchaseFailedOnChain": "La transacción falló en la cadena"
   },
   "carbonTerms": {
     "vintage": "vintage",

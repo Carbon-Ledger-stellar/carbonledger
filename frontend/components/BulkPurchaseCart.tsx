@@ -55,20 +55,12 @@ export default function BulkPurchaseCart() {
       );
       setTxStatus("polling");
       setTxHash(result.txHash);
-<<<<<<< HEAD
-      setTxStatus("confirmed");
-      clearCart();
-      addToast({ type: "success", title: t("purchaseConfirmedTitle"), message: t("purchaseConfirmedMessage", { tonnes: formatTonnes(totalTonnes) }), txHash: result.txHash });
-    } catch (e: any) {
-      setTxStatus("failed");
-      addToast({ type: "error", title: t("purchaseFailedTitle"), message: e.message });
-=======
       setPollHash(result.txHash);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setTxStatus("failed");
       setPollHash(null);
-      addToast({ type: "error", title: "Purchase failed", message: e.message });
->>>>>>> origin/cursor/679-transaction-poller-9a06
+      const message = e instanceof Error ? e.message : String(e);
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message });
     }
   }
 
@@ -80,8 +72,8 @@ export default function BulkPurchaseCart() {
       clearCart();
       addToast({
         type: "success",
-        title: "Purchase confirmed!",
-        message: `${formatTonnes(totalTonnes)} acquired`,
+        title: t("purchaseConfirmedTitle"),
+        message: t("purchaseConfirmedMessage", { tonnes: formatTonnes(totalTonnes) }),
         txHash: pollHash,
       });
       setPollHash(null);
@@ -89,8 +81,8 @@ export default function BulkPurchaseCart() {
       setTxStatus("failed");
       addToast({
         type: "error",
-        title: "Purchase failed",
-        message: pollError ?? "Transaction failed on-chain",
+        title: t("purchaseFailedTitle"),
+        message: pollError ?? t("purchaseFailedOnChain"),
       });
       setPollHash(null);
     } else if (pollState === "TIMED_OUT") {

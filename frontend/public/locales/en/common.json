@@ -128,7 +128,8 @@
     "walletErrorTitle": "Wallet error",
     "purchaseConfirmedTitle": "Purchase confirmed!",
     "purchaseConfirmedMessage": "{tonnes} acquired",
-    "purchaseFailedTitle": "Purchase failed"
+    "purchaseFailedTitle": "Purchase failed",
+    "purchaseFailedOnChain": "Transaction failed on-chain"
   },
   "carbonTerms": {
     "vintage": "vintage",
