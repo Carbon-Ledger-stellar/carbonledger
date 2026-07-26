@@ -70,7 +70,7 @@ export class WebhookProcessor extends WorkerHost {
   }
 
   private async handleCreditRetired(event: HorizonEvent) {
-    const { retirement_id, batch_id, project_id, amount, retired_by, beneficiary } = event.payload as any;
+    const { retirement_id, batch_id, project_id, amount, retired_by, beneficiary, serial_start, serial_end } = event.payload as any;
     if (!retirement_id || !batch_id) return;
 
     await this.prisma.retirementRecord.upsert({
@@ -86,6 +86,8 @@ export class WebhookProcessor extends WorkerHost {
         retirementReason: '',
         vintageYear:      0,
         serialNumbers:    [],
+        serialStart:      String(serial_start ?? ''),
+        serialEnd:        String(serial_end ?? ''),
         txHash:           event.txHash,
       },
     });

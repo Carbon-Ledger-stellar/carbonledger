@@ -17,7 +17,7 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { v4 as uuidv4 } from 'uuid';
 import { IdempotencyMiddleware } from './idempotency.middleware';
 import { PrismaService } from '../prisma.service';

@@ -2,22 +2,9 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { ConfigService } from '@nestjs/config';
 
-// Temporary workaround for stellar SDK import
-interface Keypair {
-  fromSecret(secret: string): KeypairInstance;
-}
-interface KeypairInstance {
-  publicKey(): string;
-}
+import { Keypair } from '@stellar/stellar-sdk';
 
-// Mock Stellar SDK for now - in production this would be the real SDK
-const StellarSDK = {
-  Keypair: {
-    fromSecret: (secret: string): KeypairInstance => ({
-      publicKey: () => 'mock-public-key-' + secret.slice(0, 8)
-    })
-  }
-};
+const StellarSDK = { Keypair };
 
 export interface OracleRotationRequest {
   newOraclePublicKey: string;
@@ -58,39 +45,7 @@ export class KeyRotationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
-  ) {
-    // Temporary workaround for missing keyRotation model
-    this.initMockKeyRotation();
-  }
-
-  private initMockKeyRotation() {
-    // Mock keyRotation operations until Prisma client is regenerated
-    (this.prisma as any).keyRotation = {
-      create: async (data: any) => ({
-        id: 'mock-' + Math.random().toString(36).substr(2, 9),
-        ...data.data,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
-      findUnique: async (params: any) => {
-        // Mock implementation
-        return {
-          id: params.where.id,
-          type: 'oracle',
-          status: 'pending',
-          reason: 'Mock rotation',
-          metadata: {},
-          createdAt: new Date(),
-        };
-      },
-      update: async (params: any) => ({
-        id: params.where.id,
-        ...params.data,
-        updatedAt: new Date(),
-      }),
-      findMany: async () => [],
-    };
-  }
+  ) {}
 
   async initiateOracleRotation(request: OracleRotationRequest): Promise<RotationStatus> {
     this.logger.log(`Initiating oracle key rotation: ${request.reason}`);
@@ -102,6 +57,8 @@ export class KeyRotationService {
         throw new BadRequestException('Public key does not match secret key');
       }
     } catch (error) {
+      // Don't mask the specific mismatch message with the generic one.
+      if (error instanceof BadRequestException) throw error;
       throw new BadRequestException('Invalid keypair provided');
     }
 
@@ -146,7 +103,7 @@ export class KeyRotationService {
         data: { status: 'in_progress' },
       });
 
-      const { newOraclePublicKey, newOracleSecretKey, oldOraclePublicKey } = rotation.metadata;
+      const { newOraclePublicKey, newOracleSecretKey, oldOraclePublicKey } = (rotation.metadata as Record<string, any>);
 
       // Step 1: Register new oracle on-chain before deactivating old one
       const contractId = this.configService.get<string>('CARBON_ORACLE_CONTRACT_ID');
@@ -180,7 +137,7 @@ export class KeyRotationService {
           status: 'completed',
           completedAt: new Date(),
           metadata: {
-            ...rotation.metadata,
+            ...(rotation.metadata as Record<string, any>),
             transactionHash: tx.hash,
             verificationPassed: true,
           },
@@ -196,7 +153,7 @@ export class KeyRotationService {
           status: 'failed',
           completedAt: new Date(),
           metadata: {
-            ...rotation.metadata,
+            ...(rotation.metadata as Record<string, any>),
             error: error.message,
           },
         },
@@ -215,6 +172,8 @@ export class KeyRotationService {
         throw new BadRequestException('Public key does not match secret key');
       }
     } catch (error) {
+      // Don't mask the specific mismatch message with the generic one.
+      if (error instanceof BadRequestException) throw error;
       throw new BadRequestException('Invalid keypair provided');
     }
 
@@ -285,7 +244,7 @@ export class KeyRotationService {
     }
 
     try {
-      const { newJWTSecret, oldJWTSecret, transitionPeriodHours } = rotation.metadata;
+      const { newJWTSecret, oldJWTSecret, transitionPeriodHours } = (rotation.metadata as Record<string, any>);
 
       // Step 1: Add new secret to environment (dual secret mode)
       this.logger.warn('Environment update required: Add JWT_SECRET_NEW to environment');
@@ -316,7 +275,7 @@ export class KeyRotationService {
           status: 'failed',
           completedAt: new Date(),
           metadata: {
-            ...rotation.metadata,
+            ...(rotation.metadata as Record<string, any>),
             error: error.message,
           },
         },
@@ -342,7 +301,7 @@ export class KeyRotationService {
         status: 'completed',
         completedAt: new Date(),
         metadata: {
-          ...rotation.metadata,
+          ...(rotation.metadata as Record<string, any>),
           finalizedAt: new Date(),
         },
       },
@@ -377,7 +336,7 @@ export class KeyRotationService {
   private async callContractFunction(
     contractId: string,
     functionName: string,
-    signer: KeypairInstance,
+    signer: Keypair,
     ...args: any[]
   ): Promise<any> {
     // Implementation for calling Soroban contract functions
@@ -401,7 +360,7 @@ export class KeyRotationService {
       completedAt: rotation.completedAt,
       scheduledAt: rotation.scheduledAt,
       reason: rotation.reason,
-      metadata: rotation.metadata,
+      metadata: (rotation.metadata as Record<string, any>),
     };
   }
 }

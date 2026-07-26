@@ -5,6 +5,8 @@ import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
 import { v4 as uuidv4 } from "uuid";
+import { RedisService } from "../redis.service";
+import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
 
 @Injectable()
 export class ProjectsService {
@@ -166,8 +168,12 @@ export class ProjectsService {
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
 
     await this.redisService.set(cacheKey, project, PROJECT_DETAIL_CACHE_TTL_SECONDS);
-    if (!project) throw new NotFoundException('Project not found');
     return project;
+  }
+
+  /// Drop the cached detail payload so the next read repopulates it.
+  private async invalidateProjectCache(projectId: string): Promise<void> {
+    await this.redisService.del(projectDetailCacheKey(projectId));
   }
 
   async register(dto: RegisterProjectDto) {

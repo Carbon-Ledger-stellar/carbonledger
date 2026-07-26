@@ -7,7 +7,7 @@ import { AuthModule } from '../auth/auth.module';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { QUEUE_NAME } from './queue.constants';
 import { PrismaService } from '../prisma.service';
-import { CertificatesModule } from '../retirements/certificates.module';
+import { CertificateProcessor } from '../certificates/certificate.processor';
 
 @Module({
   imports: [

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { SorobanRpc } from '@stellar/stellar-sdk';
+import { rpc as SorobanRpc } from '@stellar/stellar-sdk';
 import { contractCallsRegistry, ContractLabel } from './metrics.registry';
 
 const HTTP_TIMEOUT_MS = 2500;

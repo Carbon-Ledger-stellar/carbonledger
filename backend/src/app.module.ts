@@ -34,8 +34,10 @@ import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
-import { Server } from "@stellar/stellar-sdk";
+import { Horizon } from "@stellar/stellar-sdk";
 import { Redis } from "ioredis";
+import { RedisModule } from "./redis.module";
+import { ConfigModule } from "@nestjs/config";
 
 @Controller("health")
 class HealthController {
@@ -71,7 +73,7 @@ class HealthController {
     // Check Stellar
     try {
       const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
-      const server = new Server(horizonUrl);
+      const server = new Horizon.Server(horizonUrl);
       await server.root();
       checks.stellar = "up";
     } catch (e) {
@@ -148,6 +150,8 @@ class HealthController {
     PublicApiModule,
     RedisModule,
     IdempotencyModule,
+    // ConfigService is injected by JWTRotationStrategy and KeyRotationService.
+    ConfigModule.forRoot({ isGlobal: true }),
   ],
   controllers: [HealthController],
   providers: [

@@ -4,7 +4,7 @@ import { StellarNetworkService } from './stellar-network.service';
 const mockGetLatestLedger = jest.fn().mockResolvedValue({ sequence: 123 });
 
 jest.mock('@stellar/stellar-sdk', () => ({
-  SorobanRpc: {
+  rpc: {
     Server: jest.fn().mockImplementation(() => ({
       getLatestLedger: mockGetLatestLedger,
     })),
@@ -27,7 +27,7 @@ describe('StellarNetworkService', () => {
   });
 
   afterEach(() => {
-    jest.resetAllMocks();
+    jest.clearAllMocks();
   });
 
   it('reports healthy when Horizon and Soroban RPC are reachable', async () => {

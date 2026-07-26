@@ -9,6 +9,8 @@ import {
   HoldPriceUpdateDto,
 } from './oracle.service';
 import { OracleGuard } from './oracle.guard';
+import { OracleSyncService } from './oracle-sync.service';
+import { OracleSchedulerService } from './oracle-scheduler.service';
 import { Public, Roles } from '../auth/decorators';
 
 /** Cache TTL for the services health endpoint (30 seconds). */

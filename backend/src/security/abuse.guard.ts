@@ -41,7 +41,7 @@ export class AbuseDetectorGuard implements CanActivate {
     // 2. Extract requested serials from params or body
     let requestedSerials: string[] = [];
     if (req.params.serial) {
-      requestedSerials.push(req.params.serial);
+      requestedSerials.push(String(req.params.serial));
     } else if (req.body && Array.isArray(req.body.serials)) {
       requestedSerials.push(...req.body.serials);
     }

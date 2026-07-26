@@ -55,6 +55,8 @@ export class HoldPriceUpdateDto {
   @IsString() @Length(1, 64) methodology: string;
   @IsInt() @Type(() => Number) vintageYear: number;
   @IsString() @Length(1, 32) priceStroops: string;
+  /// Percentage deviation from the reference price that triggered the hold.
+  @IsNumber() @Type(() => Number) deviation: number;
 }
 
 @Injectable()

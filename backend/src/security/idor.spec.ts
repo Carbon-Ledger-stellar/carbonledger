@@ -10,7 +10,7 @@
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
+import request from "supertest";
 import * as jwt from "jsonwebtoken";
 
 import { AppModule } from "../app.module";
@@ -107,6 +107,8 @@ describe("IDOR (OWASP API1)", () => {
         retirementReason: "ESG offset",
         vintageYear: 2023,
         serialNumbers: ["9000", "9001"],
+        serialStart: "9000",
+        serialEnd: "9001",
         txHash: "deadbeef",
       },
     });

@@ -11,17 +11,20 @@ export class PinataService {
   private readonly logger = new Logger(PinataService.name);
   private pinata: PinataSDK;
 
-  constructor() {
-    const apiKey = process.env.IPFS_API_KEY;
-    const secretKey = process.env.IPFS_SECRET_KEY;
+  private readonly gateway: string;
 
-    if (!apiKey || !secretKey) {
-      this.logger.warn('Pinata credentials not configured');
+  constructor() {
+    // pinata v2 authenticates with a JWT; the v1 apiKey/secret pair is gone.
+    const jwt = process.env.IPFS_JWT;
+    this.gateway = process.env.IPFS_GATEWAY || 'gateway.pinata.cloud';
+
+    if (!jwt) {
+      this.logger.warn('Pinata credentials not configured (IPFS_JWT unset)');
     }
 
     this.pinata = new PinataSDK({
-      pinataApiKey: apiKey,
-      pinataSecretApiKey: secretKey,
+      pinataJwt: jwt,
+      pinataGateway: this.gateway,
     });
   }
 
@@ -33,13 +36,13 @@ export class PinataService {
     try {
       this.logger.log(`Uploading ${filename} to Pinata...`);
 
-      const blob = new Blob([buffer], { type: 'application/pdf' });
+      const blob = new Blob([new Uint8Array(buffer)], { type: 'application/pdf' });
       const file = new File([blob], filename, { type: 'application/pdf' });
 
-      const result = await this.pinata.upload.file(file);
+      const result = await this.pinata.upload.public.file(file);
 
-      const cid = result.IpfsHash;
-      const url = `https://gateway.pinata.cloud/ipfs/${cid}`;
+      const cid = result.cid;
+      const url = this.getPublicUrl(cid);
 
       this.logger.log(`Successfully uploaded ${filename} to IPFS: ${cid}`);
 
@@ -52,11 +55,9 @@ export class PinataService {
 
   async verifyPin(cid: string): Promise<boolean> {
     try {
-      const result = await this.pinata.pinList({
-        hashContains: cid,
-      });
+      const result = await this.pinata.files.public.list().cid(cid);
 
-      return result.rows && result.rows.length > 0;
+      return result.files.length > 0;
     } catch (error) {
       this.logger.error(`Failed to verify pin ${cid}: ${error}`);
       return false;
@@ -64,6 +65,6 @@ export class PinataService {
   }
 
   getPublicUrl(cid: string): string {
-    return `https://gateway.pinata.cloud/ipfs/${cid}`;
+    return `https://${this.gateway}/ipfs/${cid}`;
   }
 }

@@ -304,6 +304,8 @@ describe('ProjectsService Performance', () => {
   });
 
   describe('Performance Benchmarks', () => {
+    const mockProjects = generateMockProjects(1000);
+
     it('should generate performance report', async () => {
       const testCases = [
         { name: 'Basic Search', dto: { search: 'forestry' } as SearchProjectsDto },

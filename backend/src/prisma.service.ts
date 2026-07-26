@@ -27,19 +27,30 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       log: process.env.NODE_ENV === "development" ? ["query", "warn", "error"] : ["warn", "error"],
     });
 
-    // Middleware to track active queries for metrics
-    this.$use(async (params, next) => {
-      this._activeQueries++;
-      this._totalQueries++;
-      try {
-        return await next(params);
-      } catch (err: any) {
-        if (err?.code === "P2024") this._poolErrors++; // pool timeout
-        throw err;
-      } finally {
-        this._activeQueries--;
-      }
-    });
+    // Track active queries for metrics. Prisma 6 removed $use middleware; the
+    // supported replacement is a query-level client extension. $extends returns
+    // a proxy wrapping this client rather than mutating it, so we return that
+    // proxy as the instance — counters still live on (and are read from) the
+    // underlying client, which the proxy delegates to.
+    const self = this;
+    return this.$extends({
+      query: {
+        $allModels: {
+          async $allOperations({ args, query }) {
+            self._activeQueries++;
+            self._totalQueries++;
+            try {
+              return await query(args);
+            } catch (err: any) {
+              if (err?.code === "P2024") self._poolErrors++; // pool timeout
+              throw err;
+            } finally {
+              self._activeQueries--;
+            }
+          },
+        },
+      },
+    }) as unknown as PrismaService;
   }
 
   async onModuleInit() {

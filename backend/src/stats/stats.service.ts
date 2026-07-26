@@ -34,7 +34,7 @@ export class StatsService {
     return rows.map((r, i) => ({
       rank: i + 1,
       beneficiary: r.beneficiary,
-      totalTonnes: r._sum.amount ?? 0,
+      totalTonnes: Number(r._sum.amount ?? 0),
     }));
   }
 

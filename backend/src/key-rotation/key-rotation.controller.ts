@@ -16,7 +16,8 @@ class OracleRotationDto implements OracleRotationRequest {
 
   @IsOptional()
   @IsDateString()
-  scheduledAt?: string;
+  @Type(() => Date)
+  scheduledAt?: Date;
 }
 
 class AdminRotationDto implements AdminRotationRequest {

@@ -149,11 +149,11 @@ export class MarketplaceService {
     if (!["Active", "PartiallyFilled"].includes(listing.status)) {
       throw new BadRequestException("Listing is not available");
     }
-    if (dto.amount > listing.amountAvailable) {
+    if (dto.amount > Number(listing.amountAvailable)) {
       throw new BadRequestException("Insufficient credits in listing");
     }
 
-    const newAmount = listing.amountAvailable - dto.amount;
+    const newAmount = Number(listing.amountAvailable) - dto.amount;
     const newStatus = newAmount === 0 ? "Sold" : "PartiallyFilled";
 
     await this.prisma.marketListing.update({

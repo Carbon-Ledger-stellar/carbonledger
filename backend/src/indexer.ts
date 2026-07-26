@@ -1,4 +1,13 @@
-import { SorobanRpc, Contract, scValToNative, xdr } from '@stellar/stellar-sdk';
+import {
+  rpc as SorobanRpc,
+  Account,
+  BASE_FEE,
+  Contract,
+  Networks,
+  TransactionBuilder,
+  scValToNative,
+  xdr,
+} from '@stellar/stellar-sdk';
 import { PrismaClient } from '@prisma/client';
 import Redis from 'ioredis';
 import { StructuredLogger } from './logger/structured-logger';
@@ -33,34 +42,44 @@ async function getAllEvents() {
   const allEvents: SorobanRpc.Api.EventResponse[] = [];
   for (const contractId of Object.values(contracts)) {
     let cursor: string | undefined;
+    const filters = [{ type: 'contract' as const, contractIds: [contractId] }];
     while (true) {
-      const response = await server.getEvents({
-        startLedger: 1,
-        cursor,
-        filters: [{ type: 'contract', contractIds: [contractId] }],
-      });
+      // startLedger and cursor are mutually exclusive in stellar-sdk v15.
+      const response = await server.getEvents(
+        cursor ? { cursor, filters } : { startLedger: 1, filters },
+      );
       allEvents.push(...response.events);
       if (!response.cursor) break;
       cursor = response.cursor;
     }
   }
-  allEvents.sort((a, b) => a.ledger - b.ledger || a.txIndex - b.txIndex);
+  allEvents.sort((a, b) => a.ledger - b.ledger || a.transactionIndex - b.transactionIndex);
   return allEvents;
 }
 
+// Simulation never touches the network ledger, so any well-formed account works
+// as the source. The all-zero "null account" is the conventional choice.
+const NULL_ACCOUNT = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+
 async function invokeRead(contractId: string, method: string, args: xdr.ScVal[]) {
   const contract = new Contract(contractId);
-  const tx = new SorobanRpc.TransactionBuilder()
+  const tx = new TransactionBuilder(new Account(NULL_ACCOUNT, '0'), {
+    fee: BASE_FEE,
+    networkPassphrase: process.env.NETWORK_PASSPHRASE || Networks.TESTNET,
+  })
     .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
     .build();
   const sim = await server.simulateTransaction(tx);
-  if (sim.error) throw new Error(sim.error);
+  if (SorobanRpc.Api.isSimulationError(sim)) throw new Error(sim.error);
   return scValToNative(sim.result!.retval);
 }
 
 async function indexEvent(event: SorobanRpc.Api.EventResponse) {
   const topic = event.topic.map((t: xdr.ScVal) => scValToNative(t));
-  const data = event.data.map((d: xdr.ScVal) => scValToNative(d));
+  // v15 exposes a single `value` ScVal; multi-field events carry it as a vec.
+  const nativeValue = scValToNative(event.value);
+  const data = Array.isArray(nativeValue) ? nativeValue : [nativeValue];
   const eventType = topic[1] as string;
 
   switch (eventType) {
@@ -123,6 +142,7 @@ async function handleRegisterProject(projectId: string) {
     projectType: projectData.project_type,
     status: mapStatus(projectData.status),
     vintageYear: projectData.vintage_year,
+    methodologyScore: projectData.methodology_score,
     totalCreditsIssued: projectData.total_credits_issued,
     totalCreditsRetired: projectData.total_credits_retired,
     metadataCid: projectData.metadata_cid,
@@ -196,6 +216,7 @@ async function handleMinted(batchId: string) {
 
 async function handleRetired(retirementId: string) {
   const certData = await invokeRead(contracts.credit, 'get_retirement_certificate', [xdr.ScVal.scvString(retirementId)]);
+  const serialNumbers: string[] = certData.serial_numbers ?? [];
   const retirement = {
     retirementId,
     batchId: certData.credit_batch_id,
@@ -205,7 +226,9 @@ async function handleRetired(retirementId: string) {
     beneficiary: certData.beneficiary,
     retirementReason: certData.retirement_reason,
     vintageYear: certData.vintage_year,
-    serialNumbers: certData.serial_numbers,
+    serialNumbers,
+    serialStart: certData.serial_start ?? serialNumbers[0] ?? '',
+    serialEnd: certData.serial_end ?? serialNumbers[serialNumbers.length - 1] ?? '',
     txHash: certData.tx_hash,
     retiredAt: new Date(certData.retired_at * 1000),
   };

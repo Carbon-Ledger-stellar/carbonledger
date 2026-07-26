@@ -3,15 +3,18 @@ module.exports = {
   moduleFileExtensions: ['js', 'json', 'ts'],
   rootDir: 'src',
   testRegex: '.*\\.spec\\.ts$',
+  // Sets DATABASE_URL/JWT_SECRET/etc before any module loads.
+  setupFiles: ['<rootDir>/jest.setup.ts'],
   transform: {
     '^.+\\.(t|j)s$': ['ts-jest', {
       // Don't fail tests on TypeScript type errors (Prisma client not generated in CI)
       diagnostics: false,
     }],
   },
-  // uuid v14+ ships as ESM; map it to the CJS build so Jest can import it
+  // uuid v14+ is ESM-only (no CJS build), which Jest's CJS runtime can't load.
+  // Map it to a small shim over node:crypto's randomUUID.
   moduleNameMapper: {
-    '^uuid$': '<rootDir>/../node_modules/uuid/dist-node/index.js',
+    '^uuid$': '<rootDir>/../test/uuid-cjs-shim.js',
   },
   collectCoverageFrom: [
     '**/*.(t|j)s',
