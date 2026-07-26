@@ -1,9 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror,
-    Address, Env, String, Vec,
-    symbol_short, vec, BytesN,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN, Env,
+    String, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -13,28 +12,28 @@ const CURRENT_VERSION: u32 = 1;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum CarbonError {
-    ProjectNotFound        = 1,
-    ProjectNotVerified     = 2,
-    ProjectSuspended       = 3,
-    InsufficientCredits    = 4,
-    AlreadyRetired         = 5,
-    SerialNumberConflict   = 6,
-    UnauthorizedVerifier   = 7,
-    UnauthorizedOracle     = 8,
-    InvalidVintageYear     = 9,
-    ListingNotFound        = 10,
-    InsufficientLiquidity  = 11,
-    PriceNotSet            = 12,
-    MonitoringDataStale    = 13,
+    ProjectNotFound = 1,
+    ProjectNotVerified = 2,
+    ProjectSuspended = 3,
+    InsufficientCredits = 4,
+    AlreadyRetired = 5,
+    SerialNumberConflict = 6,
+    UnauthorizedVerifier = 7,
+    UnauthorizedOracle = 8,
+    InvalidVintageYear = 9,
+    ListingNotFound = 10,
+    InsufficientLiquidity = 11,
+    PriceNotSet = 12,
+    MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
-    ZeroAmountNotAllowed   = 16,
-    ProjectAlreadyExists   = 17,
-    InvalidSerialRange     = 18,
-    BatchTooLarge         = 19,
-    AlreadyInitialized     = 20,
-    Arithmetic             = 21,
-    UnauthorizedUpgrade    = 22,
+    ZeroAmountNotAllowed = 16,
+    ProjectAlreadyExists = 17,
+    InvalidSerialRange = 18,
+    BatchTooLarge = 19,
+    AlreadyInitialized = 20,
+    Arithmetic = 21,
+    UnauthorizedUpgrade = 22,
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
@@ -89,40 +88,40 @@ pub enum CreditStatus {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct CreditBatch {
-    pub batch_id:     String,
-    pub project_id:   String,
+    pub batch_id: String,
+    pub project_id: String,
     pub vintage_year: u32,
-    pub amount:       i128,
+    pub amount: i128,
     pub serial_start: u64,
-    pub serial_end:   u64,
-    pub issued_at:    u64,
-    pub status:       CreditStatus,
+    pub serial_end: u64,
+    pub issued_at: u64,
+    pub status: CreditStatus,
     pub metadata_cid: String,
-    pub owner:        Address,
+    pub owner: Address,
 }
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RetirementCertificate {
-    pub retirement_id:    String,
-    pub credit_batch_id:  String,
-    pub project_id:       String,
-    pub amount:           i128,
-    pub retired_by:       Address,
-    pub beneficiary:      String,
+    pub retirement_id: String,
+    pub credit_batch_id: String,
+    pub project_id: String,
+    pub amount: i128,
+    pub retired_by: Address,
+    pub beneficiary: String,
     pub retirement_reason: String,
-    pub vintage_year:     u32,
-    pub serial_numbers:   Vec<u64>,
-    pub retired_at:       u64,
-    pub tx_hash:          String,
-    pub certificate_cid:  String,
+    pub vintage_year: u32,
+    pub serial_numbers: Vec<u64>,
+    pub retired_at: u64,
+    pub tx_hash: String,
+    pub certificate_cid: String,
 }
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SerialRange {
     pub start: u64,
-    pub end:   u64,
+    pub end: u64,
 }
 
 #[contracttype]
@@ -135,10 +134,10 @@ pub enum RetiredKey {
 #[derive(Clone, Debug)]
 pub struct UpgradeRecord {
     pub from_version: u32,
-    pub to_version:   u32,
-    pub timestamp:    u64,
-    pub upgraded_by:  Address,
-    pub wasm_hash:    BytesN<32>,
+    pub to_version: u32,
+    pub timestamp: u64,
+    pub upgraded_by: Address,
+    pub wasm_hash: BytesN<32>,
 }
 
 #[contract]
@@ -146,46 +145,57 @@ pub struct CarbonCreditContract;
 
 #[contractimpl]
 impl CarbonCreditContract {
-
-    pub fn initialize(env: Env, admin: Address, registry_contract: Address) -> Result<(), CarbonError> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        registry_contract: Address,
+    ) -> Result<(), CarbonError> {
         if env.storage().persistent().has(&DataKey::Admin) {
             return Err(CarbonError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::RegistryContract, &registry_contract);
+        env.storage()
+            .persistent()
+            .set(&DataKey::RegistryContract, &registry_contract);
         let ranges: Vec<SerialRange> = vec![&env];
-        env.storage().persistent().set(&DataKey::SerialRegistry, &ranges);
-        env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SerialRegistry, &ranges);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &CURRENT_VERSION);
         Ok(())
     }
 
-    pub fn upgrade(
-        env: Env,
-        admin: Address,
-        new_wasm_hash: BytesN<32>,
-    ) -> Result<(), CarbonError> {
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
-        let current_version: u32 = env.storage()
+        let current_version: u32 = env
+            .storage()
             .persistent()
             .get(&DataKey::ContractVersion)
             .unwrap_or(1);
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
 
         let next_version = current_version + 1;
-        env.storage().persistent().set(&DataKey::ContractVersion, &next_version);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &next_version);
 
         let record = UpgradeRecord {
             from_version: current_version,
-            to_version:   next_version,
-            timestamp:    env.ledger().timestamp(),
-            upgraded_by:  admin.clone(),
-            wasm_hash:    new_wasm_hash,
+            to_version: next_version,
+            timestamp: env.ledger().timestamp(),
+            upgraded_by: admin.clone(),
+            wasm_hash: new_wasm_hash,
         };
-        env.storage().persistent().set(&DataKey::UpgradeHistory, &record);
+        env.storage()
+            .persistent()
+            .set(&DataKey::UpgradeHistory, &record);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("upgraded")),
@@ -202,9 +212,7 @@ impl CarbonCreditContract {
     }
 
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::UpgradeHistory)
+        env.storage().persistent().get(&DataKey::UpgradeHistory)
     }
 
     fn current_year(env: &Env) -> u32 {
@@ -253,7 +261,11 @@ impl CarbonCreditContract {
             return Err(CarbonError::InvalidVintageYear);
         }
 
-        if env.storage().persistent().has(&DataKey::Batch(batch_id.clone())) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Batch(batch_id.clone()))
+        {
             return Err(CarbonError::SerialNumberConflict);
         }
 
@@ -266,22 +278,29 @@ impl CarbonCreditContract {
             .persistent()
             .get(&DataKey::SerialRegistry)
             .unwrap_or_else(|| vec![&env]);
-        ranges.push_back(SerialRange { start: serial_start, end: serial_end });
-        env.storage().persistent().set(&DataKey::SerialRegistry, &ranges);
+        ranges.push_back(SerialRange {
+            start: serial_start,
+            end: serial_end,
+        });
+        env.storage()
+            .persistent()
+            .set(&DataKey::SerialRegistry, &ranges);
 
         let batch = CreditBatch {
-            batch_id:     batch_id.clone(),
-            project_id:   project_id.clone(),
+            batch_id: batch_id.clone(),
+            project_id: project_id.clone(),
             vintage_year,
             amount,
             serial_start,
             serial_end,
-            issued_at:    env.ledger().timestamp(),
-            status:       CreditStatus::Active,
+            issued_at: env.ledger().timestamp(),
+            status: CreditStatus::Active,
             metadata_cid: metadata_cid.clone(),
-            owner:        initial_owner.clone(),
+            owner: initial_owner.clone(),
         };
-        env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
         let mut project_batches: Vec<String> = env
@@ -290,7 +309,10 @@ impl CarbonCreditContract {
             .get(&DataKey::ProjectBatches(project_id.clone()))
             .unwrap_or_else(|| vec![&env]);
         project_batches.push_back(batch_id.clone());
-        env.storage().persistent().set(&DataKey::ProjectBatches(project_id.clone()), &project_batches);
+        env.storage().persistent().set(
+            &DataKey::ProjectBatches(project_id.clone()),
+            &project_batches,
+        );
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("minted")),
@@ -345,10 +367,16 @@ impl CarbonCreditContract {
             .get(&RetiredKey::BatchRetired(batch_id.clone()))
             .unwrap_or(0i128);
 
-        let already_retired_u64 = u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
-        let retire_serial_start = batch.serial_start.checked_add(already_retired_u64).ok_or(CarbonError::Arithmetic)?;
+        let already_retired_u64 =
+            u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
+        let retire_serial_start = batch
+            .serial_start
+            .checked_add(already_retired_u64)
+            .ok_or(CarbonError::Arithmetic)?;
         let amount_u64 = u64::try_from(amount).map_err(|_| CarbonError::Arithmetic)?;
-        let retire_serial_end   = retire_serial_start.checked_add(amount_u64 - 1).ok_or(CarbonError::Arithmetic)?;
+        let retire_serial_end = retire_serial_start
+            .checked_add(amount_u64 - 1)
+            .ok_or(CarbonError::Arithmetic)?;
 
         let mut serial_numbers: Vec<u64> = vec![&env];
         let mut s = retire_serial_start;
@@ -357,33 +385,44 @@ impl CarbonCreditContract {
             s += 1;
         }
 
-        let new_retired = already_retired.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
-        env.storage().persistent().set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
+        let new_retired = already_retired
+            .checked_add(amount)
+            .ok_or(CarbonError::Arithmetic)?;
+        env.storage()
+            .persistent()
+            .set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
 
-        let new_active = batch.amount.checked_sub(new_retired).ok_or(CarbonError::Arithmetic)?;
+        let new_active = batch
+            .amount
+            .checked_sub(new_retired)
+            .ok_or(CarbonError::Arithmetic)?;
         batch.status = if new_active == 0 {
             CreditStatus::FullyRetired
         } else {
             CreditStatus::PartiallyRetired
         };
-        env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
         let cert = RetirementCertificate {
-            retirement_id:     retire_id.clone(),
-            credit_batch_id:   batch_id.clone(),
-            project_id:        batch.project_id.clone(),
+            retirement_id: retire_id.clone(),
+            credit_batch_id: batch_id.clone(),
+            project_id: batch.project_id.clone(),
             amount,
-            retired_by:        holder.clone(),
-            beneficiary:       beneficiary.clone(),
+            retired_by: holder.clone(),
+            beneficiary: beneficiary.clone(),
             retirement_reason: reason.clone(),
-            vintage_year:      batch.vintage_year,
-            serial_numbers:    serial_numbers.clone(),
-            retired_at:        env.ledger().timestamp(),
-            tx_hash:           tx_hash.clone(),
-            certificate_cid:   cert_cid.clone(),
+            vintage_year: batch.vintage_year,
+            serial_numbers: serial_numbers.clone(),
+            retired_at: env.ledger().timestamp(),
+            tx_hash: tx_hash.clone(),
+            certificate_cid: cert_cid.clone(),
         };
-        env.storage().persistent().set(&DataKey::Retirement(retire_id.clone()), &cert);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retirement(retire_id.clone()), &cert);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("retired")),
@@ -432,7 +471,9 @@ impl CarbonCreditContract {
         }
 
         batch.owner = to.clone();
-        env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
         env.events().publish(
@@ -460,7 +501,11 @@ impl CarbonCreditContract {
     pub fn undo_retire(env: Env, admin: Address, retire_id: String) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
-        if env.storage().persistent().has(&DataKey::Retirement(retire_id)) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Retirement(retire_id))
+        {
             return Err(CarbonError::RetirementIrreversible);
         }
         Err(CarbonError::ProjectNotFound)
@@ -489,17 +534,22 @@ impl CarbonCreditContract {
     fn extend_batch_ttl(env: &Env, batch_id: &String) {
         let key = DataKey::Batch(batch_id.clone());
         if env.storage().persistent().has(&key) {
-            env.storage().persistent().extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
         }
     }
 
     fn load_batch(env: &Env, batch_id: &String) -> Result<CreditBatch, CarbonError> {
         let key = DataKey::Batch(batch_id.clone());
-        let batch = env.storage()
+        let batch = env
+            .storage()
             .persistent()
             .get(&key)
             .ok_or(CarbonError::ProjectNotFound)?;
-        env.storage().persistent().extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
         Ok(batch)
     }
 
@@ -552,9 +602,14 @@ mod invariants;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
 
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
 
     fn setup(env: &Env) -> (CarbonCreditContractClient, Address, Address) {
         env.mock_all_auths();
@@ -601,7 +656,12 @@ mod tests {
         );
     }
 
-    fn mint_batch(env: &Env, client: &CarbonCreditContractClient, admin: &Address, owner: &Address) {
+    fn mint_batch(
+        env: &Env,
+        client: &CarbonCreditContractClient,
+        admin: &Address,
+        owner: &Address,
+    ) {
         client.mint_credits(
             admin,
             &s(env, "proj-001"),
@@ -633,12 +693,13 @@ mod tests {
     fn test_transfer_from_non_owner_fails() {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
-        let owner    = Address::generate(&env);
+        let owner = Address::generate(&env);
         let attacker = Address::generate(&env);
-        let victim   = Address::generate(&env);
+        let victim = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
-        let result = client.try_transfer_credits(&attacker, &victim, &s(&env, "batch-001"), &100_i128);
+        let result =
+            client.try_transfer_credits(&attacker, &victim, &s(&env, "batch-001"), &100_i128);
         assert!(result.is_err());
     }
 
@@ -647,7 +708,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        let to    = Address::generate(&env);
+        let to = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
         let result = client.try_transfer_credits(&admin, &to, &s(&env, "batch-001"), &100_i128);
@@ -658,7 +719,7 @@ mod tests {
     fn test_transfer_updates_owner() {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
-        let owner     = Address::generate(&env);
+        let owner = Address::generate(&env);
         let new_owner = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
@@ -700,8 +761,28 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        let result = client.try_mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b2"), &50_u64, &150_u64, &s(&env, "cid"), &owner);
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &50_u64,
+            &150_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
         assert!(result.is_err());
     }
 
@@ -711,8 +792,21 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        let result = client.try_mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &0_u64, &100_u64, &s(&env, "cid"), &owner);
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidSerialRange);
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &0_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidSerialRange
+        );
     }
 
     #[test]
@@ -721,7 +815,17 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
         assert!(client.verify_serial_range(&101_u64, &200_u64));
         assert!(!client.verify_serial_range(&50_u64, &150_u64));
     }
@@ -732,7 +836,17 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
 
         let cert = client.retire_credits(
             &owner,
@@ -756,8 +870,27 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        client.retire_credits(&owner, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID"));
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        client.retire_credits(
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
         let to = Address::generate(&env);
         let result = client.try_transfer_credits(&owner, &to, &s(&env, "b1"), &10_i128);
@@ -770,10 +903,38 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        client.retire_credits(&owner, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID"));
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        client.retire_credits(
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
-        let result = client.try_retire_credits(&owner, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-002"), &s(&env, "tx2"), &s(&env, "QmCID2"));
+        let result = client.try_retire_credits(
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-002"),
+            &s(&env, "tx2"),
+            &s(&env, "QmCID2"),
+        );
         assert!(result.is_err());
     }
 
@@ -784,7 +945,16 @@ mod tests {
         let owner = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
-        client.retire_credits(&owner, &s(&env, "batch-001"), &500_i128, &s(&env, "partial"), &s(&env, "me"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID"));
+        client.retire_credits(
+            &owner,
+            &s(&env, "batch-001"),
+            &500_i128,
+            &s(&env, "partial"),
+            &s(&env, "me"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
         let batch = client.get_credit_batch(&s(&env, "batch-001"));
         assert_eq!(batch.status, CreditStatus::PartiallyRetired);
     }
@@ -794,11 +964,22 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         let result = client.try_mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1989_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &1989_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidVintageYear
+        );
     }
 
     #[test]
@@ -806,7 +987,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1767225600,
             protocol_version: 20,
@@ -819,7 +1000,15 @@ mod tests {
         });
 
         client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1990_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &1990_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
     }
 
@@ -828,7 +1017,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1767225600,
             protocol_version: 20,
@@ -841,7 +1030,15 @@ mod tests {
         });
 
         client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2027_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2027_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
     }
 
@@ -850,7 +1047,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1767225600,
             protocol_version: 20,
@@ -863,9 +1060,20 @@ mod tests {
         });
 
         let result = client.try_mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2028_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2028_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidVintageYear
+        );
     }
 
     #[test]
@@ -908,13 +1116,22 @@ mod tests {
         // Mint and retire credits
         mint(&env, &client, &admin, "b1", &owner);
         client.retire_credits(
-            &owner, &s(&env, "b1"), &100_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID")
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
         );
 
         // Attempt to reverse the retirement - must fail
         let result = client.try_undo_retire(&admin, &s(&env, "ret-001"));
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::RetirementIrreversible);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::RetirementIrreversible
+        );
     }
 
     #[test]
@@ -926,13 +1143,22 @@ mod tests {
         // Mint and retire credits
         mint(&env, &client, &admin, "b1", &owner);
         client.retire_credits(
-            &owner, &s(&env, "b1"), &50_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-002"), &s(&env, "tx"), &s(&env, "QmCID")
+            &owner,
+            &s(&env, "b1"),
+            &50_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-002"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
         );
 
         // Even admin cannot reverse retirement
         let result = client.try_undo_retire(&admin, &s(&env, "ret-002"));
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::RetirementIrreversible);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::RetirementIrreversible
+        );
 
         // Verify retirement certificate still exists and is unchanged
         let cert = client.get_retirement_certificate(&s(&env, "ret-002"));
@@ -948,14 +1174,27 @@ mod tests {
 
         // Mint batch with serials 1-100
         client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), 
-            &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
 
         // Retire 50 credits (serials 1-50)
         let cert = client.retire_credits(
-            &owner, &s(&env, "b1"), &50_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-003"), &s(&env, "tx"), &s(&env, "QmCID")
+            &owner,
+            &s(&env, "b1"),
+            &50_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-003"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
         );
 
         // Verify serial numbers are recorded in certificate
@@ -969,8 +1208,15 @@ mod tests {
 
         // Attempt to mint new batch with overlapping serials - should fail
         let result = client.try_mint_credits(
-            &admin, &s(&env, "p2"), &50_i128, &2023_u32, &s(&env, "b2"), 
-            &25_u64, &75_u64, &s(&env, "cid2"), &owner
+            &admin,
+            &s(&env, "p2"),
+            &50_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &25_u64,
+            &75_u64,
+            &s(&env, "cid2"),
+            &owner,
         );
         assert!(result.is_err());
     }
@@ -984,8 +1230,14 @@ mod tests {
         // Mint and retire
         mint(&env, &client, &admin, "b1", &owner);
         let original_cert = client.retire_credits(
-            &owner, &s(&env, "b1"), &100_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-004"), &s(&env, "tx123"), &s(&env, "QmCID")
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-004"),
+            &s(&env, "tx123"),
+            &s(&env, "QmCID"),
         );
 
         // Attempt reversal
@@ -1008,19 +1260,35 @@ mod tests {
 
         // Mint 1000 credits
         client.mint_credits(
-            &admin, &s(&env, "p1"), &1000_i128, &2023_u32, &s(&env, "b1"), 
-            &1_u64, &1000_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &1000_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &1000_u64,
+            &s(&env, "cid"),
+            &owner,
         );
 
         // Retire 600 credits
         client.retire_credits(
-            &owner, &s(&env, "b1"), &600_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-005"), &s(&env, "tx"), &s(&env, "QmCID")
+            &owner,
+            &s(&env, "b1"),
+            &600_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-005"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
         );
 
         // Verify batch state
         let batch_after_retirement = client.get_credit_batch(&s(&env, "b1"));
-        assert_eq!(batch_after_retirement.status, CreditStatus::PartiallyRetired);
+        assert_eq!(
+            batch_after_retirement.status,
+            CreditStatus::PartiallyRetired
+        );
         assert_eq!(batch_after_retirement.amount, 1000); // Total amount unchanged
 
         // Attempt reversal
@@ -1028,21 +1296,39 @@ mod tests {
 
         // Verify batch state is still the same - no change
         let batch_after_reversal_attempt = client.get_credit_batch(&s(&env, "b1"));
-        assert_eq!(batch_after_reversal_attempt.status, CreditStatus::PartiallyRetired);
+        assert_eq!(
+            batch_after_reversal_attempt.status,
+            CreditStatus::PartiallyRetired
+        );
         assert_eq!(batch_after_reversal_attempt.amount, 1000);
 
         // Verify only 400 credits remain active (1000 - 600)
         // Attempting to retire more than 400 should fail
         let result = client.try_retire_credits(
-            &owner, &s(&env, "b1"), &500_i128, &s(&env, "offset2"), 
-            &s(&env, "Corp"), &s(&env, "ret-006"), &s(&env, "tx2"), &s(&env, "QmCID2")
+            &owner,
+            &s(&env, "b1"),
+            &500_i128,
+            &s(&env, "offset2"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-006"),
+            &s(&env, "tx2"),
+            &s(&env, "QmCID2"),
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InsufficientCredits);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InsufficientCredits
+        );
 
         // Retiring exactly 400 should succeed
         client.retire_credits(
-            &owner, &s(&env, "b1"), &400_i128, &s(&env, "offset3"), 
-            &s(&env, "Corp"), &s(&env, "ret-007"), &s(&env, "tx3"), &s(&env, "QmCID3")
+            &owner,
+            &s(&env, "b1"),
+            &400_i128,
+            &s(&env, "offset3"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-007"),
+            &s(&env, "tx3"),
+            &s(&env, "QmCID3"),
         );
 
         // Now batch should be fully retired
@@ -1050,4 +1336,3 @@ mod tests {
         assert_eq!(final_batch.status, CreditStatus::FullyRetired);
     }
 }
-
