@@ -3,8 +3,9 @@ import type { Metadata } from 'next';
 import { ThemeProvider } from '../lib/theme-context';
 import Navbar from '../components/Navbar';
 import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
-import LocaleProvider from '../components/LocaleProvider';
-import enMessages from '../public/locales/en/common.json';
+import AppProviders from '../components/AppProviders';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Carbon Ledger',
@@ -25,15 +26,15 @@ export default function RootLayout({
        <body>
          <a href="#main-content" className="skip-link">Skip to main content</a>
          <ServiceWorkerRegistration />
-         <LocaleProvider initialMessages={enMessages}>
-           <ThemeProvider>
+         <ThemeProvider>
+           <AppProviders>
              <Navbar />
              <main id="main-content">
                {children}
              </main>
-           </ThemeProvider>
-         </LocaleProvider>
+           </AppProviders>
+         </ThemeProvider>
        </body>
     </html>
   );
-}
+} 
