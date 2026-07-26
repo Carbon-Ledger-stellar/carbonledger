@@ -9,6 +9,16 @@ import {
     IsString, IsInt, IsPositive, Min, Max, Length, Matches, IsNumber, MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  VERIFIER_EVENTS,
+  OracleMonitoringStaleEvent,
+} from '../notifications/notification.events';
+
+/** A project with no monitoring submission for this long is flagged to its verifier. */
+const MONITORING_STALE_DAYS = Number(process.env.MONITORING_STALE_DAYS ?? 30);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const CID_REGEX = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/;
 
@@ -67,6 +77,7 @@ export class OracleService {
     private readonly prisma: PrismaService,
     @InjectQueue(QUEUE_NAME) private readonly queue: Queue,
     private readonly redisService: RedisService,
+    private readonly events: EventEmitter2,
   ) {}
 
   /**
@@ -264,6 +275,69 @@ export class OracleService {
       },
       generatedAt: new Date(),
     };
+  }
+
+  /**
+   * Flags projects whose monitoring data has gone stale to their assigned verifier.
+   *
+   * Runs every 6h rather than hourly because staleness is measured in days —
+   * an hourly sweep would re-notify the same verifier about the same project
+   * 24 times a day. The window bound (`lt` staleBefore, `gte` previousSweep)
+   * means each project is reported once, on the sweep where it first crosses
+   * the threshold.
+   */
+  @Cron(CronExpression.EVERY_6_HOURS)
+  async sweepStaleMonitoring(): Promise<void> {
+    const now = Date.now();
+    const staleBefore = new Date(now - MONITORING_STALE_DAYS * DAY_MS);
+    const previousSweep = new Date(staleBefore.getTime() - 6 * 60 * 60 * 1000);
+
+    let projects: Array<{
+      projectId: string;
+      name: string;
+      verifierAddress: string;
+      lastMonitoringAt: Date | null;
+    }>;
+
+    try {
+      projects = await this.prisma.carbonProject.findMany({
+        where: {
+          status: 'Verified',
+          verifierAddress: { not: '' },
+          lastMonitoringAt: { lt: staleBefore, gte: previousSweep },
+        },
+        select: {
+          projectId: true,
+          name: true,
+          verifierAddress: true,
+          lastMonitoringAt: true,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Stale-monitoring sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+
+    for (const project of projects) {
+      const payload: OracleMonitoringStaleEvent = {
+        verifierAddress: project.verifierAddress,
+        projectId: project.projectId,
+        name: project.name,
+        lastMonitoringAt: project.lastMonitoringAt?.toISOString() ?? null,
+        daysSinceLastMonitoring: project.lastMonitoringAt
+          ? Math.floor((now - project.lastMonitoringAt.getTime()) / DAY_MS)
+          : null,
+      emittedAt: new Date().toISOString(),
+      };
+
+      this.events.emit(VERIFIER_EVENTS.ORACLE_MONITORING_STALE, payload);
+    }
+
+    if (projects.length) {
+      this.logger.log(`Emitted ${projects.length} stale-monitoring alert(s)`);
+    }
   }
 
   async flagProject(dto: FlagProjectDto) {

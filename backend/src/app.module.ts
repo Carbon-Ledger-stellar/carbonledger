@@ -38,6 +38,8 @@ import { Horizon } from "@stellar/stellar-sdk";
 import { Redis } from "ioredis";
 import { RedisModule } from "./redis.module";
 import { ConfigModule } from "@nestjs/config";
+import { EventEmitterModule } from "@nestjs/event-emitter";
+import { NotificationsModule } from "./notifications/notifications.module";
 
 @Controller("health")
 class HealthController {
@@ -152,6 +154,9 @@ class HealthController {
     IdempotencyModule,
     // ConfigService is injected by JWTRotationStrategy and KeyRotationService.
     ConfigModule.forRoot({ isGlobal: true }),
+    // Carries verifier notification events from services to NotificationsGateway.
+    EventEmitterModule.forRoot(),
+    NotificationsModule,
   ],
   controllers: [HealthController],
   providers: [

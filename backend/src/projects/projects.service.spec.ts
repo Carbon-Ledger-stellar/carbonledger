@@ -1,10 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ProjectsService } from './projects.service';
 import { PrismaService } from '../prisma.service';
 import { RedisService } from '../redis.service';
 import { MailService } from '../mail/mail.service';
 import { ProjectStateMachineService } from './project-state-machine.service';
 import { SearchProjectsDto, ProjectStatus, OracleFreshness } from './projects.dto';
+
+const eventEmitterMock = { emit: jest.fn(), on: jest.fn(), off: jest.fn() };
 
 describe('ProjectsService', () => {
   let service: ProjectsService;
@@ -97,6 +100,10 @@ describe('ProjectsService', () => {
         {
           provide: RedisService,
           useValue: mockRedisService,
+        },
+        {
+          provide: EventEmitter2,
+          useValue: eventEmitterMock,
         },
       ],
     }).compile();

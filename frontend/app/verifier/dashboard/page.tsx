@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import OracleStatus from "../../../components/OracleStatus";
+import { useVerifierNotifications } from "../../../hooks/useVerifierNotifications";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
 
@@ -33,6 +34,14 @@ export default function VerifierDashboardPage() {
   const pendingDialogRef = useRef<HTMLDivElement | null>(null);
   const pendingTriggerRef = useRef<HTMLButtonElement | null>(null);
   const docTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  // Live push notifications; refreshes the list so the new project appears
+  // without the verifier reloading. Falls back to 60s polling automatically.
+  const { notifications, transport, permission, clear } = useVerifierNotifications({
+    token,
+    publicKey,
+    onNotification: () => { void load(); },
+  });
 
   function closeModal() {
     setPending(null);
@@ -129,6 +138,50 @@ export default function VerifierDashboardPage() {
         />
         <button onClick={load} style={btnStyle}>Load</button>
       </div>
+
+      {publicKey && token && (
+        <div
+          data-testid="notification-status"
+          data-transport={transport}
+          style={{ marginBottom: "1rem", fontSize: "0.85rem", color: "#555" }}
+        >
+          <span data-testid="transport-label">
+            {transport === "websocket"
+              ? "Live updates on"
+              : transport === "polling"
+                ? "Live updates unavailable - checking every 60s"
+                : "Not connected"}
+          </span>
+          {permission === "denied" && (
+            <span style={{ marginLeft: "0.5rem", color: "#a15c00" }}>
+              Desktop notifications blocked
+            </span>
+          )}
+        </div>
+      )}
+
+      {notifications.length > 0 && (
+        <section
+          data-testid="notification-feed"
+          aria-live="polite"
+          style={{ marginBottom: "1.5rem", border: "1px solid #ddd", borderRadius: 4, padding: "0.75rem" }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <strong>Notifications ({notifications.length})</strong>
+            <button onClick={clear} style={{ ...btnStyle, padding: "0.2rem 0.5rem" }}>
+              Clear
+            </button>
+          </div>
+          <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0" }}>
+            {notifications.map(n => (
+              <li key={n.id} data-testid="notification-item" data-event={n.event} style={{ padding: "0.25rem 0" }}>
+                {n.name || n.projectId}
+                <span style={{ color: "#888", marginLeft: "0.5rem" }}>{n.event}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {error && <p style={{ color: "red" }}>{error}</p>}
       {loading && <p>Loading...</p>}
