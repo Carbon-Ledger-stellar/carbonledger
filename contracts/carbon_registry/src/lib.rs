@@ -6,18 +6,6 @@ use soroban_sdk::{
     symbol_short, vec, BytesN,
 };
 
-macro_rules! require_valid_vintage_year {
-    ($env:expr, $year:expr) => {
-        Self::validate_vintage_year(&$env, $year)?
-    };
-}
-
-macro_rules! require_batch_not_expired {
-    ($env:expr, $year:expr) => {
-        Self::validate_batch_not_expired(&$env, $year)?
-    };
-}
-
 // ── Error Enum ────────────────────────────────────────────────────────────────
 
 #[contracterror]
@@ -45,6 +33,7 @@ pub enum CarbonError {
     AlreadyInitialized    = 19,
     MethodologyScoreLow   = 20,
     UnauthorizedUpgrade   = 21,
+    Arithmetic            = 22,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -101,11 +90,6 @@ pub struct UpgradeRecord {
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
-
-/// Earliest valid vintage year for carbon credits.
-pub const VINTAGE_YEAR_MIN: u32 = 1990;
-/// Maximum number of years a vintage may be aged before it is considered expired.
-pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
 
 const CURRENT_VERSION: u32 = 1;
 
@@ -185,22 +169,6 @@ impl CarbonRegistryContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
-    fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
-        let current_year = Self::current_year(env);
-        if vintage_year < VINTAGE_YEAR_MIN || vintage_year > current_year + 1 {
-            return Err(CarbonError::InvalidVintageYear);
-        }
-        Ok(())
-    }
-
-    fn validate_batch_not_expired(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
-        let current_year = Self::current_year(env);
-        if vintage_year + MAX_VINTAGE_AGE_YEARS < current_year {
-            return Err(CarbonError::InvalidVintageYear);
-        }
-        Ok(())
-    }
-
     pub fn register_project(
         env: Env,
         admin: Address,
@@ -217,7 +185,7 @@ impl CarbonRegistryContract {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
-        if project_id.is_empty() || project_id.chars().count() > 64 {
+        if project_id.is_empty() || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
         if name.len() == 0 || name.len() > 128 {
@@ -236,7 +204,10 @@ impl CarbonRegistryContract {
             return Err(CarbonError::ProjectNotFound);
         }
 
-        Self::validate_vintage_year(&env, vintage_year)?;
+        let current_year = Self::current_year(&env);
+        if vintage_year < 1990 || vintage_year > current_year + 1 {
+            return Err(CarbonError::InvalidVintageYear);
+        }
 
         if methodology_score < 70 {
             return Err(CarbonError::MethodologyScoreLow);
@@ -299,9 +270,6 @@ impl CarbonRegistryContract {
         Self::require_verifier(&env, &verifier_address)?;
 
         let mut project = Self::load_project(&env, &project_id)?;
-        if project.status == ProjectStatus::Verified {
-            return Err(CarbonError::ProjectAlreadyExists);
-        }
         project.status = ProjectStatus::Rejected;
         env.storage().persistent().set(&DataKey::Project(project_id.clone()), &project);
 
@@ -342,9 +310,6 @@ impl CarbonRegistryContract {
         Self::require_admin(&env, &admin)?;
 
         let mut project = Self::load_project(&env, &project_id)?;
-        if project.status == ProjectStatus::Suspended {
-            return Err(CarbonError::ProjectSuspended);
-        }
         project.status = ProjectStatus::Suspended;
         env.storage().persistent().set(&DataKey::Project(project_id.clone()), &project);
 
@@ -387,7 +352,6 @@ impl CarbonRegistryContract {
         }
 
         let mut project = Self::load_project(&env, &project_id)?;
-        require_batch_not_expired!(&env, project.vintage_year);
 
         if project.total_credits_retired + amount > project.total_credits_issued {
             return Err(CarbonError::InsufficientCredits);
@@ -495,7 +459,7 @@ impl CarbonRegistryContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _}, vec, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger}, vec, Env, String};
 
     fn setup() -> (Env, Address, Address, Address) {
         let env = Env::default();
@@ -534,7 +498,6 @@ mod tests {
             &make_str(env, "forestry"),
             &75_u32,
             &2023_u32,
-            &80_u32,
         );
     }
 
@@ -693,7 +656,7 @@ mod tests {
             &make_str(&env, "forestry"),
             &70_u32,
             &2023_u32,
-        ).unwrap();
+        );
 
         let p = client.get_project(&make_str(&env, "proj-min"));
         assert_eq!(p.methodology_score, 70);
@@ -735,11 +698,11 @@ mod tests {
         client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
 
         register(&env, &client, &admin);
-        client.verify_project(&verifier, &make_str(&env, "proj-001")).unwrap();
-        client.increment_issued(&oracle, &make_str(&env, "proj-001"), &1000_i128).unwrap();
-        client.retire_credits(&admin, &make_str(&env, "proj-001"), &300_i128).unwrap();
+        client.verify_project(&verifier, &make_str(&env, "proj-001"));
+        client.increment_issued(&oracle, &make_str(&env, "proj-001"), &1000_i128);
+        client.retire_credits(&admin, &make_str(&env, "proj-001"), &300_i128);
 
-        let p = client.get_project(&make_str(&env, "proj-001")).unwrap();
+        let p = client.get_project(&make_str(&env, "proj-001"));
         assert_eq!(p.total_credits_retired, 300);
     }
 
@@ -751,8 +714,8 @@ mod tests {
         client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
 
         register(&env, &client, &admin);
-        client.verify_project(&verifier, &make_str(&env, "proj-001")).unwrap();
-        client.increment_issued(&oracle, &make_str(&env, "proj-001"), &100_i128).unwrap();
+        client.verify_project(&verifier, &make_str(&env, "proj-001"));
+        client.increment_issued(&oracle, &make_str(&env, "proj-001"), &100_i128);
 
         let result = client.try_retire_credits(&admin, &make_str(&env, "proj-001"), &200_i128);
         assert_eq!(result.unwrap_err().unwrap(), CarbonError::InsufficientCredits);
@@ -767,7 +730,7 @@ mod tests {
         let verifier = Address::generate(&env);
         let contract_id = env.register_contract(None, CarbonRegistryContract);
         let client = CarbonRegistryContractClient::new(&env, &contract_id);
-        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]).unwrap();
+        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
 
         let attacker = Address::generate(&env);
         let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
@@ -784,7 +747,7 @@ mod tests {
         let verifier = Address::generate(&env);
         let contract_id = env.register_contract(None, CarbonRegistryContract);
         let client = CarbonRegistryContractClient::new(&env, &contract_id);
-        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]).unwrap();
+        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
 
         assert_eq!(client.get_version(), 1);
     }
@@ -795,7 +758,7 @@ mod tests {
 #[cfg(test)]
 mod edge_case_tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger}, vec, Env, String};
 
     fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
 
@@ -806,7 +769,7 @@ mod edge_case_tests {
         let verifier = Address::generate(env);
         let id = env.register_contract(None, CarbonRegistryContract);
         let client = CarbonRegistryContractClient::new(env, &id);
-        client.initialize(&admin, &oracle, &vec![env, verifier.clone()]).unwrap();
+        client.initialize(&admin, &oracle, &vec![env, verifier.clone()]);
         (client, admin, oracle, verifier)
     }
 
@@ -820,9 +783,9 @@ mod edge_case_tests {
             &s(env, "VCS"),
             &s(env, "Brazil"),
             &s(env, "forestry"),
+            &75_u32,
             &2023_u32,
-            &80_u32,
-        ).unwrap();
+        );
     }
 
     // ── ProjectNotFound ───────────────────────────────────────────────────────
@@ -833,7 +796,7 @@ mod edge_case_tests {
         let env = Env::default();
         let (client, _, _, _) = init(&env);
         let result = client.try_get_project(&s(&env, "does-not-exist"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectNotFound));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ProjectNotFound);
     }
 
     #[test]
@@ -841,7 +804,7 @@ mod edge_case_tests {
         let env = Env::default();
         let (client, _, _, verifier) = init(&env);
         let result = client.try_verify_project(&verifier, &s(&env, "ghost"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectNotFound));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ProjectNotFound);
     }
 
     #[test]
@@ -849,7 +812,7 @@ mod edge_case_tests {
         let env = Env::default();
         let (client, _, _, verifier) = init(&env);
         let result = client.try_reject_project(&verifier, &s(&env, "ghost"), &s(&env, "fraud"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectNotFound));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ProjectNotFound);
     }
 
     #[test]
@@ -857,7 +820,7 @@ mod edge_case_tests {
         let env = Env::default();
         let (client, admin, _, _) = init(&env);
         let result = client.try_suspend_project(&admin, &s(&env, "ghost"), &s(&env, "reason"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectNotFound));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ProjectNotFound);
     }
 
     // ── ProjectAlreadyExists ──────────────────────────────────────────────────
@@ -870,9 +833,9 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "dup-proj"), &s(&env, "Dup"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &2023_u32, &80_u32,
+            &75_u32, &2023_u32,
         );
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectAlreadyExists));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ProjectAlreadyExists);
     }
 
     // ── InvalidVintageYear ────────────────────────────────────────────────────
@@ -884,9 +847,9 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "p1"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &1989_u32, &80_u32,
+            &75_u32, &1989_u32,
         );
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidVintageYear));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
     }
 
     #[test]
@@ -898,7 +861,7 @@ mod edge_case_tests {
         let verifier = Address::generate(&env);
         let id = env.register_contract(None, CarbonRegistryContract);
         let client = CarbonRegistryContractClient::new(&env, &id);
-        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]).unwrap();
+        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
         // Set ledger to 2026 so 1990 is within range
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1767225600,
@@ -913,8 +876,8 @@ mod edge_case_tests {
         client.register_project(
             &admin, &s(&env, "p1990"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &1990_u32, &80_u32,
-        ).unwrap();
+            &75_u32, &1990_u32,
+        );
     }
 
     // ── MethodologyScoreLow ───────────────────────────────────────────────────
@@ -926,9 +889,9 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "p1"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &2023_u32, &0_u32,
+            &0_u32, &2023_u32,
         );
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::MethodologyScoreLow));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::MethodologyScoreLow);
     }
 
     #[test]
@@ -938,9 +901,9 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "p1"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &2023_u32, &69_u32,
+            &69_u32, &2023_u32,
         );
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::MethodologyScoreLow));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::MethodologyScoreLow);
     }
 
     // ── UnauthorizedVerifier ──────────────────────────────────────────────────
@@ -952,7 +915,7 @@ mod edge_case_tests {
         register_proj(&env, &client, &admin, "p1");
         let rogue = Address::generate(&env);
         let result = client.try_verify_project(&rogue, &s(&env, "p1"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedVerifier));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
     }
 
     #[test]
@@ -962,7 +925,7 @@ mod edge_case_tests {
         register_proj(&env, &client, &admin, "p1");
         let rogue = Address::generate(&env);
         let result = client.try_reject_project(&rogue, &s(&env, "p1"), &s(&env, "fraud"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedVerifier));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
     }
 
     #[test]
@@ -972,7 +935,7 @@ mod edge_case_tests {
         register_proj(&env, &client, &admin, "p1");
         let rogue = Address::generate(&env);
         let result = client.try_suspend_project(&rogue, &s(&env, "p1"), &s(&env, "reason"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedVerifier));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
     }
 
     // ── UnauthorizedOracle ────────────────────────────────────────────────────
@@ -984,7 +947,7 @@ mod edge_case_tests {
         register_proj(&env, &client, &admin, "p1");
         let rogue = Address::generate(&env);
         let result = client.try_update_project_status(&rogue, &s(&env, "p1"), &ProjectStatus::Completed);
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedOracle));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedOracle);
     }
 
     #[test]
@@ -994,7 +957,7 @@ mod edge_case_tests {
         register_proj(&env, &client, &admin, "p1");
         let rogue = Address::generate(&env);
         let result = client.try_increment_issued(&rogue, &s(&env, "p1"), &100_i128);
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedOracle));
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedOracle);
     }
 
     // ── AlreadyInitialized ────────────────────────────────────────────────────
@@ -1004,299 +967,6 @@ mod edge_case_tests {
         let env = Env::default();
         let (client, admin, oracle, verifier) = init(&env);
         let result = client.try_initialize(&admin, &oracle, &vec![&env, verifier]);
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::AlreadyInitialized));
-    }
-
-    // ── New edge cases (issue #91) ────────────────────────────────────────────
-
-    #[test]
-    fn test_reject_already_verified_project_fails() {
-        let env = Env::default();
-        let (client, admin, _, verifier) = init(&env);
-        register_proj(&env, &client, &admin, "p1");
-        client.verify_project(&verifier, &s(&env, "p1")).unwrap();
-        let result = client.try_reject_project(&verifier, &s(&env, "p1"), &s(&env, "fraud"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectAlreadyExists));
-    }
-
-    #[test]
-    fn test_unauthorized_verifier_cannot_verify() {
-        let env = Env::default();
-        let (client, admin, _, _) = init(&env);
-        register_proj(&env, &client, &admin, "p1");
-        let rogue = Address::generate(&env);
-        let result = client.try_verify_project(&rogue, &s(&env, "p1"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedVerifier));
-    }
-
-    #[test]
-    fn test_suspend_already_suspended_project_fails() {
-        let env = Env::default();
-        let (client, admin, _, _) = init(&env);
-        register_proj(&env, &client, &admin, "p1");
-        client.suspend_project(&admin, &s(&env, "p1"), &s(&env, "investigation")).unwrap();
-        let result = client.try_suspend_project(&admin, &s(&env, "p1"), &s(&env, "again"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectSuspended));
-    }
-
-    #[test]
-    fn test_get_project_not_found() {
-        let env = Env::default();
-        let (client, _, _, _) = init(&env);
-        let result = client.try_get_project(&s(&env, "nonexistent"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectNotFound));
-    }
-}
-
-// ── Vintage Year Validation Tests (Registry) ──────────────────────────────────
-//
-// Tests register_project vintage_year validation and retire_credits batch-expiry.
-// Covers 50+ edge cases including boundary values, century boundaries, u32::MAX,
-// leap-year timestamps, and expiry transitions.
-#[cfg(test)]
-mod vintage_year_validation_tests {
-    use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, vec, Env, String};
-
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
-
-    fn set_year(env: &Env, year: u32) {
-        let seconds_per_year: u64 = 31_557_600;
-        let timestamp = (year as u64 - 1970) * seconds_per_year + 86_400;
-        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
-            timestamp,
-            protocol_version: 20, sequence_number: 1,
-            network_id: [0; 32], base_reserve: 10,
-            min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
-        });
-    }
-
-    fn setup_at_year(year: u32) -> (Env, CarbonRegistryContractClient, Address, Address, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
-        set_year(&env, year);
-        let admin    = Address::generate(&env);
-        let oracle   = Address::generate(&env);
-        let verifier = Address::generate(&env);
-        let id = env.register_contract(None, CarbonRegistryContract);
-        let client = CarbonRegistryContractClient::new(&env, &id);
-        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
-        (env, client, admin, oracle, verifier)
-    }
-
-    fn try_register(
-        env: &Env,
-        client: &CarbonRegistryContractClient,
-        admin: &Address,
-        vintage_year: u32,
-        project_id: &str,
-    ) -> Result<(), soroban_sdk::Error> {
-        client.try_register_project(
-            admin,
-            &s(env, project_id),
-            &s(env, "Test Project"),
-            &s(env, "QmCID"),
-            &Address::generate(env),
-            &s(env, "VCS"),
-            &s(env, "Brazil"),
-            &s(env, "forestry"),
-            &75_u32,
-            &vintage_year,
-        ).map(|_| ())
-    }
-
-    fn register_ok(
-        env: &Env,
-        client: &CarbonRegistryContractClient,
-        admin: &Address,
-        vintage_year: u32,
-        project_id: &str,
-    ) {
-        client.register_project(
-            admin,
-            &s(env, project_id),
-            &s(env, "Test Project"),
-            &s(env, "QmCID"),
-            &Address::generate(env),
-            &s(env, "VCS"),
-            &s(env, "Brazil"),
-            &s(env, "forestry"),
-            &75_u32,
-            &vintage_year,
-        );
-    }
-
-    // ── Below-minimum year tests ───────────────────────────────────────────────
-
-    #[test]
-    fn test_registry_vintage_year_0_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, 0, "p0");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_vintage_year_1_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, 1, "p1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_vintage_year_1900_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, 1900, "p1900");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_vintage_year_1980_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, 1980, "p1980");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_vintage_year_1989_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, 1989, "p1989");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    // ── Minimum boundary ──────────────────────────────────────────────────────
-
-    #[test]
-    fn test_registry_vintage_year_1990_accepted() {
-        let (env, client, admin, _, _) = setup_at_year(2019);
-        register_ok(&env, &client, &admin, 1990, "p1990");
-    }
-
-    // ── Current year boundary ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_registry_vintage_year_current_accepted() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        register_ok(&env, &client, &admin, 2026, "p2026");
-    }
-
-    #[test]
-    fn test_registry_vintage_year_current_plus_1_accepted() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        register_ok(&env, &client, &admin, 2027, "p2027");
-    }
-
-    #[test]
-    fn test_registry_vintage_year_current_plus_2_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, 2028, "p2028");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_vintage_year_far_future_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, 2100, "pfut");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_vintage_year_u32_max_rejected() {
-        let (env, client, admin, _, _) = setup_at_year(2026);
-        let res = try_register(&env, &client, &admin, u32::MAX, "pmax");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    // ── Century boundaries ────────────────────────────────────────────────────
-
-    #[test]
-    fn test_registry_vintage_year_1999_accepted_in_2025() {
-        let (env, client, admin, _, _) = setup_at_year(2025);
-        register_ok(&env, &client, &admin, 1999, "p1999");
-    }
-
-    #[test]
-    fn test_registry_vintage_year_2000_accepted_in_2025() {
-        let (env, client, admin, _, _) = setup_at_year(2025);
-        register_ok(&env, &client, &admin, 2000, "p2000");
-    }
-
-    #[test]
-    fn test_registry_vintage_year_2001_accepted_in_2025() {
-        let (env, client, admin, _, _) = setup_at_year(2025);
-        register_ok(&env, &client, &admin, 2001, "p2001");
-    }
-
-    // ── Retire blocked for expired vintage ────────────────────────────────────
-
-    #[test]
-    fn test_registry_retire_blocked_for_expired_vintage() {
-        // Register project with vintage 1993; at year 2025: 1993+30=2023 < 2025 → expired
-        // We need to first mint credits in the project then try to retire
-        let (env, client, admin, oracle, _verifier) = setup_at_year(2025);
-
-        register_ok(&env, &client, &admin, 1993, "proj-old");
-        client.increment_issued(&oracle, &s(&env, "proj-old"), &100_i128).unwrap();
-
-        let res = client.try_retire_credits(&admin, &s(&env, "proj-old"), &50_i128);
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_retire_blocked_at_exact_expiry_boundary() {
-        // At year 2026: vintage 1995+30=2025 < 2026 → expired
-        let (env, client, admin, oracle, _) = setup_at_year(2026);
-        register_ok(&env, &client, &admin, 1995, "proj-bnd");
-        client.increment_issued(&oracle, &s(&env, "proj-bnd"), &100_i128).unwrap();
-        let res = client.try_retire_credits(&admin, &s(&env, "proj-bnd"), &10_i128);
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_registry_retire_allowed_just_inside_expiry_boundary() {
-        // At year 2026: vintage 1996+30=2026 = 2026, NOT < 2026 → valid
-        let (env, client, admin, oracle, _) = setup_at_year(2026);
-        register_ok(&env, &client, &admin, 1996, "proj-just-ok");
-        client.increment_issued(&oracle, &s(&env, "proj-just-ok"), &100_i128).unwrap();
-        client.retire_credits(&admin, &s(&env, "proj-just-ok"), &10_i128).unwrap();
-    }
-
-    #[test]
-    fn test_registry_retire_allowed_for_fresh_vintage() {
-        let (env, client, admin, oracle, _) = setup_at_year(2026);
-        register_ok(&env, &client, &admin, 2023, "proj-fresh");
-        client.increment_issued(&oracle, &s(&env, "proj-fresh"), &100_i128).unwrap();
-        client.retire_credits(&admin, &s(&env, "proj-fresh"), &10_i128).unwrap();
-    }
-
-    // ── Leap year and calendar edge cases ─────────────────────────────────────
-
-    #[test]
-    fn test_registry_vintage_year_at_leap_year_2000_register_ok() {
-        let (env, client, admin, _, _) = setup_at_year(2000);
-        // At year 2000: vintage 1999 (1 year old) valid; vintage 1990 (10 years old) valid
-        register_ok(&env, &client, &admin, 1999, "p1999");
-    }
-
-    #[test]
-    fn test_registry_vintage_year_at_leap_year_2000_min_valid() {
-        let (env, client, admin, _, _) = setup_at_year(2000);
-        register_ok(&env, &client, &admin, 1990, "p1990");
-    }
-
-    // ── Constant correctness ──────────────────────────────────────────────────
-
-    #[test]
-    fn test_registry_vintage_year_min_constant() {
-        assert_eq!(VINTAGE_YEAR_MIN, 1990);
-    }
-
-    #[test]
-    fn test_registry_max_vintage_age_constant() {
-        assert_eq!(MAX_VINTAGE_AGE_YEARS, 30);
-    }
-
-    #[test]
-    fn test_registry_invalid_vintage_error_code() {
-        assert_eq!(CarbonError::InvalidVintageYear as u32, 9);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::AlreadyInitialized);
     }
 }

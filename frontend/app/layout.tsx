@@ -3,6 +3,9 @@ import type { Metadata } from 'next';
 import { ThemeProvider } from '../lib/theme-context';
 import Navbar from '../components/Navbar';
 import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
+import AppProviders from '../components/AppProviders';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: 'Carbon Ledger',
@@ -24,10 +27,12 @@ export default function RootLayout({
          <a href="#main-content" className="skip-link">Skip to main content</a>
          <ServiceWorkerRegistration />
          <ThemeProvider>
-           <Navbar />
-           <main id="main-content">
-             {children}
-           </main>
+           <AppProviders>
+             <Navbar />
+             <main id="main-content">
+               {children}
+             </main>
+           </AppProviders>
          </ThemeProvider>
        </body>
     </html>
