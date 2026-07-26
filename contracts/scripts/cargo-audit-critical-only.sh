@@ -3,7 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-cargo install cargo-audit --locked --quiet 2>/dev/null || true
+if ! cargo audit --version >/dev/null 2>&1; then
+  cargo install cargo-audit --version 0.21.2 --locked --quiet
+fi
 
 OUT="$(mktemp)"
 JSON="$(mktemp)"
@@ -26,7 +28,6 @@ if command -v jq >/dev/null 2>&1 && [ -s "$JSON" ]; then
   exit 0
 fi
 
-# Fallback when jq/JSON unavailable: block only on explicit critical lines
 if grep -qiE 'severity:[[:space:]]*critical' "$OUT"; then
   echo "::error::cargo audit found critical vulnerabilities"
   exit 1
