@@ -8,12 +8,12 @@
  * self-contained using NestJS TestingModule.
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { StellarNetworkService } from '../../common/stellar-network.service';
-import { contractCallsRegistry } from '../../common/metrics.registry';
+import { StellarNetworkService } from '../common/stellar-network.service';
+import { contractCallsRegistry } from '../common/metrics.registry';
 import { AdminService } from '../admin.service';
-import { PrismaService } from '../../prisma.service';
-import { IndexerService } from '../../indexer/indexer.service';
-import { OracleService } from '../../oracle/oracle.service';
+import { PrismaService } from '../prisma.service';
+import { IndexerService } from '../indexer/indexer.service';
+import { OracleService } from '../oracle/oracle.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
