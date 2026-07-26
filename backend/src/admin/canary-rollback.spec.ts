@@ -10,20 +10,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { StellarNetworkService } from '../common/stellar-network.service';
 import { contractCallsRegistry } from '../common/metrics.registry';
-import { AdminService } from '../admin.service';
+import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
+import { RedisService } from '../redis.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
-
-jest.mock('@stellar/stellar-sdk', () => ({
-  SorobanRpc: {
-    Server: jest.fn().mockImplementation(() => ({
-      getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1 }),
-    })),
-  },
-}));
 
 const mockPrismaUpsert = jest.fn().mockResolvedValue({});
 const mockPrismaFindMany = jest.fn().mockResolvedValue([]);
@@ -72,6 +65,7 @@ describe('Canary Deployment — automated rollback integration', () => {
         { provide: PrismaService,  useValue: mockPrisma   },
         { provide: IndexerService, useValue: mockIndexer  },
         { provide: OracleService,  useValue: mockOracle   },
+        { provide: RedisService,  useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() } },
       ],
     }).compile();
 

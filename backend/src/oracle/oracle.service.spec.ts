@@ -3,6 +3,7 @@ import { getQueueToken } from '@nestjs/bullmq';
 import { OracleService } from './oracle.service';
 import { PrismaService } from '../prisma.service';
 import { QUEUE_NAME } from '../queue/queue.constants';
+import { RedisService } from '../redis.service';
 
 const monitoringUpsertResult = {
   id: 'mon-1',
@@ -29,6 +30,7 @@ const prismaMock = {
 };
 
 const queueMock = { add: jest.fn().mockResolvedValue({ id: 'job-1' }) };
+const redisMock = { get: jest.fn(), set: jest.fn(), del: jest.fn() };
 
 describe('OracleService', () => {
   let service: OracleService;
@@ -39,6 +41,7 @@ describe('OracleService', () => {
         OracleService,
         { provide: PrismaService,              useValue: prismaMock },
         { provide: getQueueToken(QUEUE_NAME),  useValue: queueMock },
+        { provide: RedisService,               useValue: redisMock },
       ],
     }).compile();
 
