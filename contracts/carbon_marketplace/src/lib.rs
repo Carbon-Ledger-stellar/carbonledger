@@ -389,7 +389,7 @@ impl CarbonMarketplaceContract {
                 return Err(CarbonError::ZeroAmountNotAllowed);
             }
 
-            let mut listing = Self::load_listing(&env, &listing_id)?;
+            let listing = Self::load_listing(&env, &listing_id)?;
             if listing.status == ListingStatus::Delisted || listing.status == ListingStatus::Sold {
                 return Err(CarbonError::ListingNotFound);
             }
@@ -408,10 +408,6 @@ impl CarbonMarketplaceContract {
         for i in 0..len {
             let amount = amounts.get(i).unwrap();
             let mut listing = validated_listings.get(i).unwrap();
-
-            let total_cost = listing.price_per_credit.checked_mul(amount).ok_or(CarbonError::Arithmetic)?;
-            let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
-            let seller_proceeds = total_cost.checked_sub(protocol_fee).ok_or(CarbonError::Arithmetic)?;
 
             listing.amount_available = listing.amount_available.checked_sub(amount).ok_or(CarbonError::Arithmetic)?;
             listing.status = if listing.amount_available == 0 {
@@ -535,11 +531,12 @@ impl CarbonMarketplaceContract {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _},
-        vec, Env, String,
+        Env, String,
     };
     use carbon_credit::CarbonCreditContract;
 
@@ -772,11 +769,11 @@ mod tests {
 // ── Property-based fuzz tests ─────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod fuzz {
     use super::*;
     use proptest::prelude::*;
     use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
-    use carbon_credit::CarbonCreditContract;
 
     fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
 
@@ -952,6 +949,7 @@ mod fuzz {
 // ── Edge-case tests (issue #91) ───────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod edge_case_tests {
     use super::*;
     use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String};

@@ -231,10 +231,10 @@ impl CarbonCreditContract {
         if project_id.is_empty() || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if batch_id.len() == 0 || batch_id.len() > 64 {
+        if batch_id.is_empty() || batch_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if metadata_cid.len() == 0 || metadata_cid.len() > 128 {
+        if metadata_cid.is_empty() || metadata_cid.len() > 128 {
             return Err(CarbonError::ProjectNotFound);
         }
 
@@ -568,10 +568,10 @@ mod tests {
             min_persistent_entry_ttl: 1,
             max_entry_ttl: 518400,
         });
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
+        let admin = Address::generate(env);
+        let registry = Address::generate(env);
         let id = env.register_contract(None, CarbonCreditContract);
-        let client = CarbonCreditContractClient::new(&env, &id);
+        let client = CarbonCreditContractClient::new(env, &id);
         client.initialize(&admin, &registry);
         (client, admin, registry)
     }

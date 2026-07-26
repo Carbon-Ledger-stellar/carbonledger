@@ -55,7 +55,7 @@ export class QueueProcessor extends WorkerHost {
     const { oracleUpdateId, type } = data as { oracleUpdateId: string; type: string };
     this.logger.log(`Submitting oracle data to Soroban type=${type} oracleUpdateId=${oracleUpdateId}`);
 
-    await this.prisma.oracleUpdate.update({
+    await this.prisma.oracleJob.update({
       where: { id: oracleUpdateId },
       data:  { status: 'pending', attempts: { increment: 1 }, updatedAt: new Date() },
     });
@@ -64,7 +64,7 @@ export class QueueProcessor extends WorkerHost {
       // Soroban submission — placeholder until contract IDs are wired
       const txHash = `simulated-${Date.now()}`;
 
-      await this.prisma.oracleUpdate.update({
+      await this.prisma.oracleJob.update({
         where: { id: oracleUpdateId },
         data:  { status: 'submitted', txHash, lastError: null, updatedAt: new Date() },
       });
@@ -74,7 +74,7 @@ export class QueueProcessor extends WorkerHost {
       );
       return { oracleUpdateId, txHash, status: 'submitted' };
     } catch (err: any) {
-      await this.prisma.oracleUpdate.update({
+      await this.prisma.oracleJob.update({
         where: { id: oracleUpdateId },
         data:  { status: 'failed', lastError: err.message, updatedAt: new Date() },
       });

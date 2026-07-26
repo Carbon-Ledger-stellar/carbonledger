@@ -188,19 +188,19 @@ impl CarbonRegistryContract {
         if project_id.is_empty() || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if name.len() == 0 || name.len() > 128 {
+        if name.is_empty() || name.len() > 128 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if metadata_cid.len() == 0 || metadata_cid.len() > 128 {
+        if metadata_cid.is_empty() || metadata_cid.len() > 128 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if methodology.len() == 0 || methodology.len() > 64 {
+        if methodology.is_empty() || methodology.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if country.len() == 0 || country.len() > 64 {
+        if country.is_empty() || country.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if project_type.len() == 0 || project_type.len() > 64 {
+        if project_type.is_empty() || project_type.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
 
