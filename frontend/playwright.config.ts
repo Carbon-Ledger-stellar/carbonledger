@@ -7,7 +7,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: [
-    'html',
+    ['html', { open: 'never' }],
     ['json', { outputFile: 'test-results/results.json' }],
   ],
   use: {
@@ -34,5 +34,8 @@ export default defineConfig({
     command: 'npm run dev',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
+    env: {
+      NEXT_PUBLIC_REGISTRY_CONTRACT: process.env.NEXT_PUBLIC_REGISTRY_CONTRACT || 'C_REGISTRY_TEST_CONTRACT_ID000000000000000001',
+    },
   },
 });

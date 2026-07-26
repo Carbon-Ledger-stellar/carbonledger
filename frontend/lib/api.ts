@@ -1,4 +1,4 @@
-import useSWR, { SWRConfiguration } from "swr";
+import useSWR, { SWRConfiguration, mutate } from "swr";
 import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
@@ -491,4 +491,85 @@ export async function exportEsgPdf(filters: EsgExportFilters): Promise<Blob> {
   });
   if (!res.ok) throw new Error("PDF export failed");
   return res.blob();
+}
+
+// ── Verifier dashboard ────────────────────────────────────────────────────────
+
+export interface PendingVerifierProject {
+  id: string;
+  projectId: string;
+  name: string;
+  methodology: string;
+  country: string;
+  status: string;
+  methodologyScore: number;
+  createdAt: string;
+  metadataCid?: string;
+  documentCid?: string;
+  projectType?: string;
+  vintageYear?: number;
+  description?: string | null;
+  verifierAddress?: string;
+}
+
+async function authFetcher<T>(url: string, token: string): Promise<T> {
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message || "API error");
+  }
+  return res.json();
+}
+
+export function usePendingVerifierProjects(publicKey: string | null, token: string | null) {
+  return useSWR<PendingVerifierProject[]>(
+    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/pending-projects`, token] : null,
+    ([url, jwt]) => authFetcher<PendingVerifierProject[]>(url, jwt),
+    swrConfig,
+  );
+}
+
+export async function syncProjectVerification(
+  projectDbId: string,
+  verifierPublicKey: string,
+  token: string,
+): Promise<void> {
+  const res = await fetch(`${API_URL}/projects/${projectDbId}/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ verifierPublicKey }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || "Failed to sync verification with API");
+  }
+}
+
+export async function syncProjectRejection(
+  projectDbId: string,
+  verifierPublicKey: string,
+  reason: string,
+  token: string,
+): Promise<void> {
+  const res = await fetch(`${API_URL}/projects/${projectDbId}/reject`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ verifierPublicKey, reason }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || "Failed to sync rejection with API");
+  }
+}
+
+export async function invalidateVerifierCaches(publicKey: string): Promise<void> {
+  await mutate(`${API_URL}/verifiers/${publicKey}/pending-projects`);
 }
