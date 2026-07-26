@@ -25,12 +25,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/advisory-db
-          key: cargo-advisory-db-${{ hashFiles('carbonledger/contracts/**/Cargo.lock') }}
+          key: cargo-advisory-db-${{ hashFiles('contracts/**/Cargo.lock') }}
           restore-keys: cargo-advisory-db-
 
       - name: Run cargo audit
         id: cargo_audit
-        working-directory: carbonledger/contracts
+        working-directory: contracts
         # --deny unsound --deny yanked in addition to default --deny vulnerability
         # Exit code 1 = vulnerabilities found (critical → block); we capture output
         # for the PR comment and re-exit after posting.
@@ -49,20 +49,20 @@ jobs:
       - name: Cache backend node_modules
         uses: actions/cache@v4
         with:
-          path: carbonledger/backend/node_modules
-          key: npm-backend-${{ hashFiles('carbonledger/backend/package-lock.json') }}
+          path: backend/node_modules
+          key: npm-backend-${{ hashFiles('backend/package-lock.json') }}
           restore-keys: npm-backend-
 
       - name: Cache frontend node_modules
         uses: actions/cache@v4
         with:
-          path: carbonledger/frontend/node_modules
-          key: npm-frontend-${{ hashFiles('carbonledger/frontend/package-lock.json') }}
+          path: frontend/node_modules
+          key: npm-frontend-${{ hashFiles('frontend/package-lock.json') }}
           restore-keys: npm-frontend-
 
       - name: Run npm audit (backend)
         id: npm_audit_backend
-        working-directory: carbonledger/backend
+        working-directory: backend
         run: |
           npm ci --ignore-scripts
           npm audit --audit-level=critical 2>&1 | tee /tmp/npm-audit-backend.txt
@@ -71,7 +71,7 @@ jobs:
 
       - name: Run npm audit (frontend)
         id: npm_audit_frontend
-        working-directory: carbonledger/frontend
+        working-directory: frontend
         run: |
           npm ci --ignore-scripts
           npm audit --audit-level=critical 2>&1 | tee /tmp/npm-audit-frontend.txt
@@ -88,12 +88,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('carbonledger/oracle/requirements.txt') }}
+          key: pip-${{ hashFiles('oracle/requirements.txt') }}
           restore-keys: pip-
 
       - name: Run pip-audit
         id: pip_audit
-        working-directory: carbonledger/oracle
+        working-directory: oracle
         run: |
           pip install pip-audit --quiet
           pip-audit -r requirements.txt --severity critical --format markdown 2>&1 | tee /tmp/pip-audit.txt
@@ -212,7 +212,7 @@ jobs:
         run: cargo test --workspace
 
       - name: Generate coverage report (llvm-cov)
-        working-directory: carbonledger/contracts
+        working-directory: contracts
         run: |
           cargo install cargo-llvm-cov --locked --quiet 2>/dev/null || true
           cargo llvm-cov --workspace --lcov --output-path lcov.info
@@ -221,7 +221,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: carbonledger/contracts/lcov.info
+          files: contracts/lcov.info
           flags: contracts
           fail_ci_if_error: false
 
@@ -330,7 +330,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
@@ -360,7 +360,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
