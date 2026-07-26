@@ -94,8 +94,23 @@ async function stubNotificationApi(page: Page) {
   });
 }
 
+/**
+ * The dashboard also renders <OracleStatus/>, which calls an admin-only
+ * endpoint. Unauthenticated that returns 401, and admin-api.ts responds by
+ * navigating to /login — which detaches the inputs mid-test. Stubbing it keeps
+ * this spec focused on notification delivery rather than admin auth.
+ */
+function stubOracleHealth(page: Page) {
+  // A glob is not used here: Playwright's `*` does not match `/`, so it cannot
+  // span the `oracle/health` path segment.
+  return page.route(/\/admin\/oracle[-/]health/, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  );
+}
+
 /** Fills the dashboard's key/token inputs, which is what activates the hook. */
 async function signIn(page: Page) {
+  await stubOracleHealth(page);
   await page.goto('/verifier/dashboard');
   await page.getByPlaceholder('Your Stellar public key (G...)').fill(VERIFIER);
   await page.getByPlaceholder('JWT token').fill(TOKEN);
