@@ -293,7 +293,7 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
         run: |
-          npx jest --testPathPattern="src/security/(xss|sql-injection|injection|owasp-top10|auth-bypass|idor|privilege-escalation)\.spec\.ts" \
+          npx jest --testPathPatterns="src/security/(xss|sql-injection|injection|owasp-top10|auth-bypass|idor|privilege-escalation)\\.spec\\.ts" \
             --forceExit --runInBand
 
   backend:
