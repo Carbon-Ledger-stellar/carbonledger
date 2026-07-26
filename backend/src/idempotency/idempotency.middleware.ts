@@ -42,7 +42,11 @@ function hashBody(body: unknown): string {
 }
 
 function normaliseEndpoint(req: Request): string {
-  return `${req.method}:${req.path}`;
+  const mountedPath = `${req.baseUrl || ''}${req.path === '/' ? '' : req.path || ''}`;
+  const path =
+    mountedPath ||
+    (req.originalUrl ?? req.url ?? req.path ?? '').split('?')[0];
+  return `${req.method}:${path}`;
 }
 
 @Injectable()
