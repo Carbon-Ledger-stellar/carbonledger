@@ -221,19 +221,24 @@ model EmailLog {
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  action     String
-  resourceId String?
-  ipAddress  String?
-  result     String?  // e.g., "Success", "Failure: <error>"
-  metadata   Json?    // Optional extra info
-  timestamp  DateTime @default(now())
+  id           String   @id @default(cuid())
+  userId       String?
+  action       String
+  resourceId   String?
+  ipAddress    String?
+  result       String?  // e.g., "Success", "Failure: <error>"
+  metadata     Json?    // Optional extra info
+  timestamp    DateTime @default(now())
+  /// SHA-256 hex digest of the preceding AuditLog entry's entryHash (null for first entry)
+  previousHash String?
+  /// SHA-256 hex digest over the canonical entry payload — tamper detection (#674)
+  entryHash    String?
 
   @@index([userId])
   @@index([action])
   @@index([resourceId])
   @@index([timestamp])
+  @@index([entryHash])
 }
 
 model SyncMetadata {
