@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useTranslations } from "next-intl";
 import { bulkPurchase } from "../lib/api";
 import { useCartStore } from "../lib/use-cart-store";
 import { connectFreighter } from "../lib/freighter";
@@ -11,6 +12,7 @@ import TransactionStatus, { TxStatus } from "./TransactionStatus";
 import Toast, { useToast } from "./Toast";
 
 export default function BulkPurchaseCart() {
+  const t = useTranslations("bulkPurchaseCart");
   const { items, removeItem, clearCart, subtotalStroops, protocolFeeStroops, totalStroops, totalTonnes } = useCartStore();
   const [walletKey, setWalletKey] = useState<string | null>(null);
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
@@ -25,9 +27,9 @@ export default function BulkPurchaseCart() {
     try {
       const key = await connectFreighter();
       setWalletKey(key);
-      addToast({ type: "success", title: "Wallet connected", message: key.slice(0, 8) + "…" });
+      addToast({ type: "success", title: t("walletConnectedTitle"), message: key.slice(0, 8) + "…" });
     } catch (e) {
-      addToast({ type: "error", title: "Wallet error", message: getWalletErrorMessage(e) });
+      addToast({ type: "error", title: t("walletErrorTitle"), message: getWalletErrorMessage(e) });
     }
   }
 
@@ -48,10 +50,10 @@ export default function BulkPurchaseCart() {
       setTxHash(result.txHash);
       setTxStatus("confirmed");
       clearCart();
-      addToast({ type: "success", title: "Purchase confirmed!", message: `${formatTonnes(totalTonnes)} acquired`, txHash: result.txHash });
+      addToast({ type: "success", title: t("purchaseConfirmedTitle"), message: t("purchaseConfirmedMessage", { tonnes: formatTonnes(totalTonnes) }), txHash: result.txHash });
     } catch (e: any) {
       setTxStatus("failed");
-      addToast({ type: "error", title: "Purchase failed", message: e.message });
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message: e.message });
     }
   }
 
@@ -198,12 +200,12 @@ export default function BulkPurchaseCart() {
       <div className="bulk-cart-desktop">
         <div style={{ background: colors.surface, border: `1px solid ${colors.neutral[200]}`, borderRadius: "0.75rem", padding: "1.5rem" }}>
       <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 1rem" }}>
-        Purchase Cart ({items.length} project{items.length !== 1 ? "s" : ""})
+        {t("title", { count: items.length })}
       </h3>
 
       {items.length === 0 ? (
         <p style={{ color: colors.neutral[400], fontSize: "0.875rem", textAlign: "center", padding: "2rem 0" }}>
-          Add credits from the marketplace to build your portfolio
+          {t("empty")}
         </p>
       ) : (
         <>
@@ -230,7 +232,7 @@ export default function BulkPurchaseCart() {
                   <button
                     onClick={() => removeItem(listing.listingId)}
                     disabled={!!busy}
-                    aria-label="Remove"
+                    aria-label={t("remove")}
                     style={{ background: "transparent", border: "none", color: colors.neutral[400], cursor: "pointer", fontSize: "1rem", padding: "0.2rem" }}
                   >
                     ✕
@@ -242,10 +244,10 @@ export default function BulkPurchaseCart() {
 
           {/* Cost breakdown */}
           <div style={{ marginTop: "1rem", padding: "1rem", background: colors.primary[50], borderRadius: "0.5rem" }}>
-            <Row label="Subtotal" value={`$${formatStroops(subtotalStroops)} USDC`} />
-            <Row label="Protocol fee (1%)" value={`$${formatStroops(protocolFeeStroops)} USDC`} muted />
+            <Row label={t("subtotal")} value={`$${formatStroops(subtotalStroops)} USDC`} />
+            <Row label={t("protocolFee")} value={`$${formatStroops(protocolFeeStroops)} USDC`} muted />
             <div style={{ borderTop: `1px solid ${colors.primary[200]}`, margin: "0.5rem 0" }} />
-            <Row label={`Total · ${formatTonnes(totalTonnes)}`} value={`$${formatStroops(totalStroops)} USDC`} bold />
+            <Row label={t("totalLabel", { tonnes: formatTonnes(totalTonnes) })} value={`$${formatStroops(totalStroops)} USDC`} bold />
           </div>
 
           {/* Tx status */}
@@ -259,13 +261,13 @@ export default function BulkPurchaseCart() {
           <div style={{ marginTop: "1rem" }}>
             {!walletKey ? (
               <button onClick={handleConnect} style={btnStyle(colors.primary[600])}>
-                Connect Wallet to Purchase
+                {t("connectToPurchase")}
               </button>
             ) : (
               <button onClick={handlePurchase} disabled={!!busy || txStatus === "confirmed"} style={btnStyle(busy || txStatus === "confirmed" ? colors.neutral[300] : colors.primary[600], !!busy)}>
-                {txStatus === "confirmed" ? "Purchase Complete ✓" :
-                 busy ? "Processing…" :
-                 `Purchase ${formatTonnes(totalTonnes)} for $${formatStroops(totalStroops)} USDC`}
+                {txStatus === "confirmed" ? t("purchaseComplete") :
+                 busy ? t("processing") :
+                 t("purchaseFor", { tonnes: formatTonnes(totalTonnes), amount: formatStroops(totalStroops) })}
               </button>
             )}
           </div>
@@ -282,7 +284,7 @@ export default function BulkPurchaseCart() {
           ref={fabRef}
           className="bulk-cart-mobile-fab"
           onClick={() => setDrawerOpen(true)}
-          aria-label={`Open cart with ${items.length} items`}
+          aria-label={t("openCartAria", { count: items.length })}
         >
           🛒
           <span className="bulk-cart-mobile-fab-badge">{items.length}</span>
@@ -305,7 +307,7 @@ export default function BulkPurchaseCart() {
       >
         <div className="bulk-cart-mobile-header">
           <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: 0 }}>
-            Purchase Cart ({items.length} project{items.length !== 1 ? "s" : ""})
+            {t("title", { count: items.length })}
           </h3>
           <button
             onClick={() => setDrawerOpen(false)}
@@ -325,7 +327,7 @@ export default function BulkPurchaseCart() {
         <div style={{ padding: "1.5rem" }}>
           {items.length === 0 ? (
             <p style={{ color: colors.neutral[400], fontSize: "0.875rem", textAlign: "center", padding: "2rem 0" }}>
-              Add credits from the marketplace to build your portfolio
+              {t("empty")}
             </p>
           ) : (
             <>
@@ -352,7 +354,7 @@ export default function BulkPurchaseCart() {
                       <button
                         onClick={() => removeItem(listing.listingId)}
                         disabled={!!busy}
-                        aria-label="Remove"
+                        aria-label={t("remove")}
                         style={{ background: "transparent", border: "none", color: colors.neutral[400], cursor: "pointer", fontSize: "1rem", padding: "0.2rem" }}
                       >
                         ✕
@@ -364,10 +366,10 @@ export default function BulkPurchaseCart() {
 
               {/* Cost breakdown */}
               <div style={{ marginTop: "1rem", padding: "1rem", background: colors.primary[50], borderRadius: "0.5rem" }}>
-                <Row label="Subtotal" value={`$${formatStroops(subtotalStroops)} USDC`} />
-                <Row label="Protocol fee (1%)" value={`$${formatStroops(protocolFeeStroops)} USDC`} muted />
+                <Row label={t("subtotal")} value={`$${formatStroops(subtotalStroops)} USDC`} />
+                <Row label={t("protocolFee")} value={`$${formatStroops(protocolFeeStroops)} USDC`} muted />
                 <div style={{ borderTop: `1px solid ${colors.primary[200]}`, margin: "0.5rem 0" }} />
-                <Row label={`Total · ${formatTonnes(totalTonnes)}`} value={`$${formatStroops(totalStroops)} USDC`} bold />
+                <Row label={t("totalLabel", { tonnes: formatTonnes(totalTonnes) })} value={`$${formatStroops(totalStroops)} USDC`} bold />
               </div>
 
               {/* Tx status */}
@@ -381,13 +383,13 @@ export default function BulkPurchaseCart() {
               <div style={{ marginTop: "1rem" }}>
                 {!walletKey ? (
                   <button onClick={handleConnect} style={btnStyle(colors.primary[600])}>
-                    Connect Wallet to Purchase
+                    {t("connectToPurchase")}
                   </button>
                 ) : (
                   <button onClick={handlePurchase} disabled={!!busy || txStatus === "confirmed"} style={btnStyle(busy || txStatus === "confirmed" ? colors.neutral[300] : colors.primary[600], !!busy)}>
-                    {txStatus === "confirmed" ? "Purchase Complete ✓" :
-                     busy ? "Processing…" :
-                     `Purchase ${formatTonnes(totalTonnes)} for $${formatStroops(totalStroops)} USDC`}
+                    {txStatus === "confirmed" ? t("purchaseComplete") :
+                     busy ? t("processing") :
+                     t("purchaseFor", { tonnes: formatTonnes(totalTonnes), amount: formatStroops(totalStroops) })}
                   </button>
                 )}
               </div>

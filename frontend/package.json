@@ -26,6 +26,7 @@
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "next": "16.2.6",
+    "next-intl": "^4.13.4",
     "qrcode.react": "4.2.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
