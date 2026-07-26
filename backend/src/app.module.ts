@@ -36,7 +36,7 @@ import { RedisModule } from "./redis.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
-import { Server } from "@stellar/stellar-sdk";
+import { Horizon } from "@stellar/stellar-sdk";
 import { Redis } from "ioredis";
 
 @Controller("health")
@@ -73,7 +73,7 @@ class HealthController {
     // Check Stellar
     try {
       const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
-      const server = new Server(horizonUrl);
+      const server = new Horizon.Server(horizonUrl);
       await server.root();
       checks.stellar = "up";
     } catch (e) {
