@@ -1,10 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror,
-    Address, Env, String, Vec, IntoVal,
-    symbol_short, vec, BytesN,
-    token,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, BytesN,
+    Env, IntoVal, String, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -15,27 +13,27 @@ const CURRENT_VERSION: u32 = 1;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum CarbonError {
-    ProjectNotFound        = 1,
-    ProjectNotVerified     = 2,
-    ProjectSuspended       = 3,
-    InsufficientCredits    = 4,
-    AlreadyRetired         = 5,
-    SerialNumberConflict   = 6,
-    UnauthorizedVerifier   = 7,
-    UnauthorizedOracle     = 8,
-    InvalidVintageYear     = 9,
-    ListingNotFound        = 10,
-    InsufficientLiquidity  = 11,
-    PriceNotSet            = 12,
-    MonitoringDataStale    = 13,
+    ProjectNotFound = 1,
+    ProjectNotVerified = 2,
+    ProjectSuspended = 3,
+    InsufficientCredits = 4,
+    AlreadyRetired = 5,
+    SerialNumberConflict = 6,
+    UnauthorizedVerifier = 7,
+    UnauthorizedOracle = 8,
+    InvalidVintageYear = 9,
+    ListingNotFound = 10,
+    InsufficientLiquidity = 11,
+    PriceNotSet = 12,
+    MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
-    ZeroAmountNotAllowed   = 16,
-    ProjectAlreadyExists   = 17,
-    InvalidSerialRange     = 18,
-    AlreadyInitialized     = 19,
-    Arithmetic             = 20,
-    UnauthorizedUpgrade    = 21,
+    ZeroAmountNotAllowed = 16,
+    ProjectAlreadyExists = 17,
+    InvalidSerialRange = 18,
+    AlreadyInitialized = 19,
+    Arithmetic = 20,
+    UnauthorizedUpgrade = 21,
 }
 
 #[contracttype]
@@ -86,27 +84,27 @@ pub enum ListingStatus {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct MarketListing {
-    pub listing_id:       String,
-    pub seller:           Address,
-    pub batch_id:         String,
-    pub project_id:       String,
+    pub listing_id: String,
+    pub seller: Address,
+    pub batch_id: String,
+    pub project_id: String,
     pub amount_available: i128,
     pub price_per_credit: i128,
-    pub vintage_year:     u32,
-    pub methodology:      String,
-    pub country:          String,
-    pub created_at:       u64,
-    pub status:           ListingStatus,
+    pub vintage_year: u32,
+    pub methodology: String,
+    pub country: String,
+    pub created_at: u64,
+    pub status: ListingStatus,
 }
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct UpgradeRecord {
     pub from_version: u32,
-    pub to_version:   u32,
-    pub timestamp:    u64,
-    pub upgraded_by:  Address,
-    pub wasm_hash:    BytesN<32>,
+    pub to_version: u32,
+    pub timestamp: u64,
+    pub upgraded_by: Address,
+    pub wasm_hash: BytesN<32>,
 }
 
 #[contract]
@@ -114,54 +112,71 @@ pub struct CarbonMarketplaceContract;
 
 #[contractimpl]
 impl CarbonMarketplaceContract {
-
     fn current_year(env: &Env) -> u32 {
         let seconds_per_year: u64 = 31557600;
         let timestamp = env.ledger().timestamp();
         1970 + (timestamp / seconds_per_year) as u32
     }
 
-    pub fn initialize(env: Env, admin: Address, usdc_token: Address, credit_contract: Address, treasury: Address) -> Result<(), CarbonError> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        usdc_token: Address,
+        credit_contract: Address,
+        treasury: Address,
+    ) -> Result<(), CarbonError> {
         if env.storage().persistent().has(&DataKey::Admin) {
             return Err(CarbonError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::UsdcToken, &usdc_token);
-        env.storage().persistent().set(&DataKey::CreditContract, &credit_contract);
-        env.storage().persistent().set(&DataKey::Treasury, &treasury);
+        env.storage()
+            .persistent()
+            .set(&DataKey::UsdcToken, &usdc_token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::CreditContract, &credit_contract);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Treasury, &treasury);
         let listings: Vec<String> = vec![&env];
-        env.storage().persistent().set(&DataKey::AllListings, &listings);
-        env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AllListings, &listings);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &CURRENT_VERSION);
         Ok(())
     }
 
-    pub fn upgrade(
-        env: Env,
-        admin: Address,
-        new_wasm_hash: BytesN<32>,
-    ) -> Result<(), CarbonError> {
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
-        let current_version: u32 = env.storage()
+        let current_version: u32 = env
+            .storage()
             .persistent()
             .get(&DataKey::ContractVersion)
             .unwrap_or(1);
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
 
         let next_version = current_version + 1;
-        env.storage().persistent().set(&DataKey::ContractVersion, &next_version);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &next_version);
 
         let record = UpgradeRecord {
             from_version: current_version,
-            to_version:   next_version,
-            timestamp:    env.ledger().timestamp(),
-            upgraded_by:  admin.clone(),
-            wasm_hash:    new_wasm_hash,
+            to_version: next_version,
+            timestamp: env.ledger().timestamp(),
+            upgraded_by: admin.clone(),
+            wasm_hash: new_wasm_hash,
         };
-        env.storage().persistent().set(&DataKey::UpgradeHistory, &record);
+        env.storage()
+            .persistent()
+            .set(&DataKey::UpgradeHistory, &record);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("upgraded")),
@@ -178,28 +193,38 @@ impl CarbonMarketplaceContract {
     }
 
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::UpgradeHistory)
+        env.storage().persistent().get(&DataKey::UpgradeHistory)
     }
 
-    pub fn update_treasury(env: Env, admin: Address, new_treasury: Address) -> Result<(), CarbonError> {
+    pub fn update_treasury(
+        env: Env,
+        admin: Address,
+        new_treasury: Address,
+    ) -> Result<(), CarbonError> {
         admin.require_auth();
         let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         if stored_admin != admin {
             return Err(CarbonError::UnauthorizedVerifier);
         }
-        env.storage().persistent().set(&DataKey::Treasury, &new_treasury);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Treasury, &new_treasury);
         Ok(())
     }
 
-    pub fn suspend_project(env: Env, admin: Address, project_id: String) -> Result<(), CarbonError> {
+    pub fn suspend_project(
+        env: Env,
+        admin: Address,
+        project_id: String,
+    ) -> Result<(), CarbonError> {
         admin.require_auth();
         let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         if stored_admin != admin {
             return Err(CarbonError::UnauthorizedVerifier);
         }
-        env.storage().persistent().set(&DataKey::SuspendedProject(project_id.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SuspendedProject(project_id.clone()), &true);
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("mkt_susp")),
             project_id,
@@ -231,24 +256,31 @@ impl CarbonMarketplaceContract {
             return Err(CarbonError::InvalidVintageYear);
         }
 
-        if env.storage().persistent().get::<DataKey, bool>(&DataKey::SuspendedProject(project_id.clone())).unwrap_or(false) {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::SuspendedProject(project_id.clone()))
+            .unwrap_or(false)
+        {
             return Err(CarbonError::ProjectSuspended);
         }
 
         let listing = MarketListing {
-            listing_id:       listing_id.clone(),
-            seller:           seller.clone(),
-            batch_id:         batch_id.clone(),
-            project_id:       project_id.clone(),
+            listing_id: listing_id.clone(),
+            seller: seller.clone(),
+            batch_id: batch_id.clone(),
+            project_id: project_id.clone(),
             amount_available: amount,
             price_per_credit: price_per_credit_usdc,
             vintage_year,
-            methodology:      methodology.clone(),
-            country:          country.clone(),
-            created_at:       env.ledger().timestamp(),
-            status:           ListingStatus::Active,
+            methodology: methodology.clone(),
+            country: country.clone(),
+            created_at: env.ledger().timestamp(),
+            status: ListingStatus::Active,
         };
-        env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Listing(listing_id.clone()), &listing);
         Self::extend_listing_ttl(&env, &listing_id);
 
         let mut all: Vec<String> = env
@@ -286,7 +318,9 @@ impl CarbonMarketplaceContract {
         }
 
         listing.status = ListingStatus::Delisted;
-        env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Listing(listing_id.clone()), &listing);
         Self::extend_listing_ttl(&env, &listing_id);
 
         env.events().publish(
@@ -313,24 +347,39 @@ impl CarbonMarketplaceContract {
         if listing.status == ListingStatus::Delisted || listing.status == ListingStatus::Sold {
             return Err(CarbonError::ListingNotFound);
         }
-        if env.storage().persistent().get::<DataKey, bool>(&DataKey::SuspendedProject(listing.project_id.clone())).unwrap_or(false) {
+        if env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::SuspendedProject(listing.project_id.clone()))
+            .unwrap_or(false)
+        {
             return Err(CarbonError::ProjectSuspended);
         }
         if amount > listing.amount_available {
             return Err(CarbonError::InsufficientLiquidity);
         }
 
-        let total_cost = listing.price_per_credit.checked_mul(amount).ok_or(CarbonError::Arithmetic)?;
-        let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?; 
-        let seller_proceeds = total_cost.checked_sub(protocol_fee).ok_or(CarbonError::Arithmetic)?;
+        let total_cost = listing
+            .price_per_credit
+            .checked_mul(amount)
+            .ok_or(CarbonError::Arithmetic)?;
+        let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+        let seller_proceeds = total_cost
+            .checked_sub(protocol_fee)
+            .ok_or(CarbonError::Arithmetic)?;
 
-        listing.amount_available = listing.amount_available.checked_sub(amount).ok_or(CarbonError::Arithmetic)?;
+        listing.amount_available = listing
+            .amount_available
+            .checked_sub(amount)
+            .ok_or(CarbonError::Arithmetic)?;
         listing.status = if listing.amount_available == 0 {
             ListingStatus::Sold
         } else {
             ListingStatus::PartiallyFilled
         };
-        env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Listing(listing_id.clone()), &listing);
         Self::extend_listing_ttl(&env, &listing_id);
 
         let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
@@ -340,7 +389,11 @@ impl CarbonMarketplaceContract {
         let treasury: Address = env.storage().persistent().get(&DataKey::Treasury).unwrap();
         usdc_client.transfer(&buyer, &treasury, &protocol_fee);
 
-        let credit_contract: Address = env.storage().persistent().get(&DataKey::CreditContract).unwrap();
+        let credit_contract: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CreditContract)
+            .unwrap();
         env.invoke_contract::<()>(
             &credit_contract,
             &soroban_sdk::Symbol::new(&env, "transfer_credits"),
@@ -383,7 +436,7 @@ impl CarbonMarketplaceContract {
         let mut validated_listings: Vec<MarketListing> = vec![&env];
         for i in 0..len {
             let listing_id = listing_ids.get(i).unwrap();
-            let amount     = amounts.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
 
             if amount <= 0 {
                 return Err(CarbonError::ZeroAmountNotAllowed);
@@ -393,7 +446,9 @@ impl CarbonMarketplaceContract {
             if listing.status == ListingStatus::Delisted || listing.status == ListingStatus::Sold {
                 return Err(CarbonError::ListingNotFound);
             }
-            if env.storage().persistent()
+            if env
+                .storage()
+                .persistent()
                 .get::<DataKey, bool>(&DataKey::SuspendedProject(listing.project_id.clone()))
                 .unwrap_or(false)
             {
@@ -409,29 +464,43 @@ impl CarbonMarketplaceContract {
             let amount = amounts.get(i).unwrap();
             let mut listing = validated_listings.get(i).unwrap();
 
-            listing.amount_available = listing.amount_available.checked_sub(amount).ok_or(CarbonError::Arithmetic)?;
+            listing.amount_available = listing
+                .amount_available
+                .checked_sub(amount)
+                .ok_or(CarbonError::Arithmetic)?;
             listing.status = if listing.amount_available == 0 {
                 ListingStatus::Sold
             } else {
                 ListingStatus::PartiallyFilled
             };
-            env.storage().persistent().set(&DataKey::Listing(listing.listing_id.clone()), &listing);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Listing(listing.listing_id.clone()), &listing);
             Self::extend_listing_ttl(&env, &listing.listing_id);
             validated_listings.set(i, listing);
         }
 
         // ── Phase 3: TRANSFER — USDC and credits ─────────────────────────────
-        let usdc: Address            = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
-        let credit_contract: Address = env.storage().persistent().get(&DataKey::CreditContract).unwrap();
-        let treasury: Address        = env.storage().persistent().get(&DataKey::Treasury).unwrap();
+        let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
+        let credit_contract: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CreditContract)
+            .unwrap();
+        let treasury: Address = env.storage().persistent().get(&DataKey::Treasury).unwrap();
         let usdc_client = token::Client::new(&env, &usdc);
 
         for i in 0..len {
-            let listing       = validated_listings.get(i).unwrap();
-            let amount        = amounts.get(i).unwrap();
-            let total_cost    = listing.price_per_credit.checked_mul(amount).ok_or(CarbonError::Arithmetic)?;
-            let protocol_fee  = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
-            let seller_proceeds = total_cost.checked_sub(protocol_fee).ok_or(CarbonError::Arithmetic)?;
+            let listing = validated_listings.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
+            let total_cost = listing
+                .price_per_credit
+                .checked_mul(amount)
+                .ok_or(CarbonError::Arithmetic)?;
+            let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+            let seller_proceeds = total_cost
+                .checked_sub(protocol_fee)
+                .ok_or(CarbonError::Arithmetic)?;
 
             usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
             usdc_client.transfer(&buyer, &treasury, &protocol_fee);
@@ -452,11 +521,11 @@ impl CarbonMarketplaceContract {
                 (symbol_short!("c_ledger"), symbol_short!("bulk_buy")),
                 PurchaseCompletedEvent {
                     listing_id: listing.listing_id.clone(),
-                    buyer:      buyer.clone(),
-                    seller:     listing.seller.clone(),
+                    buyer: buyer.clone(),
+                    seller: listing.seller.clone(),
                     amount,
                     total_cost,
-                    timestamp:  env.ledger().timestamp(),
+                    timestamp: env.ledger().timestamp(),
                 },
             );
         }
@@ -485,21 +554,29 @@ impl CarbonMarketplaceContract {
     fn extend_listing_ttl(env: &Env, listing_id: &String) {
         let key = DataKey::Listing(listing_id.clone());
         if env.storage().persistent().has(&key) {
-            env.storage().persistent().extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
         }
     }
 
     fn load_listing(env: &Env, listing_id: &String) -> Result<MarketListing, CarbonError> {
         let key = DataKey::Listing(listing_id.clone());
-        let listing = env.storage()
+        let listing = env
+            .storage()
             .persistent()
             .get(&key)
             .ok_or(CarbonError::ListingNotFound)?;
-        env.storage().persistent().extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
         Ok(listing)
     }
 
-    fn filter_listings<F: Fn(&MarketListing) -> bool>(env: &Env, predicate: F) -> Vec<MarketListing> {
+    fn filter_listings<F: Fn(&MarketListing) -> bool>(
+        env: &Env,
+        predicate: F,
+    ) -> Vec<MarketListing> {
         let all: Vec<String> = env
             .storage()
             .persistent()
@@ -508,7 +585,11 @@ impl CarbonMarketplaceContract {
 
         let mut result: Vec<MarketListing> = vec![env];
         for id in all.iter() {
-            if let Some(l) = env.storage().persistent().get(&DataKey::Listing(id.clone())) {
+            if let Some(l) = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Listing(id.clone()))
+            {
                 if predicate(&l) {
                     result.push_back(l);
                 }
@@ -534,15 +615,25 @@ impl CarbonMarketplaceContract {
 #[allow(deprecated)]
 mod tests {
     use super::*;
+    use carbon_credit::CarbonCreditContract;
     use soroban_sdk::{
         testutils::{Address as _, Ledger as _},
         Env, String,
     };
-    use carbon_credit::CarbonCreditContract;
 
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
 
-    fn setup(env: &Env) -> (CarbonMarketplaceContractClient, Address, Address, Address, Address) {
+    fn setup(
+        env: &Env,
+    ) -> (
+        CarbonMarketplaceContractClient,
+        Address,
+        Address,
+        Address,
+        Address,
+    ) {
         env.mock_all_auths();
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1735689600, // 2025-01-01
@@ -554,12 +645,12 @@ mod tests {
             min_persistent_entry_ttl: 1,
             max_entry_ttl: 518400,
         });
-        let admin  = Address::generate(env);
+        let admin = Address::generate(env);
         let treasury = Address::generate(env);
         let seller = Address::generate(env);
-        let usdc   = env.register_stellar_asset_contract(admin.clone());
+        let usdc = env.register_stellar_asset_contract(admin.clone());
         let credit_id = env.register_contract(None, CarbonCreditContract);
-        let id     = env.register_contract(None, CarbonMarketplaceContract);
+        let id = env.register_contract(None, CarbonMarketplaceContract);
         let client = CarbonMarketplaceContractClient::new(env, &id);
         client.initialize(&admin, &usdc, &credit_id, &treasury);
         (client, admin, treasury, seller, usdc)
@@ -723,10 +814,10 @@ mod tests {
         let env = Env::default();
         let (client, admin, _treasury, _seller, _) = setup(&env);
         let new_treasury = Address::generate(&env);
-        
+
         // Admin can update
         client.update_treasury(&admin, &new_treasury);
-        
+
         let fake_admin = Address::generate(&env);
         let res = client.try_update_treasury(&fake_admin, &new_treasury);
         assert_eq!(res.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
@@ -737,7 +828,7 @@ mod tests {
     fn test_purchase_exact_fee_routing() {
         let env = Env::default();
         let (client, _, treasury, seller, usdc) = setup(&env);
-        
+
         client.list_credits(
             &seller,
             &s(&env, "list-fee"),
@@ -749,18 +840,18 @@ mod tests {
             &s(&env, "VCS"),
             &s(&env, "Brazil"),
         );
-        
+
         let buyer = Address::generate(&env);
         let usdc_client = token::Client::new(&env, &usdc);
-        
+
         let initial_treasury_bal = usdc_client.balance(&treasury);
         let initial_seller_bal = usdc_client.balance(&seller);
-        
+
         client.purchase_credits(&buyer, &s(&env, "list-fee"), &10_i128);
-        
+
         let final_treasury_bal = usdc_client.balance(&treasury);
         let final_seller_bal = usdc_client.balance(&seller);
-        
+
         assert_eq!(final_treasury_bal - initial_treasury_bal, 150);
         assert_eq!(final_seller_bal - initial_seller_bal, 15000 - 150);
     }
@@ -773,16 +864,27 @@ mod tests {
 mod fuzz {
     use super::*;
     use proptest::prelude::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
 
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
 
     /// Set up a fresh marketplace with a USDC mock and one active listing.
     fn setup_with_listing(
         env: &Env,
         listing_amount: i128,
         price_per_credit: i128,
-    ) -> (CarbonMarketplaceContractClient, Address, Address, Address, Address) {
+    ) -> (
+        CarbonMarketplaceContractClient,
+        Address,
+        Address,
+        Address,
+        Address,
+    ) {
         env.mock_all_auths();
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1735689600,
@@ -794,13 +896,13 @@ mod fuzz {
             min_persistent_entry_ttl: 1,
             max_entry_ttl: 518400,
         });
-        let admin    = Address::generate(env);
+        let admin = Address::generate(env);
         let treasury = Address::generate(env);
-        let seller   = Address::generate(env);
-        let usdc     = env.register_stellar_asset_contract(admin.clone());
+        let seller = Address::generate(env);
+        let usdc = env.register_stellar_asset_contract(admin.clone());
         let credit_id = env.register_contract(None, carbon_credit::CarbonCreditContract);
-        let id       = env.register_contract(None, CarbonMarketplaceContract);
-        let client   = CarbonMarketplaceContractClient::new(env, &id);
+        let id = env.register_contract(None, CarbonMarketplaceContract);
+        let client = CarbonMarketplaceContractClient::new(env, &id);
         client.initialize(&admin, &usdc, &credit_id, &treasury);
         client.list_credits(
             &seller,
@@ -952,10 +1054,15 @@ mod fuzz {
 #[allow(deprecated)]
 mod edge_case_tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String};
     use carbon_credit::CarbonCreditContract;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        Env, String,
+    };
 
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
 
     fn init(env: &Env) -> (CarbonMarketplaceContractClient, Address, Address) {
         env.mock_all_auths();
@@ -969,9 +1076,9 @@ mod edge_case_tests {
             min_persistent_entry_ttl: 1,
             max_entry_ttl: 518400,
         });
-        let admin    = Address::generate(env);
+        let admin = Address::generate(env);
         let treasury = Address::generate(env);
-        let usdc     = env.register_stellar_asset_contract(admin.clone());
+        let usdc = env.register_stellar_asset_contract(admin.clone());
         let credit_id = env.register_contract(None, CarbonCreditContract);
         let credit_client = carbon_credit::CarbonCreditContractClient::new(env, &credit_id);
         let registry = Address::generate(env);
@@ -982,10 +1089,23 @@ mod edge_case_tests {
         (client, admin, treasury)
     }
 
-    fn add_listing(env: &Env, client: &CarbonMarketplaceContractClient, seller: &Address, listing_id: &str, project_id: &str) {
+    fn add_listing(
+        env: &Env,
+        client: &CarbonMarketplaceContractClient,
+        seller: &Address,
+        listing_id: &str,
+        project_id: &str,
+    ) {
         client.list_credits(
-            seller, &s(env, listing_id), &s(env, "batch-1"), &s(env, project_id),
-            &100_i128, &10_0000000_i128, &2023_u32, &s(env, "VCS"), &s(env, "Brazil"),
+            seller,
+            &s(env, listing_id),
+            &s(env, "batch-1"),
+            &s(env, project_id),
+            &100_i128,
+            &10_0000000_i128,
+            &2023_u32,
+            &s(env, "VCS"),
+            &s(env, "Brazil"),
         );
     }
 
@@ -997,10 +1117,20 @@ mod edge_case_tests {
         let (client, _, _) = init(&env);
         let seller = Address::generate(&env);
         let result = client.try_list_credits(
-            &seller, &s(&env, "l1"), &s(&env, "b1"), &s(&env, "p1"),
-            &0_i128, &10_0000000_i128, &2023_u32, &s(&env, "VCS"), &s(&env, "BR"),
+            &seller,
+            &s(&env, "l1"),
+            &s(&env, "b1"),
+            &s(&env, "p1"),
+            &0_i128,
+            &10_0000000_i128,
+            &2023_u32,
+            &s(&env, "VCS"),
+            &s(&env, "BR"),
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ZeroAmountNotAllowed);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ZeroAmountNotAllowed
+        );
     }
 
     #[test]
@@ -1009,10 +1139,20 @@ mod edge_case_tests {
         let (client, _, _) = init(&env);
         let seller = Address::generate(&env);
         let result = client.try_list_credits(
-            &seller, &s(&env, "l1"), &s(&env, "b1"), &s(&env, "p1"),
-            &100_i128, &0_i128, &2023_u32, &s(&env, "VCS"), &s(&env, "BR"),
+            &seller,
+            &s(&env, "l1"),
+            &s(&env, "b1"),
+            &s(&env, "p1"),
+            &100_i128,
+            &0_i128,
+            &2023_u32,
+            &s(&env, "VCS"),
+            &s(&env, "BR"),
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ZeroAmountNotAllowed);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ZeroAmountNotAllowed
+        );
     }
 
     #[test]
@@ -1021,7 +1161,10 @@ mod edge_case_tests {
         let (client, _, _) = init(&env);
         let buyer = Address::generate(&env);
         let result = client.try_purchase_credits(&buyer, &s(&env, "l1"), &0_i128);
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ZeroAmountNotAllowed);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ZeroAmountNotAllowed
+        );
     }
 
     // ── InvalidVintageYear ────────────────────────────────────────────────────
@@ -1032,10 +1175,20 @@ mod edge_case_tests {
         let (client, _, _) = init(&env);
         let seller = Address::generate(&env);
         let result = client.try_list_credits(
-            &seller, &s(&env, "l1"), &s(&env, "b1"), &s(&env, "p1"),
-            &100_i128, &10_0000000_i128, &1989_u32, &s(&env, "VCS"), &s(&env, "BR"),
+            &seller,
+            &s(&env, "l1"),
+            &s(&env, "b1"),
+            &s(&env, "p1"),
+            &100_i128,
+            &10_0000000_i128,
+            &1989_u32,
+            &s(&env, "VCS"),
+            &s(&env, "BR"),
         );
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidVintageYear
+        );
     }
 
     // ── ListingNotFound ───────────────────────────────────────────────────────
@@ -1071,7 +1224,10 @@ mod edge_case_tests {
         add_listing(&env, &client, &seller, "l1", "p1"); // 100 credits
         let buyer = Address::generate(&env);
         let result = client.try_purchase_credits(&buyer, &s(&env, "l1"), &101_i128);
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InsufficientLiquidity);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InsufficientLiquidity
+        );
     }
 
     // ── ProjectSuspended ──────────────────────────────────────────────────────
@@ -1083,8 +1239,15 @@ mod edge_case_tests {
         client.suspend_project(&admin, &s(&env, "p1"));
         let seller = Address::generate(&env);
         let result = client.try_list_credits(
-            &seller, &s(&env, "l1"), &s(&env, "b1"), &s(&env, "p1"),
-            &100_i128, &10_0000000_i128, &2023_u32, &s(&env, "VCS"), &s(&env, "BR"),
+            &seller,
+            &s(&env, "l1"),
+            &s(&env, "b1"),
+            &s(&env, "p1"),
+            &100_i128,
+            &10_0000000_i128,
+            &2023_u32,
+            &s(&env, "VCS"),
+            &s(&env, "BR"),
         );
         assert_eq!(result.unwrap_err().unwrap(), CarbonError::ProjectSuspended);
     }
@@ -1111,7 +1274,10 @@ mod edge_case_tests {
         add_listing(&env, &client, &seller, "l1", "p1");
         let rogue = Address::generate(&env);
         let result = client.try_delist_credits(&rogue, &s(&env, "l1"));
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::UnauthorizedVerifier
+        );
     }
 
     #[test]
@@ -1120,17 +1286,23 @@ mod edge_case_tests {
         let (client, _, _) = init(&env);
         let rogue = Address::generate(&env);
         let result = client.try_suspend_project(&rogue, &s(&env, "p1"));
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::UnauthorizedVerifier
+        );
     }
 
     #[test]
     fn test_non_admin_cannot_update_treasury() {
         let env = Env::default();
         let (client, _, _) = init(&env);
-        let rogue        = Address::generate(&env);
+        let rogue = Address::generate(&env);
         let new_treasury = Address::generate(&env);
         let result = client.try_update_treasury(&rogue, &new_treasury);
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::UnauthorizedVerifier
+        );
     }
 
     // ── AlreadyInitialized ────────────────────────────────────────────────────
@@ -1139,10 +1311,13 @@ mod edge_case_tests {
     fn test_double_initialize_fails() {
         let env = Env::default();
         let (client, admin, treasury) = init(&env);
-        let usdc   = Address::generate(&env);
+        let usdc = Address::generate(&env);
         let credit = Address::generate(&env);
         let result = client.try_initialize(&admin, &usdc, &credit, &treasury);
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::AlreadyInitialized);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::AlreadyInitialized
+        );
     }
 
     // ── InvalidSerialRange (bulk_purchase length mismatch) ────────────────────
@@ -1152,9 +1327,12 @@ mod edge_case_tests {
         let env = Env::default();
         let (client, _, _) = init(&env);
         let buyer = Address::generate(&env);
-        let ids     = soroban_sdk::vec![&env, s(&env, "l1"), s(&env, "l2")];
+        let ids = soroban_sdk::vec![&env, s(&env, "l1"), s(&env, "l2")];
         let amounts = soroban_sdk::vec![&env, 10_i128]; // length mismatch
         let result = client.try_bulk_purchase(&buyer, &ids, &amounts);
-        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidSerialRange);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidSerialRange
+        );
     }
 }
