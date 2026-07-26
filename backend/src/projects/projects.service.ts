@@ -46,51 +46,37 @@ export class ProjectsService {
   async searchProjects(searchDto: SearchProjectsDto): Promise<PaginatedProjectsResponse> {
     const { search, methodology, country, status, vintageYear, oracleFreshness, cursor, limit = 20, sortBy = 'createdAt', sortOrder = 'desc' } = searchDto;
 
-    // Build where clause
-    const where: any = {};
-
-    // Full-text search on name and description
+    // When a free-text query is present, use the PostgreSQL tsvector GIN index
+    // for ranked full-text search (#670). Fall back to prisma-only filters
+    // otherwise so simple list calls stay on the ORM path.
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } }
-      ];
+      return this.searchProjectsFullText(searchDto);
     }
 
-    // Filter by methodology (array support)
+    // Build where clause (no free-text)
+    const where: any = {};
+
     if (methodology && methodology.length > 0) {
       where.methodology = { in: methodology };
     }
-
-    // Filter by country (array support)
     if (country && country.length > 0) {
       where.country = { in: country };
     }
-
-    // Filter by status (array support)
     if (status && status.length > 0) {
       where.status = { in: status };
     }
-
-    // Filter by vintage year (array support)
     if (vintageYear && vintageYear.length > 0) {
       where.vintageYear = { in: vintageYear };
     }
 
-    // Filter by oracle freshness
     if (oracleFreshness) {
-      const now = new Date();
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       switch (oracleFreshness) {
         case OracleFreshness.FRESH:
           where.lastMonitoringAt = { gte: thirtyDaysAgo };
           break;
         case OracleFreshness.STALE:
-          where.OR = [
-            { lastMonitoringAt: { lt: thirtyDaysAgo } },
-            { lastMonitoringAt: null }
-          ];
+          where.OR = [{ lastMonitoringAt: { lt: thirtyDaysAgo } }, { lastMonitoringAt: null }];
           break;
         case OracleFreshness.UNKNOWN:
           where.lastMonitoringAt = null;
@@ -98,57 +84,118 @@ export class ProjectsService {
       }
     }
 
-    // Build order by clause
     const orderBy: any = {};
     orderBy[sortBy] = sortOrder;
 
-    // Execute query with cursor-based pagination
     const [projects, total] = await Promise.all([
       this.prisma.carbonProject.findMany({
         where,
         orderBy,
-        take: limit + 1, // Get one extra to check if there are more
+        take:   limit + 1,
         cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
+        skip:   cursor ? 1 : 0,
         select: {
-          id: true,
-          projectId: true,
-          name: true,
-          description: true,
-          methodology: true,
-          country: true,
-          projectType: true,
-          status: true,
-          vintageYear: true,
-          totalCreditsIssued: true,
-          totalCreditsRetired: true,
-          metadataCid: true,
-          verifierAddress: true,
-          ownerAddress: true,
-          methodologyScore: true,
-          coordinates: true,
-          lastMonitoringAt: true,
-          createdAt: true,
-          updatedAt: true,
+          id: true, projectId: true, name: true, description: true,
+          methodology: true, country: true, projectType: true, status: true,
+          vintageYear: true, totalCreditsIssued: true, totalCreditsRetired: true,
+          metadataCid: true, verifierAddress: true, ownerAddress: true,
+          methodologyScore: true, coordinates: true, lastMonitoringAt: true,
+          createdAt: true, updatedAt: true,
         },
       }),
-      this.prisma.carbonProject.count({ where })
+      this.prisma.carbonProject.count({ where }),
     ]);
 
-    // Determine pagination info
-    const hasMore = projects.length > limit;
+    const hasMore   = projects.length > limit;
     const nextCursor = hasMore ? projects[projects.length - 2].id : undefined;
-    
-    // Remove the extra item if there are more
-    if (hasMore) {
-      projects.pop();
+    if (hasMore) projects.pop();
+
+    return { projects, nextCursor, hasMore, total };
+  }
+
+  /**
+   * Full-text search using the PostgreSQL tsvector GIN index (#670).
+   *
+   * Issues a single parameterised raw query to leverage `ts_rank` for
+   * relevance ordering, then applies structured filters in a sub-select.
+   * Falls back gracefully if the searchVector column is not yet present
+   * (e.g., running against a pre-migration DB in tests).
+   */
+  private async searchProjectsFullText(searchDto: SearchProjectsDto): Promise<PaginatedProjectsResponse> {
+    const { search, methodology, country, status, vintageYear, limit = 20, cursor } = searchDto;
+
+    // Build parameterised clause fragments. Prisma raw accepts $1, $2 … style.
+    // We compose in JS and pass a flat args array.
+    const conditions: string[] = ['"searchVector" @@ plainto_tsquery(\'english\', $1)'];
+    const args: unknown[]      = [search];
+    let   idx = 2;
+
+    if (methodology && methodology.length > 0) {
+      conditions.push(`"methodology" = ANY($${idx}::text[])`);
+      args.push(methodology);
+      idx++;
+    }
+    if (country && country.length > 0) {
+      conditions.push(`"country" = ANY($${idx}::text[])`);
+      args.push(country);
+      idx++;
+    }
+    if (status && status.length > 0) {
+      conditions.push(`"status" = ANY($${idx}::text[])`);
+      args.push(status);
+      idx++;
+    }
+    if (vintageYear && vintageYear.length > 0) {
+      conditions.push(`"vintageYear" = ANY($${idx}::int[])`);
+      args.push(vintageYear);
+      idx++;
+    }
+    if (cursor) {
+      conditions.push(`"id" < $${idx}`);
+      args.push(cursor);
+      idx++;
     }
 
+    const where = conditions.join(' AND ');
+    const take  = limit + 1;
+
+    type ProjectRow = {
+      id: string; projectId: string; name: string; description: string | null;
+      methodology: string; country: string; projectType: string; status: string;
+      vintageYear: number; totalCreditsIssued: string; totalCreditsRetired: string;
+      metadataCid: string; verifierAddress: string; ownerAddress: string;
+      methodologyScore: number; coordinates: unknown; lastMonitoringAt: Date | null;
+      createdAt: Date; updatedAt: Date;
+    };
+
+    const [rows, countRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<ProjectRow[]>(
+        `SELECT id, "projectId", name, description, methodology, country,
+                "projectType", status, "vintageYear", "totalCreditsIssued",
+                "totalCreditsRetired", "metadataCid", "verifierAddress",
+                "ownerAddress", "methodologyScore", coordinates,
+                "lastMonitoringAt", "createdAt", "updatedAt"
+         FROM "CarbonProject"
+         WHERE ${where}
+         ORDER BY ts_rank("searchVector", plainto_tsquery('english', $1)) DESC
+         LIMIT ${take}`,
+        ...args,
+      ),
+      this.prisma.$queryRawUnsafe<[{ count: bigint }]>(
+        `SELECT COUNT(*)::bigint AS count FROM "CarbonProject" WHERE ${where}`,
+        ...args,
+      ),
+    ]);
+
+    const hasMore    = rows.length > limit;
+    const nextCursor = hasMore ? rows[rows.length - 2].id : undefined;
+    if (hasMore) rows.pop();
+
     return {
-      projects,
+      projects:   rows,
       nextCursor,
       hasMore,
-      total,
+      total: Number(countRows[0]?.count ?? 0),
     };
   }
 

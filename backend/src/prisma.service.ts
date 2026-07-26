@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
+import { poolMetricsRegistry } from "./common/metrics.registry";
 
 // Pool sizing: allow override via env, default to 10 for production safety.
 // Formula: (num_cores * 2) + effective_spindle_count — start conservative.
@@ -32,12 +33,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       this._activeQueries++;
       this._totalQueries++;
       try {
-        return await next(params);
+        const result = await next(params);
+        return result;
       } catch (err: any) {
         if (err?.code === "P2024") this._poolErrors++; // pool timeout
         throw err;
       } finally {
         this._activeQueries--;
+        // Push fresh snapshot to registry after every query so /metrics is current
+        poolMetricsRegistry.update(this.getPoolMetrics());
       }
     });
   }
@@ -47,6 +51,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     this.logger.log(
       `Prisma connected — pool_max=${POOL_MAX} pool_timeout=${POOL_TIMEOUT_MS}ms connect_timeout=${CONNECT_TIMEOUT_S}s`,
     );
+    // Seed registry with initial (zero-query) state
+    poolMetricsRegistry.update(this.getPoolMetrics());
   }
 
   async onModuleDestroy() {
