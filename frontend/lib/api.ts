@@ -1,4 +1,4 @@
-import useSWR, { SWRConfiguration, mutate } from "swr";
+import useSWR, { SWRConfiguration } from "swr";
 import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
@@ -493,83 +493,50 @@ export async function exportEsgPdf(filters: EsgExportFilters): Promise<Blob> {
   return res.blob();
 }
 
-// ── Verifier dashboard ────────────────────────────────────────────────────────
+// ── Notification preferences ───────────────────────────────────────────────────
 
-export interface PendingVerifierProject {
-  id: string;
-  projectId: string;
-  name: string;
-  methodology: string;
-  country: string;
-  status: string;
-  methodologyScore: number;
-  createdAt: string;
-  metadataCid?: string;
-  documentCid?: string;
-  projectType?: string;
-  vintageYear?: number;
-  description?: string | null;
-  verifierAddress?: string;
+export interface NotificationPreferences {
+  projectApproved: boolean;
+  creditsMinted: boolean;
+  purchaseConfirmed: boolean;
+  retirementConfirmed: boolean;
 }
 
-async function authFetcher<T>(url: string, token: string): Promise<T> {
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(err.message || "API error");
-  }
-  return res.json();
-}
-
-export function usePendingVerifierProjects(publicKey: string | null, token: string | null) {
-  return useSWR<PendingVerifierProject[]>(
-    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/pending-projects`, token] : null,
-    ([url, jwt]) => authFetcher<PendingVerifierProject[]>(url, jwt),
+export function useNotificationPreferences(publicKey: string) {
+  return useSWR<NotificationPreferences>(
+    publicKey ? `${API_URL}/notifications/preferences/${encodeURIComponent(publicKey)}` : null,
+    fetcher,
     swrConfig,
   );
 }
 
-export async function syncProjectVerification(
-  projectDbId: string,
-  verifierPublicKey: string,
-  token: string,
-): Promise<void> {
-  const res = await fetch(`${API_URL}/projects/${projectDbId}/verify`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ verifierPublicKey }),
+export async function updateNotificationPreferences(
+  publicKey: string,
+  patch: Partial<NotificationPreferences>,
+): Promise<NotificationPreferences> {
+  const res = await fetch(`${API_URL}/notifications/preferences/${encodeURIComponent(publicKey)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || "Failed to sync verification with API");
-  }
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Update failed");
+  return res.json();
 }
 
-export async function syncProjectRejection(
-  projectDbId: string,
-  verifierPublicKey: string,
-  reason: string,
-  token: string,
-): Promise<void> {
-  const res = await fetch(`${API_URL}/projects/${projectDbId}/reject`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ verifierPublicKey, reason }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || "Failed to sync rejection with API");
-  }
+export function useLeaderboard(year?: number) {
+  const query = year ? `?year=${year}` : "";
+  return useSWR<LeaderboardEntry[]>(`${API_URL}/stats/leaderboard${query}`, fetcher, swrConfig);
 }
 
-export async function invalidateVerifierCaches(publicKey: string): Promise<void> {
-  await mutate(`${API_URL}/verifiers/${publicKey}/pending-projects`);
+export function useCreditBatches(projectId: string) {
+  return useSWR<CreditBatch[]>(
+    projectId ? `${API_URL}/credits/project/${encodeURIComponent(projectId)}/batches` : null,
+    async (url: string) => {
+      const res = await fetch(url);
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error("Failed to load credit batches");
+      return res.json();
+    },
+    swrConfig,
+  );
 }

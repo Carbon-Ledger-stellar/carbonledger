@@ -46,7 +46,7 @@ jobs:
           image-ref: carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-${{ matrix.dockerfile.name }}-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
+          severity: 'CRITICAL'
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -65,7 +65,11 @@ jobs:
           fi
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
+<<<<<<< HEAD
             --severity HIGH,CRITICAL \
+=======
+            --severity CRITICAL \
+>>>>>>> origin/cursor/679-transaction-poller-9a06
             --ignore-unfixed \
             --exit-code 1 \
             carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}

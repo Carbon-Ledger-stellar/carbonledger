@@ -39,7 +39,7 @@ export default function EsgReportPage() {
     if (filters.minAmount !== undefined && r.amount < filters.minAmount) return false;
     if (filters.maxAmount !== undefined && r.amount > filters.maxAmount) return false;
     if (filters.projectId && r.projectId !== filters.projectId) return false;
-    if (Filters.batchId && r.batchId !== filters.batchId) return false;
+    if (filters.batchId && r.batchId !== filters.batchId) return false;
     if (filters.startDate && new Date(r.retiredAt) < new Date(filters.startDate)) return false;
     if (filters.endDate && new Date(r.retiredAt) > new Date(filters.endDate)) return false;
     return true;

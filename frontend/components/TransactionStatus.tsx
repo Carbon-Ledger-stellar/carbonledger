@@ -22,6 +22,9 @@ interface Props {
   onRetry?: () => void;
 }
 
+const STELLAR_EXPERT_NETWORK =
+  process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "public" : "testnet";
+
 const config: Record<TxStatus, { icon: string; label: string; bg: string; text: string; border: string; spin?: boolean }> = {
   building:   { icon: "🏗️", label: "Building transaction…",  bg: "#f8fafc", text: "#475569", border: "#cbd5e1", spin: true },
   signing:    { icon: "✍️", label: "Waiting for signature…", bg: "#fff7ed", text: "#c2410c", border: "#fdba74", spin: true },
@@ -38,7 +41,14 @@ const config: Record<TxStatus, { icon: string; label: string; bg: string; text: 
 export default function TransactionStatus({ status, txHash, message, pollProgress, onRetry }: Props) {
   const cfg = config[status] || config.failed;
   const carbonError = status === "failed" ? getCarbonErrorMessage(message) : null;
-  const displayMessage = carbonError || message;
+  const timedOutMessage =
+    status === "timed_out"
+      ? message ?? "Check later — your transaction may still confirm on the network."
+      : null;
+  const displayMessage = carbonError || timedOutMessage || message;
+  const explorerHref = txHash
+    ? `https://stellar.expert/explorer/${STELLAR_EXPERT_NETWORK}/tx/${txHash}`
+    : undefined;
 
   return (
     <div style={{
@@ -84,6 +94,22 @@ export default function TransactionStatus({ status, txHash, message, pollProgres
               {displayMessage}
             </p>
           )}
+          {status === "timed_out" && explorerHref && (
+            <a
+              href={explorerHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: "0.8rem",
+                color: cfg.text,
+                margin: "0.35rem 0 0",
+                display: "inline-block",
+                textDecoration: "underline",
+              }}
+            >
+              View transaction on Stellar Expert →
+            </a>
+          )}
         </div>
         {status === "failed" && onRetry && (
           <button
@@ -104,9 +130,9 @@ export default function TransactionStatus({ status, txHash, message, pollProgres
         )}
       </div>
 
-      {txHash && (
+      {txHash && status !== "timed_out" && (
         <a
-          href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
+          href={explorerHref}
           target="_blank"
           rel="noopener noreferrer"
           style={{ 
