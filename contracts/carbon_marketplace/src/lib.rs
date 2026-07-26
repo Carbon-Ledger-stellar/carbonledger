@@ -954,7 +954,7 @@ mod fuzz {
 #[cfg(test)]
 mod edge_case_tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger}, Env, String};
     use carbon_credit::CarbonCreditContract;
 
     fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }

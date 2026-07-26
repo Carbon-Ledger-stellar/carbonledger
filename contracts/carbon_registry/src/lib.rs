@@ -764,6 +764,16 @@ mod edge_case_tests {
 
     fn init(env: &Env) -> (CarbonRegistryContractClient, Address, Address, Address) {
         env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600, // 2025-01-01
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
         let admin    = Address::generate(env);
         let oracle   = Address::generate(env);
         let verifier = Address::generate(env);
@@ -792,7 +802,6 @@ mod edge_case_tests {
 
     #[test]
     fn test_get_nonexistent_project_returns_not_found() {
-        let (env, _, _, _) = init(&Env::default());
         let env = Env::default();
         let (client, _, _, _) = init(&env);
         let result = client.try_get_project(&s(&env, "does-not-exist"));
