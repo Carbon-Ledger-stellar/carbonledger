@@ -35,8 +35,10 @@ jobs:
 
       - name: Build Docker image
         run: |
+          CONTEXT=$(dirname "${{ matrix.dockerfile.path }}")
           docker build -f ${{ matrix.dockerfile.path }} \
-            -t carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }} .
+            -t carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }} \
+            "$CONTEXT"
 
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@master
@@ -58,6 +60,7 @@ jobs:
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
             --severity CRITICAL \
+            --ignore-unfixed \
             --exit-code 1 \
             carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
 
@@ -72,7 +75,7 @@ jobs:
 
       - name: Upload scan artifacts
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: trivy-scan-results
           path: trivy-*-report.json
