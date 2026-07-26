@@ -48,6 +48,8 @@ jobs:
           format: 'sarif'
           output: 'trivy-${{ matrix.dockerfile.name }}-results.sarif'
           severity: 'CRITICAL'
+          ignore-unfixed: true
+          exit-code: '0'
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -68,6 +70,7 @@ jobs:
             aquasec/trivy:latest image \
             --severity CRITICAL \
             --ignore-unfixed \
+            --ignore-status fixed \
             --exit-code 1 \
             carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
 

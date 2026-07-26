@@ -115,6 +115,8 @@ CREATE TABLE "MonitoringData" (
 );
 
 -- CreateTable
+
+-- CreateTable
 CREATE TABLE "OracleSyncState" (
     "id" TEXT NOT NULL,
     "lastSyncedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -262,6 +264,16 @@ CREATE TABLE "PriceApproval" (
 );
 
 -- CreateTable
+
+-- CreateTable
+
+-- CreateTable
+
+-- CreateTable
+
+-- CreateTable
+
+-- CreateTable
 CREATE TABLE "CreditEvent" (
     "id" TEXT NOT NULL,
     "creditBatchId" TEXT NOT NULL,
@@ -331,13 +343,10 @@ CREATE INDEX "MarketListing_methodology_vintageYear_status_pricePerCredit_idx" O
 CREATE UNIQUE INDEX "MonitoringData_projectId_period_key" ON "MonitoringData"("projectId", "period");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "OracleJob_idempotencyKey_key" ON "OracleJob"("idempotencyKey");
 
 -- CreateIndex
-CREATE INDEX "OracleJob_status_idx" ON "OracleJob"("status");
 
 -- CreateIndex
-CREATE INDEX "OracleJob_projectId_idx" ON "OracleJob"("projectId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "OracleSyncState_id_key" ON "OracleSyncState"("id");
@@ -385,34 +394,24 @@ CREATE INDEX "IPFSFile_pinStatus_idx" ON "IPFSFile"("pinStatus");
 CREATE UNIQUE INDEX "VerifierApplication_publicKey_key" ON "VerifierApplication"("publicKey");
 
 -- CreateIndex
-CREATE INDEX "IdempotencyRecord_createdAt_idx" ON "IdempotencyRecord"("createdAt");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "IdempotencyRecord_idempotencyKey_endpoint_key" ON "IdempotencyRecord"("idempotencyKey", "endpoint");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ApiKey_key_key" ON "ApiKey"("key");
 
 -- CreateIndex
-CREATE INDEX "ApiKey_key_idx" ON "ApiKey"("key");
 
 -- CreateIndex
-CREATE INDEX "SorobanSubmission_contractId_idx" ON "SorobanSubmission"("contractId");
 
 -- CreateIndex
-CREATE INDEX "SorobanSubmission_status_idx" ON "SorobanSubmission"("status");
 
 -- CreateIndex
-CREATE INDEX "SorobanSubmission_createdAt_idx" ON "SorobanSubmission"("createdAt");
 
 -- CreateIndex
-CREATE INDEX "OracleUpdate_dataType_idx" ON "OracleUpdate"("dataType");
 
 -- CreateIndex
-CREATE INDEX "OracleUpdate_success_idx" ON "OracleUpdate"("success");
 
 -- CreateIndex
-CREATE INDEX "OracleUpdate_createdAt_idx" ON "OracleUpdate"("createdAt");
 
 -- CreateIndex
 CREATE INDEX "CreditEvent_creditBatchId_idx" ON "CreditEvent"("creditBatchId");
