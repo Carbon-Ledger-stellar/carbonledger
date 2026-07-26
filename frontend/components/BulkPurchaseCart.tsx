@@ -9,12 +9,20 @@ import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import TransactionStatus, { TxStatus } from "./TransactionStatus";
 import Toast, { useToast } from "./Toast";
+import {
+  useTransactionPoller,
+  TRANSACTION_MAX_POLLS,
+} from "../hooks/useTransactionPoller";
 
 export default function BulkPurchaseCart() {
   const { items, removeItem, clearCart, subtotalStroops, protocolFeeStroops, totalStroops, totalTonnes } = useCartStore();
   const [walletKey, setWalletKey] = useState<string | null>(null);
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [pollHash, setPollHash] = useState<string | null>(null);
+  const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
+    txHash: pollHash,
+  });
   const { toasts, addToast, dismiss } = useToast();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [touchStart, setTouchStart] = useState<number | null>(null);
@@ -44,18 +52,43 @@ export default function BulkPurchaseCart() {
         walletKey,
       );
       setTxStatus("polling");
-      await new Promise(r => setTimeout(r, 1500));
       setTxHash(result.txHash);
-      setTxStatus("confirmed");
-      clearCart();
-      addToast({ type: "success", title: "Purchase confirmed!", message: `${formatTonnes(totalTonnes)} acquired`, txHash: result.txHash });
+      setPollHash(result.txHash);
     } catch (e: any) {
       setTxStatus("failed");
+      setPollHash(null);
       addToast({ type: "error", title: "Purchase failed", message: e.message });
     }
   }
 
-  const busy = txStatus && !["confirmed", "failed"].includes(txStatus);
+  useEffect(() => {
+    if (!pollHash || pollState === "idle" || pollState === "polling") return;
+
+    if (pollState === "SUCCESS") {
+      setTxStatus("confirmed");
+      clearCart();
+      addToast({
+        type: "success",
+        title: "Purchase confirmed!",
+        message: `${formatTonnes(totalTonnes)} acquired`,
+        txHash: pollHash,
+      });
+      setPollHash(null);
+    } else if (pollState === "FAILED") {
+      setTxStatus("failed");
+      addToast({
+        type: "error",
+        title: "Purchase failed",
+        message: pollError ?? "Transaction failed on-chain",
+      });
+      setPollHash(null);
+    } else if (pollState === "TIMED_OUT") {
+      setTxStatus("timed_out");
+      setPollHash(null);
+    }
+  }, [pollState, pollHash, pollError, clearCart, addToast, totalTonnes]);
+
+  const busy = txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
 
   // Handle touch events for swipe down to dismiss
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -251,7 +284,17 @@ export default function BulkPurchaseCart() {
           {/* Tx status */}
           {txStatus && (
             <div style={{ marginTop: "1rem" }}>
-              <TransactionStatus status={txStatus} txHash={txHash ?? undefined} onRetry={txStatus === "failed" ? handlePurchase : undefined} />
+              <TransactionStatus
+                status={txStatus}
+                txHash={txHash ?? undefined}
+                pollProgress={
+                  txStatus === "polling"
+                    ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                    : undefined
+                }
+                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                onRetry={txStatus === "failed" ? handlePurchase : undefined}
+              />
             </div>
           )}
 
@@ -373,7 +416,17 @@ export default function BulkPurchaseCart() {
               {/* Tx status */}
               {txStatus && (
                 <div style={{ marginTop: "1rem" }}>
-                  <TransactionStatus status={txStatus} txHash={txHash ?? undefined} onRetry={txStatus === "failed" ? handlePurchase : undefined} />
+                  <TransactionStatus
+                status={txStatus}
+                txHash={txHash ?? undefined}
+                pollProgress={
+                  txStatus === "polling"
+                    ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                    : undefined
+                }
+                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                onRetry={txStatus === "failed" ? handlePurchase : undefined}
+              />
                 </div>
               )}
 

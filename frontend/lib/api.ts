@@ -496,3 +496,51 @@ export async function exportEsgPdf(filters: EsgExportFilters): Promise<Blob> {
   if (!res.ok) throw new Error("PDF export failed");
   return res.blob();
 }
+
+// ── Notification preferences ───────────────────────────────────────────────────
+
+export interface NotificationPreferences {
+  projectApproved: boolean;
+  creditsMinted: boolean;
+  purchaseConfirmed: boolean;
+  retirementConfirmed: boolean;
+}
+
+export function useNotificationPreferences(publicKey: string) {
+  return useSWR<NotificationPreferences>(
+    publicKey ? `${API_URL}/notifications/preferences/${encodeURIComponent(publicKey)}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
+export async function updateNotificationPreferences(
+  publicKey: string,
+  patch: Partial<NotificationPreferences>,
+): Promise<NotificationPreferences> {
+  const res = await fetch(`${API_URL}/notifications/preferences/${encodeURIComponent(publicKey)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Update failed");
+  return res.json();
+}
+
+export function useLeaderboard(year?: number) {
+  const query = year ? `?year=${year}` : "";
+  return useSWR<LeaderboardEntry[]>(`${API_URL}/stats/leaderboard${query}`, fetcher, swrConfig);
+}
+
+export function useCreditBatches(projectId: string) {
+  return useSWR<CreditBatch[]>(
+    projectId ? `${API_URL}/credits/project/${encodeURIComponent(projectId)}/batches` : null,
+    async (url: string) => {
+      const res = await fetch(url);
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error("Failed to load credit batches");
+      return res.json();
+    },
+    swrConfig,
+  );
+}

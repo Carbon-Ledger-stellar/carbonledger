@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { retireCredits } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
@@ -13,6 +13,10 @@ import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import RetireConfirmModal from "../../components/RetireConfirmModal";
+import {
+  useTransactionPoller,
+  TRANSACTION_MAX_POLLS,
+} from "../../hooks/useTransactionPoller";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface RetireFormState {
@@ -121,6 +125,10 @@ export default function RetirePage() {
   const [reason, setReason]         = useState("");
   const [txStatus, setTxStatus]     = useState<TxStatus | null>(null);
   const [txHash, setTxHash]         = useState<string | null>(null);
+  const [pollHash, setPollHash]     = useState<string | null>(null);
+  const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
+    txHash: pollHash,
+  });
   const [retirementId, setRetirementId] = useState<string | null>(null);
   const [showModal, setShowModal]     = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
@@ -211,23 +219,43 @@ export default function RetirePage() {
         holderPublicKey:  walletKey,
       });
       setTxStatus("polling");
-      await new Promise(r => setTimeout(r, 2000));
       setTxHash(result.txHash);
       setRetirementId(result.retirementId);
+      setPollHash(result.txHash);
+    } catch (e: any) {
+      setTxStatus("failed");
+      setPollHash(null);
+      addToast({ type: "error", title: "Retirement failed", message: getContractErrorMessage(e) });
+    }
+  }
+
+  useEffect(() => {
+    if (!pollHash || pollState === "idle" || pollState === "polling") return;
+
+    if (pollState === "SUCCESS") {
       setTxStatus("confirmed");
       addToast({
         type:    "success",
         title:   "Credits permanently retired",
         message: `${formatTonnes(amount)} retired on behalf of ${beneficiary}`,
-        txHash:  result.txHash,
+        txHash:  pollHash,
       });
-    } catch (e: any) {
+      setPollHash(null);
+    } else if (pollState === "FAILED") {
       setTxStatus("failed");
-      addToast({ type: "error", title: "Retirement failed", message: getContractErrorMessage(e) });
+      addToast({
+        type: "error",
+        title: "Retirement failed",
+        message: pollError ?? "Transaction failed on-chain",
+      });
+      setPollHash(null);
+    } else if (pollState === "TIMED_OUT") {
+      setTxStatus("timed_out");
+      setPollHash(null);
     }
-  }
+  }, [pollState, pollHash, pollError, addToast, amount, beneficiary]);
 
-  const busy = txStatus && !["confirmed", "failed"].includes(txStatus);
+  const busy = txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
   const hasValidationErrors = hasErrors(validationErrors);
   const isDisabled = hasValidationErrors || !!busy || txStatus === "confirmed";
   
@@ -363,7 +391,19 @@ export default function RetirePage() {
           </p>
         </div>
 
-        {txStatus && <TransactionStatus status={txStatus} txHash={txHash ?? undefined} onRetry={txStatus === "failed" ? handleRetire : undefined} />}
+        {txStatus && (
+          <TransactionStatus
+            status={txStatus}
+            txHash={txHash ?? undefined}
+            pollProgress={
+              txStatus === "polling"
+                ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                : undefined
+            }
+            message={txStatus === "failed" ? pollError ?? undefined : undefined}
+            onRetry={txStatus === "failed" ? handleRetire : undefined}
+          />
+        )}
 
         {retirementId && txStatus === "confirmed" && (
           <a
