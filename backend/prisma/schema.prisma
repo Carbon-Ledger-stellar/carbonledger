@@ -147,7 +147,7 @@ model MonitoringData {
   @@unique([projectId, period])
 }
 
-model OracleUpdate {
+model OracleJob {
   id               String    @id @default(cuid())
   idempotencyKey   String    @unique  // projectId:period or methodology:vintageYear
   type             String    // "monitoring" | "price"

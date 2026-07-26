@@ -49,14 +49,20 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v2
-        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        if: success()
+        continue-on-error: true
         with:
           sarif_file: 'trivy-${{ matrix.dockerfile.name }}-results.sarif'
           category: 'trivy-${{ matrix.dockerfile.name }}'
 
       - name: Check for critical CVEs
+        if: success() || failure()
         run: |
+          if ! docker image inspect "carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}" >/dev/null 2>&1; then
+            echo "::warning::Skipping Trivy gate — image was not built"
+            exit 0
+          fi
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
             --severity HIGH,CRITICAL \

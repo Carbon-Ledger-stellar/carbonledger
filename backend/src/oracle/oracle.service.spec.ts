@@ -19,7 +19,7 @@ const oracleUpdateResult = { id: 'ou-1', idempotencyKey: 'monitoring:proj-001:20
 
 const prismaMock = {
   monitoringData: { upsert: jest.fn().mockResolvedValue(monitoringUpsertResult) },
-  oracleUpdate:   { upsert: jest.fn().mockResolvedValue(oracleUpdateResult) },
+  oracleJob:   { upsert: jest.fn().mockResolvedValue(oracleUpdateResult) },
   carbonProject:  { update: jest.fn().mockResolvedValue({}) },
   priceApproval:  {
     create:   jest.fn().mockResolvedValue({ id: 'pa-1' }),
@@ -61,7 +61,7 @@ describe('OracleService', () => {
       const result = await service.submitMonitoring(monitoringDto);
 
       expect(prismaMock.monitoringData.upsert).toHaveBeenCalledTimes(1);
-      expect(prismaMock.oracleUpdate.upsert).toHaveBeenCalledWith(
+      expect(prismaMock.oracleJob.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { idempotencyKey: 'monitoring:proj-001:2024-Q1' },
         }),
@@ -96,14 +96,14 @@ describe('OracleService', () => {
     const priceDto = { methodology: 'VCS', vintageYear: 2023, priceUsdc: '12.50' };
 
     it('upserts oracle update and enqueues a price job', async () => {
-      prismaMock.oracleUpdate.upsert.mockResolvedValueOnce({
+      prismaMock.oracleJob.upsert.mockResolvedValueOnce({
         id: 'ou-2',
         idempotencyKey: 'price:VCS:2023',
       });
 
       const result = await service.submitPrice(priceDto);
 
-      expect(prismaMock.oracleUpdate.upsert).toHaveBeenCalledWith(
+      expect(prismaMock.oracleJob.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ where: { idempotencyKey: 'price:VCS:2023' } }),
       );
       expect(queueMock.add).toHaveBeenCalledWith(
