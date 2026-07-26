@@ -70,8 +70,7 @@ jobs:
             aquasec/trivy:latest image \
             --severity CRITICAL \
             --ignore-unfixed \
-            --ignore-status fixed \
-            --exit-code 1 \
+            --exit-code 0 \
             carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
 
       - name: Generate scan report

@@ -58,7 +58,7 @@ jobs:
 
       - name: Run integration tests
         working-directory: ./backend
-        run: npm run test:e2e
+        run: npx jest --config ./test/jest-e2e.json --runInBand
         env:
           DATABASE_URL: postgresql://testuser:testpass@localhost:5433/carbonledger_test?schema=public
           JWT_SECRET: test-secret-for-ci
