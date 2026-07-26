@@ -1,4 +1,5 @@
 import useSWR, { SWRConfiguration } from "swr";
+import type { SerialRangeSegment } from "./serial-range-segments";
 import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
@@ -239,6 +240,9 @@ export interface SerialLookupResult {
   txHash?: string;
   // Chain of custody
   provenance: ProvenanceEvent[];
+  batchSerialStart?: string;
+  batchSerialEnd?: string;
+  rangeSegments?: SerialRangeSegment[];
 }
 
 export function useSerialLookup(serial: string) {
