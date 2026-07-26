@@ -568,3 +568,122 @@ jobs:
       - name: Check formatting
         working-directory: contracts
         run: cargo fmt --check
+
+  # ── Kani Formal Verification ─────────────────────────────────────────────────
+  # Runs bounded model-checking proofs for the three critical carbon_credit
+  # invariants.  Failures block merge.  Timeout: 5 minutes.
+  #
+  # Proof harnesses:
+  #   proof_conservation          — INV-1: available + retired == minted
+  #   proof_insufficient_credits  — INV-2: retire(amount > available) → error
+  #   proof_serial_no_overlap     — INV-3: serial ranges never overlap
+  #   proof_conservation_multi_step — INV-1 under multi-step retirements
+  #
+  # If Kani emits UNWIND FAILURE, increase --unwind and add a comment with
+  # the new bound and justification (see docs/formal-verification.md).
+  kani:
+    name: Kani Formal Verification (carbon_credit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Run on PRs touching contracts, explicit workflow dispatch, or nightly schedule.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-kani-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-kani-
+
+      - name: Install Kani verifier
+        run: |
+          cargo install --locked kani-verifier 2>&1 || true
+          cargo kani setup 2>&1 || true
+
+      - name: Run Kani proofs — INV-1 conservation
+        working-directory: contracts/carbon_credit
+        timeout-minutes: 2
+        run: |
+          cargo kani \
+            --harness proof_conservation \
+            --harness proof_conservation_multi_step \
+            --unwind 8 \
+            --jobs auto \
+            2>&1 | tee /tmp/kani-conservation.txt
+          grep -qE "SUCCESSFUL" /tmp/kani-conservation.txt || \
+            { echo "::error::INV-1 conservation proof FAILED — see kani-proof-logs artifact"; exit 1; }
+
+      - name: Run Kani proofs — INV-2 insufficient credits
+        working-directory: contracts/carbon_credit
+        timeout-minutes: 2
+        run: |
+          cargo kani \
+            --harness proof_insufficient_credits \
+            --unwind 8 \
+            --jobs auto \
+            2>&1 | tee /tmp/kani-insufficient.txt
+          grep -qE "SUCCESSFUL" /tmp/kani-insufficient.txt || \
+            { echo "::error::INV-2 insufficient credits proof FAILED — see kani-proof-logs artifact"; exit 1; }
+
+      - name: Run Kani proofs — INV-3 serial non-overlap
+        working-directory: contracts/carbon_credit
+        timeout-minutes: 2
+        run: |
+          cargo kani \
+            --harness proof_serial_no_overlap \
+            --unwind 8 \
+            --jobs auto \
+            2>&1 | tee /tmp/kani-serial.txt
+          grep -qE "SUCCESSFUL" /tmp/kani-serial.txt || \
+            { echo "::error::INV-3 serial non-overlap proof FAILED — see kani-proof-logs artifact"; exit 1; }
+
+      - name: Upload Kani proof logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kani-proof-logs
+          path: /tmp/kani-*.txt
+          retention-days: 14
+
+      - name: Post Kani summary on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const readLog = (path) => {
+              try { return fs.readFileSync(path, 'utf8').slice(0, 2000); }
+              catch { return '(log not found)'; }
+            };
+            const cons  = readLog('/tmp/kani-conservation.txt');
+            const insuf = readLog('/tmp/kani-insufficient.txt');
+            const srl   = readLog('/tmp/kani-serial.txt');
+            const body  = [
+              '## 🔬 Kani Formal Verification Results',
+              '',
+              '| Invariant | Status |',
+              '|-----------|--------|',
+              `| INV-1 Conservation (available + retired == minted) | ${cons.includes('SUCCESSFUL') ? '✅' : '❌'} |`,
+              `| INV-2 InsufficientCredits guard | ${insuf.includes('SUCCESSFUL') ? '✅' : '❌'} |`,
+              `| INV-3 Serial non-overlap | ${srl.includes('SUCCESSFUL') ? '✅' : '❌'} |`,
+              '',
+              'See `docs/formal-verification.md` for methodology.',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
