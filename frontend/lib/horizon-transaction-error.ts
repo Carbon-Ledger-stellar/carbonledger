@@ -38,17 +38,22 @@ function extractContractCodeFromOpResult(opResult: xdr.OperationResult): number 
       return null;
     }
 
-    const err = invokeResult.error?.();
+    const err = (invokeResult as { error?: () => unknown }).error?.();
     if (!err) {
       return null;
     }
 
-    const errTag = err.switch().name;
+    const xdrErr = err as {
+      switch: () => { name: string };
+      contractCode: () => number;
+      contractError: () => number;
+    };
+    const errTag = xdrErr.switch().name;
     if (errTag === "contractCode") {
-      return err.contractCode();
+      return xdrErr.contractCode();
     }
     if (errTag === "contractError") {
-      return err.contractError();
+      return xdrErr.contractError();
     }
   } catch {
     return null;
