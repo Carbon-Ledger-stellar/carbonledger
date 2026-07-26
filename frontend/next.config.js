@@ -15,7 +15,7 @@ const nextConfig = {
     NEXT_PUBLIC_MARKETPLACE_CONTRACT: process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT || "",
     NEXT_PUBLIC_ORACLE_CONTRACT: process.env.NEXT_PUBLIC_ORACLE_CONTRACT || "",
     NEXT_PUBLIC_USDC_CONTRACT: process.env.NEXT_PUBLIC_USDC_CONTRACT || "",
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1",
   },
 };
 module.exports = nextConfig;

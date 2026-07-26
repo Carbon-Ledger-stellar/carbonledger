@@ -1,7 +1,7 @@
 import useSWR, { SWRConfiguration } from "swr";
 import useSWRInfinite from "swr/infinite";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -419,6 +419,17 @@ export interface RegisterProjectPayload {
   vintageYear: number;
   coordinates: string;
   metadataCid: string;
+  /** Verifier assigned to review this project. Drives the push notification. */
+  verifierAddress?: string;
+}
+
+/**
+ * The JWT is written under two different keys in this codebase
+ * ('cl_jwt' by the admin auth hook, 'token' elsewhere); read both.
+ */
+function authToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("cl_jwt") ?? localStorage.getItem("token");
 }
 
 export interface FieldErrors {
@@ -426,9 +437,15 @@ export interface FieldErrors {
 }
 
 export async function registerProject(payload: RegisterProjectPayload): Promise<CarbonProject> {
+  const token = authToken();
   const res = await fetch(`${API_URL}/projects`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      // POST /projects is @Roles('project_developer','admin') — without this
+      // the request is rejected before it reaches the controller.
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify(payload),
   });
   if (res.status === 400) {

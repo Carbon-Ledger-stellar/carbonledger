@@ -5,7 +5,7 @@
  */
 import useSWR from 'swr';
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,7 +89,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 // ─── Endpoints ────────────────────────────────────────────────────────────────
 
 export const fetchAdminStats    = () => request<AdminStats>('/admin/stats');
-export const fetchOracleHealth  = () => request<OracleHealth[]>('/admin/oracle-health');
+export const fetchOracleHealth  = () => request<OracleHealth[]>('/admin/oracle/health');
 export const fetchVerifiers     = () => request<VerifierActivity[]>('/admin/verifiers');
 export const fetchAdminProjects = () => request<AdminProject[]>('/admin/projects');
 
@@ -121,7 +121,7 @@ async function authedFetcher<T>(url: string): Promise<T> {
 /** Auto-refreshes every 60 s. Returns all projects' oracle health. */
 export function useOracleHealth() {
   return useSWR<OracleHealth[]>(
-    `${BASE}/admin/oracle-health`,
+    `${BASE}/admin/oracle/health`,
     authedFetcher,
     { refreshInterval: 60_000, revalidateOnFocus: true },
   );
