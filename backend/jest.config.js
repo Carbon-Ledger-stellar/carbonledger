@@ -21,6 +21,7 @@ module.exports = {
   coverageDirectory: '../coverage',
   coverageReporters: ['text', 'lcov', 'json', 'html'],
   testEnvironment: 'node',
+  setupFiles: ['<rootDir>/jest.setup.ts'],
   coverageThreshold: {
     global: {
       branches: 80,

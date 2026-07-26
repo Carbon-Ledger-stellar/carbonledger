@@ -5,7 +5,6 @@
 ///   I1 – Conservation:  sum(batch.amount) >= sum(retired per batch)
 ///   I2 – Serial uniqueness: no serial number appears in two active batches
 ///   I3 – Monotonic retirements: per-batch retired count never decreases
-
 #[cfg(test)]
 mod invariant_tests {
     use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};

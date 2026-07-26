@@ -3,7 +3,7 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror,
     Address, Env, String, Vec,
-    symbol_short, vec, BytesN, Bytes
+    symbol_short, BytesN, Bytes
 };
 use soroban_sdk::xdr::ToXdr;
 
@@ -520,7 +520,7 @@ impl CarbonOracleContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger, LedgerInfo}, Env, String, Bytes, BytesN};
+    use soroban_sdk::{testutils::{Address as _, Ledger, LedgerInfo}, Env, String, BytesN};
     use ed25519_dalek::{SigningKey, Signer};
     use soroban_sdk::xdr::ToXdr;
 
@@ -940,7 +940,7 @@ mod vintage_year_validation_tests {
         CarbonOracleContractClient::new(env, id)
     }
 
-    fn sign_price(env: &Env, key: &SigningKey, methodology: &String, vintage_year: u32, price: i128, nonce: u64) -> BytesN<64> {
+    fn sign_price(env: &Env, key: &SigningKey, methodology: &String, vintage_year: u32, price: i128, _nonce: u64) -> BytesN<64> {
         let payload = (methodology.clone(), vintage_year, price).to_xdr(env);
         let sig = key.sign(payload.to_alloc_vec().as_slice());
         BytesN::from_array(env, &sig.to_bytes())
