@@ -62,6 +62,8 @@ const MONITORING_FRESHNESS_SECS: u64 = 365 * 24 * 60 * 60;
 /// Marketplace circuit breaker halts purchases when price data exceeds this threshold.
 pub const PRICE_STALENESS_SECS: u64 = 24 * 60 * 60;
 const PRICE_CACHE_TTL_LEDGERS: u32 = 17_280;
+/// TTL for persistent timestamp keys (price / monitoring freshness metadata).
+const PERSISTENT_META_TTL_LEDGERS: u32 = 518_400;
 const CURRENT_VERSION: u32 = 1;
 
 // -- Storage Keys -------------------------------------------------------------
@@ -241,6 +243,11 @@ impl CarbonOracleContract {
             &data,
         );
         env.storage().persistent().set(&DataKey::LatestMonitoring(project_id.clone()), &now);
+        env.storage().persistent().extend_ttl(
+            &DataKey::LatestMonitoring(project_id.clone()),
+            PERSISTENT_META_TTL_LEDGERS,
+            PERSISTENT_META_TTL_LEDGERS,
+        );
 
         if methodology_score < 70 {
             env.events().publish(
@@ -293,6 +300,11 @@ impl CarbonOracleContract {
         // even if the temporary price entry has expired.
         let ts_key = DataKey::PriceUpdatedAt(methodology.clone(), vintage_year);
         env.storage().persistent().set(&ts_key, &now);
+        env.storage().persistent().extend_ttl(
+            &ts_key,
+            PERSISTENT_META_TTL_LEDGERS,
+            PERSISTENT_META_TTL_LEDGERS,
+        );
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("price_upd")),
@@ -731,17 +743,16 @@ mod staleness_tests {
     }
 
     fn advance_time(env: &Env, secs: u64) {
-        let ts  = env.ledger().timestamp();
-        let seq = env.ledger().sequence();
+        let info = env.ledger().get();
         env.ledger().set(LedgerInfo {
-            timestamp:           ts + secs,
-            protocol_version:    20,
-            sequence_number:     seq + 1,
-            network_id:          [0; 32],
-            base_reserve:        10,
-            min_temp_entry_ttl:  1,
-            min_persistent_entry_ttl: 1,
-            max_entry_ttl:       518_400,
+            timestamp:           info.timestamp + secs,
+            protocol_version:    info.protocol_version,
+            sequence_number:     info.sequence_number,
+            network_id:          info.network_id,
+            base_reserve:        info.base_reserve,
+            min_temp_entry_ttl:  info.min_temp_entry_ttl,
+            min_persistent_entry_ttl: info.min_persistent_entry_ttl,
+            max_entry_ttl:       info.max_entry_ttl,
         });
     }
 
