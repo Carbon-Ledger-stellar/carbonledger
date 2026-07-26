@@ -4,7 +4,9 @@ import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, Paginate
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
-import { v4 as uuidv4 } from "uuid";
+import { RedisService } from "../redis.service";
+import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { randomUUID } from "crypto";
 
 @Injectable()
 export class ProjectsService {
@@ -170,6 +172,10 @@ export class ProjectsService {
     return project;
   }
 
+  private async invalidateProjectCache(projectId: string): Promise<void> {
+    await this.redisService.del(projectDetailCacheKey(projectId));
+  }
+
   async register(dto: RegisterProjectDto) {
     const existing = await this.prisma.carbonProject.findUnique({ where: { projectId: dto.projectId } });
     if (existing) throw new ConflictException(`Project ${dto.projectId} already exists`);
@@ -180,7 +186,7 @@ export class ProjectsService {
   }
 
   async createProject(dto: CreateProjectDto, ownerAddress?: string) {
-    const projectId = uuidv4();
+    const projectId = randomUUID();
     // Upload documents to IPFS: store CIDs as metadataCid (first doc) and coordinates as JSON
     const metadataCid = dto.documents[0] ?? '';
     const data = {

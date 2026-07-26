@@ -10,6 +10,12 @@ export class CreditsController {
 
   // ── Public read endpoints ────────────────────────────────────────────────
 
+  @Get('project/:projectId/batches')
+  @Public()
+  getBatchesByProject(@Param('projectId') projectId: string) {
+    return this.creditsService.getBatchesByProject(projectId);
+  }
+
   @Get('batch/:id')
   @Public()
   getBatch(@Param('id') id: string) {
