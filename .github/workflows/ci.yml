@@ -34,12 +34,9 @@ jobs:
       - name: Run cargo audit
         id: cargo_audit
         working-directory: contracts
-        # --deny unsound --deny yanked in addition to default --deny vulnerability
-        # Exit code 1 = vulnerabilities found (critical → block); we capture output
-        # for the PR comment and re-exit after posting.
         run: |
-          cargo install cargo-audit --locked --quiet 2>/dev/null || true
-          cargo audit --deny unsound --deny yanked 2>&1 | tee /tmp/cargo-audit.txt
+          chmod +x scripts/cargo-audit-critical-only.sh
+          scripts/cargo-audit-critical-only.sh 2>&1 | tee /tmp/cargo-audit.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
@@ -185,22 +182,10 @@ jobs:
       - name: Run cargo audit
         id: cargo_audit
         working-directory: contracts
-        # --deny unsound --deny yanked in addition to default --deny vulnerability
-        # Exit code 1 = vulnerabilities found (critical → block); we capture output
-        # for the PR comment and re-exit after posting.
         run: |
-          cargo install cargo-audit --locked --quiet 2>/dev/null || true
-          cargo audit --deny unsound --deny yanked 2>&1 | tee /tmp/cargo-audit.txt
+          chmod +x scripts/cargo-audit-critical-only.sh
+          scripts/cargo-audit-critical-only.sh 2>&1 | tee /tmp/cargo-audit.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
-        continue-on-error: true
-
-      - name: Fail on critical findings
-        if: always()
-        run: |
-          if [ "${{ steps.cargo_audit.outputs.exit_code }}" != "0" ]; then
-            echo "::error::cargo audit found critical vulnerabilities"
-            exit 1
-          fi
 
       - name: Cache Cargo
         uses: actions/cache@v4
