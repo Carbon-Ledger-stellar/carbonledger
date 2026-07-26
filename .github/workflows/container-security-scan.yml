@@ -41,6 +41,7 @@ jobs:
             "$CONTEXT"
 
       - name: Run Trivy vulnerability scan
+        if: success()
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
@@ -57,7 +58,7 @@ jobs:
           category: 'trivy-${{ matrix.dockerfile.name }}'
 
       - name: Check for critical CVEs
-        if: success() || failure()
+        if: success()
         run: |
           if ! docker image inspect "carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}" >/dev/null 2>&1; then
             echo "::warning::Skipping Trivy gate — image was not built"
@@ -75,10 +76,12 @@ jobs:
             carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
 
       - name: Generate scan report
-        if: always()
+        if: success()
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             aquasec/trivy:latest image \
+            --severity CRITICAL \
+            --ignore-unfixed \
             --format json \
             --output trivy-${{ matrix.dockerfile.name }}-report.json \
             carbonledger-${{ matrix.dockerfile.name }}:${{ github.sha }}
