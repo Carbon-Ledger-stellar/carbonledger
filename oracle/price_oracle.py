@@ -2,13 +2,16 @@
 price_oracle.py
 Fetches carbon credit benchmark prices from Xpansiv CBL and Toucan Protocol,
 calculates weighted average per methodology/vintage, and pushes to carbon_oracle
-every 12 hours. Alerts admin if price deviation exceeds 15%.
+on every Stellar ledger close via the Horizon SSE stream.
+Alerts admin if price deviation exceeds 15%.
+
+Closes #664 — event-driven Stellar ledger streaming (replaces 12-hour schedule)
 """
 
 import os
 import time
+import json
 import logging
-import schedule
 import requests
 from dotenv import load_dotenv
 from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
@@ -263,18 +266,102 @@ def update_prices():
 
     log.info("Price oracle update cycle complete — %d prices pushed", len(prices))
 
-# ── Scheduler ─────────────────────────────────────────────────────────────────
+# ── SSE cursor persistence ────────────────────────────────────────────────────
+
+HORIZON_URL        = os.environ.get("HORIZON_URL", "https://horizon-testnet.stellar.org")
+_CURSOR_FILE       = os.environ.get("PRICE_ORACLE_CURSOR_FILE", "/tmp/price_oracle_cursor.txt")
+# Check for approvals every N ledgers (≈ every N × 5 s)
+_APPROVAL_INTERVAL = int(os.environ.get("PRICE_ORACLE_APPROVAL_INTERVAL_LEDGERS", "60"))
+_ledger_counter    = 0
+
+
+def _load_cursor() -> str:
+    try:
+        with open(_CURSOR_FILE) as f:
+            cursor = f.read().strip()
+            if cursor:
+                log.info("Resuming price oracle SSE from cursor %s", cursor)
+                return cursor
+    except FileNotFoundError:
+        pass
+    return "now"
+
+
+def _save_cursor(cursor: str) -> None:
+    try:
+        with open(_CURSOR_FILE, "w") as f:
+            f.write(cursor)
+    except Exception as exc:
+        log.warning("Failed to persist SSE cursor: %s", exc)
+
+
+def stream_ledgers():
+    """Subscribe to Horizon SSE and update prices on each ledger close."""
+    global _ledger_counter
+    cursor = _load_cursor()
+    url    = f"{HORIZON_URL}/ledgers?cursor={cursor}"
+    log.info("Price oracle connecting to Stellar ledger stream (cursor=%s)", cursor)
+
+    backoff = 1
+    while True:
+        try:
+            with requests.get(url, stream=True, timeout=90,
+                              headers={"Accept": "text/event-stream"}) as resp:
+                resp.raise_for_status()
+                backoff = 1
+                log.info("Price oracle SSE connection established")
+
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    line = line.decode("utf-8") if isinstance(line, bytes) else line
+                    if not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == '"hello"' or not data_str:
+                        continue
+                    try:
+                        ledger = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    new_cursor = ledger.get("paging_token") or str(ledger.get("sequence", ""))
+                    if not new_cursor:
+                        continue
+
+                    _ledger_counter += 1
+
+                    # Update prices on every ledger close
+                    try:
+                        update_prices()
+                    except Exception as exc:
+                        log.error("update_prices error: %s", exc)
+
+                    # Check approved prices every _APPROVAL_INTERVAL ledgers
+                    if _ledger_counter % _APPROVAL_INTERVAL == 0:
+                        try:
+                            process_approved_prices()
+                        except Exception as exc:
+                            log.error("process_approved_prices error: %s", exc)
+
+                    _save_cursor(new_cursor)
+                    url = f"{HORIZON_URL}/ledgers?cursor={new_cursor}"
+
+        except requests.exceptions.RequestException as exc:
+            log.error("SSE stream error: %s — reconnecting in %ds", exc, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+        except Exception as exc:
+            log.error("Unexpected error: %s — reconnecting in %ds", exc, backoff)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    log.info("Price oracle starting — updating every 12 hours")
+    log.info("Price oracle starting — event-driven Stellar ledger streaming")
+    # Run initial cycle immediately
     update_prices()
-    schedule.every(12).hours.do(update_prices)
-    
-    # Check for approvals more frequently (e.g. every 5 minutes)
-    log.info("Approval poller starting — checking every 5 minutes")
     process_approved_prices()
-    schedule.every(5).minutes.do(process_approved_prices)
-
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    stream_ledgers()
