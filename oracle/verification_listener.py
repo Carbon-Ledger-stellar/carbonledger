@@ -20,18 +20,38 @@ import time
 import json
 import hashlib
 import logging
+import threading
 import schedule
 import psycopg2
 import requests
 from datetime import datetime, timezone
+from flask import Flask, jsonify
 from dotenv import load_dotenv
 from stellar_sdk import Keypair, Network, SorobanServer, TransactionBuilder, scval
 from stellar_sdk.soroban_rpc import SendTransactionStatus
 
 load_dotenv()
 from log import get_logger  # noqa: E402 — must come after load_dotenv
+from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenError  # noqa: E402
 
 log = get_logger("verification_listener")
+
+# ── Circuit breaker ────────────────────────────────────────────────────────────
+
+_rpc_circuit = get_circuit_breaker("verification_listener_rpc")
+
+# ── Health endpoint (Flask, daemon thread) ────────────────────────────────────
+
+_health_app = Flask("verification_listener_health")
+
+@_health_app.route("/health", methods=["GET"])
+def _health():
+    return jsonify({"status": "ok", "circuits": get_all_health()}), 200
+
+def _start_health_server():
+    port = int(os.environ.get("VERIFICATION_HEALTH_PORT", "5003"))
+    log.info("Verification listener health endpoint starting on port %d", port)
+    _health_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -434,7 +454,8 @@ def process_reports():
                 continue
 
             try:
-                tx_hash = build_and_submit(
+                tx_hash = _rpc_circuit.call(
+                    build_and_submit,
                     server, keypair, ORACLE_CONTRACT_ID,
                     "submit_monitoring_data",
                     [
@@ -461,6 +482,12 @@ def process_reports():
                     "submitted_at":      datetime.now(timezone.utc).isoformat(),
                 })
 
+            except CircuitOpenError as e:
+                log.warning(
+                    "RPC circuit OPEN for %s/%s — skipping submission: %s",
+                    project_id, period, e,
+                )
+                log_oracle_update(project_id, period, tonnes, score, "", f"CIRCUIT_OPEN: {e}")
             except Exception as e:
                 log.error("Failed to submit monitoring data for %s: %s", project_id, e)
                 log_oracle_update(project_id, period, tonnes, score, "", f"ERROR: {e}")
@@ -471,6 +498,11 @@ def process_reports():
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Start health endpoint in a daemon thread so it doesn't block the scheduler.
+    import threading
+    health_thread = threading.Thread(target=_start_health_server, daemon=True)
+    health_thread.start()
+
     log.info("Verification listener starting — polling every 6 hours")
     process_reports()
     schedule.every(6).hours.do(process_reports)
