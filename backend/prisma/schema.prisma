@@ -78,7 +78,7 @@ model RetirementRecord {
   serialStart      String
   serialEnd        String
   serialNumbers    String[]
-  txHash           String
+  txHash           String   @unique
   certificateCid   String?
   isValid          Boolean  @default(true)
   validatedAt      DateTime?
