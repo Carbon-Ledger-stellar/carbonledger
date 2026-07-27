@@ -165,6 +165,52 @@ export function useListings(params?: { methodology?: string; vintage?: number; c
   return useSWR<MarketListing[]>(`${API_URL}/marketplace/listings?${query}`, fetcher, swrConfig);
 }
 
+/** Paginated listing response from get_listings_page. */
+export interface ListingsPage {
+  items: MarketListing[];
+  total: number;
+  offset: number;
+}
+
+/**
+ * Fetch a single page of active marketplace listings.
+ * `offset` is 0-based; `limit` is capped at 50 by the contract.
+ */
+export function useListingsPage(
+  offset: number,
+  limit: number,
+) {
+  const params = new URLSearchParams({
+    offset: String(offset),
+    limit: String(limit),
+  });
+  return useSWR<ListingsPage>(
+    `${API_URL}/marketplace/listings/page?${params}`,
+    fetcher,
+    swrConfig,
+  );
+}
+
+/**
+ * Fetch a single page of marketplace listings filtered by vintage year.
+ */
+export function useListingsByVintagePage(
+  vintageYear: number,
+  offset: number,
+  limit: number,
+) {
+  const params = new URLSearchParams({
+    vintage: String(vintageYear),
+    offset: String(offset),
+    limit: String(limit),
+  });
+  return useSWR<ListingsPage>(
+    `${API_URL}/marketplace/listings/by-vintage/page?${params}`,
+    fetcher,
+    swrConfig,
+  );
+}
+
 export function useListing(id: string) {
   return useSWR<MarketListing>(id ? `${API_URL}/marketplace/listings/${id}` : null, fetcher, swrConfig);
 }

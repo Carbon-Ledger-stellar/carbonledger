@@ -27,6 +27,8 @@ pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
 const TTL_LEDGERS: u32 = 518_400;
 const MAX_BATCH_SIZE: u32 = 10;
 const CURRENT_VERSION: u32 = 1;
+/// Maximum number of listings returned per page by paginated endpoints.
+pub const MAX_PAGE_SIZE: u32 = 50;
 
 // ── Fee collection constants ──────────────────────────────────────────────────
 /// Fee rate numerator: 1% expressed as 1/FEE_RATE_DENOM.
@@ -69,6 +71,8 @@ pub enum CarbonError {
     /// current on-chain value.  A concurrent buyer already modified the listing.
     /// Re-read the listing and resubmit with the updated amount.
     StaleExpectedAmount    = 23,
+    /// Page size exceeds the maximum allowed limit.
+    PageSizeTooLarge       = 24,
 }
 
 #[contracttype]
@@ -218,6 +222,18 @@ pub struct FeeSweptEvent {
     pub swept_by:  Address,
     pub amount:    i128,
     pub swept_at:  u64,
+}
+
+/// A paginated slice of marketplace listings.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ListingsPage {
+    /// The listing items in this page.
+    pub items: Vec<MarketListing>,
+    /// Total number of listings that match the query (across all pages).
+    pub total: u32,
+    /// The offset (0-based) of the first item in this page.
+    pub offset: u32,
 }
 
 #[contract]
@@ -930,6 +946,109 @@ impl CarbonMarketplaceContract {
 
     pub fn get_listings_by_vintage(env: Env, vintage_year: u32) -> Vec<MarketListing> {
         Self::filter_listings(&env, |l| l.vintage_year == vintage_year)
+    }
+
+    /// Returns a paginated slice of active (or partially filled) listings.
+    ///
+    /// `offset` is 0-based (skip the first `offset` matching items).
+    /// `limit` is capped at `MAX_PAGE_SIZE` (50).  Returns `PageSizeTooLarge`
+    /// if `limit` exceeds the cap *before* capping.
+    pub fn get_listings_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<ListingsPage, CarbonError> {
+        if limit > MAX_PAGE_SIZE {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllListings)
+            .unwrap_or_else(|| vec![&env]);
+
+        // First pass: collect matching items + count total
+        let mut total: u32 = 0;
+        let mut matching: Vec<MarketListing> = vec![&env];
+        for id in all.iter() {
+            if let Some(l) = env.storage().persistent().get(&DataKey::Listing(id.clone())) {
+                if l.status == ListingStatus::Active || l.status == ListingStatus::PartiallyFilled {
+                    total += 1;
+                    matching.push_back(l);
+                }
+            }
+        }
+
+        // Second pass: apply offset + limit
+        let mut page: Vec<MarketListing> = vec![&env];
+        let mut skipped: u32 = 0;
+        for i in 0..matching.len() {
+            let item = matching.get(i).unwrap();
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            if page.len() >= limit as u32 {
+                break;
+            }
+            page.push_back(item);
+        }
+
+        Ok(ListingsPage {
+            items: page,
+            total,
+            offset,
+        })
+    }
+
+    /// Returns a paginated slice of listings filtered by vintage year.
+    pub fn get_listings_by_vintage_page(
+        env: Env,
+        vintage_year: u32,
+        offset: u32,
+        limit: u32,
+    ) -> Result<ListingsPage, CarbonError> {
+        if limit > MAX_PAGE_SIZE {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllListings)
+            .unwrap_or_else(|| vec![&env]);
+
+        let mut total: u32 = 0;
+        let mut matching: Vec<MarketListing> = vec![&env];
+        for id in all.iter() {
+            if let Some(l) = env.storage().persistent().get(&DataKey::Listing(id.clone())) {
+                if l.vintage_year == vintage_year {
+                    total += 1;
+                    matching.push_back(l);
+                }
+            }
+        }
+
+        let mut page: Vec<MarketListing> = vec![&env];
+        let mut skipped: u32 = 0;
+        for i in 0..matching.len() {
+            let item = matching.get(i).unwrap();
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            if page.len() >= limit as u32 {
+                break;
+            }
+            page.push_back(item);
+        }
+
+        Ok(ListingsPage {
+            items: page,
+            total,
+            offset,
+        })
     }
 
     // ── Fee collection API ────────────────────────────────────────────────────
@@ -2568,5 +2687,191 @@ mod cas_stress_tests {
             CarbonError::InsufficientLiquidity,
             "CAS passes but amount > available → InsufficientLiquidity"
         );
+    }
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn setup(env: &Env) -> (CarbonMarketplaceContractClient, Address, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let admin    = Address::generate(env);
+        let treasury = Address::generate(env);
+        let seller   = Address::generate(env);
+        let usdc     = env.register_stellar_asset_contract(admin.clone());
+        let credit_id = env.register_contract(None, carbon_credit::CarbonCreditContract);
+        let id       = env.register_contract(None, CarbonMarketplaceContract);
+        let client   = CarbonMarketplaceContractClient::new(env, &id);
+        client.initialize(&admin, &usdc, &credit_id, &treasury);
+        (client, admin, seller)
+    }
+
+    fn add_listing(env: &Env, client: &CarbonMarketplaceContractClient, seller: &Address, id: &str, vintage: u32) {
+        client.list_credits(
+            seller,
+            &s(env, id),
+            &s(env, &format!("batch-{id}")),
+            &s(env, &format!("proj-{id}")),
+            &100_i128,
+            &10_0000000_i128,
+            &vintage,
+            &s(env, "VCS"),
+            &s(env, "Brazil"),
+        );
+    }
+
+    // ── Empty marketplace ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_empty_page_returns_zero_total() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let page = client.get_listings_page(&0, &10);
+        assert_eq!(page.total, 0);
+        assert_eq!(page.items.len(), 0);
+        assert_eq!(page.offset, 0);
+    }
+
+    // ── Single page ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_single_page_all_items_fit() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "l1", 2023);
+        add_listing(&env, &client, &seller, "l2", 2024);
+
+        let page = client.get_listings_page(&0, &10);
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.offset, 0);
+    }
+
+    // ── Multi-page ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_multi_page_paging_through() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        for i in 0..5 {
+            add_listing(&env, &client, &seller, &format!("mp-{i}"), 2023);
+        }
+
+        let page1 = client.get_listings_page(&0, &2);
+        assert_eq!(page1.total, 5);
+        assert_eq!(page1.items.len(), 2);
+        assert_eq!(page1.offset, 0);
+
+        let page2 = client.get_listings_page(&2, &2);
+        assert_eq!(page2.total, 5);
+        assert_eq!(page2.items.len(), 2);
+        assert_eq!(page2.offset, 2);
+
+        let page3 = client.get_listings_page(&4, &2);
+        assert_eq!(page3.total, 5);
+        assert_eq!(page3.items.len(), 1);
+        assert_eq!(page3.offset, 4);
+    }
+
+    // ── Offset beyond end ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_offset_beyond_total_returns_empty_page() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "oob-1", 2023);
+
+        let page = client.get_listings_page(&100, &10);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 0);
+        assert_eq!(page.offset, 100);
+    }
+
+    // ── PageSizeTooLarge ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_page_size_too_large_returns_error() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let result = client.try_get_listings_page(&0, &51);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::PageSizeTooLarge);
+    }
+
+    #[test]
+    fn test_exact_max_page_size_accepted() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let page = client.get_listings_page(&0, &MAX_PAGE_SIZE);
+        assert_eq!(page.total, 0);
+    }
+
+    // ── Delisted listings excluded ──────────────────────────────────────────
+
+    #[test]
+    fn test_delisted_excluded_from_page() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "d1", 2023);
+        add_listing(&env, &client, &seller, "d2", 2023);
+        client.delist_credits(&seller, &s(&env, "d1"));
+
+        let page = client.get_listings_page(&0, &10);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+    }
+
+    // ── get_listings_by_vintage_page ────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_page_filters_correctly() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "vp1", 2023);
+        add_listing(&env, &client, &seller, "vp2", 2023);
+        add_listing(&env, &client, &seller, "vp3", 2024);
+
+        let page = client.get_listings_by_vintage_page(&2023, &0, &10);
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 2);
+    }
+
+    #[test]
+    fn test_vintage_page_page_size_too_large() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let result = client.try_get_listings_by_vintage_page(&2023, &0, &51);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::PageSizeTooLarge);
+    }
+
+    // ── Total count unaffected by offset/limit ──────────────────────────────
+
+    #[test]
+    fn test_total_count_reflects_all_matches_not_page_size() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        for i in 0..10 {
+            add_listing(&env, &client, &seller, &format!("tc-{i}"), 2023);
+        }
+
+        let page = client.get_listings_page(&0, &3);
+        assert_eq!(page.total, 10);
+        assert_eq!(page.items.len(), 3);
     }
 }
