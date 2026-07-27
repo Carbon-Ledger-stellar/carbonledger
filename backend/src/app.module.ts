@@ -177,10 +177,6 @@ class HealthController {
     },
     {
       provide: APP_INTERCEPTOR,
-      useClass: CorrelationIdMiddleware,
-    },
-    {
-      provide: APP_INTERCEPTOR,
       useClass: LoggingInterceptor,
     },
     {
