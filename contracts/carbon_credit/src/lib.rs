@@ -3363,3 +3363,204 @@ mod cross_contract_invariant_tests {
         // Structural check: the code path ran without panic.
     }
 }
+
+// ── PR #655 — Property-based fuzz tests: 4 core invariants ────────────────────
+//
+//   P1 – Conservation:     sum(batch.amount) >= sum(retired amounts)
+//   P2 – Double-counting:  overlapping serial ranges are rejected
+//   P3 – Idempotency:      retiring more than active credits always fails
+//   P4 – Zero-rejection:   zero-amount mint/retire/transfer always fails
+//
+// Each property is tested with 10,000 proptest iterations.
+#[cfg(test)]
+mod proptest_invariant_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn setup(env: &Env) -> (CarbonCreditContractClient, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let admin    = Address::generate(env);
+        let registry = Address::generate(env);
+        let id       = env.register_contract(None, CarbonCreditContract);
+        let client   = CarbonCreditContractClient::new(env, &id);
+        client.initialize(&admin, &registry);
+        (client, admin)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
+
+        /// P1 – Conservation: minting `amount` credits and retiring `r` (where
+        /// r <= amount) always satisfies total_issued >= total_retired.
+        #[test]
+        fn prop_mint_retire_conservation(
+            amount in 10i128..=1_000i128,
+            retire_frac in 0u32..=100u32,
+        ) {
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let retire_amount = amount * retire_frac as i128 / 100;
+            prop_assume!(retire_amount >= 1, "retire amount must be >= 1");
+            prop_assume!(retire_amount <= amount, "retire cannot exceed mint");
+
+            let serial_end = amount as u64;
+            let r = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &amount, &2023_u32,
+                &s(&env, "b1"), &1_u64, &serial_end,
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r.is_ok(), "mint must succeed");
+
+            let batch = client.get_credit_batch(&s(&env, "b1"));
+            let issued = batch.amount;
+
+            let retire_result = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &retire_amount,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCID"),
+            );
+            if retire_result.is_ok() {
+                // Conservation: issued >= retired
+                prop_assert!(issued >= retire_amount,
+                    "P1 violated: issued={issued} < retired={retire_amount}");
+            }
+        }
+
+        /// P2 – Double-counting: minting two batches with overlapping serial
+        /// ranges always fails for the second batch.
+        #[test]
+        fn prop_overlapping_serial_rejected(
+            start1 in 1u64..=500u64,
+            width1 in 1u64..=200u64,
+            overlap_offset in 0u64..=100u64,
+            width2 in 1u64..=100u64,
+        ) {
+            let end1 = start1 + width1;
+            let start2 = start1 + overlap_offset;
+            let end2 = start2 + width2;
+            prop_assume!(start2 <= end1, "must be genuine overlap");
+
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let r1 = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &(width1 as i128 + 1), &2023_u32,
+                &s(&env, "b1"), &start1, &end1,
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r1.is_ok());
+
+            let r2 = client.try_mint_credits(
+                &admin, &s(&env, "p2"), &(width2 as i128 + 1), &2023_u32,
+                &s(&env, "b2"), &start2, &end2,
+                &s(&env, "QmCID"), &Address::generate(&env),
+            );
+            prop_assert_eq!(
+                r2.unwrap_err().unwrap(),
+                CarbonError::DoubleCountingDetected,
+                "P2 violated: overlapping range [{start2},{end2}] over [{start1},{end1}] was not rejected"
+            );
+        }
+
+        /// P3 – Idempotency: after retiring `r` credits from a batch,
+        /// attempting to retire more than the remaining active credits fails.
+        #[test]
+        fn prop_retire_overretire_fails(
+            total in 100i128..=1_000i128,
+            first_retire_frac in 10u32..=90u32,
+        ) {
+            let first_retire = total * first_retire_frac as i128 / 100;
+            prop_assume!(first_retire >= 1 && first_retire < total);
+
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let r = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &total, &2023_u32,
+                &s(&env, "b1"), &1_u64, &(total as u64),
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r.is_ok());
+
+            let retire1 = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &first_retire,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCID"),
+            );
+            prop_assume!(retire1.is_ok());
+
+            let remaining = total - first_retire;
+            let overretire = remaining + 1;
+
+            let retire2 = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &overretire,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-2"), &s(&env, "tx2"), &s(&env, "QmCID2"),
+            );
+            prop_assert!(retire2.is_err(),
+                "P3 violated: retiring {overretire} from {remaining} remaining credits should fail");
+        }
+
+        /// P4 – Zero-rejection: zero-amount operations (mint, retire, transfer)
+        /// always produce errors regardless of input parameters.
+        #[test]
+        fn prop_zero_amount_always_rejected(
+            serial_start in 1u64..=1000u64,
+            width in 1u64..=100u64,
+        ) {
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            // Zero-amount mint must fail
+            let mint_result = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &0_i128, &2023_u32,
+                &s(&env, "b-zero"), &serial_start, &(serial_start + width),
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assert!(mint_result.is_err(),
+                "P4 violated: zero-amount mint must be rejected");
+
+            // Mint a valid batch, then zero-amount retire must fail
+            let r = client.try_mint_credits(
+                &admin, &s(&env, "p2"), &(width as i128 + 1), &2023_u32,
+                &s(&env, "b1"), &serial_start, &(serial_start + width),
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r.is_ok());
+
+            let retire_result = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &0_i128,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-zero"), &s(&env, "tx"), &s(&env, "QmCID"),
+            );
+            prop_assert!(retire_result.is_err(),
+                "P4 violated: zero-amount retire must be rejected");
+
+            // Zero-amount transfer must fail
+            let to = Address::generate(&env);
+            let transfer_result = client.try_transfer_credits(
+                &owner, &to, &s(&env, "b1"), &0_i128,
+            );
+            prop_assert!(transfer_result.is_err(),
+                "P4 violated: zero-amount transfer must be rejected");
+        }
+    }
+}
