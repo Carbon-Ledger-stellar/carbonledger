@@ -16,6 +16,7 @@ import { IsString } from 'class-validator';
 import { RetirementsService } from './retirements.service';
 import { ExportRetirementsDto, RetireCreditsDto } from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
+import { ZkProofService } from './zk-proof.service';
 
 class VerifyCertificateDto {
   @IsString() retirementId: string;
@@ -24,7 +25,10 @@ class VerifyCertificateDto {
 
 @Controller('retirements')
 export class RetirementsController {
-  constructor(private readonly retirementsService: RetirementsService) {}
+  constructor(
+    private readonly retirementsService: RetirementsService,
+    private readonly zkProofService: ZkProofService,
+  ) {}
 
   // Fix IDOR: require auth; scope list to the caller's own retirements
   @Get()
@@ -126,5 +130,25 @@ export class RetirementsController {
   @HttpCode(200)
   verifyCertificateIntegrity(@Body() dto: VerifyCertificateDto) {
     return this.retirementsService.verifyCertificateIntegrity(dto.retirementId, dto.content);
+  }
+
+  @Post(':id/zk-proof')
+  @Roles('corporation', 'admin')
+  async createZkProof(@Param('id') id: string, @Request() req: any) {
+    const retirement = await this.retirementsService.findOne(id);
+    if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
+      throw new ForbiddenException('Access denied');
+    }
+    return this.zkProofService.generateProof(id);
+  }
+
+  @Get(':id/zk-proof')
+  @Roles('corporation', 'admin')
+  async getZkProof(@Param('id') id: string, @Request() req: any) {
+    const retirement = await this.retirementsService.findOne(id);
+    if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
+      throw new ForbiddenException('Access denied');
+    }
+    return this.zkProofService.getProof(id);
   }
 }

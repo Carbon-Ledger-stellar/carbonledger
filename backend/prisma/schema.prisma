@@ -88,8 +88,27 @@ model RetirementRecord {
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   ipfsFiles IPFSFile[]
   certificates RetirementCertificate[]
+  zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+}
+
+model ZkRetirementProof {
+  id                     String   @id @default(cuid())
+  retirementId           String
+  beneficiaryCommitment  String
+  nullifier              String   @unique
+  retiredByHash          String
+  proofJson              Json
+  publicSignals          Json
+  verifiedOnChain        Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  retirement RetirementRecord @relation(fields: [retirementId], references: [id], onDelete: Cascade)
+
+  @@index([retirementId])
+  @@index([retiredByHash])
 }
 
 model RetirementCertificate {

@@ -807,8 +807,10 @@ impl CarbonCreditContract {
     /// This is a **validation stub** that enforces structural correctness and a
     /// lightweight commitment check.  It is intentionally NOT a full zero-knowledge
     /// verifier — that requires a circuit-specific verifying key (Groth16/PLONK)
-    /// which is out of scope for this contract.  Replace `verify_proof_of_knowledge`
-    /// body with a call to your chosen verifier library before mainnet deployment.
+    /// Production Groth16 verification lives in `contracts/carbon_zk_verifier`
+    /// (Circom BLS12-381 / CAP-0059). This XOR stub remains for backward-
+    /// compatible unit tests of the legacy `ZkProof` format only — do not use
+    /// it for anonymous retirement certificates (see docs/zk-proof-spec.md).
     ///
     /// ## What this stub guarantees
     /// - Commitment is the correct length (32 bytes).
