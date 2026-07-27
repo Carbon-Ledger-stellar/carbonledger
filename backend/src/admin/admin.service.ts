@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
 import { RedisService } from '../redis.service';
+import { StellarNetworkService, CanaryConfig } from '../common/stellar-network.service';
 
 @Injectable()
 export class AdminService {
@@ -11,7 +12,50 @@ export class AdminService {
     private readonly indexer: IndexerService,
     private readonly oracle: OracleService,
     private readonly redis: RedisService,
+    private readonly stellarNetwork: StellarNetworkService,
   ) {}
+
+  // ── Canary deployment ───────────────────────────────────────────────────────
+
+  /**
+   * Update canary routing at runtime. Backs POST /api/v1/admin/canary, which is
+   * also the target of the Grafana rollback webhook (trafficPct=0).
+   *
+   * Returns synchronously because callers — including automated rollback — need
+   * the applied config immediately; the in-memory config is authoritative for
+   * routing and the AdminConfig write is only for surviving a restart.
+   */
+  updateCanary(config: Partial<CanaryConfig>): { config: CanaryConfig } {
+    const applied = this.stellarNetwork.setCanaryConfig(config);
+
+    if (config.trafficPct !== undefined) {
+      void this.prisma.adminConfig.upsert({
+        where:  { key: 'canary_traffic_pct' },
+        update: { value: String(applied.trafficPct) },
+        create: { key: 'canary_traffic_pct', value: String(applied.trafficPct) },
+      });
+    }
+    if (config.canaryContractId !== undefined) {
+      void this.prisma.adminConfig.upsert({
+        where:  { key: 'canary_contract_id' },
+        update: { value: applied.canaryContractId ?? '' },
+        create: { key: 'canary_contract_id', value: applied.canaryContractId ?? '' },
+      });
+    }
+
+    return { config: applied };
+  }
+
+  /** Current canary config plus observed primary/canary error rates. */
+  getCanaryStatus(): {
+    config: Readonly<CanaryConfig>;
+    errorRates: { primary: number; canary: number };
+  } {
+    return {
+      config:     this.stellarNetwork.getCanaryConfig(),
+      errorRates: this.stellarNetwork.getErrorRates(),
+    };
+  }
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
 

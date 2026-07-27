@@ -64,9 +64,9 @@ export class MonitoringService {
 
   private async getActiveListingsCount(): Promise<number> {
     try {
-      const count = await this.prisma.marketplace.count({
+      const count = await this.prisma.marketListing.count({
         where: {
-          status: "active",
+          status: "Active",
         },
       });
       return count;
@@ -81,9 +81,9 @@ export class MonitoringService {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      const count = await this.prisma.retirement.count({
+      const count = await this.prisma.retirementRecord.count({
         where: {
-          createdAt: {
+          retiredAt: {
             gte: today,
           },
         },
@@ -101,7 +101,7 @@ export class MonitoringService {
     daysSinceUpdate: number;
   }> {
     try {
-      const latestUpdate = await this.prisma.oracleUpdate.findFirst({
+      const latestUpdate = await this.prisma.oracleUpdateLog.findFirst({
         orderBy: {
           createdAt: "desc",
         },
@@ -202,7 +202,7 @@ export class MonitoringService {
     error?: string,
   ): Promise<void> {
     try {
-      await this.prisma.oracleUpdate.create({
+      await this.prisma.oracleUpdateLog.create({
         data: {
           dataType,
           success,

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
+import type { SignOptions } from 'jsonwebtoken';
 import { PassportModule } from '@nestjs/passport';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
@@ -18,7 +19,9 @@ import { PrismaService } from '../prisma.service';
     JwtModule.register({
       secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
       signOptions: {
-        expiresIn: process.env.JWT_EXPIRY || '15m',
+        // jsonwebtoken types expiresIn as a ms-style template literal; an env
+        // string can't be narrowed to it statically.
+        expiresIn: (process.env.JWT_EXPIRY || '15m') as SignOptions['expiresIn'],
         issuer: process.env.JWT_ISSUER || 'carbonledger',
       },
     }),

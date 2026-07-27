@@ -21,38 +21,22 @@
     "pretest:e2e": "npm run test:db:up && npm run test:db:migrate",
     "export:openapi": "npx ts-node --transpile-only src/export-openapi.ts"
   },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "setupFiles": [
-      "<rootDir>/jest.setup.ts"
-    ],
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
-  },
   "dependencies": {
     "@nest-lab/throttler-storage-redis": "1.2.0",
     "@nestjs/bullmq": "^11.0.4",
     "@nestjs/common": "^11.1.24",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.24",
+    "@nestjs/event-emitter": "^3.1.0",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.24",
+    "@nestjs/platform-socket.io": "^11.1.28",
     "@nestjs/schedule": "^6.1.3",
+    "@nestjs/swagger": "^11.4.6",
     "@nestjs/throttler": "^6.5.0",
-    "@prisma/client": "^7.8.0",
+    "@nestjs/websockets": "^11.1.28",
+    "@prisma/client": "^6.19.3",
     "@stellar/stellar-sdk": "^15.1.0",
     "axios": "^1.16.0",
     "bullmq": "^5.78.0",
@@ -61,6 +45,7 @@
     "form-data": "^4.0.5",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^7.0.13",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pdfkit": "^0.13.0",
@@ -68,6 +53,7 @@
     "qrcode": "^1.5.3",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
+    "socket.io": "^4.8.3",
     "uuid": "^14.0.0",
     "winston": "^3.14.2",
     "winston-cloudwatch": "^6.3.0"
@@ -77,11 +63,13 @@
     "@nestjs/testing": "^11.1.24",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^25.9.2",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^7.2.0",
     "jest": "^30.4.2",
-    "prisma": "^7.8.0",
+    "prisma": "^6.19.3",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.11",
     "ts-node": "^10.9.1",

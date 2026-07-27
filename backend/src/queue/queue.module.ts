@@ -7,13 +7,18 @@ import { AuthModule } from '../auth/auth.module';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { QUEUE_NAME } from './queue.constants';
 import { PrismaService } from '../prisma.service';
-import { CertificatesModule } from '../retirements/certificates.module';
+import { CertificateProcessor } from '../certificates/certificate.processor';
+// Two distinct CertificateService classes exist. QueueProcessor injects the
+// retirements one; CertificateProcessor comes from the certificates one.
+// Both modules are needed — aliased because the classes share a name.
+import { CertificatesModule as RetirementCertificatesModule } from '../retirements/certificates.module';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: QUEUE_NAME }),
     AuthModule,
     CertificatesModule,
+    RetirementCertificatesModule,
   ],
   providers: [QueueService, QueueProcessor, PrismaService],
   controllers: [QueueController],

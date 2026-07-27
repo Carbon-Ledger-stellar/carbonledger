@@ -5,6 +5,10 @@ import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
 import { v4 as uuidv4 } from "uuid";
+import { RedisService } from "../redis.service";
+import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { EventEmitter2 } from "@nestjs/event-emitter";
+import { VERIFIER_EVENTS, ProjectPendingVerificationEvent } from "../notifications/notification.events";
 
 @Injectable()
 export class ProjectsService {
@@ -15,6 +19,7 @@ export class ProjectsService {
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
+    private readonly events: EventEmitter2,
   ) {}
 
   async findAll(filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number }) {
@@ -166,8 +171,12 @@ export class ProjectsService {
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
 
     await this.redisService.set(cacheKey, project, PROJECT_DETAIL_CACHE_TTL_SECONDS);
-    if (!project) throw new NotFoundException('Project not found');
     return project;
+  }
+
+  /// Drop the cached detail payload so the next read repopulates it.
+  private async invalidateProjectCache(projectId: string): Promise<void> {
+    await this.redisService.del(projectDetailCacheKey(projectId));
   }
 
   async register(dto: RegisterProjectDto) {
@@ -199,6 +208,23 @@ export class ProjectsService {
       status: 'Pending',
     };
     const project = await this.prisma.carbonProject.create({ data });
+
+    // Push the new project to its assigned verifier so they don't have to poll.
+    // Unassigned projects have no recipient; the hourly deadline sweep will not
+    // pick them up either until a verifier is set.
+    if (project.verifierAddress) {
+      const event: ProjectPendingVerificationEvent = {
+        verifierAddress: project.verifierAddress,
+        projectId: project.projectId,
+        name: project.name,
+        methodology: project.methodology,
+        country: project.country,
+        vintageYear: project.vintageYear,
+        emittedAt: new Date().toISOString(),
+      };
+      this.events.emit(VERIFIER_EVENTS.PROJECT_PENDING_VERIFICATION, event);
+    }
+
     // Return project ID and a placeholder txHash (contract call would happen here)
     return {
       projectId: project.projectId,

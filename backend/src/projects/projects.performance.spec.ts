@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ProjectsService } from './projects.service';
 import { PrismaService } from '../prisma.service';
 import { SearchProjectsDto, ProjectStatus, OracleFreshness } from './projects.dto';
+
+const eventEmitterMock = { emit: jest.fn(), on: jest.fn(), off: jest.fn() };
 
 describe('ProjectsService Performance', () => {
   let service: ProjectsService;
@@ -63,6 +66,7 @@ describe('ProjectsService Performance', () => {
           provide: PrismaService,
           useValue: mockPrisma,
         },
+        { provide: EventEmitter2, useValue: eventEmitterMock },
       ],
     }).compile();
 
@@ -304,6 +308,8 @@ describe('ProjectsService Performance', () => {
   });
 
   describe('Performance Benchmarks', () => {
+    const mockProjects = generateMockProjects(1000);
+
     it('should generate performance report', async () => {
       const testCases = [
         { name: 'Basic Search', dto: { search: 'forestry' } as SearchProjectsDto },

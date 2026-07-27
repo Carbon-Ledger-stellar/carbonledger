@@ -43,7 +43,7 @@ export class CertificateProcessor {
       const pdfBuffer = await this.certificateService.generatePdf({
         retirementId: retirement.retirementId,
         beneficiary: retirement.beneficiary,
-        amount: retirement.amount,
+        amount: Number(retirement.amount),
         projectName: retirement.project.name,
         retirementReason: retirement.retirementReason,
         retiredAt: retirement.retiredAt,
@@ -84,7 +84,7 @@ export class CertificateProcessor {
           retirement.retiredBy,
           retirementId,
           url,
-          retirement.amount
+          Number(retirement.amount)
         );
       } catch (emailError) {
         this.logger.warn(

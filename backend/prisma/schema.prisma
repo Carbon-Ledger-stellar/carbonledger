@@ -55,6 +55,7 @@ model CreditBatch {
   serialEnd   String
   status      String   @default("Active")
   metadataCid String
+  owner       String?  // current holder; updated on transfer events
   issuedAt    DateTime @default(now()) @db.Timestamptz
 
   project     CarbonProject      @relation(fields: [projectId], references: [projectId])
@@ -80,6 +81,12 @@ model RetirementRecord {
   serialNumbers    String[]
   txHash           String
   certificateCid   String?
+  /// pending_certificate | generating | completed | failed — drives CertificateProcessor polling
+  certificateStatus      String    @default("pending_certificate")
+  certificateRetries     Int       @default(0)
+  certificateUrl         String?
+  certificateGeneratedAt DateTime?
+  certificateFailedAt    DateTime?
   isValid          Boolean  @default(true)
   validatedAt      DateTime?
   retiredAt        DateTime @default(now())
@@ -167,6 +174,23 @@ model OracleUpdate {
 
   @@index([status])
   @@index([projectId])
+}
+
+/// Audit trail for oracle / admin / JWT key rotations driven by KeyRotationService.
+model KeyRotation {
+  id          String    @id @default(cuid())
+  type        String    // oracle | admin | jwt
+  status      String    @default("pending") // pending | in_progress | completed | failed
+  reason      String
+  scheduledAt DateTime?
+  completedAt DateTime?
+  metadata    Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model OracleSyncState {
@@ -363,7 +387,7 @@ model SorobanSubmission {
   @@index([createdAt])
 }
 
-model OracleUpdate {
+model OracleUpdateLog {
   id        String   @id @default(cuid())
   dataType  String   // "verification" | "price" | "satellite"
   success   Boolean

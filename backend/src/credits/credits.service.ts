@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
+import { IpfsService } from "../common/ipfs.service";
 import { MintCreditsDto, RetireCreditsDto } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
@@ -101,6 +102,8 @@ export class CreditsService {
         retirementReason: dto.retirementReason,
         vintageYear:      batch.vintageYear,
         serialNumbers,
+        serialStart:      serialNumbers[0] ?? "",
+        serialEnd:        serialNumbers[serialNumbers.length - 1] ?? "",
         txHash:           randomBytes(32).toString("hex"),
         isValid:          true,
       },

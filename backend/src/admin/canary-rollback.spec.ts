@@ -8,17 +8,18 @@
  * self-contained using NestJS TestingModule.
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { StellarNetworkService } from '../../common/stellar-network.service';
-import { contractCallsRegistry } from '../../common/metrics.registry';
-import { AdminService } from '../admin.service';
-import { PrismaService } from '../../prisma.service';
-import { IndexerService } from '../../indexer/indexer.service';
-import { OracleService } from '../../oracle/oracle.service';
+import { StellarNetworkService } from '../common/stellar-network.service';
+import { contractCallsRegistry } from '../common/metrics.registry';
+import { AdminService } from './admin.service';
+import { PrismaService } from '../prisma.service';
+import { IndexerService } from '../indexer/indexer.service';
+import { OracleService } from '../oracle/oracle.service';
+import { RedisService } from '../redis.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 jest.mock('@stellar/stellar-sdk', () => ({
-  SorobanRpc: {
+  rpc: {
     Server: jest.fn().mockImplementation(() => ({
       getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1 }),
     })),
@@ -48,6 +49,12 @@ const mockOracle = {
   getPriceApprovals: jest.fn().mockResolvedValue([]),
 };
 
+const mockRedis = {
+  get: jest.fn().mockResolvedValue(null),
+  set: jest.fn().mockResolvedValue(true),
+  del: jest.fn().mockResolvedValue(true),
+};
+
 // ── Test suite ───────────────────────────────────────────────────────────────
 
 const PRIMARY_CONTRACT_ID = 'CPRIMARY000000000000000000000000000000000000000000000000';
@@ -72,6 +79,7 @@ describe('Canary Deployment — automated rollback integration', () => {
         { provide: PrismaService,  useValue: mockPrisma   },
         { provide: IndexerService, useValue: mockIndexer  },
         { provide: OracleService,  useValue: mockOracle   },
+        { provide: RedisService,   useValue: mockRedis    },
       ],
     }).compile();
 

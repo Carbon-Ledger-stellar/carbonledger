@@ -12,7 +12,7 @@ const COUNTRIES     = ["Brazil", "Indonesia", "Kenya", "India", "Colombia", "Per
 export default function NewProjectPage() {
   const [fields, setFields] = useState({
     name: "", methodology: "", country: "", projectType: "",
-    vintageYear: new Date().getFullYear(), coordinates: "",
+    vintageYear: new Date().getFullYear(), coordinates: "", verifierAddress: "",
   });
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [docFile, setDocFile]         = useState<File | null>(null);
@@ -118,6 +118,17 @@ export default function NewProjectPage() {
               style={{ ...inputStyle, borderColor: fieldErrors.vintageYear ? "#dc2626" : colors.neutral[300] }}
               value={fields.vintageYear} onChange={e => set("vintageYear", Number(e.target.value))} required />
           </Field>
+        </div>
+
+        <div>
+          <Field id="verifierAddress" label="Assigned Verifier (Stellar address)" error={fieldErrors.verifierAddress}>
+            <input id="verifierAddress" placeholder="G..."
+              style={{ ...inputStyle, borderColor: fieldErrors.verifierAddress ? "#dc2626" : colors.neutral[300] }}
+              value={fields.verifierAddress} onChange={e => set("verifierAddress", e.target.value)} />
+          </Field>
+          <p style={{ fontSize: "0.8rem", color: colors.neutral[500], margin: "0.25rem 0 0" }}>
+            Optional. When set, the verifier is notified in real time that this project awaits review.
+          </p>
         </div>
 
         <Field id="coordinates" label="Project Coordinates (lat, lng)" error={fieldErrors.coordinates}>

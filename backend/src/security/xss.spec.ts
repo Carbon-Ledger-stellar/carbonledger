@@ -15,7 +15,7 @@
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
+import request from "supertest";
 import * as jwt from "jsonwebtoken";
 
 import { AppModule } from "../app.module";
@@ -157,8 +157,8 @@ describe("XSS Sanitization (OWASP API3 / #423)", () => {
           amount: 10000,
           availableAmount: 10000,
           vintageYear: 2023,
-          serialStart: 1,
-          serialEnd: 10000,
+          serialStart: "1",
+          serialEnd: "10000",
           metadataCid: "QmXSSTest1234567890123456789012345678901234",
           ownerAddress: "GCORP_XSS",
           status: "active",

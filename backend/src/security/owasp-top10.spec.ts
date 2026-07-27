@@ -11,7 +11,7 @@
 
 import { Test, TestingModule } from "@nestjs/testing";
 import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
+import request from "supertest";
 import * as jwt from "jsonwebtoken";
 
 import { AppModule } from "../app.module";
@@ -312,6 +312,8 @@ describe("OWASP API Top 10 — Mass Assignment, Resource Consumption, Rate Limit
         retirementReason: "ESG",
         vintageYear: 2023,
         serialNumbers: ["8000"],
+        serialStart: "8000",
+        serialEnd: "8000",
         txHash: "cafebabe",
         certificateCid: "QmRealCIDThatWontMatchTamperedContent",
         isValid: true,

@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { ThemeProvider } from '../lib/theme-context';
+import { WalletProvider } from '../lib/wallet/WalletContext';
 import Navbar from '../components/Navbar';
 import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
 
@@ -24,10 +25,12 @@ export default function RootLayout({
          <a href="#main-content" className="skip-link">Skip to main content</a>
          <ServiceWorkerRegistration />
          <ThemeProvider>
-           <Navbar />
-           <main id="main-content">
-             {children}
-           </main>
+           <WalletProvider>
+             <Navbar />
+             <main id="main-content">
+               {children}
+             </main>
+           </WalletProvider>
          </ThemeProvider>
        </body>
     </html>

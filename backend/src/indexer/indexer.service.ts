@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { SorobanRpc, xdr, scValToNative } from '@stellar/stellar-sdk';
+import { rpc as SorobanRpc, xdr, scValToNative } from '@stellar/stellar-sdk';
 import { Interval } from '@nestjs/schedule';
 
 @Injectable()
@@ -99,9 +99,10 @@ export class IndexerService implements OnModuleInit {
     }
   }
 
-  private async processEvent(event: SorobanRpc.Api.GetEventsResponse.Event) {
-    const topics = event.topic.map((t) => scValToNative(xdr.ScVal.fromXDR(t, 'base64')));
-    const value = scValToNative(xdr.ScVal.fromXDR(event.value, 'base64'));
+  private async processEvent(event: SorobanRpc.Api.EventResponse) {
+    // v15 returns already-decoded ScVals from getEvents(), not base64 strings.
+    const topics = event.topic.map((t) => scValToNative(t));
+    const value = scValToNative(event.value);
 
     // topics[0] is usually the contract symbol (c_ledger)
     // topics[1] is the event type (minted, retired, transfer)
@@ -178,6 +179,8 @@ export class IndexerService implements OnModuleInit {
           retirementReason: 'On-chain retirement',
           vintageYear: batch?.vintageYear || 0,
           serialNumbers: [], // We'd need to calculate this from historical retirements
+          serialStart: batch?.serialStart ?? '',
+          serialEnd: batch?.serialEnd ?? '',
           txHash,
         },
       });
@@ -190,9 +193,9 @@ export class IndexerService implements OnModuleInit {
 
       const retiredSum = totalRetired._sum.amount || 0;
       let newStatus = 'Active';
-      if (batch && retiredSum >= batch.amount) {
+      if (batch && Number(retiredSum) >= Number(batch.amount)) {
         newStatus = 'FullyRetired';
-      } else if (retiredSum > 0) {
+      } else if (Number(retiredSum) > 0) {
         newStatus = 'PartiallyRetired';
       }
 

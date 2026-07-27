@@ -2,6 +2,11 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { KeyRotationService } from './key-rotation.service';
 import { PrismaService } from '../prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { Keypair } from '@stellar/stellar-sdk';
+
+// Real keypairs — the service validates secret→public with the Stellar SDK.
+const oracleKp = Keypair.random();
+const adminKp = Keypair.random();
 
 describe('KeyRotationService', () => {
   let service: KeyRotationService;
@@ -47,8 +52,8 @@ describe('KeyRotationService', () => {
 
   describe('initiateOracleRotation', () => {
     const validOracleRequest = {
-      newOraclePublicKey: 'GABC123...',
-      newOracleSecretKey: 'SABC123...',
+      newOraclePublicKey: oracleKp.publicKey(),
+      newOracleSecretKey: oracleKp.secret(),
       reason: 'Test rotation',
     };
 
@@ -63,7 +68,12 @@ describe('KeyRotationService', () => {
       };
 
       mockPrismaService.keyRotation.create.mockResolvedValue(mockRotation);
-      mockConfigService.get.mockReturnValue('mock-value');
+      mockPrismaService.keyRotation.findUnique.mockResolvedValue(mockRotation);
+      mockPrismaService.keyRotation.update.mockResolvedValue(mockRotation);
+      // executeOracleRotation signs with ADMIN_SECRET_KEY, so it must be a real secret.
+      mockConfigService.get.mockImplementation((key: string) =>
+        key === 'ADMIN_SECRET_KEY' ? adminKp.secret() : 'mock-value',
+      );
 
       const result = await service.initiateOracleRotation(validOracleRequest);
 
@@ -78,10 +88,10 @@ describe('KeyRotationService', () => {
     });
 
     it('should reject invalid keypair', async () => {
+      // Valid secret, but a public key belonging to a different keypair.
       const invalidRequest = {
         ...validOracleRequest,
-        newOraclePublicKey: 'GINVALID',
-        newOracleSecretKey: 'SINVALID',
+        newOraclePublicKey: Keypair.random().publicKey(),
       };
 
       await expect(service.initiateOracleRotation(invalidRequest)).rejects.toThrow(
@@ -92,8 +102,8 @@ describe('KeyRotationService', () => {
 
   describe('initiateAdminRotation', () => {
     const validAdminRequest = {
-      newAdminPublicKey: 'GXYZ123...',
-      newAdminSecretKey: 'SXYZ123...',
+      newAdminPublicKey: adminKp.publicKey(),
+      newAdminSecretKey: adminKp.secret(),
       reason: 'Test admin rotation',
       multiSigRequired: true,
       timeLockHours: 24,
@@ -121,7 +131,7 @@ describe('KeyRotationService', () => {
 
   describe('initiateJWTRotation', () => {
     const validJWTRequest = {
-      newJWTSecret: 'new-secret-key-32-chars-minimum',
+      newJWTSecret: 'new-jwt-secret-with-32-chars-min!',
       reason: 'Test JWT rotation',
       transitionPeriodHours: 24,
     };
@@ -137,6 +147,8 @@ describe('KeyRotationService', () => {
       };
 
       mockPrismaService.keyRotation.create.mockResolvedValue(mockRotation);
+      mockPrismaService.keyRotation.findUnique.mockResolvedValue(mockRotation);
+      mockPrismaService.keyRotation.update.mockResolvedValue(mockRotation);
       mockConfigService.get.mockReturnValue('old-secret');
 
       const result = await service.initiateJWTRotation(validJWTRequest);
