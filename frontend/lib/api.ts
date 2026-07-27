@@ -1,4 +1,5 @@
 import useSWR, { SWRConfiguration } from "swr";
+import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
@@ -17,7 +18,14 @@ export interface CarbonProject {
   totalCreditsIssued: number;
   totalCreditsRetired: number;
   metadataCid: string;
-  methodologyScore: number;
+  /**
+   * Raw shape returned by the API for the Prisma `coordinates: Json?` field.
+   * `latitude`/`longitude` below are kept for existing call sites but are
+   * never actually populated by the API — use `coordinates` for new code.
+   */
+  coordinates?: { lat: number; lng: number } | null;
+  latitude?: number;
+  longitude?: number;
   createdAt: string;
 }
 
@@ -26,6 +34,7 @@ export interface CreditBatch {
   batchId: string;
   projectId: string;
   vintageYear: number;
+  /** Fractional tonnes supported, e.g. 0.5 tCO₂e. Minimum 0.01. */
   amount: number;
   serialStart: string;
   serialEnd: string;
@@ -41,12 +50,14 @@ export interface MarketListing {
   projectName: string;
   batchId: string;
   seller: string;
+  /** Fractional tonnes supported, e.g. 0.5 tCO₂e. Minimum 0.01. */
   amountAvailable: number;
   pricePerCredit: string;
   vintageYear: number;
   methodology: string;
   country: string;
   status: string;
+  oracleDaysSinceUpdate?: number;
   createdAt: string;
 }
 
@@ -56,6 +67,7 @@ export interface RetirementRecord {
   batchId: string;
   projectId: string;
   projectName?: string;
+  /** Fractional tonnes supported, e.g. 0.5 tCO₂e. */
   amount: number;
   retiredBy: string;
   beneficiary: string;
@@ -82,11 +94,22 @@ export interface OracleStatus {
   latestScore: number | null;
 }
 
+export interface OracleHistoryEntry {
+  submittedAt: string;
+  score: number;
+}
+
 export interface PlatformStats {
   totalCreditsIssued: number;
   totalCreditsRetired: number;
   activeProjects: number;
   marketplaceVolume: string;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  beneficiary: string;
+  totalTonnes: number;
 }
 
 // ── Fetcher ───────────────────────────────────────────────────────────────────
@@ -113,11 +136,31 @@ export function useProjects(params?: { methodology?: string; country?: string; v
   return useSWR<CarbonProject[]>(`${API_URL}/projects?${query}`, fetcher, swrConfig);
 }
 
+/**
+ * GET /projects actually returns a paginated wrapper
+ * ({ projects, nextCursor, hasMore, total }), not a bare array — unlike
+ * the `useProjects` hook above, which mistypes it as `CarbonProject[]`.
+ * This hook types and unwraps it correctly. Used by the marketplace map
+ * to fetch project coordinates for pin placement without touching the
+ * existing (mistyped) `useProjects` hook or its current call site.
+ */
+export interface PaginatedProjectsResponse {
+  projects: CarbonProject[];
+  nextCursor?: string;
+  hasMore: boolean;
+  total: number;
+}
+
+export function useProjectsForMap(params?: { methodology?: string; country?: string; vintage?: number; limit?: number }) {
+  const query = new URLSearchParams(params as Record<string, string>).toString();
+  return useSWR<PaginatedProjectsResponse>(`${API_URL}/projects?${query}`, fetcher, swrConfig);
+}
+
 export function useProject(id: string) {
   return useSWR<CarbonProject>(id ? `${API_URL}/projects/${id}` : null, fetcher, swrConfig);
 }
 
-export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string }) {
+export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string; projectType?: string; search?: string }) {
   const query = new URLSearchParams(params as Record<string, string>).toString();
   return useSWR<MarketListing[]>(`${API_URL}/marketplace/listings?${query}`, fetcher, swrConfig);
 }
@@ -142,11 +185,60 @@ export function useOracleStatus(projectId: string) {
   );
 }
 
+export function useOracleHistory(projectId: string) {
+  return useSWR<OracleHistoryEntry[]>(
+    projectId ? `${API_URL}/oracle/history/${projectId}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
+export interface AggregateStats {
+  active_listings_count: number;
+  totalCreditsRetired: number;
+}
+
+export function useAggregateStats() {
+  return useSWR<AggregateStats>(`${API_URL}/stats/aggregate`, fetcher, {
+    ...swrConfig,
+    refreshInterval: 60_000,
+  });
+}
+
 export function usePlatformStats() {
   return useSWR<PlatformStats>(`${API_URL}/stats`, fetcher, {
     ...swrConfig,
     refreshInterval: 30_000,
   });
+}
+
+export interface ProvenanceEvent {
+  type: "registered" | "verified" | "minted" | "listed" | "purchased" | "transferred" | "retired";
+  label: string;
+  timestamp: string;
+  actor?: string;
+  txHash?: string;
+  detail?: string;
+}
+
+export interface SerialLookupResult {
+  serialNumber: string;
+  batchId: string;
+  projectId: string;
+  projectName?: string;
+  vintageYear: number;
+  methodology?: string;
+  country?: string;
+  currentOwner?: string;
+  status: "active" | "retired";
+  // Retirement fields (present when status === "retired")
+  retirementId?: string;
+  beneficiary?: string;
+  retirementReason?: string;
+  retiredAt?: string;
+  txHash?: string;
+  // Chain of custody
+  provenance: ProvenanceEvent[];
 }
 
 export function useSerialLookup(serial: string) {
@@ -157,9 +249,136 @@ export function useSerialLookup(serial: string) {
   );
 }
 
+export function useSerialRangeLookup(start: string, end: string) {
+  const key = start && end ? `${API_URL}/credits/lookup?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}` : null;
+  return useSWR<SerialLookupResult[]>(key, fetcher, swrConfig);
+}
+
+export function useSerialSingleLookup(serial: string) {
+  return useSWR<SerialLookupResult>(
+    serial ? `${API_URL}/credits/lookup/${encodeURIComponent(serial)}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
+export interface ProvenanceTransfer {
+  eventType: string;
+  actor: string;
+  from: string | null;
+  to: string | null;
+  txHash: string;
+  timestamp: string;
+}
+
+export interface SerialProvenanceResult {
+  serialNumber: string;
+  batch: {
+    batchId: string;
+    vintageYear: number;
+    amount: number;
+    serialStart: string;
+    serialEnd: string;
+    status: string;
+    issuedAt: string;
+    metadataCid: string;
+  };
+  project: {
+    projectId: string;
+    name: string;
+    methodology: string;
+    country: string;
+    vintageYear: number;
+  };
+  currentOwner: string | null;
+  status: "active" | "retired";
+  transfers: ProvenanceTransfer[];
+  provenance: Array<{ eventType: string; actor: string; txHash: string; timestamp: string }>;
+  retirement: {
+    retirementId: string;
+    retiredBy: string;
+    beneficiary: string;
+    retirementReason: string;
+    vintageYear: number;
+    txHash: string;
+    retiredAt: string;
+    certificateUrl: string | null;
+  } | null;
+}
+
+/**
+ * useSerialProvenance — full provenance for a single serial number.
+ * Returns credit batch details, project info, all transfer events in
+ * chronological order, and retirement details if retired.
+ * Accessible without authentication (public audit endpoint).
+ */
+export function useSerialProvenance(serial: string) {
+  return useSWR<SerialProvenanceResult>(
+    serial ? `${API_URL}/credits/provenance/${encodeURIComponent(serial)}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
+export interface OracleServiceStatus {
+  status: "healthy" | "stale" | "offline";
+  lastSubmissionAt: string | null;
+  staleThresholdDays?: number;
+  staleThresholdHours?: number;
+}
+
+export interface OracleServicesHealth {
+  services: {
+    verification_listener: OracleServiceStatus;
+    price_oracle:          OracleServiceStatus;
+    satellite_monitor:     OracleServiceStatus;
+  };
+  generatedAt: string;
+}
+
+/**
+ * useOracleServicesHealth — aggregate health of all oracle services.
+ * Returns status (healthy | stale | offline) + last submission timestamp
+ * for each of the three oracle services.
+ * Always returns 200; stale/offline status is encoded in the response body.
+ * Refreshes every 30 seconds to match the server-side cache TTL.
+ */
+export function useOracleServicesHealth() {
+  return useSWR<OracleServicesHealth>(
+    `${API_URL}/oracle/services/health`,
+    fetcher,
+    { ...swrConfig, refreshInterval: 30_000 },
+  );
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
+export interface BulkPurchaseItem {
+  listingId: string;
+  amount: number;
+}
+
+export interface BulkPurchaseResult {
+  txHash: string;
+  batchIds: string[];
+}
+
+export async function bulkPurchase(
+  items: BulkPurchaseItem[],
+  buyerPublicKey: string,
+): Promise<BulkPurchaseResult> {
+  if (items.length === 0) throw new Error("Cart is empty");
+  const res = await fetch(`${API_URL}/marketplace/bulk-purchase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items, buyerPublicKey }),
+  });
+  if (!res.ok) throw new Error((await res.json()).message);
+  return res.json();
+}
+
 export async function purchaseCredits(listingId: string, amount: number, buyerPublicKey: string) {
+  if (amount < 0.01) throw new Error("Minimum purchase is 0.01 tCO₂e");
   const res = await fetch(`${API_URL}/marketplace/purchase`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -176,6 +395,13 @@ export async function retireCredits(payload: {
   retirementReason: string;
   holderPublicKey: string;
 }) {
+  // Frontend validation should prevent these from reaching this point
+  if (payload.amount < 0.01) throw new Error("Minimum retirement is 0.01 tCO₂e");
+  if (!payload.beneficiary?.trim()) throw new Error("Beneficiary name is required");
+  if (payload.beneficiary.length > 100) throw new Error("Beneficiary name must not exceed 100 characters");
+  if (!payload.retirementReason?.trim()) throw new Error("Retirement reason is required");
+  if (payload.retirementReason.length > 500) throw new Error("Retirement reason must not exceed 500 characters");
+  
   const res = await fetch(`${API_URL}/credits/retire`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -183,6 +409,45 @@ export async function retireCredits(payload: {
   });
   if (!res.ok) throw new Error((await res.json()).message);
   return res.json();
+}
+
+export interface RegisterProjectPayload {
+  name: string;
+  methodology: string;
+  country: string;
+  projectType: string;
+  vintageYear: number;
+  coordinates: string;
+  metadataCid: string;
+}
+
+export interface FieldErrors {
+  [field: string]: string;
+}
+
+export async function registerProject(payload: RegisterProjectPayload): Promise<CarbonProject> {
+  const res = await fetch(`${API_URL}/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 400) {
+    const body = await res.json();
+    const err: any = new Error(body.message || "Validation error");
+    err.fieldErrors = body.errors ?? {};
+    throw err;
+  }
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Network error");
+  return res.json();
+}
+
+export async function uploadToIpfs(file: File): Promise<string> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_URL}/ipfs/upload`, { method: "POST", body: form });
+  if (!res.ok) throw new Error("IPFS upload failed");
+  const { cid } = await res.json();
+  return cid;
 }
 
 export async function generateCertificatePdf(retirementId: string): Promise<Blob> {

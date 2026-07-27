@@ -11,6 +11,7 @@ Runbooks for CarbonLedger production incidents. Each runbook follows the same st
 | 3 | Double-counting alert | Critical | [double-counting.md](double-counting.md) |
 | 4 | Database corruption | High | [database-corruption.md](database-corruption.md) |
 | 5 | Key compromise | Critical | [key-compromise.md](key-compromise.md) |
+| 6 | Contract upgrade | High | [contract-upgrade.md](contract-upgrade.md) |
 
 ## Supporting Docs
 

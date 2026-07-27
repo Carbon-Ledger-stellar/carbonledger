@@ -1,6 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { IpfsService } from "../common/ipfs.service";
+import { RetireCreditsDto } from "./retirements.dto";
+import { CertificateService } from "./certificate.service";
+import { v4 as uuidv4 } from "uuid";
 
 export interface PaginatedRetirementsResponse {
   retirements: any[];
@@ -15,19 +18,71 @@ export class RetirementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ipfsService: IpfsService,
+    private readonly certificateService: CertificateService,
   ) {}
 
-  async findAll(cursor?: string, limit = 20): Promise<PaginatedRetirementsResponse> {
+  async retireCredits(dto: RetireCreditsDto) {
+    // Check if already retired (same batchId + retiredBy combination)
+    const existing = await this.prisma.retirementRecord.findFirst({
+      where: { batchId: dto.batchId, retiredBy: dto.retiredBy },
+    });
+    if (existing) {
+      throw new ConflictException('Credits already retired (AlreadyRetired)');
+    }
+
+    const batch = await this.prisma.creditBatch.findUnique({ where: { batchId: dto.batchId } });
+    if (!batch) throw new NotFoundException(`Credit batch ${dto.batchId} not found`);
+
+    const retirementId = uuidv4();
+    const retirement = await this.prisma.retirementRecord.create({
+      data: {
+        retirementId,
+        batchId: dto.batchId,
+        projectId: dto.projectId,
+        amount: dto.amount,
+        retiredBy: dto.retiredBy,
+        beneficiary: dto.beneficiary,
+        retirementReason: dto.retirementReason,
+        vintageYear: batch.vintageYear,
+        serialStart: batch.serialStart,
+        serialEnd: batch.serialEnd,
+        serialNumbers: [],
+        txHash: dto.txHash,
+      },
+    });
+
+    // Generate and pin certificate to IPFS
+    let certificateCid: string | null = null;
+    try {
+      const result = await this.certificateService.generateAndPinCertificate(retirementId);
+      certificateCid = result.cid;
+    } catch (err) {
+      this.logger.warn(`Certificate generation failed for ${retirementId}: ${err.message}`);
+    }
+
+    return {
+      retirementId: retirement.retirementId,
+      txHash: retirement.txHash,
+      certificateCid,
+      certificateUrl: certificateCid
+        ? `https://gateway.pinata.cloud/ipfs/${certificateCid}`
+        : null,
+    };
+  }
+
+  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
     const take = Math.min(Math.max(limit, 1), 100);
+    const where = retiredBy ? { retiredBy } : {};
 
     const [retirements, total_count] = await Promise.all([
       this.prisma.retirementRecord.findMany({
+        where,
         orderBy: { retiredAt: "desc" },
         take: take + 1,
         cursor: cursor ? { id: cursor } : undefined,
         skip: cursor ? 1 : 0,
       }),
-      this.prisma.retirementRecord.count(),
+      this.prisma.retirementRecord.count({ where }),
     ]);
 
     const hasMore = retirements.length > take;
@@ -42,7 +97,7 @@ export class RetirementsService {
       where: { retirementId },
       include: { project: true, batch: true },
     });
-    if (!r) throw new NotFoundException(`Retirement ${retirementId} not found`);
+    if (!r) throw new NotFoundException('Retirement not found');
     return r;
   }
 
@@ -116,5 +171,29 @@ export class RetirementsService {
   async generatePdf(retirementId: string): Promise<Buffer> {
     const retirement = await this.findOne(retirementId);
     return Buffer.from(JSON.stringify(retirement));
+  }
+
+  async exportCsv(filters: any): Promise<Buffer> {
+    const where: any = {};
+    if (filters.retiredBy)   where.retiredBy   = filters.retiredBy;
+    if (filters.projectId)   where.projectId   = filters.projectId;
+    if (filters.batchId)     where.batchId     = filters.batchId;
+    if (filters.beneficiary) where.beneficiary = { contains: filters.beneficiary, mode: "insensitive" };
+    if (filters.vintageYear) where.vintageYear = filters.vintageYear;
+
+    const retirements = await this.prisma.retirementRecord.findMany({ where, orderBy: { retiredAt: "desc" } });
+
+    const header = "retirementId,batchId,projectId,amount,retiredBy,beneficiary,retirementReason,vintageYear,txHash,retiredAt\n";
+    const rows = retirements.map((r) =>
+      [r.retirementId, r.batchId, r.projectId, r.amount, r.retiredBy, r.beneficiary, r.retirementReason, r.vintageYear, r.txHash, r.retiredAt.toISOString()].join(",")
+    ).join("\n");
+
+    return Buffer.from(header + rows);
+  }
+
+  async exportPdf(filters: any): Promise<Buffer> {
+    const csvBuffer = await this.exportCsv(filters);
+    // Minimal PDF wrapper — production would use pdfkit
+    return Buffer.from(`%PDF-1.4\n% ESG Retirement Report\n${csvBuffer.toString()}`);
   }
 }
