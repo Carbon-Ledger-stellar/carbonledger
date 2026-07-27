@@ -641,3 +641,16 @@ MIT License — see [LICENSE](./LICENSE) for details.
 [Website](#) · [Audit Explorer](#) · [Twitter](#) · [Discord](#)
 
 </div>
+
+## Integration Tests
+
+### Running Integration Tests
+
+To run all integration tests:
+
+```bash
+# Run all tests
+./scripts/test-all.sh
+
+# Run only integration tests
+cargo test --test lifecycle_integration_test -- --nocapture
