@@ -5,6 +5,7 @@ calculates weighted average per methodology/vintage, and pushes to carbon_oracle
 every 12 hours. Alerts admin if price deviation exceeds 15%.
 """
 
+import json
 import os
 import time
 import logging
@@ -32,8 +33,81 @@ BACKEND_JWT_TOKEN    = os.environ.get("BACKEND_JWT_TOKEN", "") # Used for authen
 PRICE_DEVIATION_ALERT = 0.15  # 15%
 USDC_STROOPS         = 10_000_000  # 1 USDC = 10^7 stroops
 
+# Maximum age (seconds) for a cached price to be used as fallback (48 hours)
+MAX_FALLBACK_AGE_SECS = 48 * 60 * 60
+
 # In-memory cache of last pushed prices for deviation detection
 _last_prices: dict[tuple[str, int], int] = {}
+
+# ── Redis client for last-good price persistence ─────────────────────────────
+
+_redis_client = None
+
+def _get_redis():
+    """Lazily initialize a Redis connection. Returns None if unavailable."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    try:
+        import redis as redis_lib
+        _redis_client = redis_lib.Redis(
+            host=os.environ.get("REDIS_HOST", "localhost"),
+            port=int(os.environ.get("REDIS_PORT", "6379")),
+            password=os.environ.get("REDIS_PASSWORD") or None,
+            decode_responses=True,
+            socket_connect_timeout=5,
+        )
+        _redis_client.ping()
+        return _redis_client
+    except Exception as e:
+        log.warning("Redis unavailable, fallback disabled: %s", e)
+        _redis_client = None
+        return None
+
+
+def _last_good_key(methodology: str, vintage: int) -> str:
+    return f"carbonledger:price:last_good:{methodology}:{vintage}"
+
+
+def persist_last_good_price(methodology: str, vintage: int, stroops: int) -> None:
+    """Persist a verified price to Redis as the last-known-good value."""
+    r = _get_redis()
+    if r is None:
+        return
+    try:
+        payload = json.dumps({
+            "stroops": stroops,
+            "saved_at": int(time.time()),
+        })
+        r.set(_last_good_key(methodology, vintage), payload)
+    except Exception as e:
+        log.error("Failed to persist last-good price for %s/%d: %s", methodology, vintage, e)
+
+
+def load_last_good_price(methodology: str, vintage: int) -> tuple[int, float] | None:
+    """Load last-known-good price from Redis.
+
+    Returns (stroops, age_seconds) or None if unavailable / stale.
+    """
+    r = _get_redis()
+    if r is None:
+        return None
+    try:
+        raw = r.get(_last_good_key(methodology, vintage))
+        if not raw:
+            return None
+        data = json.loads(raw)
+        stroops = int(data["stroops"])
+        saved_at = int(data["saved_at"])
+        age = time.time() - saved_at
+        if age > MAX_FALLBACK_AGE_SECS:
+            log.warning("Cached price for %s/%d is stale (%.0fs old, max %ds)",
+                        methodology, vintage, age, MAX_FALLBACK_AGE_SECS)
+            return None
+        return stroops, age
+    except Exception as e:
+        log.error("Failed to load last-good price for %s/%d: %s", methodology, vintage, e)
+        return None
 
 # ── Price feed fetchers ───────────────────────────────────────────────────────
 
@@ -173,6 +247,86 @@ def hold_price_update(methodology: str, vintage_year: int, stroops: int, deviati
     except Exception as e:
         log.error("Failed to contact backend for hold: %s", e)
 
+
+def _set_fallback_gauge(value: int) -> None:
+    """Set the oracle_using_fallback_price Prometheus gauge.
+
+    Writes a Prometheus text format metric to a file or stdout.
+    In production, use the prometheus_client library; here we emit
+    a simple metric line that can be scraped by Prometheus.
+    """
+    try:
+        from prometheus_client import Gauge, REGISTRY
+        gauge_name = "oracle_using_fallback_price"
+        # Reuse existing gauge if already registered
+        gauge = None
+        for collector in list(REGISTRY._names_to_collectors.values()):
+            if getattr(collector, "_name", None) == gauge_name:
+                gauge = collector
+                break
+        if gauge is None:
+            gauge = Gauge(gauge_name, "1 when oracle is using fallback price data",
+                          ["methodology", "vintage"])
+        # We set a global flag; methodology/vintage are set per-price
+        gauge.labels(methodology="*", vintage="*").set(value)
+    except ImportError:
+        # prometheus_client not installed — emit a structured log instead
+        if value:
+            log.warning("PROMETHEUS: oracle_using_fallback_price=1")
+        else:
+            log.info("PROMETHEUS: oracle_using_fallback_price=0")
+
+
+def _load_fallback_prices() -> dict[tuple[str, int], float]:
+    """Load prices from Redis cache for all previously persisted methodology/vintage pairs.
+
+    Returns a dict mapping (methodology, vintage) → price_usd.
+    """
+    fallback_prices: dict[tuple[str, int], float] = {}
+    r = _get_redis()
+    if r is None:
+        return fallback_prices
+
+    try:
+        # Scan for all last_good keys
+        cursor = 0
+        pattern = "carbonledger:price:last_good:*"
+        while True:
+            cursor, keys = r.scan(cursor=cursor, match=pattern, count=100)
+            for key in keys:
+                try:
+                    raw = r.get(key)
+                    if not raw:
+                        continue
+                    data = json.loads(raw)
+                    stroops = int(data["stroops"])
+                    saved_at = int(data["saved_at"])
+                    age = time.time() - saved_at
+
+                    if age > MAX_FALLBACK_AGE_SECS:
+                        log.warning("Skipping stale fallback price: %s (age %.0fs)", key, age)
+                        continue
+
+                    # Parse methodology and vintage from key
+                    # Format: carbonledger:price:last_good:{methodology}:{vintage}
+                    parts = key.split(":")
+                    methodology = parts[4]
+                    vintage = int(parts[5])
+                    price_usd = stroops / USDC_STROOPS
+
+                    fallback_prices[(methodology, vintage)] = price_usd
+                    log.info("Loaded fallback price %s/%d → $%.2f USD (age %.0fs)",
+                             methodology, vintage, price_usd, age)
+                except Exception as e:
+                    log.error("Failed to parse fallback price key %s: %s", key, e)
+
+            if cursor == 0:
+                break
+    except Exception as e:
+        log.error("Failed to scan Redis for fallback prices: %s", e)
+
+    return fallback_prices
+
 def process_approved_prices():
     """Poll backend for approved price updates and submit them on-chain."""
     log.info("Checking for approved price updates...")
@@ -228,8 +382,30 @@ def update_prices():
     toucan_data  = fetch_toucan_prices()
     prices       = aggregate_prices(xpansiv_data, toucan_data)
 
+    both_feeds_failed = len(xpansiv_data) == 0 and len(toucan_data) == 0
+    feed_names = []
+    feed_errors = []
+
+    if not xpansiv_data:
+        feed_names.append("Xpansiv")
+        feed_errors.append("Xpansiv CBL feed unavailable")
+    if not toucan_data:
+        feed_names.append("Toucan")
+        feed_errors.append("Toucan Protocol feed unavailable")
+
+    if both_feeds_failed:
+        log.warning("Both price feeds failed — attempting fallback to last-known-good prices")
+        _set_fallback_gauge(1)
+        alert_admin(
+            f"Price oracle fallback activated: {', '.join(feed_errors)}. "
+            f"Attempting to use cached prices from Redis."
+        )
+        prices = _load_fallback_prices()
+    else:
+        _set_fallback_gauge(0)
+
     if not prices:
-        log.warning("No price data available from any feed")
+        log.warning("No price data available from any feed or cache")
         return
 
     for (methodology, vintage_year), price_usd in prices.items():
@@ -244,6 +420,8 @@ def update_prices():
                 hold_price_update(methodology, vintage_year, stroops, deviation)
                 continue # HOLD: do not submit on-chain
 
+        is_fallback = both_feeds_failed
+
         try:
             tx_hash = build_and_submit(
                 server, keypair,
@@ -256,7 +434,13 @@ def update_prices():
                 ],
             )
             _last_prices[key] = stroops
-            log.info("Updated price %s/%d → $%.2f USD (tx %s)", methodology, vintage_year, price_usd, tx_hash)
+
+            if not is_fallback:
+                persist_last_good_price(methodology, vintage_year, stroops)
+
+            log.info("Updated price %s/%d → $%.2f USD (tx %s)%s",
+                     methodology, vintage_year, price_usd, tx_hash,
+                     " [fallback]" if is_fallback else "")
 
         except Exception as e:
             log.error("Failed to push price for %s/%d: %s", methodology, vintage_year, e)
