@@ -1,6 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
+  turbopack: {
+    root: __dirname,
+  },
   images: { domains: ["ipfs.io", "gateway.pinata.cloud"] },
   env: {
     NEXT_PUBLIC_STELLAR_NETWORK: process.env.NEXT_PUBLIC_STELLAR_NETWORK || "testnet",

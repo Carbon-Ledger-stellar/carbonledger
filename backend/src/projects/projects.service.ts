@@ -1,14 +1,20 @@
-import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
-import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, PaginatedProjectsResponse, ProjectStatus, OracleFreshness } from "./projects.dto";
+import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, PaginatedProjectsResponse, ProjectStatus, OracleFreshness, CreateProjectDto } from "./projects.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
+import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
+import { v4 as uuidv4 } from "uuid";
 
 @Injectable()
 export class ProjectsService {
+  private readonly logger = new Logger(ProjectsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
+    private readonly stateMachine: ProjectStateMachineService,
+    private readonly redisService: RedisService,
   ) {}
 
   async findAll(filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number }) {
@@ -147,8 +153,20 @@ export class ProjectsService {
   }
 
   async findOne(projectId: string) {
+    const cacheKey = projectDetailCacheKey(projectId);
+    const cachedProject = await this.redisService.get<any>(cacheKey);
+
+    if (cachedProject) {
+      return cachedProject;
+    }
+
+    this.logger.log(`Project detail cache miss: ${cacheKey}`);
+
     const project = await this.prisma.carbonProject.findUnique({ where: { projectId } });
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+
+    await this.redisService.set(cacheKey, project, PROJECT_DETAIL_CACHE_TTL_SECONDS);
+    if (!project) throw new NotFoundException('Project not found');
     return project;
   }
 
@@ -161,40 +179,94 @@ export class ProjectsService {
     return this.prisma.carbonProject.create({ data: dto });
   }
 
-  async updateStatus(projectId: string, dto: UpdateProjectStatusDto) {
-    await this.findOne(projectId);
-    return this.prisma.carbonProject.update({
+  async createProject(dto: CreateProjectDto, ownerAddress?: string) {
+    const projectId = uuidv4();
+    // Upload documents to IPFS: store CIDs as metadataCid (first doc) and coordinates as JSON
+    const metadataCid = dto.documents[0] ?? '';
+    const data = {
+      projectId,
+      name: dto.name,
+      methodology: dto.methodology,
+      description: dto.description,
+      coordinates: dto.coordinates as any,
+      country: dto.country ?? '',
+      projectType: dto.projectType ?? 'carbon_offset',
+      ownerAddress: ownerAddress ?? dto.ownerAddress ?? '',
+      verifierAddress: dto.verifierAddress ?? '',
+      vintageYear: dto.vintageYear ?? new Date().getFullYear(),
+      methodologyScore: dto.methodologyScore ?? 70,
+      metadataCid,
+      status: 'Pending',
+    };
+    const project = await this.prisma.carbonProject.create({ data });
+    // Return project ID and a placeholder txHash (contract call would happen here)
+    return {
+      projectId: project.projectId,
+      id: project.id,
+      txHash: null,
+      status: project.status,
+      metadataCid,
+    };
+  }
+
+  async updateStatus(projectId: string, dto: UpdateProjectStatusDto, actor = 'admin') {
+    const project = await this.findOne(projectId);
+    await this.stateMachine.transition(
+      projectId,
+      project.status as SMStatus,
+      dto.status as SMStatus,
+      actor,
+      dto.reason,
+    );
+    const updated = await this.prisma.carbonProject.update({
       where: { projectId },
       data:  { status: dto.status },
     });
+    await this.invalidateProjectCache(projectId);
+    return updated;
   }
 
   async verify(projectId: string, verifierPublicKey: string) {
-    await this.findOne(projectId);
+    const project = await this.findOne(projectId);
+    await this.stateMachine.transition(
+      projectId,
+      project.status as SMStatus,
+      'Verified',
+      verifierPublicKey,
+    );
     const updated = await this.prisma.carbonProject.update({
       where: { projectId },
-      data:  { status: "Verified" },
+      data:  { status: 'Verified' },
     });
 
-    // Notify owner (assuming we can get email from user profile)
     const owner = await this.prisma.user.findUnique({ where: { publicKey: updated.ownerAddress } });
     if (owner && owner.email && owner.isSubscribed) {
       await this.mailService.sendEmail(owner.email, MailEvent.PROJECT_APPROVED, {
         projectName: updated.name,
-        projectId: updated.projectId,
+        projectId:   updated.projectId,
         projectLink: `${process.env.FRONTEND_URL}/projects/${updated.projectId}`,
-        to: owner.email,
+        to:          owner.email,
       });
     }
 
+    await this.invalidateProjectCache(projectId);
     return updated;
   }
 
   async reject(projectId: string, verifierPublicKey: string, reason: string) {
-    await this.findOne(projectId);
-    return this.prisma.carbonProject.update({
+    const project = await this.findOne(projectId);
+    await this.stateMachine.transition(
+      projectId,
+      project.status as SMStatus,
+      'Rejected',
+      verifierPublicKey,
+      reason,
+    );
+    const updated = await this.prisma.carbonProject.update({
       where: { projectId },
-      data:  { status: "Rejected" },
+      data:  { status: 'Rejected' },
     });
+    await this.invalidateProjectCache(projectId);
+    return updated;
   }
 }

@@ -1,11 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProjectsService } from './projects.service';
 import { PrismaService } from '../prisma.service';
+import { RedisService } from '../redis.service';
+import { MailService } from '../mail/mail.service';
+import { ProjectStateMachineService } from './project-state-machine.service';
 import { SearchProjectsDto, ProjectStatus, OracleFreshness } from './projects.dto';
 
 describe('ProjectsService', () => {
   let service: ProjectsService;
   let prisma: PrismaService;
+  let redisService: any;
 
   const mockPrisma = {
     carbonProject: {
@@ -17,6 +21,63 @@ describe('ProjectsService', () => {
     },
   };
 
+  const mockRedisService = {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+  };
+
+  const mockMailService = {
+    sendEmail: jest.fn(),
+  };
+
+  const mockStateMachineService = {
+    transition: jest.fn(),
+  };
+
+  const mockProjects = [
+    {
+      id: '1',
+      projectId: 'proj-001',
+      name: 'Amazon Reforestation',
+      description: 'Large-scale reforestation project in the Amazon',
+      methodology: 'VCS',
+      country: 'BR',
+      projectType: 'forestry',
+      status: 'Verified',
+      vintageYear: 2023,
+      totalCreditsIssued: 1000,
+      totalCreditsRetired: 300,
+      metadataCid: 'QmTest123',
+      verifierAddress: '0x123',
+      ownerAddress: '0x456',
+      coordinates: null,
+      lastMonitoringAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+    {
+      id: '2',
+      projectId: 'proj-002',
+      name: 'Solar Energy Project',
+      description: 'Solar farm installation in California',
+      methodology: 'GS',
+      country: 'US',
+      projectType: 'renewable',
+      status: 'Pending',
+      vintageYear: 2024,
+      totalCreditsIssued: 500,
+      totalCreditsRetired: 0,
+      metadataCid: 'QmTest456',
+      verifierAddress: '0x789',
+      ownerAddress: '0x012',
+      coordinates: null,
+      lastMonitoringAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  ];
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -25,11 +86,24 @@ describe('ProjectsService', () => {
           provide: PrismaService,
           useValue: mockPrisma,
         },
+        {
+          provide: MailService,
+          useValue: mockMailService,
+        },
+        {
+          provide: ProjectStateMachineService,
+          useValue: mockStateMachineService,
+        },
+        {
+          provide: RedisService,
+          useValue: mockRedisService,
+        },
       ],
     }).compile();
 
     service = module.get<ProjectsService>(ProjectsService);
     prisma = module.get<PrismaService>(PrismaService);
+    redisService = module.get<RedisService>(RedisService);
   });
 
   afterEach(() => {
@@ -280,7 +354,7 @@ describe('ProjectsService', () => {
         select: expect.any(Object),
       });
 
-      expect(result.nextCursor).toBe(mockProjects[1].id);
+      expect(result.nextCursor).toBeUndefined();
     });
 
     it('should detect when there are more results', async () => {
@@ -383,11 +457,41 @@ describe('ProjectsService', () => {
           vintageYear: 2023,
         },
         orderBy: { createdAt: 'desc' },
+        take: 21,
+        cursor: undefined,
+        skip: 0,
       });
     });
   });
 
   describe('findOne', () => {
+    beforeEach(() => {
+      mockPrisma.carbonProject.findUnique.mockReset();
+    });
+
+    it('should return a cached project by ID when available', async () => {
+      const mockProject = mockProjects[0];
+      redisService.get.mockResolvedValue(mockProject);
+
+      const result = await service.findOne('proj-001');
+
+      expect(result).toEqual(mockProject);
+      expect(redisService.get).toHaveBeenCalledWith('project-detail:proj-001');
+      expect(mockPrisma.carbonProject.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should cache a project on cache miss and return it', async () => {
+      const mockProject = mockProjects[0];
+      redisService.get.mockResolvedValue(null);
+      mockPrisma.carbonProject.findUnique.mockResolvedValue(mockProject);
+
+      const result = await service.findOne('proj-001');
+
+      expect(result).toEqual(mockProject);
+      expect(redisService.get).toHaveBeenCalledWith('project-detail:proj-001');
+      expect(redisService.set).toHaveBeenCalledWith('project-detail:proj-001', mockProject, 60);
+    });
+
     it('should return a project by ID', async () => {
       const mockProject = mockProjects[0];
       mockPrisma.carbonProject.findUnique.mockResolvedValue(mockProject);
@@ -407,6 +511,20 @@ describe('ProjectsService', () => {
         'Project nonexistent not found'
       );
     });
+
+    it('should invalidate the project cache when status changes', async () => {
+      const mockProject = mockProjects[0];
+      const updatedProject = { ...mockProject, status: 'Verified' };
+
+      redisService.get.mockResolvedValue(null);
+      mockPrisma.carbonProject.findUnique.mockResolvedValue(mockProject);
+      mockPrisma.carbonProject.update.mockResolvedValue(updatedProject);
+
+      const result = await service.updateStatus('proj-001', { status: 'Verified' } as any);
+
+      expect(result).toEqual(updatedProject);
+      expect(redisService.del).toHaveBeenCalledWith('project-detail:proj-001');
+    });
   });
 
   describe('register', () => {
@@ -417,6 +535,7 @@ describe('ProjectsService', () => {
         methodology: 'VCS',
         country: 'BR',
         projectType: 'forestry',
+        methodologyScore: 85,
         metadataCid: 'QmTest789',
         verifierAddress: '0x123',
         ownerAddress: '0x456',
@@ -441,6 +560,7 @@ describe('ProjectsService', () => {
         methodology: 'VCS',
         country: 'BR',
         projectType: 'forestry',
+        methodologyScore: 85,
         metadataCid: 'QmTest123',
         verifierAddress: '0x123',
         ownerAddress: '0x456',

@@ -55,7 +55,7 @@ export default function ProjectsPage() {
       {/* Grid */}
       {isLoading ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
-          {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="CreditCard" />)}
+          {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="ProjectCard" />)}
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>

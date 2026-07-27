@@ -21,22 +21,23 @@ resource "aws_elasticache_subnet_group" "main" {
   subnet_ids = aws_subnet.private[*].id
 }
 
-# ── ElastiCache Redis ─────────────────────────────────────────────────────────
+# ── ElastiCache Redis (Replication Group for HA) ──────────────────────────────
 
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "${local.name}-redis"
-  engine               = "redis"
-  engine_version       = "7.1"
-  node_type            = var.redis_node_type
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  port                 = 6379
-  subnet_group_name    = aws_elasticache_subnet_group.main.name
-  security_group_ids   = [aws_security_group.redis.id]
+resource "aws_elasticache_replication_group" "redis" {
+  replication_group_id          = "${local.name}-redis"
+  description                   = "Redis replication group for ${local.name}"
+  node_type                     = var.redis_node_type
+  num_cache_clusters            = var.redis_num_cache_clusters
+  parameter_group_name          = "default.redis7"
+  port                          = 6379
+  subnet_group_name             = aws_elasticache_subnet_group.main.name
+  security_group_ids            = [aws_security_group.redis.id]
+  automatic_failover_enabled    = true
+  multi_az_enabled              = true
 
   tags = { Name = "${local.name}-redis" }
 }
 
 output "redis_endpoint" {
-  value = aws_elasticache_cluster.redis.cache_nodes[0].address
+  value = aws_elasticache_replication_group.redis.primary_endpoint_address
 }
