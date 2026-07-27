@@ -69,6 +69,35 @@ The oracle is considered failed when **any** of the following are true:
 2. Replay missed webhook payloads from the satellite provider's dashboard if available.
 3. If replay is not possible, manually submit monitoring data via `carbon_oracle.submit_monitoring_data()` using verified off-chain records.
 
+### GEE Webhook Secret Rotation
+
+The satellite monitor verifies incoming webhook payloads using an HMAC-SHA256 signature
+via the `GEE_WEBHOOK_SECRET` environment variable. To rotate the secret:
+
+1. Generate a new secret:
+   ```bash
+   openssl rand -hex 32
+   ```
+
+2. Update `GEE_WEBHOOK_SECRET` in the oracle's environment (`.env` or Docker secret):
+   ```bash
+   GEE_WEBHOOK_SECRET=<new_hex_secret>
+   ```
+
+3. Update the webhook URL in Google Earth Engine's export configuration with the new secret.
+   The signature header is `X-GEE-Signature: sha256=<hmac_hex>`.
+
+4. Restart the satellite monitor:
+   ```bash
+   systemctl restart satellite_monitor
+   # or
+   docker restart carbonledger-satellite-monitor
+   ```
+
+5. Verify a test payload is accepted with the new secret.
+
+6. **Rollback**: If the new secret causes failures, revert to the previous value and restart.
+
 ### Unsuspend projects
 
 Once oracle is confirmed healthy:
