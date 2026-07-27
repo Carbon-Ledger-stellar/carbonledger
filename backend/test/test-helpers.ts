@@ -21,6 +21,7 @@ export async function cleanDatabase(app: INestApplication) {
   await prisma.oracleUpdate.deleteMany();
   await prisma.marketListing.deleteMany();
   await prisma.retirementRecord.deleteMany();
+  await prisma.idempotencyRecord.deleteMany();
   await prisma.creditBatch.deleteMany();
   await prisma.carbonProject.deleteMany();
   await prisma.job.deleteMany();

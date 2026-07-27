@@ -10,12 +10,18 @@ import {
   ForbiddenException,
   HttpCode,
   Header,
+  HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { IsString } from 'class-validator';
 import { RetirementsService } from './retirements.service';
-import { ExportRetirementsDto, RetireCreditsDto } from './retirements.dto';
+import {
+  ExportRetirementsDto,
+  RetireCreditsDto,
+  BulkRetirementsDto,
+} from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
+import { QuotaBucket } from '../throttle';
 
 class VerifyCertificateDto {
   @IsString() retirementId: string;
@@ -40,6 +46,26 @@ export class RetirementsController {
   @Roles('corporation', 'admin')
   retireCredits(@Body() dto: RetireCreditsDto) {
     return this.retirementsService.retireCredits(dto);
+  }
+
+  @Post('bulk')
+  @Roles('corporation', 'admin')
+  @QuotaBucket('bulkRetire')
+  async bulkRetireCredits(
+    @Body() dto: BulkRetirementsDto,
+    @Request() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.retirementsService.bulkRetireCredits({
+      ...dto,
+      retiredBy: req.user.publicKey,
+    });
+
+    if ('jobId' in result) {
+      res.status(HttpStatus.ACCEPTED);
+    }
+
+    return result;
   }
 
   // Fix IDOR: require auth; only the owner or admin may read a specific retirement
