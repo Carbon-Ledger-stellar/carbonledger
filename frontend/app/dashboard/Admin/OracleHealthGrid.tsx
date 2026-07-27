@@ -11,8 +11,8 @@ interface Props {
 type OracleStatus = 'healthy' | 'warning' | 'stale';
 
 function getStatus(o: OracleHealth): OracleStatus {
-  if (!o.isCurrent)            return 'stale';
-  if (o.daysSinceUpdate > 180) return 'warning';
+  if (o.daysSinceUpdate >= 365) return 'stale';
+  if (o.daysSinceUpdate >= 300) return 'warning';
   return 'healthy';
 }
 

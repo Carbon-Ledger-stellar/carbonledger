@@ -27,3 +27,4 @@ This directory contains ADRs for CarbonLedger. Each ADR documents a significant 
 | [ADR-003](ADR-003-usdc-over-xlm-payments.md) | USDC over XLM for payments | Accepted |
 | [ADR-004](ADR-004-oracle-design.md) | Oracle architecture — off-chain bridge | Accepted |
 | [ADR-005](ADR-005-off-chain-storage.md) | Off-chain storage — PostgreSQL + IPFS | Accepted |
+| [ADR-006](ADR-006-retirement-state-machine.md) | Retirement state machine invariants | Accepted |

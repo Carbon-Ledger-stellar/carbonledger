@@ -45,3 +45,50 @@ resource "aws_iam_role_policy" "app_s3" {
 }
 
 output "assets_bucket" { value = aws_s3_bucket.assets.bucket }
+
+# ── S3 bucket for PostgreSQL backups ─────────────────────────────────────────
+
+resource "aws_s3_bucket" "db_backups" {
+  bucket = "${var.project}-db-backups-${terraform.workspace}"
+}
+
+resource "aws_s3_bucket_versioning" "db_backups" {
+  bucket = aws_s3_bucket.db_backups.id
+  versioning_configuration { status = "Enabled" }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "db_backups" {
+  bucket = aws_s3_bucket.db_backups.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "db_backups" {
+  bucket                  = aws_s3_bucket.db_backups.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "db_backups" {
+  bucket = aws_s3_bucket.db_backups.id
+
+  rule {
+    id     = "expire-after-30-days"
+    status = "Enabled"
+
+    expiration {
+      days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+}
+
+output "db_backups_bucket" { value = aws_s3_bucket.db_backups.bucket }

@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Pre-commit hook: block accidental secret commits
+# Checks staged files for patterns that look like real secrets
+#
+# Install: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# Or run:  bash scripts/setup-hooks.sh
+
+set -euo pipefail
+
+RED='\033[0;31m'
+NC='\033[0m'
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# Block .env files (except .env.example)
+for f in $STAGED; do
+  if [[ "$f" =~ ^\.env$ ]] || ([[ "$f" =~ \.env\. ]] && [[ ! "$f" =~ \.env\.example ]]); then
+    echo -e "${RED}ERROR: Attempting to commit env file: $f${NC}"
+    echo "Remove it with: git reset HEAD $f"
+    exit 1
+  fi
+done
+
+# Patterns that indicate real secret values
+SECRET_PATTERNS=(
+  'ORACLE_SECRET_KEY=[A-Z0-9]{56}'
+  'ADMIN_SECRET_KEY=[A-Z0-9]{56}'
+  'JWT_SECRET=[^$\n]{20,}'
+  'POSTGRES_PASSWORD=[^$\n<]{4,}'
+  'IPFS_SECRET_KEY=[^$\n]{10,}'
+  'PLANET_LABS_API_KEY=[^$\n]{10,}'
+  'GOOGLE_EARTH_ENGINE_KEY=[^$\n]{10,}'
+  'XPANSIV_API_KEY=[^$\n]{10,}'
+  'TOUCAN_API_KEY=[^$\n]{10,}'
+  'GEE_WEBHOOK_SECRET=[^$\n]{10,}'
+  'GOLD_STANDARD_API_KEY=[^$\n]{10,}'
+  'VERRA_VCS_API_KEY=[^$\n]{10,}'
+  'ADMIN_ALERT_WEBHOOK=https?://[^$\n]{10,}'
+  'S[A-Z0-9]{55}'
+  'AAAA[A-Za-z0-9+/]{60,}={0,2}'
+)
+
+FOUND=0
+for f in $STAGED; do
+  for pattern in "${SECRET_PATTERNS[@]}"; do
+    if git diff --cached -- "$f" | grep -qE "^\+.*${pattern}"; then
+      echo -e "${RED}ERROR: Possible secret detected in $f (pattern: $pattern)${NC}"
+      FOUND=1
+    fi
+  done
+done
+
+if [ "$FOUND" -eq 1 ]; then
+  echo ""
+  echo "Commit blocked. Review the above and:"
+  echo "  1. Remove the secret value from the file"
+  echo "  2. Store it in AWS Secrets Manager or GitHub Actions secrets"
+  echo "  3. Reference it via environment variable injection at runtime"
+  echo ""
+  echo "To bypass (only if you are certain this is a false positive):"
+  echo "  git commit --no-verify"
+  exit 1
+fi
+
+exit 0

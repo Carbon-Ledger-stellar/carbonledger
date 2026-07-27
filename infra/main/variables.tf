@@ -33,3 +33,8 @@ variable "redis_node_type" {
   description = "ElastiCache node type"
   default     = "cache.t3.micro"
 }
+
+variable "redis_num_cache_clusters" {
+  description = "Number of cache clusters (nodes) in the replication group"
+  default     = 2
+}
