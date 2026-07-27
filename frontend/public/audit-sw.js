@@ -15,6 +15,7 @@ const STATIC_CACHE = `carbonledger-static-${SW_VERSION}`;
 
 /** API path prefixes that belong to the audit data plane. */
 const AUDIT_API_PATTERNS = [
+  '/api/v1/public',
   '/api/audit',
   '/retirements',
   '/projects',
