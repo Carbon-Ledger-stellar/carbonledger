@@ -36,6 +36,28 @@ export class RetirementsController {
     return this.retirementsService.findAll(cursor, limit ? Number(limit) : 20, req.user.publicKey);
   }
 
+  /**
+   * Full-text search over retirements using the PostgreSQL tsvector GIN index (#670).
+   * Scoped to the authenticated caller's retirements.
+   */
+  @Get('search')
+  searchRetirements(
+    @Request() req: any,
+    @Query('search')      search?: string,
+    @Query('projectId')   projectId?: string,
+    @Query('vintageYear') vintageYear?: string,
+    @Query('cursor')      cursor?: string,
+    @Query('limit')       limit?: string,
+  ) {
+    return this.retirementsService.searchRetirements({
+      search,
+      projectId,
+      retiredBy: req.user.publicKey,
+      vintageYear: vintageYear ? Number(vintageYear) : undefined,
+      cursor,
+      limit: limit ? Number(limit) : 20,
+    });
+  }
   @Post()
   @Roles('corporation', 'admin')
   retireCredits(@Body() dto: RetireCreditsDto) {

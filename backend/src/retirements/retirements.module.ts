@@ -21,5 +21,6 @@ import { CertificateService } from "./certificate.service";
     RetirementIndexerService,
     CertificateService,
   ],
+  exports: [RetirementsService],
 })
 export class RetirementsModule {}
