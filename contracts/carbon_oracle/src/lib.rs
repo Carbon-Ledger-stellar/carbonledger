@@ -84,6 +84,10 @@ pub enum DataKey {
     Admin,
     ContractVersion,
     UpgradeHistory,
+    /// Configurable liveness SLA in seconds.  Default: 365 days (31_536_000 s).
+    LivenessSlaSeconds,
+    /// Address of the carbon_registry contract for cross-contract suspend calls.
+    RegistryAddress,
 }
 
 // -- Types --------------------------------------------------------------------
@@ -117,6 +121,8 @@ pub struct CarbonOracleContract;
 
 #[contractimpl]
 impl CarbonOracleContract {
+
+    pub fn initialize(env: Env, admin: Address, oracle_address: Address, oracle_pub_key: BytesN<32>, registry_address: Address) -> Result<(), CarbonError> {
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -128,6 +134,12 @@ impl CarbonOracleContract {
         }
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
+        env.storage().persistent().set(&DataKey::OracleAddress, &oracle_address);
+        env.storage().persistent().set(&DataKey::OraclePublicKey, &oracle_pub_key);
+        env.storage().persistent().set(&DataKey::OracleNonce, &0_u64);
+        env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage().persistent().set(&DataKey::RegistryAddress, &registry_address);
+        env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &MONITORING_FRESHNESS_SECS);
         env.storage()
             .persistent()
             .set(&DataKey::OracleAddress, &oracle_address);
@@ -396,6 +408,90 @@ impl CarbonOracleContract {
         }
     }
 
+    /// Permissionless liveness check.  Anyone may call this to verify that a
+    /// project's monitoring data is within the configured SLA window.  If the
+    /// data is stale the function:
+    ///   1. Flags the project in oracle storage
+    ///   2. Cross-contract calls `carbon_registry::oracle_suspend_project`
+    ///   3. Emits a `(c_ledger, liveness_flag)` event
+    ///
+    /// Idempotent: if the project is already flagged, no action is taken.
+    pub fn check_liveness(env: Env, project_id: String) -> Result<(), CarbonError> {
+        let sla: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LivenessSlaSeconds)
+            .unwrap_or(MONITORING_FRESHNESS_SECS);
+
+        let latest: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LatestMonitoring(project_id.clone()));
+
+        let is_stale = match latest {
+            None => true,
+            Some(ts) => env.ledger().timestamp().saturating_sub(ts) > sla,
+        };
+
+        if !is_stale {
+            return Ok(());
+        }
+
+        // Idempotent: skip if already flagged.
+        let already_flagged: Option<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        if already_flagged.is_some() {
+            return Ok(());
+        }
+
+        let reason = String::from_str(&env, "liveness_sla_breach");
+
+        // 1. Flag in oracle storage.
+        env.storage().persistent().set(
+            &DataKey::FlaggedProject(project_id.clone()),
+            &reason,
+        );
+
+        // 2. Cross-contract call: suspend in registry.
+        let registry_address: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RegistryAddress)
+            .ok_or(CarbonError::ProjectNotFound)?;
+
+        env.invoke_contract(
+            &registry_address,
+            &env.symbol("oracle_suspend_project"),
+            (
+                project_id.clone(),
+                reason.clone(),
+            ).into_val(&env),
+        );
+
+        // 3. Emit event.
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("liveness_flag")),
+            (project_id, reason),
+        );
+
+        Ok(())
+    }
+
+    /// Admin-only: adjust the liveness SLA window in seconds.
+    pub fn set_liveness_sla(env: Env, admin: Address, seconds: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &seconds);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("sla_upd")),
+            (admin, seconds),
+        );
+        Ok(())
+    }
+
     /// Returns true if the benchmark price for (methodology, vintage_year) was
     /// updated within the last 24 hours.  Returns false if the price was never
     /// set or was last updated more than PRICE_STALENESS_SECS (24 h) ago.
@@ -582,6 +678,11 @@ mod tests {
 
         let admin = Address::generate(env);
         let oracle = Address::generate(env);
+        let registry = Address::generate(env);
+        let id     = env.register_contract(None, CarbonOracleContract);
+        let client = CarbonOracleContractClient::new(env, &id);
+        
+        client.initialize(&admin, &oracle, &pub_key, &registry);
         let id = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
 
@@ -760,11 +861,15 @@ mod staleness_tests {
         let signing_key = test_signing_key();
         let pub_bytes = signing_key.verifying_key().to_bytes();
         let pub_key = BytesN::from_array(env, &pub_bytes);
+        let admin    = Address::generate(env);
+        let oracle   = Address::generate(env);
+        let registry = Address::generate(env);
+        let id     = env.register_contract(None, CarbonOracleContract);
         let admin = Address::generate(env);
         let oracle = Address::generate(env);
         let id = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
-        client.initialize(&admin, &oracle, &pub_key);
+        client.initialize(&admin, &oracle, &pub_key, &registry);
         (client, admin, oracle, signing_key)
     }
 
@@ -1001,6 +1106,13 @@ mod vintage_year_validation_tests {
         let signing_key = test_signing_key();
         let pub_bytes = signing_key.verifying_key().to_bytes();
         let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let admin    = Address::generate(&env);
+        let oracle   = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id     = env.register_contract(None, CarbonOracleContract);
+        let client = CarbonOracleContractClient::new(&env, &id);
+        client.initialize(&admin, &oracle, &pub_key, &registry);
+        (env, client, admin, oracle, signing_key)
         let admin = Address::generate(&env);
         let oracle = Address::generate(&env);
         let id = env.register_contract(None, CarbonOracleContract);
@@ -1226,5 +1338,328 @@ mod vintage_year_validation_tests {
     #[test]
     fn test_oracle_invalid_vintage_error_code() {
         assert_eq!(CarbonError::InvalidVintageYear as u32, 9);
+    }
+}
+
+// ── Liveness Check Tests ─────────────────────────────────────────────────────
+//
+// Tests for check_liveness() and the cross-contract suspend mechanism.
+// Validates that stale monitoring data triggers flag + suspend, that the check
+// is idempotent, and that the SLA window is configurable.
+#[cfg(test)]
+mod liveness_tests {
+    use super::*;
+    use carbon_registry::{
+        CarbonRegistryContract, CarbonRegistryContractClient,
+        ProjectStatus,
+    };
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger, LedgerInfo},
+        Env, String, BytesN, vec,
+    };
+    use ed25519_dalek::{SigningKey, Signer};
+    use rand::rngs::OsRng;
+    use soroban_sdk::xdr::ToXdr;
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn advance_time(env: &Env, secs: u64) {
+        let ts  = env.ledger().timestamp();
+        let seq = env.ledger().sequence();
+        env.ledger().set(LedgerInfo {
+            timestamp:           ts + secs,
+            protocol_version:    20,
+            sequence_number:     seq + 1,
+            network_id:          [0; 32],
+            base_reserve:        10,
+            min_temp_entry_ttl:  1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl:       518_400,
+        });
+    }
+
+    /// Deploy both contracts and wire them together.
+    fn setup_cross_contract() -> (
+        Env,
+        CarbonOracleContractClient,
+        CarbonRegistryContractClient,
+        Address,  // admin
+        Address,  // oracle signer
+        Address,  // verifier
+        SigningKey,
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.ledger().set(LedgerInfo {
+            timestamp:           1_735_689_600, // 2025-01-01
+            protocol_version:    20,
+            sequence_number:     1,
+            network_id:          [0; 32],
+            base_reserve:        10,
+            min_temp_entry_ttl:  1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl:       518_400,
+        });
+
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let pub_bytes = signing_key.verifying_key().to_bytes();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+
+        let admin    = Address::generate(&env);
+        let oracle   = Address::generate(&env);
+        let verifier = Address::generate(&env);
+
+        // Register both contracts.
+        let oracle_id  = env.register_contract(None, CarbonOracleContract);
+        let registry_id = env.register_contract(None, CarbonRegistryContract);
+
+        let oracle_client  = CarbonOracleContractClient::new(&env, &oracle_id);
+        let registry_client = CarbonRegistryContractClient::new(&env, &registry_id);
+
+        // Initialize registry with oracle contract address as the oracle.
+        registry_client.initialize(&admin, &oracle_id, &vec![&env, verifier.clone()]);
+
+        // Initialize oracle with registry contract address.
+        oracle_client.initialize(&admin, &oracle, &pub_key, &registry_id);
+
+        (env, oracle_client, registry_client, admin, oracle, verifier, signing_key)
+    }
+
+    fn sign_monitoring(
+        env: &Env,
+        key: &SigningKey,
+        project_id: &String,
+        period: &String,
+        tonnes: i128,
+        score: u32,
+        cid: &String,
+    ) -> BytesN<64> {
+        let payload = (project_id.clone(), period.clone(), tonnes, score, cid.clone()).to_xdr(env);
+        let sig = key.sign(payload.to_alloc_vec().as_slice());
+        BytesN::from_array(env, &sig.to_bytes())
+    }
+
+    fn register_project(
+        env: &Env,
+        registry: &CarbonRegistryContractClient,
+        admin: &Address,
+        project_id: &str,
+    ) {
+        registry.register_project(
+            admin,
+            &s(env, project_id),
+            &s(env, "Test Project"),
+            &s(env, "QmCID"),
+            &Address::generate(env),
+            &s(env, "VCS"),
+            &s(env, "Brazil"),
+            &s(env, "forestry"),
+            &75_u32,
+            &2023_u32,
+        );
+    }
+
+    // ── 1. Fresh data → no flag ──────────────────────────────────────────────
+
+    #[test]
+    fn test_check_liveness_fresh_data_no_flag() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-fresh");
+        register_project(&env, &registry_client, &admin, "proj-fresh");
+
+        let period = s(&env, "2025-Q1");
+        let cid    = s(&env, "QmCID");
+        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        // Check immediately — data is fresh.
+        oracle_client.check_liveness(&project_id);
+
+        // Project should NOT be flagged.
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert!(flagged.is_none(), "fresh project should not be flagged");
+
+        // Project should still be Verified (not Suspended).
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Pending);
+    }
+
+    // ── 2. Stale data → flag + suspend ───────────────────────────────────────
+
+    #[test]
+    fn test_check_liveness_stale_data_flags_and_suspends() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-stale");
+        register_project(&env, &registry_client, &admin, "proj-stale");
+
+        let period = s(&env, "2025-Q1");
+        let cid    = s(&env, "QmCID");
+        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        // Advance past the 365-day default SLA.
+        advance_time(&env, 366 * 24 * 60 * 60);
+
+        oracle_client.check_liveness(&project_id);
+
+        // Project should be flagged in oracle storage.
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
+
+        // Project should be Suspended in the registry.
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Suspended);
+    }
+
+    // ── 3. Already flagged → idempotent ──────────────────────────────────────
+
+    #[test]
+    fn test_check_liveness_already_flagged_is_idempotent() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-idem");
+        register_project(&env, &registry_client, &admin, "proj-idem");
+
+        let period = s(&env, "2025-Q1");
+        let cid    = s(&env, "QmCID");
+        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        advance_time(&env, 366 * 24 * 60 * 60);
+
+        // First call — should flag and suspend.
+        oracle_client.check_liveness(&project_id);
+
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Suspended);
+
+        // Second call — should be idempotent (no error).
+        oracle_client.check_liveness(&project_id);
+
+        // Status unchanged.
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Suspended);
+    }
+
+    // ── 4. SLA change → different behavior ───────────────────────────────────
+
+    #[test]
+    fn test_check_liveness_custom_sla() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-sla");
+        register_project(&env, &registry_client, &admin, "proj-sla");
+
+        let period = s(&env, "2025-Q1");
+        let cid    = s(&env, "QmCID");
+        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        // Set a very short SLA: 1 hour.
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+
+        // Advance 2 hours — past the 1-hour SLA.
+        advance_time(&env, 2 * 60 * 60);
+
+        oracle_client.check_liveness(&project_id);
+
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
+
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Suspended);
+    }
+
+    // ── 5. No monitoring data ever → stale ───────────────────────────────────
+
+    #[test]
+    fn test_check_liveness_no_data_ever_is_stale() {
+        let (env, oracle_client, registry_client, admin, _, _, _) =
+            setup_cross_contract();
+
+        register_project(&env, &registry_client, &admin, "proj-never");
+
+        let project_id = s(&env, "proj-never");
+        oracle_client.check_liveness(&project_id);
+
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
+
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Suspended);
+    }
+
+    // ── 6. Fresh data within custom SLA → no flag ────────────────────────────
+
+    #[test]
+    fn test_check_liveness_fresh_within_custom_sla() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-sla-fresh");
+        register_project(&env, &registry_client, &admin, "proj-sla-fresh");
+
+        let period = s(&env, "2025-Q1");
+        let cid    = s(&env, "QmCID");
+        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        // Set a long SLA: 2 years.
+        let two_years: u64 = 2 * 365 * 24 * 60 * 60;
+        oracle_client.set_liveness_sla(&admin, &two_years);
+
+        // Advance 366 days — within the 2-year SLA.
+        advance_time(&env, 366 * 24 * 60 * 60);
+
+        oracle_client.check_liveness(&project_id);
+
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert!(flagged.is_none(), "should not be flagged within custom SLA");
+
+        let p = registry_client.get_project(&project_id);
+        assert_ne!(p.status, ProjectStatus::Suspended);
     }
 }

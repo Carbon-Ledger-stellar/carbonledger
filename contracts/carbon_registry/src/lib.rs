@@ -346,6 +346,32 @@ impl CarbonRegistryContract {
         Ok(())
     }
 
+    /// Permissionless cross-contract entry point for the oracle to suspend a
+    /// project when its monitoring data goes stale (liveness SLA breach).
+    ///
+    /// Only callable by the registered oracle address (cross-contract).
+    /// Idempotent: returns `Ok(())` if the project is already suspended.
+    pub fn oracle_suspend_project(
+        env: Env,
+        project_id: String,
+        reason: String,
+    ) -> Result<(), CarbonError> {
+        Self::require_oracle(&env, &env.invoker())?;
+
+        let mut project = Self::load_project(&env, &project_id)?;
+        if project.status == ProjectStatus::Suspended {
+            return Ok(());
+        }
+        project.status = ProjectStatus::Suspended;
+        env.storage().persistent().set(&DataKey::Project(project_id.clone()), &project);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("suspended")),
+            (project_id, env.invoker(), reason),
+        );
+        Ok(())
+    }
+
     pub fn get_project(env: Env, project_id: String) -> Result<CarbonProject, CarbonError> {
         Self::load_project(&env, &project_id)
     }
@@ -1112,5 +1138,58 @@ mod edge_case_tests {
             result.unwrap_err().unwrap(),
             CarbonError::AlreadyInitialized
         );
+    }
+}
+
+// ── oracle_suspend_project tests ─────────────────────────────────────────────
+//
+// Tests for the cross-contract suspend entry point used by the oracle when
+// monitoring data goes stale (liveness SLA breach).
+//
+// Note: `oracle_suspend_project` authenticates via `env.invoker()`, so direct
+// unit-test calls go through the registered oracle contract in cross-contract
+// liveness tests in carbon_oracle.  Here we only test the failure paths where
+// the invoker is NOT the registered oracle.
+#[cfg(test)]
+mod oracle_suspend_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn init(env: &Env) -> (CarbonRegistryContractClient, Address, Address, Address) {
+        env.mock_all_auths();
+        let admin    = Address::generate(env);
+        let oracle   = Address::generate(env);
+        let verifier = Address::generate(env);
+        let id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(env, &id);
+        client.initialize(&admin, &oracle, &vec![env, verifier.clone()]).unwrap();
+        (client, admin, oracle, verifier)
+    }
+
+    fn register_proj(env: &Env, client: &CarbonRegistryContractClient, admin: &Address, id: &str) {
+        client.register_project(
+            admin,
+            &s(env, id),
+            &s(env, "Test Project"),
+            &s(env, "QmCID"),
+            &Address::generate(env),
+            &s(env, "VCS"),
+            &s(env, "Brazil"),
+            &s(env, "forestry"),
+            &75_u32,
+            &2023_u32,
+        ).unwrap();
+    }
+
+    #[test]
+    fn test_oracle_suspend_project_unauthorized_when_invoker_is_not_oracle() {
+        let env = Env::default();
+        let (client, admin, _, _) = init(&env);
+        register_proj(&env, &client, &admin, "p1");
+
+        let result = client.try_oracle_suspend_project(&s(&env, "p1"), &s(&env, "reason"));
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedOracle));
     }
 }
