@@ -1,5 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { WebhookModule } from "./webhook/webhook.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
@@ -146,6 +147,7 @@ class HealthController {
     VerifiersModule,
     AdminModule,
     PublicApiModule,
+    WebhookModule,
     RedisModule,
     IdempotencyModule,
   ],

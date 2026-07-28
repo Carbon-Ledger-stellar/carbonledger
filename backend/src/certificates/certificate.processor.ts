@@ -1,18 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, forwardRef, Inject, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { CertificateService } from './certificate.service';
 import { PinataService } from './pinata.service';
 import { NotificationService } from './notification.service';
+import { WebhookService } from '../webhook/webhook.service';
 
 @Injectable()
 export class CertificateProcessor {
-  private readonly logger = new Logger(CertificateProcessor.name);
-
-  constructor(
+  private readonly logger = new Logger(CertificateProcessor.name);    constructor(
     private readonly prisma: PrismaService,
     private readonly certificateService: CertificateService,
     private readonly pinataService: PinataService,
-    private readonly notificationService: NotificationService
+    private readonly notificationService: NotificationService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   async processCertificateGeneration(retirementId: string): Promise<void> {
@@ -108,6 +108,27 @@ export class CertificateProcessor {
           `Failed to send notification email: ${emailError instanceof Error ? emailError.message : String(emailError)}`,
         );
         // Don't fail the job if email fails
+      }
+
+      // Dispatch webhook: certificate.ready
+      try {
+        if (this.webhookService) {
+          await this.webhookService.dispatch('certificate.ready', {
+            retirementId: retirement.retirementId,
+            beneficiary: retirement.beneficiary,
+            amount: Number(retirement.amount),
+            projectName: retirement.project.name,
+            vintageYear: retirement.vintageYear,
+            txHash: retirement.txHash,
+            certificateUrl: url,
+            certificateCid: cid,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (webhookError) {
+        this.logger.warn(
+          `Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`,
+        );
       }
     } catch (error) {
       this.logger.error(

@@ -8,9 +8,10 @@ import { IpfsService } from "../common/ipfs.service";
 import { CertificatesModule } from "../certificates/certificates.module";
 import { UploadsModule } from "../uploads/uploads.module";
 import { QueueModule } from "../queue/queue.module";
+import { WebhookModule } from "../webhook/webhook.module";
 
 @Module({
-  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule],
+  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule, WebhookModule],
   controllers: [RetirementsController],
   providers: [
     RetirementsService,

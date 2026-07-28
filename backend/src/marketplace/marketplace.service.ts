@@ -1,16 +1,20 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { CreateListingDto, PurchaseDto, BulkPurchaseDto, ListingsQueryDto, PaginatedListingsResponse } from "./marketplace.dto";
 import { randomBytes } from "crypto";
 import { ListingsCacheService } from "./listings-cache.service";
 import { MarketplaceContractService } from "./marketplace-contract.service";
+import { WebhookService } from "../webhook/webhook.service";
 
 @Injectable()
 export class MarketplaceService {
+  private readonly logger = new Logger(MarketplaceService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: ListingsCacheService,
     private readonly contractService: MarketplaceContractService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   async findAll(query: ListingsQueryDto): Promise<PaginatedListingsResponse> {
@@ -161,11 +165,35 @@ export class MarketplaceService {
       data:  { amountAvailable: newAmount, status: newStatus },
     });
 
-    return {
-      txHash:  randomBytes(32).toString("hex"),
+    const txHash = randomBytes(32).toString("hex");
+    const result = {
+      txHash,
       batchId: listing.batchId,
-      amount:  dto.amount,
+      amount: dto.amount,
     };
+
+    // Dispatch webhook: credit.purchased
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('credit.purchased', {
+          listingId: dto.listingId,
+          batchId: listing.batchId,
+          projectId: listing.projectId,
+          buyer: dto.buyerPublicKey,
+          seller: listing.seller,
+          amount: dto.amount,
+          pricePerCredit: listing.pricePerCredit,
+          txHash,
+          vintageYear: listing.vintageYear,
+          methodology: listing.methodology,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
+    }
+
+    return result;
   }
 
   async bulkPurchase(dto: BulkPurchaseDto) {

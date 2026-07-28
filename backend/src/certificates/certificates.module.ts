@@ -4,8 +4,10 @@ import { PinataService } from './pinata.service';
 import { NotificationService } from './notification.service';
 import { CertificateProcessor } from './certificate.processor';
 import { CertificatesController } from './certificates.controller';
+import { WebhookModule } from '../webhook/webhook.module';
 
 @Module({
+  imports: [WebhookModule],
   controllers: [CertificatesController],
   providers: [
     CertificateService,

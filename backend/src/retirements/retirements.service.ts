@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { IpfsService } from "../common/ipfs.service";
 import { RetireCreditsDto } from "./retirements.dto";
 import { QueueService } from "../queue/queue.service";
 import { JobType } from "../queue/queue.constants";
 import { v4 as uuidv4 } from "uuid";
+import { WebhookService } from "../webhook/webhook.service";
 
 export interface PaginatedRetirementsResponse {
   retirements: any[];
@@ -20,6 +21,7 @@ export class RetirementsService {
     private readonly prisma: PrismaService,
     private readonly ipfsService: IpfsService,
     private readonly queueService: QueueService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
@@ -61,6 +63,25 @@ export class RetirementsService {
     } catch (err: any) {
       this.logger.warn(`Failed to enqueue certificate generation for ${retirementId}: ${err.message}`);
       // Don't fail retirement creation if queue enqueue fails
+    }
+
+    // Dispatch webhook: retirement.confirmed
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('retirement.confirmed', {
+          retirementId: retirement.retirementId,
+          batchId: retirement.batchId,
+          projectId: retirement.projectId,
+          amount: Number(retirement.amount),
+          retiredBy: retirement.retiredBy,
+          beneficiary: retirement.beneficiary,
+          vintageYear: retirement.vintageYear,
+          txHash: retirement.txHash,
+          retiredAt: retirement.retiredAt.toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
     }
 
     return {
