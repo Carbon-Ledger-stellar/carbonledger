@@ -31,8 +31,8 @@ trusted setup. `ark-bls12-381` / `ark-serialize` are used only in
 types (same pattern as
 [stellar/soroban-examples/groth16_verifier](https://github.com/stellar/soroban-examples/tree/main/groth16_verifier)).
 
-The legacy XOR stub in `carbon_credit::verify_zk_proof_internal` is **not** used
-for private certificates; production verification targets `carbon_zk_verifier`.
+The legacy XOR stub previously in `carbon_credit::verify_zk_proof_internal` was
+removed from `main`; production verification targets `carbon_zk_verifier` only.
 
 ---
 
@@ -112,8 +112,8 @@ Certificate** button → shows commitment / nullifier / wallet hash + JSON downl
 
 ## 8. Legacy stub
 
-`carbon_credit` still contains the SHA-256 commitment + XOR PoK stub for older
-`ZkProof` tests. Anonymous / private certificates MUST use this Groth16 path.
+`carbon_credit` no longer ships the SHA-256 commitment + XOR PoK stub. Private
+retirement certificates MUST use the Groth16 path in `carbon_zk_verifier`.
 
 ---
 
