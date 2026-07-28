@@ -1,6 +1,7 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -31,10 +32,11 @@ import { ThrottleModule, RoleLimitGuard } from "./throttle";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+import { RedisModule } from "./redis.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
-import { Server } from "@stellar/stellar-sdk";
+import { Horizon } from "@stellar/stellar-sdk";
 import { Redis } from "ioredis";
 
 @Controller("health")
@@ -71,7 +73,7 @@ class HealthController {
     // Check Stellar
     try {
       const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
-      const server = new Server(horizonUrl);
+      const server = new Horizon.Server(horizonUrl);
       await server.root();
       checks.stellar = "up";
     } catch (e) {
@@ -100,6 +102,7 @@ class HealthController {
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     // Built-in NestJS throttler (IP-based, Redis-backed) — handles burst/DDoS at infra level
     ThrottlerModule.forRoot({
       throttlers: [

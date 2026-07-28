@@ -17,8 +17,9 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { v4 as uuidv4 } from 'uuid';
+import * as express from 'express';
 import { IdempotencyMiddleware } from './idempotency.middleware';
 import { PrismaService } from '../prisma.service';
 
@@ -136,14 +137,8 @@ describe('IdempotencyMiddleware (integration)', () => {
     app = module.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
 
-    // Apply middleware the same way AppModule does
-    const consumer = {
-      apply: (mw: any) => ({
-        forRoutes: (..._routes: any[]) => undefined,
-      }),
-    };
-    // Instead, use the express layer directly
     const middleware = module.get(IdempotencyMiddleware);
+    app.use(express.json());
     app.use('/credits/mint',         (req: any, res: any, next: any) => middleware.use(req, res, next));
     app.use('/marketplace/purchase', (req: any, res: any, next: any) => middleware.use(req, res, next));
     app.use('/retirements',          (req: any, res: any, next: any) => middleware.use(req, res, next));
