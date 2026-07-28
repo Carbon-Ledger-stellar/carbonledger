@@ -22,6 +22,17 @@ export class RetirementsService {
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
+    // Replay-attack guard: reject any txHash that has already been recorded.
+    // Without this check, a different `retiredBy` address could reuse a real
+    // (or fabricated) transaction hash to generate a second certificate for the
+    // same on-chain retirement — effectively double-counting carbon credits.
+    const txHashExists = await this.prisma.retirementRecord.findFirst({
+      where: { txHash: dto.txHash },
+    });
+    if (txHashExists) {
+      throw new ConflictException('Transaction hash already used');
+    }
+
     // Check if already retired (same batchId + retiredBy combination)
     const existing = await this.prisma.retirementRecord.findFirst({
       where: { batchId: dto.batchId, retiredBy: dto.retiredBy },
