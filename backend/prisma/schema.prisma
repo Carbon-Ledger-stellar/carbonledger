@@ -77,7 +77,7 @@ model RetirementRecord {
   serialStart      String
   serialEnd        String
   serialNumbers    String[]
-  txHash           String
+  txHash           String   @unique
   certificateCid   String?
   isValid          Boolean  @default(true)
   validatedAt      DateTime?
@@ -87,8 +87,27 @@ model RetirementRecord {
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   ipfsFiles IPFSFile[]
   certificates RetirementCertificate[]
+  zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+}
+
+model ZkRetirementProof {
+  id                     String   @id @default(cuid())
+  retirementId           String
+  beneficiaryCommitment  String
+  nullifier              String   @unique
+  retiredByHash          String
+  proofJson              Json
+  publicSignals          Json
+  verifiedOnChain        Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  retirement RetirementRecord @relation(fields: [retirementId], references: [id], onDelete: Cascade)
+
+  @@index([retirementId])
+  @@index([retiredByHash])
 }
 
 model RetirementCertificate {
@@ -146,6 +165,41 @@ model MonitoringData {
   @@unique([projectId, period])
 }
 
+model OracleJob {
+  id               String    @id @default(cuid())
+  idempotencyKey   String    @unique  // projectId:period or methodology:vintageYear
+  type             String    // "monitoring" | "price"
+  projectId        String?
+  period           String?
+  tonnesVerified   Decimal?  @db.Decimal(18, 2)
+  methodologyScore Int?
+  methodology      String?
+  vintageYear      Int?
+  priceUsdc        String?
+  txHash           String?
+  status           String    @default("pending")  // pending | submitted | failed
+  attempts         Int       @default(0)
+  lastError        String?
+  submittedAt      DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
+  @@index([projectId])
+}
+
+model OracleSyncState {
+  id                String   @id @default(cuid())
+  lastSyncedAt      DateTime @default(now())
+  lastSyncedBlock   Int      @default(0)
+  recordsSynced     Int      @default(0)
+  lastError         String?
+  lastErrorAt       DateTime?
+  syncStatus        String   @default("idle")  // idle | syncing | completed | failed
+  updatedAt         DateTime @updatedAt
+
+  @@unique([id])
+}
+
 model User {
   id                      String                   @id @default(cuid())
   publicKey               String                   @unique
@@ -185,19 +239,24 @@ model EmailLog {
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  action     String
-  resourceId String?
-  ipAddress  String?
-  result     String?  // e.g., "Success", "Failure: <error>"
-  metadata   Json?    // Optional extra info
-  timestamp  DateTime @default(now())
+  id           String   @id @default(cuid())
+  userId       String?
+  action       String
+  resourceId   String?
+  ipAddress    String?
+  result       String?  // e.g., "Success", "Failure: <error>"
+  metadata     Json?    // Optional extra info
+  timestamp    DateTime @default(now())
+  /// SHA-256 hex digest of the preceding AuditLog entry's entryHash (null for first entry)
+  previousHash String?
+  /// SHA-256 hex digest over the canonical entry payload — tamper detection (#674)
+  entryHash    String?
 
   @@index([userId])
   @@index([action])
   @@index([resourceId])
   @@index([timestamp])
+  @@index([entryHash])
 }
 
 model SyncMetadata {
@@ -358,6 +417,7 @@ model CreditEvent {
   @@index([timestamp])
 }
 
+
 model OracleSyncState {
   id                String    @id @default(cuid())
   lastSyncedAt      DateTime  @default(now())
@@ -369,4 +429,17 @@ model OracleSyncState {
   updatedAt         DateTime  @updatedAt
 
   @@unique([id])
+
+model SatelliteWebhookProvider {
+  id          String   @id @default(cuid())
+  providerId  String   @unique
+  name        String
+  hmacKey     String   // stored as hex-encoded bytes, encrypted at rest ideally
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([providerId])
+  @@index([isActive])
+
 }
