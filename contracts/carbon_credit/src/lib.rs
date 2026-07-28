@@ -577,6 +577,10 @@ impl CarbonCreditContract {
         batch.amount.checked_sub(retired).unwrap_or(0)
     }
 
+    // Legacy XOR `verify_zk_proof_internal` stub was removed upstream.
+    // Production Groth16 verification lives in `contracts/carbon_zk_verifier`
+    // (Circom BLS12-381 / CAP-0059). See docs/zk-proof-spec.md.
+
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
         let ranges: Vec<SerialRange> = env
             .storage()

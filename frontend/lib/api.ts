@@ -464,6 +464,46 @@ export async function generateCertificatePdf(retirementId: string): Promise<Blob
   return res.blob();
 }
 
+export interface PrivateZkCertificate {
+  retirementId: string;
+  scheme: string;
+  circuit: string;
+  beneficiaryCommitment: string;
+  nullifier: string;
+  retiredByHash: string;
+  proof: unknown;
+  publicSignals: string[];
+  verifiedOnChain: boolean;
+  createdAt: string;
+  note: string;
+}
+
+/** Generate (or error if exists) a private ZK retirement certificate. */
+export async function generateZkProof(retirementId: string): Promise<PrivateZkCertificate> {
+  const res = await fetch(`${API_URL}/retirements/${retirementId}/zk-proof`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || "Failed to generate private certificate");
+  }
+  return res.json();
+}
+
+/** Fetch a previously stored private ZK certificate. */
+export async function fetchZkProof(retirementId: string): Promise<PrivateZkCertificate> {
+  const res = await fetch(`${API_URL}/retirements/${retirementId}/zk-proof`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || "Private certificate not found");
+  }
+  return res.json();
+}
+
 export interface EsgExportFilters {
   methodology?: string;
   country?: string;
