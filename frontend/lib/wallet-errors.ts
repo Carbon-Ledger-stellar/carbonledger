@@ -1,7 +1,9 @@
 export type WalletErrorCode =
   | "WALLET_NOT_INSTALLED"
+  | "WALLET_LOCKED"
   | "WALLET_PERMISSION_DENIED"
   | "WRONG_NETWORK"
+  | "SESSION_EXPIRED"
   | "TRANSACTION_REJECTED"
   | "INSUFFICIENT_XLM"
   | "ACCOUNT_NOT_ACTIVATED"
@@ -10,10 +12,14 @@ export type WalletErrorCode =
 const messages: Record<WalletErrorCode, string> = {
   WALLET_NOT_INSTALLED:
     "Freighter wallet is not installed. Please install it from freighter.app to continue.",
+  WALLET_LOCKED:
+    "Your Freighter wallet is locked. Please unlock the extension and try again.",
   WALLET_PERMISSION_DENIED:
     "Permission denied. Please allow CarbonLedger to connect to your Freighter wallet.",
   WRONG_NETWORK:
     "Your wallet is connected to the wrong network. Please switch to Stellar Testnet in Freighter.",
+  SESSION_EXPIRED:
+    "Your wallet session has expired. Please reconnect to continue.",
   TRANSACTION_REJECTED:
     "Transaction was rejected. Please try again or contact support if the issue persists.",
   INSUFFICIENT_XLM:

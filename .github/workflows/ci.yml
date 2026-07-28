@@ -365,6 +365,10 @@ jobs:
         working-directory: frontend
         run: npx tsc --noEmit
 
+      - name: i18n coverage (no hardcoded English in buyer-flow components)
+        working-directory: frontend
+        run: node scripts/check-i18n-coverage.js
+
       - name: Build
         working-directory: frontend
         env:

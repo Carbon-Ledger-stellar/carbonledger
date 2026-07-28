@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   useRetirement,
   generateZkProof,
@@ -18,6 +19,7 @@ export default function RetirementCertificatePage({ params }: { params: { id: st
 }
 
 function RetirementCertificateClient({ id }: { id: string }) {
+  const t = useTranslations("retireCertificatePage");
   const searchParams = useSearchParams();
   const isNew = searchParams.get("new") === "1";
   const { data: retirement, isLoading } = useRetirement(id);
@@ -33,9 +35,9 @@ function RetirementCertificateClient({ id }: { id: string }) {
 
   if (!retirement) return (
     <div style={{ textAlign: "center", padding: "4rem" }}>
-      <p style={{ color: colors.neutral[500] }}>Certificate not found.</p>
+      <p style={{ color: colors.neutral[500] }}>{t("notFound")}</p>
       <p style={{ fontSize: "0.875rem", color: colors.neutral[400] }}>
-        Retirement ID: {id}
+        {t("retirementIdLabel", { id })}
       </p>
     </div>
   );
@@ -71,7 +73,7 @@ function RetirementCertificateClient({ id }: { id: string }) {
         }
       }
     } catch (err: unknown) {
-      setZkError(err instanceof Error ? err.message : "Could not generate private certificate");
+      setZkError(err instanceof Error ? err.message : t("privateCertificateGenerationFailed"));
     } finally {
       setZkBusy(false);
     }
@@ -91,12 +93,10 @@ function RetirementCertificateClient({ id }: { id: string }) {
   const privatePanel = (
     <div style={{ marginTop: "2rem", paddingTop: "1.5rem", borderTop: `1px solid ${colors.neutral[200]}` }}>
       <h2 style={{ fontSize: "1.125rem", fontWeight: 600, color: colors.neutral[800], margin: "0 0 0.5rem" }}>
-        Private certificate
+        {t("privateCertificateTitle")}
       </h2>
       <p style={{ fontSize: "0.875rem", color: colors.neutral[500], margin: "0 0 1rem", maxWidth: "40rem" }}>
-        Prove this retirement without revealing beneficiary name, project, amount, or serials.
-        The certificate exposes only a commitment, nullifier, and wallet binding hash
-        (Groth16 / BLS12-381).
+        {t("privateCertificateDescription")}
       </p>
       <button
         type="button"
@@ -112,7 +112,7 @@ function RetirementCertificateClient({ id }: { id: string }) {
           opacity: zkBusy ? 0.7 : 1,
         }}
       >
-        {zkBusy ? "Generating…" : "Generate Private Certificate"}
+        {zkBusy ? t("generating") : t("generatePrivateCertificate")}
       </button>
       {zkError && (
         <p style={{ color: colors.neutral[600], fontSize: "0.85rem", marginTop: "0.75rem" }}>{zkError}</p>
@@ -120,13 +120,13 @@ function RetirementCertificateClient({ id }: { id: string }) {
       {zkCert && (
         <div style={{ marginTop: "1.25rem" }}>
           <p style={{ fontSize: "0.8rem", color: colors.neutral[600], margin: "0 0 0.35rem" }}>
-            Commitment: <code style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>{zkCert.beneficiaryCommitment}</code>
+            {t("commitmentLabel")} <code style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>{zkCert.beneficiaryCommitment}</code>
           </p>
           <p style={{ fontSize: "0.8rem", color: colors.neutral[600], margin: "0 0 0.35rem" }}>
-            Nullifier: <code style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>{zkCert.nullifier}</code>
+            {t("nullifierLabel")} <code style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>{zkCert.nullifier}</code>
           </p>
           <p style={{ fontSize: "0.8rem", color: colors.neutral[600], margin: "0 0 0.75rem" }}>
-            Wallet hash: <code style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>{zkCert.retiredByHash}</code>
+            {t("walletHashLabel")} <code style={{ fontSize: "0.75rem", wordBreak: "break-all" }}>{zkCert.retiredByHash}</code>
           </p>
           <button
             type="button"
@@ -140,7 +140,7 @@ function RetirementCertificateClient({ id }: { id: string }) {
               cursor: "pointer",
             }}
           >
-            Download JSON
+            {t("downloadJson")}
           </button>
         </div>
       )}
@@ -163,11 +163,11 @@ function RetirementCertificateClient({ id }: { id: string }) {
     <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "2.5rem 2rem" }}>
       <div style={{ marginBottom: "1.5rem" }}>
         <a href="/audit" style={{ fontSize: "0.875rem", color: colors.primary[600], textDecoration: "none" }}>
-          ← Public Audit Trail
+          {t("backToAuditTrail")}
         </a>
         <p style={{ fontSize: "0.8rem", color: colors.neutral[400], margin: "0.5rem 0 0" }}>
-          This certificate is permanently recorded on Stellar and publicly verifiable without a wallet.
-          Permanent URL: <code style={{ fontSize: "0.75rem" }}>/api/certificate/{retirement.retirementId}</code>
+          {t("permanentRecordNotice")}{" "}
+          {t("permanentUrlLabel")} <code style={{ fontSize: "0.75rem" }}>/api/certificate/{retirement.retirementId}</code>
         </p>
       </div>
       <div id="retirement-certificate-print">
