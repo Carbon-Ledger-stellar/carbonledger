@@ -12,3 +12,5 @@ resolver = "2"
 [workspace.dependencies]
 arbitrary = "=1.3.2"
 
+[dev-dependencies]
+insta = "1.34"
