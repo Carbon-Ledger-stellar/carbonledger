@@ -1,7 +1,9 @@
-import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { VerifiersService } from './verifiers.service';
 import { ApplyVerifierDto, ReviewVerifierDto } from './verifiers.dto';
-import { RolesGuard, Roles } from '../auth/roles.guard';
+import { RolesGuard } from '../auth/roles.guard';
+import { Public, Roles } from '../auth/decorators';
 
 @Controller('verifiers')
 export class VerifiersController {

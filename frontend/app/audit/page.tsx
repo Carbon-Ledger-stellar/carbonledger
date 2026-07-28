@@ -139,7 +139,7 @@ export default function AuditPage() {
                 <InfoRow label="Serial Number" value={result.serialNumber} />
                 <InfoRow label="Project ID" value={result.projectId} />
                 <InfoRow label="Project Name" value={result.projectName} />
-                <InfoRow label="Vintage Year" value={result.vintageYear} />
+                <InfoRow label="Vintage Year" value={String(result.vintageYear)} />
                 <InfoRow label="Amount" value={`${result.amount} tonnes CO₂`} />
                 <InfoRow label="Status" value={result.status} highlight={result.status === 'Retired'} />
                 <InfoRow label="Issuance Date" value={new Date(result.issuanceDate).toLocaleDateString()} />
