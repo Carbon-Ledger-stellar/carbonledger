@@ -10,6 +10,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { TokenFamilyService } from './token-family.service';
+import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
 
@@ -24,7 +25,8 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly tokenFamily: TokenFamilyService,
-  ) {}
+    private readonly secretsRefresh: SecretsRefreshService,
+  ) { }
 
   /** Issue a one-time challenge nonce for the given Stellar public key. */
   generateChallenge(publicKey: string): { nonce: string; expiresAt: number } {
@@ -137,6 +139,11 @@ export class AuthService {
   /**
    * Sign a short-lived JWT access token.
    * Refresh tokens are now opaque strings managed by TokenFamilyService.
+   *
+   * Previously signed with the static process.env.JWT_SECRET, which meant
+   * a rotated secret only took effect after a restart. Now signs with
+   * whatever SecretsRefreshService currently holds as `current` — kept up
+   * to date by the rotate-jwt-secret Lambda via SIGHUP, no restart needed.
    */
   private signAccessToken(publicKey: string, role: UserRole): string {
     const issuer = process.env.JWT_ISSUER || 'carbonledger';
@@ -144,7 +151,7 @@ export class AuthService {
 
     return jwt.sign(
       { sub: publicKey, role, type: 'access' },
-      process.env.JWT_SECRET || 'dev-secret-change-in-production',
+      this.secretsRefresh.getJwtSigningSecret(),
       { expiresIn, issuer },
     );
   }

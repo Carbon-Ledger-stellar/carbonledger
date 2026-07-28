@@ -6,7 +6,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model CarbonProject {
@@ -145,41 +144,6 @@ model MonitoringData {
   project CarbonProject @relation(fields: [projectId], references: [projectId])
 
   @@unique([projectId, period])
-}
-
-model OracleUpdate {
-  id               String    @id @default(cuid())
-  idempotencyKey   String    @unique  // projectId:period or methodology:vintageYear
-  type             String    // "monitoring" | "price"
-  projectId        String?
-  period           String?
-  tonnesVerified   Decimal?  @db.Decimal(18, 2)
-  methodologyScore Int?
-  methodology      String?
-  vintageYear      Int?
-  priceUsdc        String?
-  txHash           String?
-  status           String    @default("pending")  // pending | submitted | failed
-  attempts         Int       @default(0)
-  lastError        String?
-  submittedAt      DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  @@index([status])
-  @@index([projectId])
-}
-
-model OracleSyncState {
-  id                String   @id @default(cuid())
-  lastSyncedAt      DateTime @default(now())
-  lastSyncedBlock   Int      @default(0)
-  recordsSynced     Int      @default(0)
-  lastError         String?
-  lastErrorAt       DateTime?
-  syncStatus        String   @default("idle")  // idle | syncing | completed | failed
-  updatedAt         DateTime @updatedAt
-
-  @@unique([id])
 }
 
 model User {
@@ -392,4 +356,17 @@ model CreditEvent {
 
   @@index([creditBatchId])
   @@index([timestamp])
+}
+
+model OracleSyncState {
+  id                String    @id @default(cuid())
+  lastSyncedAt      DateTime  @default(now())
+  lastSyncedBlock   Int       @default(0)
+  recordsSynced     Int       @default(0)
+  lastError         String?
+  lastErrorAt       DateTime?
+  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([id])
 }

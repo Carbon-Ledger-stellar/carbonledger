@@ -30,6 +30,7 @@ from stellar_sdk.soroban_rpc import SendTransactionStatus
 
 load_dotenv()
 from log import get_logger  # noqa: E402 — must come after load_dotenv
+import secrets_manager  # noqa: E402 — DB/Redis credentials now come from here, not raw env vars
 
 log = get_logger("verification_listener")
 
@@ -40,13 +41,18 @@ ORACLE_CONTRACT_ID      = os.environ["CARBON_ORACLE_CONTRACT_ID"]
 REGISTRY_CONTRACT_ID    = os.environ["CARBON_REGISTRY_CONTRACT_ID"]
 STELLAR_RPC_URL         = os.environ.get("STELLAR_RPC_URL", "https://soroban-testnet.stellar.org")
 NETWORK_PASSPHRASE      = os.environ.get("NETWORK_PASSPHRASE", Network.TESTNET_NETWORK_PASSPHRASE)
-DATABASE_URL            = os.environ["DATABASE_URL"]
+# DATABASE_URL previously came from a static env var (os.environ["DATABASE_URL"]),
+# which meant a rotated Postgres password required a process restart to pick up.
+# get_db() below now calls secrets_manager.get_database_url() fresh on every
+# connection instead of using a module-level constant.
 ADMIN_ALERT_WEBHOOK     = os.environ.get("ADMIN_ALERT_WEBHOOK", "")
 METHODOLOGY_SCORE_MIN   = 70
 
 # ── Redis / cache config ──────────────────────────────────────────────────────
 REDIS_URL               = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-REDIS_PASSWORD          = os.environ.get("REDIS_PASSWORD", "")
+# REDIS_PASSWORD previously came from a static env var. _get_redis() below now
+# calls secrets_manager.get_redis_password() and tracks refresh_generation to
+# detect a rotation and reconnect — see _get_redis() for details.
 # TTL for cached verification results (default: 1 hour)
 CACHE_TTL_SECONDS       = int(os.environ.get("VERIFICATION_CACHE_TTL", "3600"))
 # A cache entry is considered stale if it has not been refreshed in this many seconds
@@ -59,25 +65,34 @@ VERIFIER_APIS = [
     {"name": "Verra VCS",     "url": os.environ.get("VERRA_VCS_API_URL", ""),     "key": os.environ.get("VERRA_VCS_API_KEY", "")},
 ]
 
-# ── Redis client (lazy initialisation) ───────────────────────────────────────
+# ── Redis client (lazy initialisation, rotation-aware) ───────────────────────
 
 _redis_client = None
+# The secrets_manager.refresh_generation value at the time _redis_client was
+# opened. If the live generation has moved on (a rotation happened), the
+# cached client is holding a stale password and must be torn down and
+# reopened — otherwise a Redis password rotation would silently break the
+# oracle's cache until the process was restarted.
+_redis_client_generation = -1
 
 
 def _get_redis():
-    """Return a lazily-initialised Redis client. Returns None if Redis is unavailable."""
-    global _redis_client
-    if _redis_client is not None:
+    """Return a Redis client, reconnecting if the AUTH token has rotated
+    since the cached client was opened. Returns None if Redis is unavailable."""
+    global _redis_client, _redis_client_generation
+    if _redis_client is not None and _redis_client_generation == secrets_manager.refresh_generation:
         return _redis_client
     try:
         import redis  # imported here so the module loads even without redis installed
+        password = secrets_manager.get_redis_password()
         kwargs = {"decode_responses": True}
-        if REDIS_PASSWORD:
-            kwargs["password"] = REDIS_PASSWORD
+        if password:
+            kwargs["password"] = password
         client = redis.from_url(REDIS_URL, **kwargs)
         client.ping()
         _redis_client = client
-        log.info("Redis connected: %s", REDIS_URL)
+        _redis_client_generation = secrets_manager.refresh_generation
+        log.info("Redis connected: %s (generation=%d)", REDIS_URL, _redis_client_generation)
     except Exception as exc:
         log.warning("Redis unavailable (%s) — cache disabled, falling back to DB", exc)
         _redis_client = None
@@ -212,7 +227,10 @@ def cache_invalidate_all_for_project(project_id: str) -> int:
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def get_db():
-    return psycopg2.connect(DATABASE_URL)
+    # Fetches the current DATABASE_URL from secrets_manager on every call —
+    # never cached — so a rotated Postgres password takes effect on the very
+    # next connection, no restart required.
+    return psycopg2.connect(secrets_manager.get_database_url())
 
 
 def log_oracle_update(project_id: str, period: str, tonnes: int, score: int, tx_hash: str, status: str):
@@ -472,6 +490,7 @@ def process_reports():
 
 if __name__ == "__main__":
     log.info("Verification listener starting — polling every 6 hours")
+    secrets_manager.start_refresh_loop()
     process_reports()
     schedule.every(6).hours.do(process_reports)
     while True:

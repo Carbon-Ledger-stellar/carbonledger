@@ -90,7 +90,18 @@ POST /api/v1/key-rotation/admin
 ✅ **Time-lock protection implemented**
 ✅ **Audit trail maintained**
 
-## JWT Secret Rotation
+## JWT Secret Rotation (legacy manual path — superseded below)
+
+> **Superseded.** This section describes the original `JWT_SECRET` /
+> `JWT_SECRET_NEW` environment-variable approach, triggered via
+> `POST /api/v1/key-rotation/jwt`. It required editing env vars and a
+> service restart to finalize, and the "old secret still valid" window
+> was open-ended rather than time-boxed. It has been replaced by the
+> automated AWS Secrets Manager rotation described in
+> **[Automated Secrets Manager Rotation (JWT / Postgres / Redis)](#automated-secrets-manager-rotation-jwt--postgres--redis)**
+> below. This section is kept for historical reference only — the
+> `/api/v1/key-rotation/jwt` endpoint and its underlying env vars are
+> deprecated and will be removed in a future release.
 
 ### Procedure
 
@@ -125,6 +136,98 @@ POST /api/v1/key-rotation/jwt
 ✅ **Zero-downtime authentication**
 ✅ **Two valid secrets during transition**
 ✅ **Gradual token migration**
+
+## Automated Secrets Manager Rotation (JWT / Postgres / Redis)
+
+This is the current, automated process for the three secrets that
+require coordinated restarts across NestJS, the oracle, and the
+frontend if handled manually: the JWT signing secret, PostgreSQL
+credentials, and the Redis AUTH token. Unlike the oracle/admin
+rotation above (which stays a deliberate, admin-triggered API call),
+these three now rotate automatically on a schedule with no manual
+steps and no restart.
+
+### What rotates, and how
+
+| Secret | Mechanism | Terraform resource |
+|---|---|---|
+| JWT signing secret | Custom Lambda, dual-secret overlap | `infra/main/secrets.tf` → `aws_lambda_function.rotate_jwt` |
+| PostgreSQL credentials | AWS-managed RDS single-user rotation template (via Serverless Application Repository) | `aws_serverlessapplicationrepository_cloudformation_stack.rotate_postgres` |
+| Redis AUTH token | Custom Lambda, ElastiCache `ROTATE` strategy | `aws_lambda_function.rotate_redis` |
+
+All three follow the standard Secrets Manager four-step lifecycle
+(`createSecret` → `setSecret` → `testSecret` → `finishSecret`), wired
+via `aws_secretsmanager_secret_rotation` on a 30-day schedule (or
+on-demand: `aws secretsmanager rotate-secret --secret-id <arn>`).
+
+### The 15-minute JWT overlap
+
+The JWT secret is stored as a JSON document rather than a bare
+string:
+
+```json
+{ "current": "...", "previous": "...", "previous_expires_at": "2026-08-01T03:15:00Z" }
+```
+
+`createSecret` generates a new `current` value and carries the
+outgoing value forward as `previous`, stamped with an expiry 15
+minutes out. Tokens signed with the old secret keep validating until
+that timestamp passes, which is what lets in-flight requests survive
+a rotation with zero downtime.
+
+### How the backend picks it up without restarting
+
+`backend/src/key-rotation/secrets-refresh.service.ts`
+(`SecretsRefreshService`) keeps the live JWT/Postgres/Redis values in
+memory and refreshes them:
+
+- **On `SIGHUP`** — sent as part of the Lambda's `finishSecret` step,
+  or manually: `kill -HUP <pid>`.
+- **On a 5-minute poll** — a fallback in case a `SIGHUP` is ever
+  missed.
+
+`backend/src/auth/jwt-rotation.strategy.ts` (`JWTRotationStrategy`)
+reads from `SecretsRefreshService.getJwtVerificationSecrets()`, which
+returns the current secret plus the previous one only while still
+inside its 15-minute window — replacing the old
+`JWT_SECRET`/`JWT_SECRET_NEW` env-var pair described above.
+
+Oracle services use the same pattern in Python, via
+`oracle/secrets_manager.py`: `start_refresh_loop()` does an initial
+fetch, registers a `SIGHUP` handler, and starts a 5-minute poll
+fallback thread. `verification_listener.py` calls
+`secrets_manager.get_database_url()` fresh on every `psycopg2.connect()`
+(never cached), and tracks a `refresh_generation` counter to detect
+when the Redis AUTH token has rotated and reconnect — closing a bug
+where the previous lazily-cached Redis client had no way to pick up a
+rotated password short of a full process restart.
+
+### Automated end-to-end test
+
+`scripts/test-key-rotation-staging.sh` now includes
+`test_secrets_manager_rotation()`, which:
+
+1. Forces a rotation of each of the three secrets via
+   `aws secretsmanager rotate-secret`.
+2. Probes an authenticated staging endpoint continuously through the
+   rotation window and fails on any dropped request.
+3. Confirms the rotation Lambda reports the secret fully settled
+   (no `AWSPENDING` version left).
+
+This runs nightly via `.github/workflows/key-rotation-test.yml`
+(03:00 UTC) and can be triggered manually from the Actions tab.
+Required env vars: `STAGING_JWT_SECRET_ARN`, `STAGING_POSTGRES_SECRET_ARN`,
+`STAGING_REDIS_SECRET_ARN`, `STAGING_API_URL`.
+
+### One thing to know about Terraform state
+
+RDS's built-in single-user rotation template updates the database
+password directly via the RDS API — it does not go through Terraform.
+That means `var.db_password` in `infra/main/variables.tf` reflects
+only the *bootstrap* password from the first `terraform apply`; after
+the first rotation, the real password lives in Secrets Manager, not
+in Terraform state or tfvars. This is expected AWS behavior for RDS
+rotation and doesn't require any Terraform changes to accommodate.
 
 ## Security Considerations
 
