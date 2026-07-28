@@ -83,8 +83,11 @@ export async function seedTestData(app: INestApplication) {
       beneficiary: 'Test Corporation',
       retirementReason: 'Carbon neutrality goal',
       vintageYear: 2024,
+      serialStart: 'KE-001-2024-0001',
+      serialEnd: 'KE-001-2024-0100',
       serialNumbers: ['KE-001-2024-0001', 'KE-001-2024-0100'],
       txHash: '0xtest123',
+      certificateStatus: 'pending_certificate',
     },
   });
 }

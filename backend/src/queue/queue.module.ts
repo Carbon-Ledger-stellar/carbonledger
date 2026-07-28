@@ -5,9 +5,9 @@ import { QueueController } from './queue.controller';
 import { QueueProcessor } from './queue.processor';
 import { AuthModule } from '../auth/auth.module';
 import { CertificatesModule } from '../certificates/certificates.module';
+import { CertificateProcessor } from '../certificates/certificate.processor';
 import { QUEUE_NAME } from './queue.constants';
 import { PrismaService } from '../prisma.service';
-import { CertificatesModule } from '../retirements/certificates.module';
 
 @Module({
   imports: [

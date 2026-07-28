@@ -2,7 +2,8 @@ import { Injectable, NotFoundException, BadRequestException, ConflictException, 
 import { PrismaService } from "../prisma.service";
 import { IpfsService } from "../common/ipfs.service";
 import { RetireCreditsDto } from "./retirements.dto";
-import { CertificateService } from "./certificate.service";
+import { QueueService } from "../queue/queue.service";
+import { JobType } from "../queue/queue.constants";
 import { v4 as uuidv4 } from "uuid";
 
 export interface PaginatedRetirementsResponse {
@@ -18,7 +19,7 @@ export class RetirementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ipfsService: IpfsService,
-    private readonly certificateService: CertificateService,
+    private readonly queueService: QueueService,
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
@@ -51,22 +52,23 @@ export class RetirementsService {
       },
     });
 
-    // Generate and pin certificate to IPFS
-    let certificateCid: string | null = null;
+    // Enqueue certificate generation job via BullMQ for async PDF generation
     try {
-      const result = await this.certificateService.generateAndPinCertificate(retirementId);
-      certificateCid = result.cid;
-    } catch (err) {
-      this.logger.warn(`Certificate generation failed for ${retirementId}: ${err.message}`);
+      await this.queueService.enqueue(JobType.CERTIFICATE_GENERATION, {
+        retirementId,
+      });
+      this.logger.log(`Certificate generation job enqueued for ${retirementId}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to enqueue certificate generation for ${retirementId}: ${err.message}`);
+      // Don't fail retirement creation if queue enqueue fails
     }
 
     return {
       retirementId: retirement.retirementId,
       txHash: retirement.txHash,
-      certificateCid,
-      certificateUrl: certificateCid
-        ? `https://gateway.pinata.cloud/ipfs/${certificateCid}`
-        : null,
+      certificateCid: null,
+      certificateUrl: null,
+      certificateStatus: 'pending_certificate',
     };
   }
 

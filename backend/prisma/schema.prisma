@@ -79,10 +79,15 @@ model RetirementRecord {
   serialEnd        String
   serialNumbers    String[]
   txHash           String
-  certificateCid   String?
-  isValid          Boolean  @default(true)
-  validatedAt      DateTime?
-  retiredAt        DateTime @default(now())
+  certificateCid           String?
+  certificateUrl           String?
+  certificateStatus        String    @default("pending_certificate")
+  certificateRetries       Int       @default(0)
+  certificateFailedAt      DateTime?
+  certificateGeneratedAt   DateTime?
+  isValid                  Boolean   @default(true)
+  validatedAt              DateTime?
+  retiredAt                DateTime  @default(now())
 
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
   project CarbonProject @relation(fields: [projectId], references: [projectId])

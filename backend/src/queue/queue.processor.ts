@@ -3,7 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { QUEUE_NAME, JobType } from './queue.constants';
 import { PrismaService } from '../prisma.service';
-import { CertificateService } from '../retirements/certificate.service';
+import { CertificateProcessor } from '../certificates/certificate.processor';
 
 @Processor(QUEUE_NAME)
 export class QueueProcessor extends WorkerHost {
@@ -11,7 +11,7 @@ export class QueueProcessor extends WorkerHost {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly certificateService: CertificateService,
+    private readonly certificateProcessor: CertificateProcessor,
   ) {
     super();
   }
@@ -37,8 +37,8 @@ export class QueueProcessor extends WorkerHost {
     const retirementId = data['retirementId'] as string;
     this.logger.log(`Generating certificate for retirement ${retirementId}`);
     try {
-      const result = await this.certificateService.generateAndPinCertificate(retirementId);
-      return { retirementId, cid: result.cid, status: 'generated_and_pinned' };
+      await this.certificateProcessor.processCertificateGeneration(retirementId);
+      return { retirementId, status: 'generated_and_pinned' };
     } catch (err: any) {
       this.logger.error(`Failed to generate certificate for ${retirementId}: ${err.message}`);
       throw err;
