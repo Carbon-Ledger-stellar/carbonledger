@@ -74,7 +74,7 @@ export class AuthService {
       const user = await this.prisma.user.upsert({
         where: { publicKey },
         update: {},
-        create: { publicKey, role },
+        create: { publicKey, role: 'corporation' },
       });
 
       // 4. Create a fresh token family in Redis

@@ -1,13 +1,12 @@
-const mockGetAccount = jest.fn();
-const mockSimulateTransaction = jest.fn();
-const mockSendTransaction = jest.fn();
-const mockGetTransaction = jest.fn();
-const mockGetEvents = jest.fn();
-const mockFromXDR = jest.fn();
+var mockGetAccount = jest.fn();
+var mockSimulateTransaction = jest.fn();
+var mockSendTransaction = jest.fn();
+var mockGetTransaction = jest.fn();
+var mockGetEvents = jest.fn();
+var mockFromXDR = jest.fn();
 
 const mockTx = { sign: jest.fn() };
 
-// TransactionBuilder needs fromXDR as a static method on the constructor
 function MockTransactionBuilder() {
   return {
     addOperation: jest.fn().mockReturnThis(),
@@ -28,9 +27,13 @@ jest.mock('@stellar/stellar-sdk', () => ({
     })),
     Api: {
       GetTransactionStatus: { SUCCESS: 'SUCCESS', FAILED: 'FAILED' },
+      isSimulationError: jest.fn(() => false),
     },
   },
   TransactionBuilder: MockTransactionBuilder,
+  assembleTransaction: jest.fn(() => ({
+    build: jest.fn(() => ({ toXDR: () => 'unsigned-xdr' })),
+  })),
   Networks: {
     PUBLIC: 'Public Global Stellar Network',
     TESTNET: 'Test SDF Network ; September 2015',
@@ -43,7 +46,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
   },
   scValToNative: jest.fn((v) => ({ parsed: true, raw: v })),
   nativeToScVal: jest.fn((v) => v),
-  Address: jest.fn().mockImplementation(() => ({ toScAddress: jest.fn() })),
+  Address: jest.fn().mockImplementation(() => ({ toScAddress: jest.fn(), toScVal: jest.fn() })),
 }));
 
 import {

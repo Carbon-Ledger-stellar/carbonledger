@@ -7,13 +7,15 @@ import { AuthModule } from '../auth/auth.module';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { QUEUE_NAME } from './queue.constants';
 import { PrismaService } from '../prisma.service';
-import { CertificatesModule } from '../retirements/certificates.module';
+import { CertificateProcessor } from '../certificates/certificate.processor';
+import { CertificatesModule as RetirementsCertificatesModule } from '../retirements/certificates.module';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: QUEUE_NAME }),
     AuthModule,
     CertificatesModule,
+    RetirementsCertificatesModule,
   ],
   providers: [QueueService, QueueProcessor, PrismaService],
   controllers: [QueueController],
@@ -23,6 +25,9 @@ export class QueueModule implements OnModuleInit {
   constructor(private readonly certificateProcessor: CertificateProcessor) {}
 
   async onModuleInit() {
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
     // Start polling for pending certificates every 60 seconds
     setInterval(async () => {
       try {
