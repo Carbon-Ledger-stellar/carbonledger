@@ -597,6 +597,11 @@ impl CarbonCreditContract {
 #[cfg(test)]
 mod invariants;
 
+// ── Kani formal verification proofs ──────────────────────────────────────────
+// Compiled only by the Kani model checker toolchain (cfg(kani)).
+// Zero impact on production binary or regular test runs.
+mod proofs;
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
