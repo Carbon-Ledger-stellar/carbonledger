@@ -21,26 +21,6 @@
     "pretest:e2e": "npm run test:db:up && npm run test:db:migrate",
     "export:openapi": "npx ts-node --transpile-only src/export-openapi.ts"
   },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "setupFiles": [
-      "<rootDir>/jest.setup.ts"
-    ],
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
-  },
   "dependencies": {
     "@nest-lab/throttler-storage-redis": "1.2.0",
     "@nestjs/bullmq": "^11.0.4",
