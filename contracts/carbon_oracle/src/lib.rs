@@ -122,12 +122,12 @@ pub struct CarbonOracleContract;
 #[contractimpl]
 impl CarbonOracleContract {
 
-    pub fn initialize(env: Env, admin: Address, oracle_address: Address, oracle_pub_key: BytesN<32>, registry_address: Address) -> Result<(), CarbonError> {
     pub fn initialize(
         env: Env,
         admin: Address,
         oracle_address: Address,
         oracle_pub_key: BytesN<32>,
+        registry_address: Address,
     ) -> Result<(), CarbonError> {
         if env.storage().persistent().has(&DataKey::Admin) {
             return Err(CarbonError::AlreadyInitialized);
@@ -140,18 +140,6 @@ impl CarbonOracleContract {
         env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
         env.storage().persistent().set(&DataKey::RegistryAddress, &registry_address);
         env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &MONITORING_FRESHNESS_SECS);
-        env.storage()
-            .persistent()
-            .set(&DataKey::OracleAddress, &oracle_address);
-        env.storage()
-            .persistent()
-            .set(&DataKey::OraclePublicKey, &oracle_pub_key);
-        env.storage()
-            .persistent()
-            .set(&DataKey::OracleNonce, &0_u64);
-        env.storage()
-            .persistent()
-            .set(&DataKey::ContractVersion, &CURRENT_VERSION);
         Ok(())
     }
 
@@ -681,12 +669,8 @@ mod tests {
         let registry = Address::generate(env);
         let id     = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
-        
-        client.initialize(&admin, &oracle, &pub_key, &registry);
-        let id = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(env, &id);
 
-        client.initialize(&admin, &oracle, &pub_key);
+        client.initialize(&admin, &oracle, &pub_key, &registry);
         (client, admin, oracle, signing_key)
     }
 
@@ -865,9 +849,6 @@ mod staleness_tests {
         let oracle   = Address::generate(env);
         let registry = Address::generate(env);
         let id     = env.register_contract(None, CarbonOracleContract);
-        let admin = Address::generate(env);
-        let oracle = Address::generate(env);
-        let id = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
         client.initialize(&admin, &oracle, &pub_key, &registry);
         (client, admin, oracle, signing_key)
@@ -1112,13 +1093,6 @@ mod vintage_year_validation_tests {
         let id     = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(&env, &id);
         client.initialize(&admin, &oracle, &pub_key, &registry);
-        (env, client, admin, oracle, signing_key)
-        let admin = Address::generate(&env);
-        let oracle = Address::generate(&env);
-        let id = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(&env, &id);
-        client.initialize(&admin, &oracle, &pub_key);
-        let _ = client;
         (env, id, admin, oracle, signing_key)
     }
 

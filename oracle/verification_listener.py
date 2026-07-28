@@ -33,6 +33,7 @@ from stellar_sdk.soroban_rpc import SendTransactionStatus
 load_dotenv()
 from log import get_logger  # noqa: E402 — must come after load_dotenv
 from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenError  # noqa: E402
+from utils.safe_parse import safe_float  # noqa: E402
 
 log = get_logger("verification_listener")
 
@@ -368,7 +369,7 @@ def validate_methodology_report(report: dict, methodology: str) -> tuple[bool, i
             log.warning("Missing required field: %s", field)
             score -= 20
 
-    if report.get("tonnes_verified", 0) <= 0:
+    if safe_float(report.get("tonnes_verified", 0)) <= 0:
         log.warning("Non-positive tonnes_verified for project %s", report.get("project_id"))
         score -= 30
 

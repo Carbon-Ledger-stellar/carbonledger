@@ -24,6 +24,7 @@ load_dotenv()
 from log import get_logger  # noqa: E402 — must come after load_dotenv
 log = get_logger("price_oracle")
 from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenError  # noqa: E402
+from utils.safe_parse import safe_float, safe_int  # noqa: E402
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -221,17 +222,17 @@ def aggregate_prices(xpansiv: list[dict], toucan: list[dict]) -> dict[tuple[str,
     buckets: dict[tuple[str, int], list[tuple[float, float]]] = {}
 
     for item in xpansiv:
-        key    = (item.get("methodology", "VCS"), int(item.get("vintage_year", 2023)))
-        price  = float(item.get("price_usd", 0))
-        volume = float(item.get("volume", 1))
-        if price > 0:
+        key    = (str(item.get("methodology", "VCS")), safe_int(item.get("vintage_year", 2023), 2023))
+        price  = safe_float(item.get("price_usd", 0))
+        volume = safe_float(item.get("volume", 1))
+        if price > 0 and volume > 0:
             buckets.setdefault(key, []).append((price, volume))
 
     for item in toucan:
-        key    = (item.get("methodology", "VCS"), int(item.get("vintage_year", 2023)))
-        price  = float(item.get("price_usd", 0))
-        volume = float(item.get("volume", 1))
-        if price > 0:
+        key    = (str(item.get("methodology", "VCS")), safe_int(item.get("vintage_year", 2023), 2023))
+        price  = safe_float(item.get("price_usd", 0))
+        volume = safe_float(item.get("volume", 1))
+        if price > 0 and volume > 0:
             buckets.setdefault(key, []).append((price, volume))
 
     result = {}
@@ -304,7 +305,7 @@ def cross_validate_prices(
                 methodology  = str(item.get("methodology", "VCS"))
                 vintage_year = int(item.get("vintage_year", 2023))
                 price_usd    = float(item.get("price_usd", 0))
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 continue
 
             # Drop zero, negative, NaN, and infinite prices
