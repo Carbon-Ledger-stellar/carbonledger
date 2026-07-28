@@ -511,6 +511,12 @@ jobs:
           PROPTEST_CASES: 1000
         run: "cargo test -p carbon_credit 'fuzz::' -- --nocapture"
 
+      - name: Run proptest invariants (carbon_credit)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_credit 'proptest_invariant_tests::' -- --nocapture"
+
       - name: Run fuzz tests (carbon_marketplace)
         working-directory: contracts
         env:
