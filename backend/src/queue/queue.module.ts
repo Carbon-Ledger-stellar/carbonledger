@@ -23,6 +23,9 @@ export class QueueModule implements OnModuleInit {
   constructor(private readonly certificateProcessor: CertificateProcessor) {}
 
   async onModuleInit() {
+    if (process.env.NODE_ENV === 'test') {
+      return;
+    }
     // Start polling for pending certificates every 60 seconds
     setInterval(async () => {
       try {

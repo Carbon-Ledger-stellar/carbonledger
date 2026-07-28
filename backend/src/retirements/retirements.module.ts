@@ -9,6 +9,8 @@ import { CertificatesModule } from "../certificates/certificates.module";
 import { UploadsModule } from "../uploads/uploads.module";
 import { QueueModule } from "../queue/queue.module";
 import { WebhookModule } from "../webhook/webhook.module";
+import { CertificateService } from "./certificate.service";
+import { ZkProofService } from "./zk-proof.service";
 
 @Module({
   imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule, WebhookModule],
@@ -18,6 +20,9 @@ import { WebhookModule } from "../webhook/webhook.module";
     PrismaService,
     IpfsService,
     RetirementIndexerService,
+    CertificateService,
+    ZkProofService,
   ],
+  exports: [RetirementsService],
 })
 export class RetirementsModule {}
