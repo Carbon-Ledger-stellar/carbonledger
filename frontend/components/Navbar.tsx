@@ -2,16 +2,19 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useWallet } from '@/lib/wallet/WalletContext';
 import { useTheme } from '@/lib/theme-context';
 import { useEffect, useState } from 'react';
+import { useAppLocale } from '@/components/LocaleProvider';
+import { locales, type AppLocale } from '@/i18n/routing';
 
 const NAV_LINKS = [
-  { href: '/marketplace', label: 'Marketplace' },
-  { href: '/projects',    label: 'Projects' },
-  { href: '/audit',       label: 'Audit' },
-  { href: '/retire',      label: 'Retire' },
-  { href: '/dashboard',   label: 'Dashboard' },
+  { href: '/marketplace', labelKey: 'marketplace' },
+  { href: '/projects',    labelKey: 'projects' },
+  { href: '/audit',       labelKey: 'audit' },
+  { href: '/retire',      labelKey: 'retire' },
+  { href: '/dashboard',   labelKey: 'dashboard' },
 ] as const;
 
 export function isActive(pathname: string, href: string): boolean {
@@ -21,6 +24,8 @@ export function isActive(pathname: string, href: string): boolean {
 
 export default function Navbar() {
   const pathname = usePathname();
+  const t = useTranslations('navbar');
+  const { locale, setLocale } = useAppLocale();
   const { isConnected, publicKey, error, connect, disconnect, checkNetwork } = useWallet();
   const { theme, setTheme } = useTheme();
   const [networkWarning, setNetworkWarning] = useState<string | null>(null);
@@ -29,10 +34,10 @@ export default function Navbar() {
   useEffect(() => {
     if (isConnected) {
       checkNetwork().then(({ isCorrect, currentNetwork }) => {
-        setNetworkWarning(isCorrect ? null : `Network mismatch: ${currentNetwork}`);
+        setNetworkWarning(isCorrect ? null : t('networkMismatch', { network: currentNetwork }));
       });
     }
-  }, [isConnected, checkNetwork]);
+  }, [isConnected, checkNetwork, t]);
 
   // Close drawer on route change
   useEffect(() => { setDrawerOpen(false); }, [pathname]);
@@ -48,7 +53,7 @@ export default function Navbar() {
   const handleConnect = async () => {
     const result = await connect();
     if (!result.success && result.error?.includes('not installed')) {
-      if (confirm('Freighter wallet not installed. Install now?')) {
+      if (confirm(t('freighterNotInstalled'))) {
         window.open('https://freighter.app/', '_blank');
       }
     }
@@ -57,16 +62,48 @@ export default function Navbar() {
   const truncateAddress = (addr: string) =>
     addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : '';
 
+  const localeLabels: Record<AppLocale, string> = {
+    en: t('localeEn'),
+    es: t('localeEs'),
+    pt: t('localePt'),
+  };
+
+  const languageSwitcher = (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.875rem' }}>
+      <span className="sr-only">{t('language')}</span>
+      <select
+        aria-label={t('language')}
+        value={locale}
+        onChange={(e) => setLocale(e.target.value as AppLocale)}
+        style={{
+          background: '#16213e',
+          color: '#fff',
+          border: '1px solid rgba(255,255,255,0.2)',
+          borderRadius: '4px',
+          padding: '0.35rem 0.5rem',
+          cursor: 'pointer',
+        }}
+      >
+        {locales.map((loc) => (
+          <option key={loc} value={loc}>
+            {localeLabels[loc]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
   return (
     <>
-      <nav style={styles.nav} aria-label="Main navigation">
+      <nav style={styles.nav} aria-label={t('mainNav')}>
         {/* Logo */}
-        <Link href="/" style={styles.logoLink}>CarbonLedger</Link>
+        <Link href="/" style={styles.logoLink}>{t('brand')}</Link>
 
         {/* Desktop nav links */}
         <ul style={styles.navList} role="list" className="desktop-nav">
-          {NAV_LINKS.map(({ href, label }) => {
+          {NAV_LINKS.map(({ href, labelKey }) => {
             const active = isActive(pathname, href);
+            const label = t(labelKey);
             return (
               <li key={href}>
                 <Link href={href} className={active ? 'nav-link nav-link--active' : 'nav-link'} aria-current={active ? 'page' : undefined}>
@@ -79,25 +116,26 @@ export default function Navbar() {
 
         {/* Wallet + theme — desktop */}
         <div style={styles.right} className="desktop-nav">
+          {languageSwitcher}
           {error && <span style={styles.error}>{error}</span>}
           {networkWarning && <span style={styles.warning}>{networkWarning}</span>}
           <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} style={styles.connectBtn}>
-            {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+            {theme === 'dark' ? t('light') : t('dark')}
           </button>
           {isConnected && publicKey ? (
             <div style={styles.walletInfo}>
               <span style={styles.address}>{truncateAddress(publicKey)}</span>
-              <button onClick={disconnect} style={styles.disconnectBtn}>Disconnect</button>
+              <button onClick={disconnect} style={styles.disconnectBtn}>{t('disconnect')}</button>
             </div>
           ) : (
-            <button onClick={handleConnect} style={styles.connectBtn}>Connect Wallet</button>
+            <button onClick={handleConnect} style={styles.connectBtn}>{t('connectWallet')}</button>
           )}
         </div>
 
         {/* Hamburger — mobile only */}
         <button
           className="hamburger-btn"
-          aria-label={drawerOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-label={drawerOpen ? t('closeMenu') : t('openMenu')}
           aria-expanded={drawerOpen}
           aria-controls="mobile-drawer"
           onClick={() => setDrawerOpen(v => !v)}
@@ -126,7 +164,7 @@ export default function Navbar() {
         id="mobile-drawer"
         role="dialog"
         aria-modal="true"
-        aria-label="Navigation menu"
+        aria-label={t('navMenu')}
         style={{
           position: 'fixed', top: 0, left: 0, bottom: 0,
           width: '280px', zIndex: 200,
@@ -140,21 +178,22 @@ export default function Navbar() {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
           <Link href="/" style={{ ...styles.logoLink, fontSize: '1.1rem' }} onClick={() => setDrawerOpen(false)}>
-            CarbonLedger
+            {t('brand')}
           </Link>
           <button
             onClick={() => setDrawerOpen(false)}
-            aria-label="Close navigation menu"
+            aria-label={t('closeMenu')}
             style={{ background: 'none', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer', padding: '0.25rem' }}
           >
             ✕
           </button>
         </div>
 
-        <nav aria-label="Mobile navigation">
+        <nav aria-label={t('mobileNav')}>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            {NAV_LINKS.map(({ href, label }) => {
+            {NAV_LINKS.map(({ href, labelKey }) => {
               const active = isActive(pathname, href);
+              const label = t(labelKey);
               return (
                 <li key={href}>
                   <Link
@@ -182,17 +221,18 @@ export default function Navbar() {
         </nav>
 
         <div style={{ marginTop: 'auto', paddingTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {languageSwitcher}
           {networkWarning && <span style={{ ...styles.warning, fontSize: '0.8rem' }}>{networkWarning}</span>}
           <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} style={{ ...styles.connectBtn, width: '100%' }}>
-            {theme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode'}
+            {theme === 'dark' ? t('lightMode') : t('darkMode')}
           </button>
           {isConnected && publicKey ? (
             <>
               <span style={{ ...styles.address, textAlign: 'center' }}>{truncateAddress(publicKey)}</span>
-              <button onClick={disconnect} style={{ ...styles.disconnectBtn, width: '100%' }}>Disconnect</button>
+              <button onClick={disconnect} style={{ ...styles.disconnectBtn, width: '100%' }}>{t('disconnect')}</button>
             </>
           ) : (
-            <button onClick={handleConnect} style={{ ...styles.connectBtn, width: '100%' }}>Connect Wallet</button>
+            <button onClick={handleConnect} style={{ ...styles.connectBtn, width: '100%' }}>{t('connectWallet')}</button>
           )}
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { WalletStatus } from "../hooks/useWalletStatus";
 import { colors, borderRadius, shadows, typography } from "../styles/design-system";
 import { connectFreighter } from "../lib/freighter";
+import { useTranslations } from "next-intl";
 
 interface WalletPromptProps {
   status: WalletStatus;
@@ -11,6 +12,8 @@ interface WalletPromptProps {
 }
 
 export default function WalletPrompt({ status, onConnect, refresh }: WalletPromptProps) {
+  const t = useTranslations("walletPrompt");
+
   if (status === "loading" || status === "ready") return null;
 
   const handleConnect = async () => {
@@ -24,31 +27,29 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
   };
 
   const handleSwitchNetwork = () => {
-    // Since we can't trigger a switch via API, we prompt the user to check their wallet
-    // and then we refresh the status.
-    alert("Please open your Freighter extension and switch to the Testnet.");
+    alert(t("switchNetworkAlert"));
     refresh();
   };
 
   const content = {
     not_installed: {
-      title: "Wallet Required",
-      message: "To securely purchase and retire carbon credits, you'll need the Freighter wallet extension.",
-      buttonText: "Install Freighter",
+      title: t("notInstalledTitle"),
+      message: t("notInstalledMessage"),
+      buttonText: t("notInstalledButton"),
       action: () => window.open("https://www.freighter.app/", "_blank"),
       icon: "🔌",
     },
     not_connected: {
-      title: "Connect Your Wallet",
-      message: "Connect your Freighter wallet to authorize this transaction on the Stellar network.",
-      buttonText: "Connect Wallet",
+      title: t("notConnectedTitle"),
+      message: t("notConnectedMessage"),
+      buttonText: t("notConnectedButton"),
       action: handleConnect,
       icon: "🦊",
     },
     wrong_network: {
-      title: "Switch to Testnet",
-      message: "CarbonLedger currently operates on the Stellar Testnet. Please switch your wallet network to continue.",
-      buttonText: "Refresh Connection",
+      title: t("wrongNetworkTitle"),
+      message: t("wrongNetworkMessage"),
+      buttonText: t("wrongNetworkButton"),
       action: handleSwitchNetwork,
       icon: "🌐",
     },
@@ -95,7 +96,10 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
       </button>
       {status === "not_installed" && (
         <p style={{ marginTop: "1rem", fontSize: "0.75rem", color: colors.neutral[400] }}>
-          Already installed? <button onClick={refresh} style={{ background: "none", border: "none", color: colors.primary[600], cursor: "pointer", padding: 0, fontSize: "inherit", textDecoration: "underline" }}>Click here to refresh</button>
+          {t("alreadyInstalled")}{" "}
+          <button onClick={refresh} style={{ background: "none", border: "none", color: colors.primary[600], cursor: "pointer", padding: 0, fontSize: "inherit", textDecoration: "underline" }}>
+            {t("refreshLink")}
+          </button>
         </p>
       )}
     </div>
