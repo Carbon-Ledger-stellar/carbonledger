@@ -24,6 +24,29 @@ export class RetirementsResolver {
   }
 
   /**
+   * Full-text search over retirements — mirrors GET /retirements/search (#670).
+   * Scoped to the authenticated caller's retirements.
+   */
+  @Query(() => RetirementsPage, { name: 'searchRetirements' })
+  async searchRetirements(
+    @Context() ctx: { req: any },
+    @Args('search',      { nullable: true }) search?: string,
+    @Args('projectId',   { nullable: true }) projectId?: string,
+    @Args('vintageYear', { nullable: true, type: () => Int }) vintageYear?: number,
+    @Args('cursor',      { nullable: true }) cursor?: string,
+    @Args('limit',       { nullable: true, type: () => Int, defaultValue: 20 }) limit?: number,
+  ) {
+    const user = ctx.req?.user;
+    if (!user) throw new UnauthorizedException('Authentication required');
+    const result = await this.retirementsService.searchRetirements({
+      search, projectId, vintageYear, cursor,
+      retiredBy: user.publicKey,
+      limit: limit ?? 20,
+    });
+    return { retirements: result.retirements, next_cursor: result.next_cursor, total_count: result.total_count };
+  }
+
+  /**
    * Single retirement certificate — public, mirrors GET /retirements/:id/certificate.
    * Returns the full provenance view needed by the audit explorer in one query.
    */

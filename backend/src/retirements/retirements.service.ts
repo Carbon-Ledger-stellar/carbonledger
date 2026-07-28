@@ -70,8 +70,69 @@ export class RetirementsService {
     };
   }
 
-  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
+  /**
+   * Full-text search over retirements using the PostgreSQL tsvector GIN index (#670).
+   * Searches beneficiary (weight A) and retirementReason (weight B).
+   */
+  async searchRetirements(query: {
+    search?: string;
+    projectId?: string;
+    retiredBy?: string;
+    vintageYear?: number;
+    cursor?: string;
+    limit?: number;
+  }): Promise<PaginatedRetirementsResponse> {
+    const { search, projectId, retiredBy, vintageYear, cursor, limit = 20 } = query;
     const take = Math.min(Math.max(limit, 1), 100);
+
+    if (!search) {
+      return this.findAll(cursor, take, retiredBy);
+    }
+
+    const conditions: string[] = ['"searchVector" @@ plainto_tsquery(\'english\', $1)'];
+    const args: unknown[] = [search];
+    let idx = 2;
+
+    if (projectId) { conditions.push(`"projectId" = $${idx}`); args.push(projectId); idx++; }
+    if (retiredBy) { conditions.push(`"retiredBy" = $${idx}`); args.push(retiredBy); idx++; }
+    if (vintageYear) { conditions.push(`"vintageYear" = $${idx}`); args.push(vintageYear); idx++; }
+    if (cursor) { conditions.push(`"id" < $${idx}`); args.push(cursor); idx++; }
+
+    const where = conditions.join(' AND ');
+
+    type RetirementRow = {
+      id: string; retirementId: string; batchId: string; projectId: string;
+      amount: string; retiredBy: string; beneficiary: string; retirementReason: string;
+      vintageYear: number; serialStart: string; serialEnd: string; serialNumbers: string[];
+      txHash: string; certificateCid: string | null; isValid: boolean;
+      validatedAt: Date | null; retiredAt: Date;
+    };
+
+    const [rows, countRows] = await Promise.all([
+      this.prisma.$queryRawUnsafe<RetirementRow[]>(
+        `SELECT id, "retirementId", "batchId", "projectId", amount, "retiredBy",
+                beneficiary, "retirementReason", "vintageYear", "serialStart", "serialEnd",
+                "serialNumbers", "txHash", "certificateCid", "isValid", "validatedAt", "retiredAt"
+         FROM "RetirementRecord"
+         WHERE ${where}
+         ORDER BY ts_rank("searchVector", plainto_tsquery('english', $1)) DESC
+         LIMIT ${take + 1}`,
+        ...args,
+      ),
+      this.prisma.$queryRawUnsafe<[{ count: bigint }]>(
+        `SELECT COUNT(*)::bigint AS count FROM "RetirementRecord" WHERE ${where}`,
+        ...args,
+      ),
+    ]);
+
+    const hasMore = rows.length > take;
+    const next_cursor = hasMore ? rows[rows.length - 2].id : undefined;
+    if (hasMore) rows.pop();
+
+    return { retirements: rows, next_cursor, total_count: Number(countRows[0]?.count ?? 0) };
+  }
+
+  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {    const take = Math.min(Math.max(limit, 1), 100);
     const where = retiredBy ? { retiredBy } : {};
 
     const [retirements, total_count] = await Promise.all([
