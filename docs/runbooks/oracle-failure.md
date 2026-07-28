@@ -1,87 +1,70 @@
-# Runbook: Oracle Failure
+# Oracle Failure Runbook
 
-**Severity:** High  
-**Contacts:** See [contacts.md](contacts.md) → Oracle  
-**Escalation:** See [escalation.md](escalation.md)
+## Overview
+This runbook covers procedures for handling oracle failures, including DLQ drain and transaction recovery.
 
----
+## Dead-Letter Queue (DLQ)
 
-## Detection
+### What is the DLQ?
+The DLQ stores transactions that failed after all retry attempts. Entries include:
+- Transaction type (price_update, verification)
+- Project ID
+- Payload
+- Attempt count
+- Last error message
+- Timestamp
 
-The oracle is considered failed when **any** of the following are true:
+### DLQ Location
+# View entries with Python
+python3 -c "
+import redis
+import json
+r = redis.Redis(decode_responses=True)
+entries = []
+for i in range(10):
+    entry = r.lindex('carbonledger:dlq:oracle', i)
+    if entry:
+        entries.append(json.loads(entry))
+print(json.dumps(entries, indent=2))
+"
+# Run reprocessor once
+python3 oracle/dlq_reprocessor.py --once
 
-- `GET /api/v1/health` returns non-200 for > 5 minutes
-- `carbon_oracle.is_monitoring_current()` returns `false` for an active project (no data in 365 days — but alert at 30 days)
-- Price feed last updated > 24 hours ago (TTL breach — see `docs/ttl-cost.md`)
-- Oracle process logs show repeated `ConnectionError` or `AuthenticationError`
-- Monitoring alert fires on `oracle_last_update_age_hours > 24`
+# Run with specific batch size
+python3 oracle/dlq_reprocessor.py --once --batch-size 20
 
-**Automated alert sources:** uptime monitor on oracle host, Stellar Horizon event stream, price-feed staleness cron.
+# Run with custom retry attempts
+python3 oracle/dlq_reprocessor.py --once --max-retries 5
+# Run reprocessor continuously
+python3 oracle/dlq_reprocessor.py --interval 60
 
----
+# In production, run as a cron job
+# */5 * * * * /path/to/oracle/dlq_reprocessor.py --once
+# Clear all entries (use with caution)
+python3 oracle/dlq_reprocessor.py --clear
 
-## Containment
+# Or via Redis
+redis-cli DEL carbonledger:dlq:oracle
+# Check oracle logs
+tail -100 logs/oracle.log
 
-1. **Identify which oracle component failed** (verification listener, price oracle, or satellite monitor):
-   ```bash
-   # Check process status on oracle host
-   systemctl status verification_listener price_oracle satellite_monitor
-   # Or in Docker
-   docker ps --filter name=oracle
-   docker logs carbonledger-oracle --tail 100
-   ```
+# Check DLQ entries
+python3 oracle/dlq_reprocessor.py --once --batch-size 1
+# Check Soroban RPC
+curl -X POST ${SOROBAN_RPC_URL} \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"getHealth","id":1}'
 
-2. **Freeze new credit issuance** if monitoring data is stale and new mint requests are pending:
-   - Call `carbon_registry.suspend_project(<project_id>)` for affected projects via admin keypair.
-   - This prevents minting credits against unverified monitoring data.
+# Check Redis connectivity
+redis-cli ping
+# Run reprocessor
+python3 oracle/dlq_reprocessor.py --once
+# Check DLQ depth
+redis-cli LLEN carbonledger:dlq:oracle
 
-3. **Do not push stale or fabricated monitoring data** to the contract. A gap is safer than bad data.
-
-4. **Notify stakeholders** (see [contacts.md](contacts.md)) that price feeds and/or monitoring submissions are delayed.
-
----
-
-## Recovery
-
-### Price oracle down
-
-1. Restart the price oracle process:
-   ```bash
-   python3 oracle/price_oracle.py
-   # or
-   docker restart carbonledger-price-oracle
-   ```
-2. Verify it fetches and submits a price update within one cycle (12 hours max).
-3. Confirm `carbon_oracle.get_benchmark_price()` returns a fresh value on-chain.
-
-### Verification listener down
-
-1. Check Stellar RPC connectivity:
-   ```bash
-   curl https://soroban-testnet.stellar.org/health
-   ```
-2. Rotate `ORACLE_SECRET_KEY` if authentication errors are the cause (follow [key-compromise.md](key-compromise.md) if key is suspected stolen).
-3. Restart listener; confirm it processes any backlogged verification events.
-
-### Satellite monitor down (webhook receiver)
-
-1. Check that the webhook endpoint is reachable from Google Earth Engine / Planet Labs.
-2. Replay missed webhook payloads from the satellite provider's dashboard if available.
-3. If replay is not possible, manually submit monitoring data via `carbon_oracle.submit_monitoring_data()` using verified off-chain records.
-
-### Unsuspend projects
-
-Once oracle is confirmed healthy:
-```bash
-stellar contract invoke --id $CARBON_REGISTRY_CONTRACT_ID \
-  --source $ADMIN_SECRET_KEY --network testnet \
-  -- update_project_status --project_id <id> --status Active
-```
-
----
-
-## Post-mortem
-
-- Document root cause, timeline, and affected projects in the incident channel.
-- File a GitHub issue if a code or config change is needed.
-- Review alert thresholds — did we detect this fast enough?
+# Check metrics
+curl http://localhost:8000/metrics | grep oracle_dlq
+# Environment variables
+DLQ_MAX_RETRIES=3                    # Maximum retry attempts
+DLQ_RETRY_DELAYS=5,30,120            # Retry delay schedule
+DLQ_BATCH_SIZE=10                    # DLQ drain batch size

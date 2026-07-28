@@ -72,6 +72,26 @@ describe("TransactionStatus — ARIA live regions", () => {
     expect(region).toHaveTextContent("Something went wrong");
   });
 
+  it("uses aria-live=polite and role=status for timed_out status", () => {
+    render(<TransactionStatus status="timed_out" txHash="abc123" />);
+    const region = document.querySelector("[aria-live]");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toHaveTextContent("Check later");
+  });
+
+  it("announces polling progress inside the polite live region", () => {
+    render(
+      <TransactionStatus
+        status="polling"
+        pollProgress={{ current: 4, max: 120 }}
+      />,
+    );
+    const region = document.querySelector("[aria-live]");
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveTextContent("attempt 4 of 120");
+  });
+
   it("has aria-atomic=true on the live region", () => {
     render(<TransactionStatus status="confirmed" />);
     expect(document.querySelector("[aria-live]")).toHaveAttribute("aria-atomic", "true");

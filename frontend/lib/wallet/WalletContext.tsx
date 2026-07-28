@@ -31,7 +31,7 @@ export interface WalletContextValue {
   error: string | null;
 
   // --- Actions ---
-  connect: () => Promise<void>;
+  connect: () => Promise<{ success: boolean; error?: string }>;
   disconnect: () => Promise<void>;
   /** Retry after error / wrong network / account change */
   retry: () => Promise<void>;
@@ -85,6 +85,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const connectWithResult = async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      await connect();
+      return { success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Connect failed";
+      return { success: false, error: message };
+    }
+  };
+
   const value: WalletContextValue = {
     // State machine
     connectionStatus: state.status,
@@ -97,7 +107,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     error: state.errorMessage,
 
     // Actions
-    connect,
+    connect: connectWithResult,
     disconnect,
     retry,
     reset,
