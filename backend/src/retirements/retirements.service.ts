@@ -4,6 +4,7 @@ import { IpfsService } from "../common/ipfs.service";
 import { RetireCreditsDto } from "./retirements.dto";
 import { QueueService } from "../queue/queue.service";
 import { JobType } from "../queue/queue.constants";
+import { CertificateService } from "../certificates/certificate.service";
 import { v4 as uuidv4 } from "uuid";
 
 export interface PaginatedRetirementsResponse {
@@ -20,6 +21,7 @@ export class RetirementsService {
     private readonly prisma: PrismaService,
     private readonly ipfsService: IpfsService,
     private readonly queueService: QueueService,
+    private readonly certificateService: CertificateService,
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
@@ -161,18 +163,32 @@ export class RetirementsService {
         storedCid: retirement.certificateCid,
       };
     } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
       this.logger.error(
-        `Error verifying certificate integrity for ${retirementId}: ${error.message}`
+        `Error verifying certificate integrity for ${retirementId}: ${errMsg}`
       );
       throw new BadRequestException(
-        `Failed to verify certificate integrity: ${error.message}`
+        `Failed to verify certificate integrity: ${errMsg}`
       );
     }
   }
 
   async generatePdf(retirementId: string): Promise<Buffer> {
     const retirement = await this.findOne(retirementId);
-    return Buffer.from(JSON.stringify(retirement));
+    // Use CertificateService to generate a proper PDF with QR code
+    return await this.certificateService.generatePdf({
+      retirementId: retirement.retirementId,
+      beneficiary: retirement.beneficiary,
+      amount: Number(retirement.amount),
+      projectName: retirement.project.name,
+      retirementReason: retirement.retirementReason,
+      retiredAt: retirement.retiredAt,
+      serialNumbers: retirement.serialNumbers,
+      serialStart: retirement.serialStart,
+      serialEnd: retirement.serialEnd,
+      vintageYear: retirement.vintageYear,
+      txHash: retirement.txHash,
+    });
   }
 
   async exportCsv(filters: any): Promise<Buffer> {

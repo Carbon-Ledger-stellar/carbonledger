@@ -17,28 +17,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private _poolErrors = 0;
 
   constructor() {
-    const url = new URL(process.env.DATABASE_URL!);
-    url.searchParams.set("connection_limit", String(POOL_MAX));
-    url.searchParams.set("pool_timeout", String(POOL_TIMEOUT_MS / 1000));
-    url.searchParams.set("connect_timeout", String(CONNECT_TIMEOUT_S));
-
     super({
-      datasources: { db: { url: url.toString() } },
       log: process.env.NODE_ENV === "development" ? ["query", "warn", "error"] : ["warn", "error"],
-    });
-
-    // Middleware to track active queries for metrics
-    this.$use(async (params, next) => {
-      this._activeQueries++;
-      this._totalQueries++;
-      try {
-        return await next(params);
-      } catch (err: any) {
-        if (err?.code === "P2024") this._poolErrors++; // pool timeout
-        throw err;
-      } finally {
-        this._activeQueries--;
-      }
     });
   }
 
@@ -51,6 +31,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleDestroy() {
     await this.$disconnect();
+  }
+
+  /**
+   * Track a query execution for pool metrics.
+   * Called by services that want to report query stats.
+   */
+  trackQuery(errorCode?: string): void {
+    this._activeQueries++;
+    this._totalQueries++;
+    if (errorCode === "P2024") this._poolErrors++;
+    this._activeQueries--;
   }
 
   getPoolMetrics() {

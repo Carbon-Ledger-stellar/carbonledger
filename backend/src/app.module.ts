@@ -31,10 +31,11 @@ import { ThrottleModule, RoleLimitGuard } from "./throttle";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+import { RedisModule } from "./redis.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
-import { Server } from "@stellar/stellar-sdk";
+import Server from "@stellar/stellar-sdk";
 import { Redis } from "ioredis";
 
 @Controller("health")

@@ -192,9 +192,11 @@ Response:
 ### Environment Variables
 
 ```env
-# Pinata / IPFS
-IPFS_API_KEY=your_pinata_api_key
-IPFS_SECRET_KEY=your_pinata_secret_key
+# Pinata / IPFS (v2 SDK — use PINATA_JWT exclusively)
+PINATA_JWT=your_pinata_jwt
+# Legacy fallback (not recommended): IPFS_API_KEY + IPFS_SECRET_KEY
+# IPFS_API_KEY=your_pinata_api_key
+# IPFS_SECRET_KEY=your_pinata_secret_key
 
 # Email (optional — mock mode if not configured)
 SMTP_HOST=smtp.gmail.com
@@ -210,11 +212,13 @@ REDIS_PORT=6379
 REDIS_PASSWORD=
 ```
 
+> **Note on Pinata v2 SDK**: The `pinata` npm package v2.x uses a JWT-based authentication model. Set `PINATA_JWT` in your environment (you can generate one from the Pinata dashboard). The legacy `IPFS_API_KEY` + `IPFS_SECRET_KEY` pair is no longer supported directly by the SDK; the service falls back to concatenating them as `${apiKey}:${secretKey}`, but migrating to `PINATA_JWT` is strongly recommended.
+
 ## Dependencies
 
 - `pdfkit` — PDF generation
 - `qrcode` — QR code generation (PNG buffers)
-- `pinata` — IPFS/Pinata SDK
+- `pinata` — IPFS/Pinata SDK (v2.x — uses `PINATA_JWT` for auth)
 - `nodemailer` — Email notifications
 - `bullmq` + `@nestjs/bullmq` — Job queue
 - `@prisma/client` — Database ORM
@@ -278,21 +282,26 @@ curl http://localhost:3001/api/v1/queue/stats
    npm install
    ```
 
-2. **Run Prisma Migration**
+2. **Generate Prisma Client**
+   ```bash
+   npx prisma generate
+   ```
+
+3. **Run Prisma Migration**
    ```bash
    npx prisma migrate dev --name add_certificate_status_fields
    ```
 
-3. **Configure Environment**
-   - Set `IPFS_API_KEY` and `IPFS_SECRET_KEY` in `.env`
+4. **Configure Environment**
+   - Set `PINATA_JWT` in `.env` (or `IPFS_API_KEY` + `IPFS_SECRET_KEY` as legacy fallback)
    - (Optional) Configure SMTP for email notifications
 
-4. **Start Backend**
+5. **Start Backend**
    ```bash
    npm run start:dev
    ```
 
-5. **Verify Polling**
+6. **Verify Polling**
    - Check logs for "Polling for pending certificates..."
    - Should appear every 60 seconds
 

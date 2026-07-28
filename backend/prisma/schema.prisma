@@ -6,7 +6,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model CarbonProject {
@@ -99,6 +98,7 @@ model RetirementRecord {
 
 model RetirementCertificate {
   id          String   @id @default(cuid())
+  /// Stores RetirementRecord.id (Prisma cuid), NOT the UUID retirementId field
   retirementId String
   beneficiary String
   amount      Decimal  @db.Decimal(18, 2)
@@ -365,18 +365,6 @@ model SorobanSubmission {
 
   @@index([contractId])
   @@index([status])
-  @@index([createdAt])
-}
-
-model OracleUpdate {
-  id        String   @id @default(cuid())
-  dataType  String   // "verification" | "price" | "satellite"
-  success   Boolean
-  error     String?
-  createdAt DateTime @default(now())
-
-  @@index([dataType])
-  @@index([success])
   @@index([createdAt])
 }
 
