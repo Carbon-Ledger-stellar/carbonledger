@@ -59,4 +59,68 @@ export class VerifiersService {
       orderBy: { createdAt: 'asc' },
     });
   }
+
+  /** Projects this verifier has already attested to (verified or rejected), with issuance volume. */
+  async attestationHistory(verifierPublicKey: string, cursor?: string, limit = 20) {
+    const projects = await this.prisma.carbonProject.findMany({
+      where: {
+        verifierAddress: verifierPublicKey,
+        status: { in: ['Verified', 'Rejected'] },
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: limit + 1,
+      ...(cursor && { cursor: { id: cursor }, skip: 1 }),
+    });
+
+    const hasMore = projects.length > limit;
+    const page = hasMore ? projects.slice(0, limit) : projects;
+    const total = await this.prisma.carbonProject.count({
+      where: { verifierAddress: verifierPublicKey, status: { in: ['Verified', 'Rejected'] } },
+    });
+
+    return {
+      projects: page,
+      nextCursor: hasMore ? page[page.length - 1].id : undefined,
+      hasMore,
+      total,
+    };
+  }
+
+  /** Paginated attestation fee ledger for a verifier's fee tracker. */
+  async feeHistory(verifierPublicKey: string, cursor?: string, limit = 20) {
+    const fees = await this.prisma.verifierAttestationFee.findMany({
+      where: { verifierPublicKey },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(cursor && { cursor: { id: cursor }, skip: 1 }),
+    });
+
+    const hasMore = fees.length > limit;
+    const page = hasMore ? fees.slice(0, limit) : fees;
+    const total = await this.prisma.verifierAttestationFee.count({ where: { verifierPublicKey } });
+
+    return {
+      fees: page,
+      nextCursor: hasMore ? page[page.length - 1].id : undefined,
+      hasMore,
+      total,
+    };
+  }
+
+  /** Full (unpaginated) fee ledger for CSV export. */
+  async allFees(verifierPublicKey: string) {
+    return this.prisma.verifierAttestationFee.findMany({
+      where: { verifierPublicKey },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  feesToCsv(fees: Array<Record<string, unknown>>): string {
+    if (fees.length === 0) return '';
+    const headers = Object.keys(fees[0]);
+    const rows = fees.map(row =>
+      headers.map(h => JSON.stringify(row[h] ?? '')).join(','),
+    );
+    return [headers.join(','), ...rows].join('\n');
+  }
 }
