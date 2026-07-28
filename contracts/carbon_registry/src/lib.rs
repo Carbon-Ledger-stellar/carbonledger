@@ -793,6 +793,25 @@ mod tests {
         assert_eq!(p.total_credits_retired, 300);
     }
 
+    /// Kills mutation of `total_credits_retired + amount > total_credits_issued`
+    /// -> `>=` in `retire_credits` (issue #632): retiring exactly the full
+    /// issued amount is the boundary case and must succeed, not be rejected.
+    #[test]
+    fn test_retire_exact_issued_amount_succeeds() {
+        let (env, admin, oracle, verifier) = setup();
+        let contract_id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
+
+        register(&env, &client, &admin);
+        client.increment_issued(&oracle, &make_str(&env, "proj-001"), &500_i128);
+        client.retire_credits(&admin, &make_str(&env, "proj-001"), &500_i128);
+
+        let p = client.get_project(&make_str(&env, "proj-001"));
+        assert_eq!(p.total_credits_retired, 500);
+        assert_eq!(p.total_credits_retired, p.total_credits_issued);
+    }
+
     #[test]
     fn test_retire_credits_cannot_exceed_issued() {
         let (env, admin, oracle, verifier) = setup();

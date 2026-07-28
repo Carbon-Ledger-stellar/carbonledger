@@ -601,6 +601,19 @@ impl CarbonCreditContract {
 #[cfg(test)]
 mod invariants;
 
+// ── Conservation law invariant helpers and tests (Issue #633) ─────────────────
+// Reusable assertion helpers for verifying the credit supply conservation law:
+//   total_minted == credits_active + credits_retired
+// Import conservation::* in any test module to use the helpers.
+#[cfg(test)]
+mod conservation;
+
+// ── Conservation invariant test suite (Issue #633) ───────────────────────────
+// Dedicated test suite that calls conservation assertions after every
+// mint_credits, transfer_credits, and retire_credits call.
+#[cfg(test)]
+mod conservation_invariant_tests;
+
 // ── Kani formal verification proofs ──────────────────────────────────────────
 // Compiled only by the Kani model checker toolchain (cfg(kani)).
 // Zero impact on production binary or regular test runs.
@@ -1343,6 +1356,183 @@ mod tests {
         // Now batch should be fully retired
         let final_batch = client.get_credit_batch(&s(&env, "b1"));
         assert_eq!(final_batch.status, CreditStatus::FullyRetired);
+    }
+
+    // ── Mutation-testing survivor kills (issue #632) ──────────────────────────
+    //
+    // Targeted tests for boundary conditions and status branches identified as
+    // likely mutation survivors during manual mutation analysis of
+    // retire_credits, transfer_credits, verify_serial_range and mint_credits.
+    // See audit/mutation-testing-report.md for the full analysis.
+
+    /// Kills mutation of `batch.status == CreditStatus::Suspended` (condition
+    /// removed / flipped) in `retire_credits`. A Suspended batch can only be
+    /// reached by writing storage directly since no public entry point sets
+    /// this status on carbon_credit; we simulate it to exercise the guard.
+    #[test]
+    fn test_retire_suspended_batch_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        env.as_contract(&client.address, || {
+            let mut batch: CreditBatch = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Batch(s(&env, "batch-001")))
+                .unwrap();
+            batch.status = CreditStatus::Suspended;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Batch(s(&env, "batch-001")), &batch);
+        });
+
+        let result = client.try_retire_credits(
+            &owner,
+            &s(&env, "batch-001"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-susp"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ProjectSuspended
+        );
+    }
+
+    /// Kills mutation of the same Suspended guard in `transfer_credits`.
+    #[test]
+    fn test_transfer_suspended_batch_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let to = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        env.as_contract(&client.address, || {
+            let mut batch: CreditBatch = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Batch(s(&env, "batch-001")))
+                .unwrap();
+            batch.status = CreditStatus::Suspended;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Batch(s(&env, "batch-001")), &batch);
+        });
+
+        let result = client.try_transfer_credits(&owner, &to, &s(&env, "batch-001"), &100_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ProjectSuspended
+        );
+    }
+
+    /// Kills mutation of `amount > active` -> `amount >= active` in
+    /// `transfer_credits`: transferring more than active must fail, and
+    /// transferring exactly the active amount must succeed.
+    #[test]
+    fn test_transfer_exceeds_active_amount_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let to = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        let result = client.try_transfer_credits(&owner, &to, &s(&env, "batch-001"), &1001_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InsufficientCredits
+        );
+    }
+
+    #[test]
+    fn test_transfer_exact_active_amount_succeeds() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let to = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        client.transfer_credits(&owner, &to, &s(&env, "batch-001"), &1000_i128);
+        let batch = client.get_credit_batch(&s(&env, "batch-001"));
+        assert_eq!(batch.owner, to);
+    }
+
+    /// Kills mutation of `amount > MAX_BATCH_SIZE` -> `amount >= MAX_BATCH_SIZE`
+    /// in `mint_credits`: minting exactly MAX_BATCH_SIZE must succeed, and
+    /// minting one more than MAX_BATCH_SIZE must fail with BatchTooLarge.
+    #[test]
+    fn test_mint_exact_max_batch_size_succeeds() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &MAX_BATCH_SIZE,
+            &2023_u32,
+            &s(&env, "b-max"),
+            &1_u64,
+            &(MAX_BATCH_SIZE as u64),
+            &s(&env, "QmCID"),
+            &owner,
+        );
+        let b = client.get_credit_batch(&s(&env, "b-max"));
+        assert_eq!(b.amount, MAX_BATCH_SIZE);
+    }
+
+    #[test]
+    fn test_mint_over_max_batch_size_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        let over = MAX_BATCH_SIZE + 1;
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &over,
+            &2023_u32,
+            &s(&env, "b-over"),
+            &1_u64,
+            &(over as u64),
+            &s(&env, "QmCID"),
+            &owner,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::BatchTooLarge);
+    }
+
+    /// Kills mutation of the overlap condition `start <= r.end && end >= r.start`
+    /// in `verify_serial_range_internal`: a range that shares exactly one serial
+    /// number with an existing range (touching, not merely adjacent) must be
+    /// detected as an overlap.
+    #[test]
+    fn test_serial_range_single_serial_overlap_detected() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &101_u64,
+            &200_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        // [50,101] shares serial 101 with [101,200] — this IS an overlap.
+        assert!(!client.verify_serial_range(&50_u64, &101_u64));
+        // [201, 300] is strictly adjacent with no shared serial — not an overlap.
+        assert!(client.verify_serial_range(&201_u64, &300_u64));
     }
 }
 
