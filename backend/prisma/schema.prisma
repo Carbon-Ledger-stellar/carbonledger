@@ -77,11 +77,16 @@ model RetirementRecord {
   serialStart      String
   serialEnd        String
   serialNumbers    String[]
-  txHash           String   @unique
-  certificateCid   String?
-  isValid          Boolean  @default(true)
-  validatedAt      DateTime?
-  retiredAt        DateTime @default(now())
+  txHash           String
+  certificateCid           String?
+  certificateUrl           String?
+  certificateStatus        String    @default("pending_certificate")
+  certificateRetries       Int       @default(0)
+  certificateFailedAt      DateTime?
+  certificateGeneratedAt   DateTime?
+  isValid                  Boolean   @default(true)
+  validatedAt              DateTime?
+  retiredAt                DateTime  @default(now())
 
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
   project CarbonProject @relation(fields: [projectId], references: [projectId])
@@ -409,6 +414,43 @@ model OracleUpdate {
   @@index([dataType])
   @@index([success])
   @@index([createdAt])
+}
+
+/// Tracks webhook subscriptions for corporate ESG platforms.
+/// Each subscription is tied to an owner address and listens for specified events.
+model WebhookSubscription {
+  id           String   @id @default(cuid())
+  ownerAddress String
+  url          String
+  secret       String
+  events       String[] // e.g. ["retirement.confirmed", "certificate.ready", "credit.purchased"]
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  deliveryLogs WebhookDeliveryLog[]
+
+  @@index([ownerAddress])
+  @@index([active])
+}
+
+/// Logs each webhook delivery attempt, including response details.
+model WebhookDeliveryLog {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  eventType      String
+  url            String
+  statusCode     Int?
+  responseBody   String?  @db.Text
+  success        Boolean  @default(false)
+  attempt        Int      @default(1)
+  error          String?
+  timestamp      DateTime @default(now())
+
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([eventType])
+  @@index([timestamp])
 }
 
 /// Append-only credit event log — never updated or deleted.

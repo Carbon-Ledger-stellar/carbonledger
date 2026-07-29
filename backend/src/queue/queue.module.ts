@@ -16,7 +16,6 @@ import { CertificatesModule as RetirementsCertificatesModule } from '../retireme
     AuthModule,
     forwardRef(() => RetirementsModule),
     CertificatesModule,
-    RetirementsCertificatesModule,
   ],
   providers: [QueueService, QueueProcessor, PrismaService],
   controllers: [QueueController],
