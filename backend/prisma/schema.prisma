@@ -320,6 +320,19 @@ model VerifierApplication {
   updatedAt        DateTime  @updatedAt
 }
 
+model VerifierAttestationFee {
+  id                String   @id @default(cuid())
+  verifierPublicKey String
+  projectId         String
+  decision          String   // Verified | Rejected
+  feeStroops        String
+  txHash            String   @unique
+  createdAt         DateTime @default(now())
+
+  @@index([verifierPublicKey, createdAt])
+  @@index([projectId])
+}
+
 model PriceApproval {
   id           String   @id @default(cuid())
   methodology  String

@@ -226,6 +226,27 @@ input[type="button"],
   border: 0;
 }
 
+/* ESG Dashboard responsive grids */
+.esg-kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+.esg-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .esg-kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .esg-charts-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 /* Skip link */
 .skip-link {
   position: absolute;
