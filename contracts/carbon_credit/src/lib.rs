@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN, Env,
-    String, Vec,
+    Map, String, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -37,6 +37,7 @@ pub enum CarbonError {
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
+pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
 
 #[contracttype]
 #[derive(Clone)]
@@ -102,6 +103,13 @@ pub struct CreditBatch {
 
 #[contracttype]
 #[derive(Clone, Debug)]
+pub struct CreditBatchWithExpiry {
+    pub batch: CreditBatch,
+    pub is_expired: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
 pub struct RetirementCertificate {
     pub retirement_id: String,
     pub credit_batch_id: String,
@@ -158,10 +166,11 @@ impl CarbonCreditContract {
         env.storage()
             .persistent()
             .set(&DataKey::RegistryContract, &registry_contract);
-        let ranges: Vec<SerialRange> = vec![&env];
+        // Use Map<u64, u64> (serial_start -> serial_end) for O(log n) overlap detection
+        let registry: Map<u64, u64> = Map::new(&env);
         env.storage()
             .persistent()
-            .set(&DataKey::SerialRegistry, &ranges);
+            .set(&DataKey::SerialRegistry, &registry);
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
@@ -221,6 +230,10 @@ impl CarbonCreditContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
+    fn batch_is_expired(env: &Env, vintage_year: u32) -> bool {
+        Self::current_year(env).saturating_sub(vintage_year) > MAX_VINTAGE_AGE_YEARS
+    }
+
     pub fn mint_credits(
         env: Env,
         admin: Address,
@@ -273,18 +286,16 @@ impl CarbonCreditContract {
             return Err(CarbonError::DoubleCountingDetected);
         }
 
-        let mut ranges: Vec<SerialRange> = env
+        // Insert into sorted Map<u64, u64> (serial_start -> serial_end)
+        let mut registry: Map<u64, u64> = env
             .storage()
             .persistent()
             .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| vec![&env]);
-        ranges.push_back(SerialRange {
-            start: serial_start,
-            end: serial_end,
-        });
+            .unwrap_or_else(|| Map::new(&env));
+        registry.set(serial_start, serial_end);
         env.storage()
             .persistent()
-            .set(&DataKey::SerialRegistry, &ranges);
+            .set(&DataKey::SerialRegistry, &registry);
 
         let batch = CreditBatch {
             batch_id: batch_id.clone(),
@@ -354,6 +365,10 @@ impl CarbonCreditContract {
         }
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
+        }
+
+        if Self::batch_is_expired(&env, batch.vintage_year) {
+            return Err(CarbonError::InvalidVintageYear);
         }
 
         let active_amount = Self::active_amount(&env, &batch);
@@ -465,6 +480,10 @@ impl CarbonCreditContract {
             return Err(CarbonError::ProjectSuspended);
         }
 
+        if Self::batch_is_expired(&env, batch.vintage_year) {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+
         let active = Self::active_amount(&env, &batch);
         if amount > active {
             return Err(CarbonError::InsufficientCredits);
@@ -485,6 +504,15 @@ impl CarbonCreditContract {
 
     pub fn get_credit_batch(env: Env, batch_id: String) -> Result<CreditBatch, CarbonError> {
         Self::load_batch(&env, &batch_id)
+    }
+
+    pub fn get_credit_batch_with_expiry(
+        env: Env,
+        batch_id: String,
+    ) -> Result<CreditBatchWithExpiry, CarbonError> {
+        let batch = Self::load_batch(&env, &batch_id)?;
+        let is_expired = Self::batch_is_expired(&env, batch.vintage_year);
+        Ok(CreditBatchWithExpiry { batch, is_expired })
     }
 
     pub fn get_retirement_certificate(
@@ -582,14 +610,23 @@ impl CarbonCreditContract {
     // (Circom BLS12-381 / CAP-0059). See docs/zk-proof-spec.md.
 
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
-        let ranges: Vec<SerialRange> = env
+        // O(log n) overlap detection using Map<u64, u64> sorted by serial_start.
+        // Iterates in ascending key order; breaks early once key > end (no further
+        // overlap is possible because all remaining keys are larger than `end`).
+        let registry: Map<u64, u64> = env
             .storage()
             .persistent()
             .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| vec![env]);
+            .unwrap_or_else(|| Map::new(env));
 
-        for r in ranges.iter() {
-            if start <= r.end && end >= r.start {
+        for (existing_start, existing_end) in registry.iter() {
+            // Once keys exceed the new range's end, no overlap is possible.
+            if existing_start > end {
+                break;
+            }
+            // Overlap condition: existing range [es, ee] overlaps [start, end]
+            // iff es <= end AND ee >= start
+            if existing_end >= start {
                 return false;
             }
         }
@@ -1544,5 +1581,341 @@ mod proptest_invariant_tests {
             prop_assert!(transfer_result.is_err(),
                 "P4 violated: zero-amount transfer must be rejected");
         }
+    }
+}
+
+// ── Vintage Expiry Tests (#649) ───────────────────────────────────────────────
+
+#[cfg(test)]
+mod vintage_expiry_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    /// timestamp 1735689600 = 2025-01-01, so current_year = 2025
+    fn setup_2025(env: &Env) -> (CarbonCreditContractClient, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600, // 2025-01-01
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        let admin = Address::generate(env);
+        let registry = Address::generate(env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(env, &id);
+        client.initialize(&admin, &registry);
+        (client, admin)
+    }
+
+    // Mint a batch with a specific vintage year. Serial range is offset to avoid conflicts.
+    fn mint_with_vintage(
+        env: &Env,
+        client: &CarbonCreditContractClient,
+        admin: &Address,
+        vintage_year: u32,
+        batch_id: &str,
+        serial_offset: u64,
+        owner: &Address,
+    ) {
+        client.mint_credits(
+            admin,
+            &s(env, "proj-001"),
+            &100_i128,
+            &vintage_year,
+            &s(env, batch_id),
+            &(serial_offset + 1),
+            &(serial_offset + 100),
+            &s(env, "QmCID"),
+            owner,
+        );
+    }
+
+    /// age == 30 (vintage_year = 2025 - 30 = 1995): transfer MUST succeed
+    #[test]
+    fn test_transfer_age_30_valid() {
+        let env = Env::default();
+        let (client, admin) = setup_2025(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+
+        // year 1995, age = 2025 - 1995 = 30, which is NOT > 30, so valid
+        mint_with_vintage(&env, &client, &admin, 1995, "b-1995", 0, &owner);
+        client.transfer_credits(&owner, &buyer, &s(&env, "b-1995"), &50_i128);
+        let batch = client.get_credit_batch(&s(&env, "b-1995"));
+        assert_eq!(batch.owner, buyer);
+    }
+
+    /// age == 31 (vintage_year = 2025 - 31 = 1994): transfer MUST return InvalidVintageYear
+    #[test]
+    fn test_transfer_age_31_invalid() {
+        let env = Env::default();
+        let (client, admin) = setup_2025(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+
+        // year 1994, age = 2025 - 1994 = 31 > 30 → expired
+        mint_with_vintage(&env, &client, &admin, 1994, "b-1994", 200, &owner);
+        let result =
+            client.try_transfer_credits(&owner, &buyer, &s(&env, "b-1994"), &50_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidVintageYear
+        );
+    }
+
+    /// retire_credits on an expired batch (vintage_year = 1994): MUST return InvalidVintageYear
+    #[test]
+    fn test_retire_expired_batch_invalid() {
+        let env = Env::default();
+        let (client, admin) = setup_2025(&env);
+        let owner = Address::generate(&env);
+
+        mint_with_vintage(&env, &client, &admin, 1994, "b-exp", 400, &owner);
+        let result = client.try_retire_credits(
+            &owner,
+            &s(&env, "b-exp"),
+            &50_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-exp"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidVintageYear
+        );
+    }
+
+    /// current_year credits (vintage_year = 2025): transfer MUST succeed
+    #[test]
+    fn test_current_year_credits_valid() {
+        let env = Env::default();
+        let (client, admin) = setup_2025(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+
+        mint_with_vintage(&env, &client, &admin, 2025, "b-2025", 600, &owner);
+        client.transfer_credits(&owner, &buyer, &s(&env, "b-2025"), &10_i128);
+        let batch = client.get_credit_batch(&s(&env, "b-2025"));
+        assert_eq!(batch.owner, buyer);
+    }
+
+    /// get_credit_batch_with_expiry returns is_expired=true for 1994 vintage
+    #[test]
+    fn test_get_credit_batch_with_expiry_expired() {
+        let env = Env::default();
+        let (client, admin) = setup_2025(&env);
+        let owner = Address::generate(&env);
+
+        mint_with_vintage(&env, &client, &admin, 1994, "b-chk-exp", 800, &owner);
+        let result = client.get_credit_batch_with_expiry(&s(&env, "b-chk-exp"));
+        assert!(result.is_expired);
+        assert_eq!(result.batch.vintage_year, 1994);
+    }
+
+    /// get_credit_batch_with_expiry returns is_expired=false for 2023 vintage
+    #[test]
+    fn test_get_credit_batch_with_expiry_not_expired() {
+        let env = Env::default();
+        let (client, admin) = setup_2025(&env);
+        let owner = Address::generate(&env);
+
+        mint_with_vintage(&env, &client, &admin, 2023, "b-chk-ok", 1000, &owner);
+        let result = client.get_credit_batch_with_expiry(&s(&env, "b-chk-ok"));
+        assert!(!result.is_expired);
+        assert_eq!(result.batch.vintage_year, 2023);
+    }
+}
+
+// ── Serial Registry O(log n) Tests (#650) ────────────────────────────────────
+
+#[cfg(test)]
+mod serial_registry_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    fn setup(env: &Env) -> (CarbonCreditContractClient, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        let admin = Address::generate(env);
+        let registry = Address::generate(env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(env, &id);
+        client.initialize(&admin, &registry);
+        (client, admin)
+    }
+
+    /// Two non-overlapping ranges should both be accepted
+    #[test]
+    fn test_serial_registry_no_overlap_accepted() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let owner = Address::generate(&env);
+
+        // First range: [1, 100]
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        // Second range: [200, 300] — no overlap
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &101_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &200_u64,
+            &300_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+
+        let b1 = client.get_credit_batch(&s(&env, "b1"));
+        let b2 = client.get_credit_batch(&s(&env, "b2"));
+        assert_eq!(b1.serial_start, 1);
+        assert_eq!(b2.serial_start, 200);
+    }
+
+    /// Overlapping range must be rejected with DoubleCountingDetected
+    #[test]
+    fn test_serial_registry_overlap_rejected() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        // Overlapping range [50, 150]
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &101_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &50_u64,
+            &150_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::DoubleCountingDetected
+        );
+    }
+
+    /// Adjacent ranges [1,100] and [101,200] are NOT overlapping — both should succeed
+    #[test]
+    fn test_serial_registry_adjacent_ranges_ok() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        // Adjacent — starts exactly where first ends + 1
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &101_u64,
+            &200_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+
+        assert!(client.verify_serial_range(&201_u64, &300_u64));
+        assert!(!client.verify_serial_range(&100_u64, &101_u64));
+    }
+
+    /// A range contained within an existing range is rejected
+    #[test]
+    fn test_serial_registry_contained_range_rejected() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &1000_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &1000_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        // Contained: [50, 75] is inside [1, 1000]
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &26_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &50_u64,
+            &75_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::DoubleCountingDetected
+        );
     }
 }
