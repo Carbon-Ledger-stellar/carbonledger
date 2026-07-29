@@ -1,18 +1,20 @@
-import { Module, OnModuleInit } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from './queue.service';
 import { QueueController } from './queue.controller';
 import { QueueProcessor } from './queue.processor';
 import { AuthModule } from '../auth/auth.module';
-import { CertificatesModule } from '../certificates/certificates.module';
-import { CertificateProcessor } from '../certificates/certificate.processor';
 import { QUEUE_NAME } from './queue.constants';
 import { PrismaService } from '../prisma.service';
+import { RetirementsModule } from '../retirements/retirements.module';
+import { CertificateProcessor } from '../certificates/certificate.processor';
+import { CertificatesModule as RetirementsCertificatesModule } from '../retirements/certificates.module';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: QUEUE_NAME }),
     AuthModule,
+    forwardRef(() => RetirementsModule),
     CertificatesModule,
   ],
   providers: [QueueService, QueueProcessor, PrismaService],

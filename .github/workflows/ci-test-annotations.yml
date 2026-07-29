@@ -1,0 +1,298 @@
+name: CI Test Result Annotations
+
+# This workflow collects test results from all suites (Rust contracts, Jest backend,
+# Playwright E2E) and posts structured annotations + a single PR summary comment.
+#
+# It is triggered as a separate workflow so annotations appear within 1 minute of
+# each test suite finishing, without coupling annotation logic to test execution.
+#
+# The PR comment is UPDATED (not duplicated) on every push to the same PR by
+# searching for an existing comment from this bot and editing it in place.
+#
+# Closes #646
+
+on:
+  # Triggered by completion of the main CI workflow
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+
+  # Allow manual re-trigger for debugging
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "CI workflow run ID to annotate"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  actions: read
+
+jobs:
+  # ── Download artifacts from the triggering CI run ──────────────────────────
+  annotate:
+    name: Annotate Test Results
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Determine the run ID we are annotating ─────────────────────────────
+      - name: Set run ID
+        id: run_id
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "id=${{ inputs.run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Download all test artifacts from the CI run ────────────────────────
+      - name: Download all CI artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.run_id.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ci-artifacts
+        continue-on-error: true  # Don't fail if some artifacts are missing
+
+      - name: List downloaded artifacts
+        run: |
+          find ci-artifacts -type f | head -50 || echo "No artifacts downloaded"
+
+      # ── Annotate Rust contract test failures ───────────────────────────────
+      # cargo test outputs failures in the format:
+      #   test <module>::<name> ... FAILED
+      #   ---- <module>::<name> stdout ----
+      #   thread '...' panicked at 'assertion failed', src/lib.rs:42:5
+      # We parse this and emit ::error file=... annotations.
+      - name: Annotate Rust test failures
+        if: always()
+        run: |
+          if [ -f ci-artifacts/contract-test-output/test-output.txt ]; then
+            echo "Parsing Rust test output for annotations..."
+            python3 - <<'PYTHON'
+          import re, sys
+
+          with open("ci-artifacts/contract-test-output/test-output.txt") as f:
+              content = f.read()
+
+          # Match: panicked at 'message', file.rs:line:col
+          panic_re = re.compile(
+              r"thread '.*?' panicked at '?(.*?)'?,\s*([^:'\n]+\.rs):(\d+)",
+              re.MULTILINE,
+          )
+          for m in panic_re.finditer(content):
+              msg, filepath, line = m.group(1), m.group(2), m.group(3)
+              # Strip workspace prefix
+              filepath = re.sub(r'^.*/contracts/', 'contracts/', filepath)
+              print(f"::error file={filepath},line={line}::Rust test failure: {msg}")
+
+          # Match: test module::name ... FAILED
+          fail_re = re.compile(r"^test (\S+) \.\.\. FAILED", re.MULTILINE)
+          for m in fail_re.finditer(content):
+              test_name = m.group(1)
+              print(f"::error title=Rust Test Failed::{test_name}")
+          PYTHON
+          else
+            echo "No Rust test output artifact found — skipping Rust annotations"
+          fi
+
+      # ── Annotate Jest (backend) failures via JUnit XML ─────────────────────
+      - name: Annotate backend test failures
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "Backend Tests"
+          path: |
+            ci-artifacts/**/junit.xml
+            ci-artifacts/**/backend-junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+          only-summary: false
+
+      # ── Annotate Playwright E2E failures via JUnit XML ─────────────────────
+      - name: Annotate E2E test failures
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "E2E Tests (Playwright)"
+          path: |
+            ci-artifacts/**/junit.xml
+            ci-artifacts/**/playwright-junit.xml
+          reporter: java-junit
+          fail-on-error: false
+          only-summary: false
+
+      # ── Upload E2E screenshots as a consolidated artifact ──────────────────
+      - name: Re-upload E2E failure screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-failure-screenshots-${{ github.run_id }}
+          path: |
+            ci-artifacts/**/test-results/**/*.png
+            ci-artifacts/**/playwright-report/**/*.png
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # ── Build the PR summary data ──────────────────────────────────────────
+      - name: Build test summary JSON
+        id: summary
+        if: always()
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, glob, xml.etree.ElementTree as ET
+
+          def parse_junit(pattern):
+              totals = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0, "suite": ""}
+              files = glob.glob(pattern, recursive=True)
+              for path in files:
+                  try:
+                      tree = ET.parse(path)
+                      root = tree.getroot()
+                      suites = root.findall("testsuite") or [root]
+                      for suite in suites:
+                          totals["passed"]  += int(suite.get("tests", 0)) \
+                                              - int(suite.get("failures", 0)) \
+                                              - int(suite.get("skipped", 0)) \
+                                              - int(suite.get("errors", 0))
+                          totals["failed"]  += int(suite.get("failures", 0))
+                          totals["skipped"] += int(suite.get("skipped", 0))
+                          totals["errors"]  += int(suite.get("errors", 0))
+                  except Exception as e:
+                      print(f"WARN: could not parse {path}: {e}")
+              return totals
+
+          rust    = parse_junit("ci-artifacts/**/*rust*.xml")
+          backend = parse_junit("ci-artifacts/**/*backend*.xml")
+          e2e     = parse_junit("ci-artifacts/**/*playwright*.xml")
+
+          summary = {
+              "rust":    rust,
+              "backend": backend,
+              "e2e":     e2e,
+          }
+
+          os.makedirs(".ci-summary", exist_ok=True)
+          with open(".ci-summary/summary.json", "w") as f:
+              json.dump(summary, f, indent=2)
+          print(json.dumps(summary, indent=2))
+          PYTHON
+
+      # ── Find the PR number associated with this workflow run ───────────────
+      - name: Find associated PR number
+        id: pr
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          PR_NUMBER=$(gh api \
+            "repos/${REPO}/commits/${HEAD_SHA}/pulls" \
+            --jq '.[0].number // empty' 2>/dev/null || true)
+          echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Found PR: ${PR_NUMBER:-none}"
+
+      # ── Post / update the PR summary comment ──────────────────────────────
+      # We look for an existing comment starting with the magic header
+      # "<!-- ci-test-summary -->" and edit it instead of posting a new one.
+      - name: Post or update PR summary comment
+        if: always() && steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          RUN_ID: ${{ steps.run_id.outputs.id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.run_id.outputs.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, subprocess
+
+          repo      = os.environ["REPO"]
+          pr        = os.environ["PR_NUMBER"]
+          run_url   = os.environ["RUN_URL"]
+          head_sha  = os.environ["HEAD_SHA"][:8]
+
+          # Load summary
+          try:
+              with open(".ci-summary/summary.json") as f:
+                  s = json.load(f)
+          except Exception:
+              s = {"rust": {}, "backend": {}, "e2e": {}}
+
+          def status_icon(d):
+              if d.get("failed", 0) > 0 or d.get("errors", 0) > 0:
+                  return "❌"
+              if d.get("passed", 0) > 0:
+                  return "✅"
+              return "⚪"
+
+          def fmt_suite(name, d):
+              icon = status_icon(d)
+              p = d.get("passed", 0)
+              f = d.get("failed", 0) + d.get("errors", 0)
+              sk = d.get("skipped", 0)
+              return f"| {icon} **{name}** | {p} passed | {f} failed | {sk} skipped |"
+
+          # Build screenshot links section
+          screenshots_section = ""
+          import glob
+          shots = glob.glob("ci-artifacts/**/test-results/**/*.png", recursive=True)
+          shots += glob.glob("ci-artifacts/**/playwright-report/**/*.png", recursive=True)
+          if shots:
+              screenshots_section = "\n### 📸 E2E Failure Screenshots\n"
+              for shot in shots[:10]:  # cap at 10
+                  name = os.path.basename(shot)
+                  screenshots_section += f"- `{name}` — uploaded as `e2e-failure-screenshots` artifact\n"
+
+          body = f"""<!-- ci-test-summary -->
+          ## 🧪 Test Results — `{head_sha}`
+
+          | Suite | Passed | Failed | Skipped |
+          |-------|--------|--------|---------|
+          {fmt_suite("Rust Contracts", s.get("rust", {}))}
+          {fmt_suite("Backend (Jest)", s.get("backend", {}))}
+          {fmt_suite("E2E (Playwright)", s.get("e2e", {}))}
+          {screenshots_section}
+          > 🔗 [Full CI run logs]({run_url})
+          > Commit `{head_sha}` · Updated automatically on every push
+          """
+
+          # Search for existing comment
+          result = subprocess.run(
+              ["gh", "api", f"repos/{repo}/issues/{pr}/comments",
+               "--jq", '[.[] | select(.body | startswith("<!-- ci-test-summary -->")) | .id][0]'],
+              capture_output=True, text=True,
+          )
+          existing_id = result.stdout.strip()
+
+          if existing_id and existing_id != "null":
+              # Update existing comment
+              subprocess.run(
+                  ["gh", "api", f"repos/{repo}/issues/comments/{existing_id}",
+                   "--method", "PATCH", "--field", f"body={body}"],
+                  check=True,
+              )
+              print(f"Updated existing comment {existing_id}")
+          else:
+              # Create new comment
+              subprocess.run(
+                  ["gh", "api", f"repos/{repo}/issues/{pr}/comments",
+                   "--method", "POST", "--field", f"body={body}"],
+                  check=True,
+              )
+              print("Created new PR comment")
+          PYTHON
+
+      # ── Fail this workflow if the CI run itself failed ─────────────────────
+      - name: Propagate CI failure status
+        if: github.event.workflow_run.conclusion == 'failure'
+        run: |
+          echo "::error::The CI workflow run failed. See annotations above for details."
+          exit 1

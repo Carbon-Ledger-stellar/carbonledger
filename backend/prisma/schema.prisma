@@ -6,7 +6,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 model CarbonProject {
@@ -326,6 +325,19 @@ model VerifierApplication {
   updatedAt        DateTime  @updatedAt
 }
 
+model VerifierAttestationFee {
+  id                String   @id @default(cuid())
+  verifierPublicKey String
+  projectId         String
+  decision          String   // Verified | Rejected
+  feeStroops        String
+  txHash            String   @unique
+  createdAt         DateTime @default(now())
+
+  @@index([verifierPublicKey, createdAt])
+  @@index([projectId])
+}
+
 model PriceApproval {
   id           String   @id @default(cuid())
   methodology  String
@@ -460,6 +472,19 @@ model CreditEvent {
   @@index([timestamp])
 }
 
+
+model OracleSyncState {
+  id                String    @id @default(cuid())
+  lastSyncedAt      DateTime  @default(now())
+  lastSyncedBlock   Int       @default(0)
+  recordsSynced     Int       @default(0)
+  lastError         String?
+  lastErrorAt       DateTime?
+  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([id])
+
 model SatelliteWebhookProvider {
   id          String   @id @default(cuid())
   providerId  String   @unique
@@ -471,4 +496,5 @@ model SatelliteWebhookProvider {
 
   @@index([providerId])
   @@index([isActive])
+
 }

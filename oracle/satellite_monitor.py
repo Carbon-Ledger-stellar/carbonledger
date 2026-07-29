@@ -33,6 +33,7 @@ load_dotenv()
 from log import get_logger  # noqa: E402 — must come after load_dotenv
 log = get_logger("satellite_monitor")
 from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenError  # noqa: E402
+from utils.safe_parse import safe_float, safe_int  # noqa: E402
 
 app = Flask(__name__)
 
@@ -245,8 +246,8 @@ def coordinates_match(registered: dict, satellite: dict, tolerance_km: float = 1
     """Check if satellite observation coordinates match registered project area."""
     if not registered or not satellite:
         return False
-    lat_diff = abs(registered.get("lat", 0) - satellite.get("lat", 0))
-    lon_diff = abs(registered.get("lon", 0) - satellite.get("lon", 0))
+    lat_diff = abs(safe_float(registered.get("lat", 0)) - safe_float(satellite.get("lat", 0)))
+    lon_diff = abs(safe_float(registered.get("lon", 0)) - safe_float(satellite.get("lon", 0)))
     # ~0.009 degrees per km at equator
     threshold = tolerance_km * 0.009
     return lat_diff <= threshold and lon_diff <= threshold
@@ -257,8 +258,8 @@ def detect_contradiction(report: dict) -> bool:
     Returns True if satellite data contradicts reported sequestration.
     Contradiction = deforestation detected in a project claiming forest preservation.
     """
-    deforestation_pct = float(report.get("deforestation_pct", 0))
-    reported_tonnes   = float(report.get("reported_tonnes_sequestered", 0))
+    deforestation_pct = safe_float(report.get("deforestation_pct", 0))
+    reported_tonnes   = safe_float(report.get("reported_tonnes_sequestered", 0))
     project_type      = report.get("project_type", "")
 
     if project_type in ("forestry", "blue_carbon") and deforestation_pct > 5.0 and reported_tonnes > 0:
@@ -307,8 +308,8 @@ def satellite_webhook():
     project_id    = data.get("project_id", "")
     period        = data.get("period", "")
     satellite_cid = data.get("satellite_cid", "")
-    tonnes        = int(data.get("tonnes_verified", 0))
-    score         = int(data.get("methodology_score", 80))
+    tonnes        = safe_int(data.get("tonnes_verified", 0))
+    score         = safe_int(data.get("methodology_score", 80))
     coordinates   = data.get("coordinates", {})
 
     if not project_id or not period or not satellite_cid:

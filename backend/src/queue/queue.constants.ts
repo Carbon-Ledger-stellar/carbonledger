@@ -8,6 +8,7 @@ export const JobType = {
   ORACLE_SUBMISSION:      'oracle_submission',
   EMAIL_NOTIFICATION:     'email_notification',
   HORIZON_EVENT:          'horizon_event',
+  BULK_RETIREMENT:        'bulk_retirement',
 } as const;
 
 export type JobType = typeof JobType[keyof typeof JobType];

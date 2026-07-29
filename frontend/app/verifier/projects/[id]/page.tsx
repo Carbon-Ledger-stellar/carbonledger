@@ -8,12 +8,11 @@ import TransactionStatus, { TxStatus } from "../../../../components/TransactionS
 import Toast, { useToast } from "../../../../components/Toast";
 import {
   useProject,
-  syncProjectVerification,
-  syncProjectRejection,
   invalidateVerifierCaches,
   type PendingVerifierProject,
 } from "../../../../lib/api";
 import { breakdownMethodologyScore, RUBRIC_DIMENSIONS } from "../../../../lib/methodology-scoring";
+import { getAttestationChecklist } from "../../../../lib/attestation-checklist";
 import { useVerifierAuth } from "../../../../lib/use-verifier-auth";
 import {
   verifyProjectOnChain,
@@ -45,11 +44,27 @@ export default function VerifierProjectReviewPage() {
   const [txMessage, setTxMessage] = useState<string | undefined>();
   const [pollProgress, setPollProgress] = useState<{ current: number; max: number } | undefined>();
   const [submitting, setSubmitting] = useState(false);
+  const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
 
   const breakdown = useMemo(
     () => (project ? breakdownMethodologyScore(project.methodologyScore) : null),
     [project],
   );
+
+  const checklist = useMemo(
+    () => (project ? getAttestationChecklist(project.methodology) : []),
+    [project],
+  );
+  const checklistComplete = checklist.length > 0 && checklist.every(item => checkedItems.has(item.key));
+
+  function toggleChecklistItem(key: string) {
+    setCheckedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const docCid = projectDocCid(project);
 
@@ -77,12 +92,10 @@ export default function VerifierProjectReviewPage() {
       let hash: string;
       if (decision === "verify") {
         hash = await verifyProjectOnChain(publicKey, project.projectId, onProgress);
-        await syncProjectVerification(project.id, publicKey, token);
         addToast({ type: "success", title: "Project verified", message: "On-chain attestation recorded.", txHash: hash });
       } else {
         const reason = rejectReason.trim();
         hash = await rejectProjectOnChain(publicKey, project.projectId, reason, onProgress);
-        await syncProjectRejection(project.id, publicKey, reason, token);
         addToast({ type: "success", title: "Project rejected", message: "Rejection recorded on-chain.", txHash: hash });
       }
 
@@ -197,6 +210,31 @@ export default function VerifierProjectReviewPage() {
         </section>
       )}
 
+      <section style={sectionStyle}>
+        <h2 style={h2Style}>Attestation checklist — {project.methodology}</h2>
+        <p style={{ fontSize: "0.8rem", color: colors.neutral[500], marginTop: 0 }}>
+          Every item must be confirmed before an on-chain attestation can be submitted.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+          {checklist.map(item => (
+            <label key={item.key} style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", fontSize: "0.875rem", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={checkedItems.has(item.key)}
+                onChange={() => toggleChecklistItem(item.key)}
+                style={{ marginTop: "0.2rem" }}
+              />
+              <span>{item.label}</span>
+            </label>
+          ))}
+        </div>
+        {!checklistComplete && (
+          <p style={{ fontSize: "0.75rem", color: colors.neutral[500], marginTop: "0.75rem" }}>
+            {checkedItems.size}/{checklist.length} confirmed
+          </p>
+        )}
+      </section>
+
       {txStatus && (
         <div style={{ marginBottom: "1rem" }}>
           <TransactionStatus
@@ -212,9 +250,10 @@ export default function VerifierProjectReviewPage() {
       <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || !checklistComplete}
+          title={!checklistComplete ? "Complete the attestation checklist first" : undefined}
           onClick={() => setPending({ decision: "verify" })}
-          style={{ ...actionBtn, background: "#16a34a" }}
+          style={{ ...actionBtn, background: "#16a34a", opacity: submitting || !checklistComplete ? 0.5 : 1 }}
         >
           Approve
         </button>
