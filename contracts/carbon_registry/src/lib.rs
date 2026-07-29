@@ -26,18 +26,19 @@ pub enum CarbonError {
     MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
-    ZeroAmountNotAllowed  = 16,
-    ProjectAlreadyExists  = 17,
-    InvalidSerialRange    = 18,
-    AlreadyInitialized    = 19,
-    MethodologyScoreLow   = 20,
-    UnauthorizedUpgrade   = 21,
-    PageSizeTooLarge      = 22,
-    Arithmetic            = 23,
-    ProposalNotFound      = 24,
-    ProposalExpired       = 25,
-    DuplicateApproval     = 26,
-    ThresholdNotMet       = 27,
+    ZeroAmountNotAllowed = 16,
+    ProjectAlreadyExists = 17,
+    InvalidSerialRange = 18,
+    AlreadyInitialized = 19,
+    MethodologyScoreLow = 20,
+    UnauthorizedUpgrade = 21,
+    PageSizeTooLarge = 22,
+    Arithmetic = 23,
+    ProposalNotFound = 24,
+    ProposalExpired = 25,
+    DuplicateApproval = 26,
+    ThresholdNotMet = 27,
+    StorageLimitExceeded = 28,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ pub enum CarbonError {
 #[derive(Clone)]
 pub enum DataKey {
     Project(String),
+    ProjectCount(Address),
     Verifiers,
     OracleAddress,
     RegistryAdmin,
@@ -126,6 +128,8 @@ pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
 pub const MIN_HISTORY_ENTRIES: u32 = 10;
 /// Maximum allowed value for max_history_entries.
 pub const MAX_HISTORY_ENTRIES_LIMIT: u32 = 200;
+/// Maximum number of projects a single admin can register before storage caps kick in.
+pub const MAX_PROJECTS_PER_ADMIN: u32 = 1_000;
 
 #[contract]
 pub struct CarbonRegistryContract;
@@ -575,6 +579,16 @@ impl CarbonRegistryContract {
             return Err(CarbonError::ProjectAlreadyExists);
         }
 
+        let project_count_key = DataKey::ProjectCount(admin.clone());
+        let project_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&project_count_key)
+            .unwrap_or(0u32);
+        if project_count >= MAX_PROJECTS_PER_ADMIN {
+            return Err(CarbonError::StorageLimitExceeded);
+        }
+
         let project = CarbonProject {
             project_id: project_id.clone(),
             name: name.clone(),
@@ -593,6 +607,9 @@ impl CarbonRegistryContract {
         env.storage()
             .persistent()
             .set(&DataKey::Project(project_id.clone()), &project);
+        env.storage()
+            .persistent()
+            .set(&project_count_key, &(project_count + 1));
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("reg_proj")),
@@ -1092,6 +1109,44 @@ mod tests {
 
         let p = client.get_project(&make_str(&env, "proj-min"));
         assert_eq!(p.methodology_score, 70);
+    }
+
+    #[test]
+    fn test_registering_past_project_cap_fails() {
+        let (env, admin, oracle, verifier) = setup();
+        let contract_id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
+
+        for index in 0..MAX_PROJECTS_PER_ADMIN {
+            let project_id = format!("proj-{index}");
+            client.register_project(
+                &admin,
+                &String::from_str(&env, &project_id),
+                &make_str(&env, "Project"),
+                &make_str(&env, "cid"),
+                &Address::generate(&env),
+                &make_str(&env, "VCS"),
+                &make_str(&env, "Brazil"),
+                &make_str(&env, "forestry"),
+                &75_u32,
+                &2023_u32,
+            );
+        }
+
+        let result = client.try_register_project(
+            &admin,
+            &make_str(&env, "proj-cap-exceeded"),
+            &make_str(&env, "Overflow"),
+            &make_str(&env, "cid"),
+            &Address::generate(&env),
+            &make_str(&env, "VCS"),
+            &make_str(&env, "Brazil"),
+            &make_str(&env, "forestry"),
+            &75_u32,
+            &2023_u32,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::StorageLimitExceeded);
     }
 
     #[test]

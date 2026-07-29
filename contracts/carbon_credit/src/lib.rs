@@ -33,23 +33,30 @@ pub enum CarbonError {
     MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
-    ZeroAmountNotAllowed   = 16,
-    ProjectAlreadyExists   = 17,
-    InvalidSerialRange     = 18,
-    BatchTooLarge         = 19,
-    AlreadyInitialized     = 20,
-    Arithmetic             = 21,
-    UnauthorizedUpgrade    = 22,
+    ZeroAmountNotAllowed = 16,
+    ProjectAlreadyExists = 17,
+    InvalidSerialRange = 18,
+    BatchTooLarge = 19,
+    AlreadyInitialized = 20,
+    Arithmetic = 21,
+    UnauthorizedUpgrade = 22,
     /// Cross-contract invariant violation: total issued credits would exceed
     /// the oracle-verified tonnes for this project.
     IssuanceExceedsVerified = 23,
-    InvalidZkProofFormat    = 24,
+    InvalidZkProofFormat = 24,
     ZkProofVerificationFailed = 25,
-    PageSizeTooLarge          = 26,
+    PageSizeTooLarge = 26,
+    StorageLimitExceeded = 27,
+    InvalidPauseWindow = 28,
+    EmergencyPaused = 29,
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
+/// Maximum number of credit batches a single project can host before storage caps kick in.
+pub const MAX_BATCHES_PER_PROJECT: u32 = 10_000;
 pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
+pub const DEFAULT_MIN_VINTAGE_YEAR: u32 = 1990;
+pub const DEFAULT_MAX_VINTAGE_YEAR: u32 = 0;
 
 #[contracttype]
 #[derive(Clone)]
@@ -57,11 +64,16 @@ pub enum DataKey {
     Batch(String),
     Retirement(String),
     ProjectBatches(String),
+    ProjectBatchCount(String),
     SerialRegistry,
     Admin,
     RegistryContract,
     ContractVersion,
     UpgradeHistory,
+    PauseEnabled,
+    PauseUntil,
+    VintageYearMin,
+    VintageYearMax,
     /// Maximum number of upgrade history entries to retain.
     MaxHistoryEntries,
     /// Address of the carbon_oracle contract, used to query verified tonnes
@@ -100,6 +112,24 @@ pub struct CreditRetiredEvent {
     pub retired_by: Address,
     pub beneficiary: String,
     pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreditMintedEvent {
+    pub batch_id: String,
+    pub project_id: String,
+    pub amount: i128,
+    pub retired_by: Address,
+    pub beneficiary: String,
+    pub timestamp: u64,
+    pub retirement_id: String,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum RetiredKey {
+    BatchRetired(String),
 }
 
 #[contracttype]
@@ -241,12 +271,15 @@ impl CarbonCreditContract {
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         Ok(())
     }
 
     pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         let current_version: u32 = env
             .storage()
@@ -368,6 +401,7 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         let clamped = core::cmp::max(
             MIN_HISTORY_ENTRIES,
@@ -408,6 +442,7 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
         env.storage().persistent().set(&DataKey::OracleContract, &oracle);
         env.events().publish(
             (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "ora_set")),
@@ -424,6 +459,7 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
         env.storage().persistent().set(&DataKey::VerifiedPeriods(project_id.clone()), &periods);
         env.events().publish(
             (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "per_set")),
@@ -432,9 +468,45 @@ impl CarbonCreditContract {
         Ok(())
     }
 
+    pub fn pause_operations(env: Env, admin: Address, until_timestamp: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        let now = env.ledger().timestamp();
+        if until_timestamp <= now || until_timestamp > now.saturating_add(72 * 60 * 60) {
+            return Err(CarbonError::InvalidPauseWindow);
+        }
+        env.storage().persistent().set(&DataKey::PauseEnabled, &true);
+        env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        Ok(())
+    }
+
+    pub fn unpause_operations(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        Ok(())
+    }
+
+    pub fn set_vintage_year_bounds(
+        env: Env,
+        admin: Address,
+        min_year: u32,
+        max_year: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        if min_year > max_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        env.storage().persistent().set(&DataKey::VintageYearMin, &min_year);
+        env.storage().persistent().set(&DataKey::VintageYearMax, &max_year);
+        Ok(())
+    }
+
     pub fn get_oracle_contract(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::OracleContract)
-        env.storage().persistent().get(&DataKey::UpgradeHistory)
     }
 
     fn current_year(env: &Env) -> u32 {
@@ -443,12 +515,45 @@ impl CarbonCreditContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
+    fn min_vintage_year(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VintageYearMin)
+            .unwrap_or(DEFAULT_MIN_VINTAGE_YEAR)
+    }
+
+    fn max_vintage_year(env: &Env) -> u32 {
+        let configured: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VintageYearMax)
+            .unwrap_or(DEFAULT_MAX_VINTAGE_YEAR);
+        if configured == 0 {
+            Self::current_year(env)
+        } else {
+            configured
+        }
+    }
+
+    fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
+        let min_year = Self::min_vintage_year(env);
+        let max_year = Self::max_vintage_year(env);
+        if vintage_year < min_year || vintage_year > max_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        Ok(())
+    }
 
     /// Returns `true` when the batch's vintage year is older than
     /// `MAX_VINTAGE_AGE_YEARS` (30) relative to the current ledger year.
     /// An age of exactly 30 is still valid; only `age > 30` is expired.
     fn is_batch_expired(env: &Env, batch: &CreditBatch) -> bool {
         let year = Self::current_year(env);
+        if batch.vintage_year < Self::min_vintage_year(env)
+            || batch.vintage_year > Self::max_vintage_year(env)
+        {
+            return true;
+        }
         year.saturating_sub(batch.vintage_year) > MAX_VINTAGE_AGE_YEARS
     }
 
@@ -470,6 +575,7 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         if project_id.is_empty() || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
@@ -480,7 +586,6 @@ impl CarbonCreditContract {
         if metadata_cid.is_empty() || metadata_cid.len() > 128 {
             return Err(CarbonError::ProjectNotFound);
         }
-
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
@@ -491,19 +596,20 @@ impl CarbonCreditContract {
             return Err(CarbonError::InvalidSerialRange);
         }
 
-        let current_year = Self::current_year(&env);
-        if vintage_year < 1990 || vintage_year > current_year + 1 {
-            return Err(CarbonError::InvalidVintageYear);
-        }
-
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Batch(batch_id.clone()))
-        {
+        Self::validate_vintage_year(&env, vintage_year)?;
+        if env.storage().persistent().has(&DataKey::Batch(batch_id.clone())) {
             return Err(CarbonError::SerialNumberConflict);
         }
 
+        let batch_count_key = DataKey::ProjectBatchCount(project_id.clone());
+        let batch_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&batch_count_key)
+            .unwrap_or(0u32);
+        if batch_count >= MAX_BATCHES_PER_PROJECT {
+            return Err(CarbonError::StorageLimitExceeded);
+        }
         if !Self::verify_serial_range_internal(&env, serial_start, serial_end) {
             return Err(CarbonError::DoubleCountingDetected);
         }
@@ -545,6 +651,9 @@ impl CarbonCreditContract {
             &DataKey::ProjectBatches(project_id.clone()),
             &project_batches,
         );
+        env.storage()
+            .persistent()
+            .set(&batch_count_key, &(batch_count + 1));
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("minted")),
@@ -604,6 +713,7 @@ impl CarbonCreditContract {
         cert_cid: String,
     ) -> Result<RetirementCertificate, CarbonError> {
         holder.require_auth();
+        Self::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
@@ -632,9 +742,8 @@ impl CarbonCreditContract {
         let already_retired: i128 = env
             .storage()
             .persistent()
-            .get(&DataKey::Batch(batch_id.clone()))
-            .map(|b: CreditBatch| b.amount - batch.amount)
-            .unwrap_or(0);
+            .get(&RetiredKey::BatchRetired(batch_id.clone()))
+            .unwrap_or(0_i128);
 
         let already_retired_u64 =
             u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
@@ -675,6 +784,7 @@ impl CarbonCreditContract {
             .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
+        let now = env.ledger().timestamp();
         let cert = RetirementCertificate {
             retirement_id: retire_id.clone(),
             credit_batch_id: batch_id.clone(),
@@ -685,7 +795,7 @@ impl CarbonCreditContract {
             retirement_reason: reason.clone(),
             vintage_year: batch.vintage_year,
             serial_numbers: serial_numbers.clone(),
-            retired_at: env.ledger().timestamp(),
+            retired_at: now,
             tx_hash: tx_hash.clone(),
             certificate_cid: cert_cid.clone(),
         };
@@ -702,7 +812,7 @@ impl CarbonCreditContract {
                 amount,
                 retired_by: holder.clone(),
                 beneficiary: beneficiary.clone(),
-                timestamp: env.ledger().timestamp(),
+                timestamp: now,
             },
         );
         Ok(cert)
@@ -716,6 +826,7 @@ impl CarbonCreditContract {
         amount: i128,
     ) -> Result<(), CarbonError> {
         from.require_auth();
+        Self::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
@@ -798,6 +909,7 @@ impl CarbonCreditContract {
     pub fn undo_retire(env: Env, admin: Address, retire_id: String) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
         if env
             .storage()
             .persistent()
@@ -870,13 +982,26 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::FullyRetired {
             return 0;
         }
-        // Calculate active amount from serial registry
-        let ranges: Vec<SerialRange> = env
+        let retired: i128 = env
             .storage()
             .persistent()
             .get(&RetiredKey::BatchRetired(batch.batch_id.clone()))
             .unwrap_or(0i128);
         batch.amount.checked_sub(retired).unwrap_or(0)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), CarbonError> {
+        let paused: bool = env.storage().persistent().get(&DataKey::PauseEnabled).unwrap_or(false);
+        let until: u64 = env.storage().persistent().get(&DataKey::PauseUntil).unwrap_or(0);
+        let now = env.ledger().timestamp();
+        if paused && until > now {
+            return Err(CarbonError::EmergencyPaused);
+        }
+        if paused && until <= now {
+            env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+            env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        }
+        Ok(())
     }
 
     // Legacy XOR `verify_zk_proof_internal` stub was removed upstream.
@@ -1167,6 +1292,43 @@ mod tests {
             result.unwrap_err().unwrap(),
             CarbonError::InvalidSerialRange
         );
+    }
+
+    #[test]
+    fn test_minting_past_project_batch_cap_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        for index in 0..MAX_BATCHES_PER_PROJECT {
+            let batch_id = format!("batch-{index}");
+            let serial_start = (index as u64) * 1000 + 1;
+            let serial_end = serial_start + 99;
+            client.mint_credits(
+                &admin,
+                &s(&env, "proj-001"),
+                &100_i128,
+                &2023_u32,
+                &String::from_str(&env, &batch_id),
+                &serial_start,
+                &serial_end,
+                &s(&env, "cid"),
+                &owner,
+            );
+        }
+
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "proj-001"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "batch-over-cap"),
+            &(MAX_BATCHES_PER_PROJECT as u64 * 1000 + 1),
+            &(MAX_BATCHES_PER_PROJECT as u64 * 1000 + 100),
+            &s(&env, "cid"),
+            &owner,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::StorageLimitExceeded);
     }
 
     #[test]

@@ -1,8 +1,9 @@
-import { Controller, Get, Query, Res, Req } from '@nestjs/common';
+import { Controller, Get, Query, Res, Req, UseGuards } from '@nestjs/common';
 import { Response, Request } from 'express';
 import { ExportService } from './export.service';
 import { Roles } from '../auth/decorators';
 import { AuditService } from '../audit/audit.service';
+import { CheckPolicies, PoliciesGuard, ExportSubject } from '../policies';
 
 @Controller('export')
 @Roles('admin')
@@ -13,6 +14,8 @@ export class ExportController {
   ) {}
 
   @Get('projects')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('export', ExportSubject))
   async exportProjects(
     @Query() filters: any,
     @Query('format') format = 'json',
@@ -45,6 +48,8 @@ export class ExportController {
    *   - json             — legacy in-memory JSON array (not recommended for large sets)
    */
   @Get('retirements')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('export', ExportSubject))
   async exportRetirements(
     @Query() filters: any,
     @Query('format') format = 'ndjson',
