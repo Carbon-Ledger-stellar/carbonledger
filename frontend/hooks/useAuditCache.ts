@@ -81,7 +81,7 @@ export interface UseAuditCacheReturn extends AuditCacheState {
 
 let _dbPromise: Promise<IDBDatabase> | null = null;
 
-function openDB(): Promise<IDBDatabase> {
+export function openDB(): Promise<IDBDatabase> {
   if (_dbPromise) return _dbPromise;
 
   _dbPromise = new Promise((resolve, reject) => {
@@ -120,7 +120,7 @@ function idbRequest<T>(req: IDBRequest<T>): Promise<T> {
 }
 
 /** Read all records from a store (returns raw stored envelopes). */
-async function readAll<T>(storeName: AuditStoreName): Promise<CachedRecord<T>[]> {
+export async function readAll<T>(storeName: AuditStoreName): Promise<CachedRecord<T>[]> {
   const db = await openDB();
   return idbRequest<CachedRecord<T>[]>(
     db.transaction(storeName, "readonly").objectStore(storeName).getAll()

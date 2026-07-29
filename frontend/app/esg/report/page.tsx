@@ -43,7 +43,19 @@ export default function EsgReportPage() {
     batchId: "",
   });
 
-  const [exporting, setExporting] = useState(false);
+  const filteredRetirements = retirements.filter((r) => {
+    if (filters.methodology && r.project?.methodology !== filters.methodology) return false;
+    if (filters.country && r.project?.country !== filters.country) return false;
+    if (filters.vintageYear && r.vintageYear !== filters.vintageYear) return false;
+    if (filters.beneficiary && !r.beneficiary.toLowerCase().includes(filters.beneficiary.toLowerCase())) return false;
+    if (filters.minAmount !== undefined && r.amount < filters.minAmount) return false;
+    if (filters.maxAmount !== undefined && r.amount > filters.maxAmount) return false;
+    if (filters.projectId && r.projectId !== filters.projectId) return false;
+    if (filters.batchId && r.batchId !== filters.batchId) return false;
+    if (filters.startDate && new Date(r.retiredAt) < new Date(filters.startDate)) return false;
+    if (filters.endDate && new Date(r.retiredAt) > new Date(filters.endDate)) return false;
+    return true;
+  });
 
   const filteredRetirements = useMemo(() => {
     return retirements.filter((r) => {

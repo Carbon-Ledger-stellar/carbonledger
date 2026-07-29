@@ -16,15 +16,12 @@ export interface OrderBookLevel {
   cumulative: number;
 }
 
-export interface AggregatedOrderBook {
-  bids: OrderBookLevel[];
-  asks: OrderBookLevel[];
-  bestBid: number | null;
-  bestAsk: number | null;
-  spread: number | null;
-  midPrice: number | null;
-  totalBidVolume: number;
-  totalAskVolume: number;
+export async function getOrderBook(
+  sellingAsset: Asset,
+  buyingAsset: Asset,
+  limit = 20,
+): Promise<{ bids: { price: string; amount: string }[]; asks: { price: string; amount: string }[] }> {
+  return server.orderbook(sellingAsset, buyingAsset).limit(limit).call();
 }
 
 export interface OrderBookQuote {
@@ -203,28 +200,40 @@ export function estimateAskFill(levels: OrderBookLevel[], requestedQuantity: num
 export async function fetchOrderBook(
   sellingAsset: Asset,
   buyingAsset: Asset,
-  limit = DEFAULT_DEPTH_LIMIT,
-): Promise<RawOrderBookResponse> {
-  const url = `${buildOrderBookUrl(sellingAsset, buyingAsset)}&limit=${limit}`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to load order book: ${response.status} ${response.statusText}`);
-  }
-  return response.json();
+  amount: string,
+  price: string,
+): Promise<string> {
+  const account = await server.loadAccount(sellerKeypair.publicKey);
+  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK })
+    .addOperation(
+      Operation.manageSellOffer({
+        selling: sellingAsset,
+        buying:  buyingAsset,
+        amount,
+        price,
+      }),
+    )
+    .setTimeout(30)
+    .build();
+  const signed = await sellerKeypair.sign(tx.toXDR());
+  const { TransactionBuilder: TB } = await import("@stellar/stellar-sdk");
+  const signedTx = TB.fromXDR(signed, NETWORK);
+  const result = await server.submitTransaction(signedTx);
+  return result.hash;
 }
 
-export function formatOrderBookPrice(price: number | null): string {
-  if (price === null || !Number.isFinite(price)) {
-    return "—";
-  }
-  return price.toLocaleString(undefined, { maximumFractionDigits: 6 });
-}
-
-export function formatOrderBookVolume(volume: number | null): string {
-  if (volume === null || !Number.isFinite(volume)) {
-    return "—";
-  }
-  return volume.toLocaleString(undefined, { maximumFractionDigits: 2 });
+export async function getTradeHistory(
+  baseAsset: Asset,
+  counterAsset: Asset,
+  limit = 50,
+) {
+  const trades = await server
+    .trades()
+    .forAssetPair(baseAsset, counterAsset)
+    .limit(limit)
+    .order("desc")
+    .call();
+  return trades.records;
 }
 
 export function saveSdexEstimate(quote: StoredOrderBookQuote | null): void {

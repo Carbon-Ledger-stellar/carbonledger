@@ -2,13 +2,28 @@ import {
   isConnected,
   isAllowed,
   setAllowed,
-  getPublicKey as freighterGetPublicKey,
+  getAddress,
   signTransaction as freighterSignTransaction,
   getNetworkDetails,
   WatchWalletChanges,
 } from "@stellar/freighter-api";
 
 export type FreighterNetwork = "TESTNET" | "PUBLIC" | "FUTURENET";
+
+const TESTNET_PASSPHRASE =
+  "Test SDF Network ; September 2015";
+const PUBLIC_PASSPHRASE =
+  "Public Global Stellar Network ; September 2015";
+
+function passphraseFor(network: FreighterNetwork): string {
+  return network === "PUBLIC" ? PUBLIC_PASSPHRASE : TESTNET_PASSPHRASE;
+}
+
+/** Freighter surfaces a locked wallet as an error string on getAddress(), not as a distinct API flag. */
+function isLockedError(message: string | undefined | null): boolean {
+  if (!message) return false;
+  return /locked|unlock/i.test(message);
+}
 
 export async function connectFreighter(): Promise<string> {
   const connected = await isConnected();
@@ -24,17 +39,31 @@ export async function connectFreighter(): Promise<string> {
 }
 
 export async function getPublicKey(): Promise<string> {
-  const result = await freighterGetPublicKey();
-  if (result.error) throw new Error(result.error);
-  return result.publicKey;
+  const result = await getAddress();
+  if (result.error) {
+    const message = typeof result.error === "string" ? result.error : String(result.error);
+    if (isLockedError(message)) throw new Error("WALLET_LOCKED");
+    throw new Error(message);
+  }
+  return result.address;
 }
+
+const SIGNING_DECLINED_PATTERNS = [/declin/i, /reject/i, /denied/i, /closed/i, /cancel/i];
 
 export async function signTransaction(
   xdr: string,
   network: FreighterNetwork = "TESTNET",
 ): Promise<string> {
-  const result = await freighterSignTransaction(xdr, { network });
-  if (result.error) throw new Error(result.error);
+  const result = await freighterSignTransaction(xdr, {
+    networkPassphrase: passphraseFor(network),
+  });
+  if (result.error) {
+    const message = typeof result.error === "string" ? result.error : String(result.error);
+    if (SIGNING_DECLINED_PATTERNS.some((p) => p.test(message))) {
+      throw new Error("SIGNING_CANCELLED");
+    }
+    throw new Error(message);
+  }
   return result.signedTxXdr;
 }
 
