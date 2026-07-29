@@ -52,7 +52,7 @@ export class CreditsService {
     const batch = await this.prisma.creditBatch.create({ data: dto });
 
     // Notify project owner (respects per-event preferences)
-    const project = await this.prisma.carbonProject.findUnique({ where: { projectId: dto.projectId } });
+    const project = await this.prisma.carbonProject.findFirst({ where: { projectId: dto.projectId, deletedAt: null } });
     if (project?.ownerAddress) {
       await this.mailService.sendIfEnabled(project.ownerAddress, MailEvent.CREDITS_MINTED, {
         batchId: batch.batchId,

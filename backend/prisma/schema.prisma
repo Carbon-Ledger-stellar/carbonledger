@@ -26,6 +26,9 @@ model CarbonProject {
   ownerAddress        String
   coordinates         Json?
   lastMonitoringAt    DateTime?
+  deletedAt           DateTime?
+  deletionReason      String?
+  retentionUntil      DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   ipfsFiles           IPFSFile[]
@@ -42,6 +45,8 @@ model CarbonProject {
   @@index([createdAt])
   @@index([methodology, country, status])
   @@index([lastMonitoringAt])
+  @@index([deletedAt])
+  @@index([retentionUntil])
 }
 
 model CreditBatch {
@@ -206,8 +211,14 @@ model User {
   email                   String?                  @unique
   role                    String                   @default("corporation")
   isSubscribed            Boolean                  @default(true)
+  deletedAt               DateTime?
+  deletionReason          String?
+  retentionUntil          DateTime?
   createdAt               DateTime                 @default(now())
   notificationPreferences NotificationPreference?
+
+  @@index([deletedAt])
+  @@index([retentionUntil])
 }
 
 model NotificationPreference {

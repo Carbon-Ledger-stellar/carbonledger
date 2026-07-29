@@ -11,6 +11,7 @@ import {
   HttpStatus,
   Req,
 } from "@nestjs/common";
+import { IsString, IsOptional, IsIn, MaxLength, Matches } from "class-validator";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { IpfsUploadService } from "./ipfs-upload.service";
 import { UploadFileDto, UploadResponseDto } from "./uploads.dto";
@@ -156,8 +157,9 @@ export class UploadsController {
   @Post("webhook/pinata")
   @Public()
   async handlePinataWebhook(@Body() data: any) {
+    const safeData = this.sanitizeWebhookPayload(data);
     try {
-      await this.ipfsUploadService.handlePinataWebhook(data);
+      await this.ipfsUploadService.handlePinataWebhook(safeData);
       return { success: true, message: "Webhook processed" };
     } catch (error: any) {
       throw new HttpException(
@@ -165,6 +167,25 @@ export class UploadsController {
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
+  }
+
+  private sanitizeWebhookPayload(data: any): Record<string, unknown> {
+    const normalized: Record<string, unknown> = {};
+
+    if (data && typeof data === "object") {
+      if (typeof data.id === "string") {
+        normalized.id = data.id.replace(/[^a-zA-Z0-9-_]/g, "").slice(0, 128);
+      }
+      if (typeof data.status === "string") {
+        const status = data.status.toLowerCase();
+        normalized.status = ["pinned", "failed", "pending"].includes(status) ? status : "pending";
+      }
+      if (typeof data.pinataApiError === "string") {
+        normalized.pinataApiError = data.pinataApiError.replace(/\r\n/g, " ").slice(0, 1024);
+      }
+    }
+
+    return normalized;
   }
 
   @Get("files")
