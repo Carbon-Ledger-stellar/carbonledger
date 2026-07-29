@@ -26,6 +26,13 @@ pub enum CarbonError {
     MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
+    ZeroAmountNotAllowed  = 16,
+    ProjectAlreadyExists  = 17,
+    InvalidSerialRange    = 18,
+    AlreadyInitialized    = 19,
+    MethodologyScoreLow   = 20,
+    UnauthorizedUpgrade   = 21,
+    PageSizeTooLarge      = 22,
     ZeroAmountNotAllowed = 16,
     ProjectAlreadyExists = 17,
     InvalidSerialRange = 18,
@@ -119,6 +126,12 @@ pub struct UpgradeProposal {
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 const CURRENT_VERSION: u32 = 1;
+/// Default maximum number of upgrade history entries retained.
+pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
+/// Minimum allowed value for max_history_entries.
+pub const MIN_HISTORY_ENTRIES: u32 = 10;
+/// Maximum allowed value for max_history_entries.
+pub const MAX_HISTORY_ENTRIES_LIMIT: u32 = 200;
 
 #[contract]
 pub struct CarbonRegistryContract;
@@ -175,6 +188,35 @@ impl CarbonRegistryContract {
             upgraded_by: admin.clone(),
             wasm_hash: new_wasm_hash,
         };
+
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        history.push_back(record);
+
+        let max_entries: u32 = env.storage()
+            .persistent()
+            .get(&DataKey::MaxHistoryEntries)
+            .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
+        let max = max_entries as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
         env.storage()
             .persistent()
             .set(&DataKey::UpgradeHistory, &record);
@@ -193,7 +235,89 @@ impl CarbonRegistryContract {
             .unwrap_or(1)
     }
 
+    /// Returns the most recent upgrade record, or None if no upgrades have occurred.
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history.get(history.len() - 1).unwrap())
+        }
+    }
+
+    /// Returns a paginated slice of the upgrade history.
+    /// `offset` is zero-based (0 = oldest record). `limit` caps at 50.
+    pub fn get_upgrade_history_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<UpgradeRecord>, CarbonError> {
+        let effective_limit = if limit > 50 { 50 } else { limit };
+        if effective_limit == 0 {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let len = history.len();
+
+        if offset >= len {
+            return Ok(vec![&env]);
+        }
+
+        let mut result: Vec<UpgradeRecord> = vec![&env];
+        let end = core::cmp::min(offset + effective_limit, len);
+        for i in offset..end {
+            result.push_back(history.get(i).unwrap());
+        }
+        Ok(result)
+    }
+
+    /// Admin: set the maximum number of upgrade history entries to retain.
+    /// Values are clamped to [MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES_LIMIT].
+    pub fn set_max_history_entries(
+        env: Env,
+        admin: Address,
+        n: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        let clamped = core::cmp::max(
+            MIN_HISTORY_ENTRIES,
+            core::cmp::min(n, MAX_HISTORY_ENTRIES_LIMIT),
+        );
+        env.storage().persistent().set(&DataKey::MaxHistoryEntries, &clamped);
+
+        // If current history exceeds the new cap, prune immediately
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let max = clamped as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        Ok(())
         env.storage().persistent().get(&DataKey::UpgradeHistory)
     }
 

@@ -7,6 +7,12 @@ use soroban_sdk::{
 
 const TTL_LEDGERS: u32 = 518_400;
 const CURRENT_VERSION: u32 = 1;
+/// Default maximum number of upgrade history entries retained.
+pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
+/// Minimum allowed value for max_history_entries.
+pub const MIN_HISTORY_ENTRIES: u32 = 10;
+/// Maximum allowed value for max_history_entries.
+pub const MAX_HISTORY_ENTRIES_LIMIT: u32 = 200;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -27,6 +33,20 @@ pub enum CarbonError {
     MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
+    ZeroAmountNotAllowed   = 16,
+    ProjectAlreadyExists   = 17,
+    InvalidSerialRange     = 18,
+    BatchTooLarge         = 19,
+    AlreadyInitialized     = 20,
+    Arithmetic             = 21,
+    UnauthorizedUpgrade    = 22,
+    /// Cross-contract invariant violation: total issued credits would exceed
+    /// the oracle-verified tonnes for this project.  Re-check oracle data
+    /// before retrying.
+    IssuanceExceedsVerified = 23,
+    InvalidZkProofFormat    = 24,
+    ZkProofVerificationFailed = 25,
+    PageSizeTooLarge          = 26,
     ZeroAmountNotAllowed = 16,
     ProjectAlreadyExists = 17,
     InvalidSerialRange = 18,
@@ -50,6 +70,17 @@ pub enum DataKey {
     RegistryContract,
     ContractVersion,
     UpgradeHistory,
+    /// Maximum number of upgrade history entries to retain.
+    MaxHistoryEntries,
+    /// Address of the carbon_oracle contract, used to query verified tonnes
+    /// before minting.  Set by admin via set_oracle_contract().
+    OracleContract,
+    /// Per-project list of monitoring period strings used to sum verified tonnes.
+    /// Key = project_id; Value = Vec<String> of period identifiers.
+    VerifiedPeriods(String),
+    UserBatches(Address),
+    TotalSupply,
+    Allowance(Address, Address),
 }
 
 #[contracttype]
@@ -142,6 +173,27 @@ pub enum RetiredKey {
 #[derive(Clone, Debug)]
 pub struct UpgradeRecord {
     pub from_version: u32,
+    pub to_version:   u32,
+    pub timestamp:    u64,
+    pub upgraded_by:  Address,
+    pub wasm_hash:    BytesN<32>,
+}
+
+/// Emitted when old upgrade history entries are pruned to stay within bounds.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HistoryPrunedEvent {
+    pub entries_pruned: u32,
+    pub remaining:      u32,
+    pub pruned_at:      u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZkProof {
+    pub commitment: Bytes,
+    pub salt: Bytes,
+    pub proof: Bytes,
     pub to_version: u32,
     pub timestamp: u64,
     pub upgraded_by: Address,
@@ -222,6 +274,35 @@ impl CarbonCreditContract {
             upgraded_by: admin.clone(),
             wasm_hash: new_wasm_hash,
         };
+
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        history.push_back(record);
+
+        let max_entries: u32 = env.storage()
+            .persistent()
+            .get(&DataKey::MaxHistoryEntries)
+            .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
+        let max = max_entries as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.events().publish(
+                (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
         env.storage()
             .persistent()
             .set(&DataKey::UpgradeHistory, &record);
@@ -240,7 +321,134 @@ impl CarbonCreditContract {
             .unwrap_or(1)
     }
 
+    /// Returns the most recent upgrade record, or None if no upgrades have occurred.
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history.get(history.len() - 1).unwrap())
+        }
+    }
+
+    /// Returns a paginated slice of the upgrade history.
+    /// `offset` is zero-based (0 = oldest record). `limit` caps at 50.
+    pub fn get_upgrade_history_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<UpgradeRecord>, CarbonError> {
+        let effective_limit = if limit > 50 { 50 } else { limit };
+        if effective_limit == 0 {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let len = history.len();
+
+        if offset >= len {
+            return Ok(vec![&env]);
+        }
+
+        let mut result: Vec<UpgradeRecord> = vec![&env];
+        let end = core::cmp::min(offset + effective_limit, len);
+        for i in offset..end {
+            result.push_back(history.get(i).unwrap());
+        }
+        Ok(result)
+    }
+
+    /// Admin: set the maximum number of upgrade history entries to retain.
+    /// Values are clamped to [MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES_LIMIT].
+    pub fn set_max_history_entries(
+        env: Env,
+        admin: Address,
+        n: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        let clamped = core::cmp::max(
+            MIN_HISTORY_ENTRIES,
+            core::cmp::min(n, MAX_HISTORY_ENTRIES_LIMIT),
+        );
+        env.storage().persistent().set(&DataKey::MaxHistoryEntries, &clamped);
+
+        // If current history exceeds the new cap, prune immediately
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let max = clamped as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
+            env.events().publish(
+                (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Register the oracle contract address used for the issued <= verified
+    /// cross-contract invariant check in mint_credits.
+    /// Must be called by admin after deployment.
+    pub fn set_oracle_contract(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::OracleContract, &oracle);
+        env.events().publish(
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "ora_set")),
+            (admin, oracle),
+        );
+        Ok(())
+    }
+
+    /// Register which oracle monitoring periods count toward verified tonnes
+    /// for a given project.  The list is used when calling get_total_verified_tonnes
+    /// on the oracle contract during mint_credits.
+    ///
+    /// Called by admin before each mint to specify which periods are in scope.
+    /// Periods not in this list are ignored by the invariant check.
+    pub fn set_verified_periods(
+        env: Env,
+        admin: Address,
+        project_id: String,
+        periods: Vec<String>,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::VerifiedPeriods(project_id.clone()), &periods);
+        env.events().publish(
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "per_set")),
+            (project_id, periods.len()),
+        );
+        Ok(())
+    }
+
+    /// Returns the oracle contract address, if set.
+    pub fn get_oracle_contract(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::OracleContract)
         env.storage().persistent().get(&DataKey::UpgradeHistory)
     }
 
