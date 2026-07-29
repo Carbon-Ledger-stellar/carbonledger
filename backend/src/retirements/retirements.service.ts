@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from "uuid";
 import { createHash } from "crypto";
 import { QueueService } from "../queue/queue.service";
 import { JobType } from "../queue/queue.constants";
+import { sanitizeRetirementPayload, sanitizeRetirementForResponse } from "../common/sanitization.util";
 
 export interface BulkRetirementResult {
   batchId: string;
@@ -64,12 +65,14 @@ export class RetirementsService {
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
+    const sanitizedDto = sanitizeRetirementPayload(dto as unknown as Record<string, unknown>) as RetireCreditsDto;
+
     // Replay-attack guard: reject any txHash that has already been recorded.
     // Without this check, a different `retiredBy` address could reuse a real
     // (or fabricated) transaction hash to generate a second certificate for the
     // same on-chain retirement — effectively double-counting carbon credits.
     const txHashExists = await this.prisma.retirementRecord.findFirst({
-      where: { txHash: dto.txHash },
+      where: { txHash: sanitizedDto.txHash },
     });
     if (txHashExists) {
       throw new ConflictException('Transaction hash already used');
@@ -77,30 +80,30 @@ export class RetirementsService {
 
     // Check if already retired (same batchId + retiredBy combination)
     const existing = await this.prisma.retirementRecord.findFirst({
-      where: { batchId: dto.batchId, retiredBy: dto.retiredBy },
+      where: { batchId: sanitizedDto.batchId, retiredBy: sanitizedDto.retiredBy },
     });
     if (existing) {
       throw new ConflictException('Credits already retired (AlreadyRetired)');
     }
 
-    const batch = await this.prisma.creditBatch.findUnique({ where: { batchId: dto.batchId } });
-    if (!batch) throw new NotFoundException(`Credit batch ${dto.batchId} not found`);
+    const batch = await this.prisma.creditBatch.findUnique({ where: { batchId: sanitizedDto.batchId } });
+    if (!batch) throw new NotFoundException(`Credit batch ${sanitizedDto.batchId} not found`);
 
     const retirementId = uuidv4();
     const retirement = await this.prisma.retirementRecord.create({
       data: {
         retirementId,
-        batchId: dto.batchId,
-        projectId: dto.projectId,
-        amount: dto.amount,
-        retiredBy: dto.retiredBy,
-        beneficiary: dto.beneficiary,
-        retirementReason: dto.retirementReason,
+        batchId: sanitizedDto.batchId,
+        projectId: sanitizedDto.projectId,
+        amount: sanitizedDto.amount,
+        retiredBy: sanitizedDto.retiredBy,
+        beneficiary: sanitizedDto.beneficiary,
+        retirementReason: sanitizedDto.retirementReason,
         vintageYear: batch.vintageYear,
         serialStart: batch.serialStart,
         serialEnd: batch.serialEnd,
         serialNumbers: [],
-        txHash: dto.txHash,
+        txHash: sanitizedDto.txHash,
       },
     });
 
@@ -144,10 +147,11 @@ export class RetirementsService {
   }
 
   async bulkRetireCredits(dto: BulkRetirementRequest): Promise<BulkRetirementResult[] | BulkRetirementQueuedResponse> {
-    const normalized = await this.validateBulkRetirementRequest(dto);
+    const sanitizedDto = sanitizeRetirementPayload(dto as unknown as Record<string, unknown>) as BulkRetirementRequest;
+    const normalized = await this.validateBulkRetirementRequest(sanitizedDto);
 
     if (normalized.length > 10) {
-      const jobId = this.bulkRetirementJobId(dto, normalized);
+      const jobId = this.bulkRetirementJobId(sanitizedDto, normalized);
       const job = await this.queueService.enqueue(
         JobType.BULK_RETIREMENT,
         {
@@ -157,9 +161,9 @@ export class RetirementsService {
             beneficiary: item.beneficiary,
             reason: item.reason,
           })),
-          beneficiary: dto.beneficiary,
-          retirementReason: dto.retirementReason,
-          retiredBy: dto.retiredBy,
+          beneficiary: sanitizedDto.beneficiary,
+          retirementReason: sanitizedDto.retirementReason,
+          retiredBy: sanitizedDto.retiredBy,
         },
         { jobId },
       );
@@ -167,15 +171,16 @@ export class RetirementsService {
       return { jobId: String(job.id ?? jobId) };
     }
 
-    return this.executeBulkRetirements(dto, normalized);
+    return this.executeBulkRetirements(sanitizedDto, normalized);
   }
 
   async executeBulkRetirements(
     dto: BulkRetirementRequest,
     normalized?: NormalizedBulkItem[],
   ): Promise<BulkRetirementResult[]> {
-    const items = normalized ?? await this.validateBulkRetirementRequest(dto);
-    const txHash = this.buildBulkTransactionHash(dto, items);
+    const sanitizedDto = sanitizeRetirementPayload(dto as unknown as Record<string, unknown>) as BulkRetirementRequest;
+    const items = normalized ?? await this.validateBulkRetirementRequest(sanitizedDto);
+    const txHash = this.buildBulkTransactionHash(sanitizedDto, items);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const records: Array<{ retirementId: string; batchId: string }> = [];
@@ -188,7 +193,7 @@ export class RetirementsService {
             batchId: item.batchId,
             projectId: item.batch.projectId,
             amount: item.amount,
-            retiredBy: dto.retiredBy,
+            retiredBy: sanitizedDto.retiredBy,
             beneficiary: item.beneficiary,
             retirementReason: item.reason,
             vintageYear: item.batch.vintageYear,
@@ -225,6 +230,27 @@ export class RetirementsService {
   }
 
   async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
+    const take = Math.min(Math.max(limit, 1), 100);
+    const where = retiredBy ? { retiredBy } : {};
+
+    const [retirements, total_count] = await Promise.all([
+      this.prisma.retirementRecord.findMany({
+        where,
+        orderBy: { retiredAt: "desc" },
+        take: take + 1,
+        cursor: cursor ? { id: cursor } : undefined,
+        skip: cursor ? 1 : 0,
+      }),
+      this.prisma.retirementRecord.count({ where }),
+    ]);
+
+    const hasMore = retirements.length > take;
+    const next_cursor = hasMore ? retirements[retirements.length - 2].id : undefined;
+    if (hasMore) retirements.pop();
+
+    return { retirements: retirements.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, total_count };
+  }
+
   /**
    * Full-text search over retirements using the PostgreSQL tsvector GIN index (#670).
    * Searches beneficiary (weight A) and retirementReason (weight B).
@@ -244,89 +270,32 @@ export class RetirementsService {
       return this.findAll(cursor, take, retiredBy);
     }
 
-    const conditions: string[] = ['"searchVector" @@ plainto_tsquery(\'english\', $1)'];
-    const args: unknown[] = [search];
-    let idx = 2;
-
-    if (projectId) { conditions.push(`"projectId" = $${idx}`); args.push(projectId); idx++; }
-    if (retiredBy) { conditions.push(`"retiredBy" = $${idx}`); args.push(retiredBy); idx++; }
-    if (vintageYear) { conditions.push(`"vintageYear" = $${idx}`); args.push(vintageYear); idx++; }
-    if (cursor) { conditions.push(`"id" < $${idx}`); args.push(cursor); idx++; }
-
-    const where = conditions.join(' AND ');
-
-    type RetirementRow = {
-      id: string; retirementId: string; batchId: string; projectId: string;
-      amount: string; retiredBy: string; beneficiary: string; retirementReason: string;
-      vintageYear: number; serialStart: string; serialEnd: string; serialNumbers: string[];
-      txHash: string; certificateCid: string | null; isValid: boolean;
-      validatedAt: Date | null; retiredAt: Date;
+    const where: any = {
+      OR: [
+        { beneficiary: { contains: search, mode: 'insensitive' } },
+        { retirementReason: { contains: search, mode: 'insensitive' } },
+      ],
     };
 
-    const [rows, countRows] = await Promise.all([
-      this.prisma.$queryRawUnsafe<RetirementRow[]>(
-        `SELECT id, "retirementId", "batchId", "projectId", amount, "retiredBy",
-                beneficiary, "retirementReason", "vintageYear", "serialStart", "serialEnd",
-                "serialNumbers", "txHash", "certificateCid", "isValid", "validatedAt", "retiredAt"
-         FROM "RetirementRecord"
-         WHERE ${where}
-         ORDER BY ts_rank("searchVector", plainto_tsquery('english', $1)) DESC
-         LIMIT ${take + 1}`,
-        ...args,
-      ),
-      this.prisma.$queryRawUnsafe<[{ count: bigint }]>(
-        `SELECT COUNT(*)::bigint AS count FROM "RetirementRecord" WHERE ${where}`,
-        ...args,
-      ),
+    if (projectId) { where.projectId = projectId; }
+    if (retiredBy) { where.retiredBy = retiredBy; }
+    if (vintageYear) { where.vintageYear = vintageYear; }
+    if (cursor) { where.id = { lt: cursor }; }
+
+    const [rows, total_count] = await Promise.all([
+      this.prisma.retirementRecord.findMany({
+        where,
+        take: take + 1,
+        orderBy: { retiredAt: 'desc' },
+      }),
+      this.prisma.retirementRecord.count({ where }),
     ]);
 
     const hasMore = rows.length > take;
     const next_cursor = hasMore ? rows[rows.length - 2].id : undefined;
     if (hasMore) rows.pop();
 
-    return { retirements: rows, next_cursor, total_count: Number(countRows[0]?.count ?? 0) };
-  }
-
-  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
-    const take = Math.min(Math.max(limit, 1), 100);
-    const where = retiredBy ? { retiredBy } : {};
-
-    // Use explicit select to avoid loading the large serialNumbers[] array on list pages.
-    // The composite index on (retiredBy, retiredAt) is used when retiredBy is present.
-    const [retirements, total_count] = await Promise.all([
-      this.prisma.retirementRecord.findMany({
-        where,
-        orderBy: { retiredAt: "desc" },
-        take: take + 1,
-        cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
-        select: {
-          id: true,
-          retirementId: true,
-          batchId: true,
-          projectId: true,
-          amount: true,
-          retiredBy: true,
-          beneficiary: true,
-          retirementReason: true,
-          vintageYear: true,
-          serialStart: true,
-          serialEnd: true,
-          txHash: true,
-          certificateCid: true,
-          isValid: true,
-          validatedAt: true,
-          retiredAt: true,
-        },
-      }),
-      this.prisma.retirementRecord.count({ where }),
-    ]);
-
-    const hasMore = retirements.length > take;
-    const next_cursor = hasMore ? retirements[retirements.length - 2].id : undefined;
-    if (hasMore) retirements.pop();
-
-    return { retirements, next_cursor, total_count };
+    return { retirements: rows.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, total_count };
   }
 
   async findOne(retirementId: string) {
@@ -335,7 +304,7 @@ export class RetirementsService {
       include: { project: true, batch: true },
     });
     if (!r) throw new NotFoundException('Retirement not found');
-    return r;
+    return sanitizeRetirementForResponse(r as Record<string, unknown>);
   }
 
   /**
