@@ -16,7 +16,8 @@
     "test:visual:ui": "playwright test tests/visual-regression.spec.ts --ui",
     "test:visual:update": "playwright test tests/visual-regression.spec.ts --update-snapshots",
     "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "build-storybook": "storybook build",
+    "test-storybook": "test-storybook"
   },
   "dependencies": {
     "@stellar/freighter-api": "6.0.1",
@@ -39,8 +40,10 @@
     "@axe-core/playwright": "^4.8.0",
     "@eslint/eslintrc": "^3",
     "@playwright/test": "^1.60.0",
+    "@storybook/addon-a11y": "^10.5.5",
     "@storybook/nextjs": "^10.4.1",
     "@storybook/react": "^10.4.1",
+    "@storybook/test-runner": "^0.24.4",
     "@testing-library/jest-dom": "^6",
     "@testing-library/react": "^16",
     "@types/jest": "^29.5.14",
