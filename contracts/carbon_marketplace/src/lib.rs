@@ -1411,6 +1411,95 @@ mod edge_case_tests {
             CarbonError::InvalidSerialRange
         );
     }
+
+    // ── Mutation-testing survivor kills (issue #632) ──────────────────────────
+    //
+    // `len != amounts.len() || len > MAX_BATCH_SIZE` guards bulk_purchase.
+    // These tests exercise the MAX_BATCH_SIZE (10) boundary directly, without
+    // requiring real listings/cross-contract transfers: the length check runs
+    // before any listing is loaded, so a request that passes the length check
+    // but references nonexistent listings surfaces ListingNotFound instead of
+    // InvalidSerialRange, proving the boundary comparison is `>` not `>=`.
+
+    #[test]
+    fn test_bulk_purchase_exact_max_batch_size_passes_length_check() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let buyer = Address::generate(&env);
+        let ids = soroban_sdk::vec![
+            &env,
+            s(&env, "l0"),
+            s(&env, "l1"),
+            s(&env, "l2"),
+            s(&env, "l3"),
+            s(&env, "l4"),
+            s(&env, "l5"),
+            s(&env, "l6"),
+            s(&env, "l7"),
+            s(&env, "l8"),
+            s(&env, "l9"),
+        ];
+        let amounts = soroban_sdk::vec![
+            &env, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128,
+            10_i128,
+        ];
+        let result = client.try_bulk_purchase(&buyer, &ids, &amounts);
+        // Exactly MAX_BATCH_SIZE (10) listings must pass the length guard and
+        // fail downstream on the (nonexistent) listing lookup instead.
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ListingNotFound);
+    }
+
+    #[test]
+    fn test_bulk_purchase_over_max_batch_size_fails_length_check() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let buyer = Address::generate(&env);
+        let ids = soroban_sdk::vec![
+            &env,
+            s(&env, "l0"),
+            s(&env, "l1"),
+            s(&env, "l2"),
+            s(&env, "l3"),
+            s(&env, "l4"),
+            s(&env, "l5"),
+            s(&env, "l6"),
+            s(&env, "l7"),
+            s(&env, "l8"),
+            s(&env, "l9"),
+            s(&env, "l10"),
+        ];
+        let amounts = soroban_sdk::vec![
+            &env, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128,
+            10_i128, 10_i128,
+        ];
+        let result = client.try_bulk_purchase(&buyer, &ids, &amounts);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidSerialRange
+        );
+    }
+
+    /// Kills mutation of `vintage_year < 1990` -> `<= 1990` in list_credits:
+    /// vintage 1990 is the minimum valid year and must be accepted.
+    #[test]
+    fn test_list_vintage_1990_succeeds() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let seller = Address::generate(&env);
+        client.list_credits(
+            &seller,
+            &s(&env, "l-1990"),
+            &s(&env, "b-1990"),
+            &s(&env, "p1"),
+            &100_i128,
+            &10_0000000_i128,
+            &1990_u32,
+            &s(&env, "VCS"),
+            &s(&env, "BR"),
+        );
+        let l = client.get_listing(&s(&env, "l-1990"));
+        assert_eq!(l.vintage_year, 1990);
+    }
 }
 
 // ── Fee Config Tests (#651) ───────────────────────────────────────────────────
