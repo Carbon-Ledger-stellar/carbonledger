@@ -12,6 +12,7 @@ import { OracleSyncService } from './oracle-sync.service';
 import { OracleSchedulerService } from './oracle-scheduler.service';
 import { OracleGuard } from './oracle.guard';
 import { Public, Roles } from '../auth/decorators';
+import { CheckPolicies, PoliciesGuard, OracleDataSubject } from '../policies';
 
 /** Cache TTL for the services health endpoint (30 seconds). */
 const HEALTH_CACHE_TTL_S = 30;
@@ -35,16 +36,9 @@ export class OracleController {
   /**
    * GET /oracle/services/health
    *
-   * Returns the aggregate health of all three oracle services:
-   *   - verification_listener  (stale threshold: 365 days)
-   *   - price_oracle           (stale threshold: 24 hours)
-   *   - satellite_monitor      (stale threshold: 365 days)
-   *
-   * Always returns HTTP 200.  The `status` field per service is one of:
-   *   "healthy" | "stale" | "offline"
-   *
-   * Response is cached for 30 seconds via Cache-Control.
+   * Returns the aggregate health of all three oracle services.
    * Public — no authentication required.
+   * Response is cached for 30 seconds via Cache-Control.
    */
   @Get('services/health')
   @Public()
@@ -58,10 +52,12 @@ export class OracleController {
   }
 
   // ── Internal oracle endpoints — authenticated with oracle keypair ─────────
+  // The OracleGuard verifies an Ed25519 Stellar keypair signature.
+  // @Public() bypasses RolesGuard (no JWT); @UseGuards(OracleGuard) enforces oracle auth.
 
   @Post('ingest/monitoring')
-  @Public()                   // bypass JWT RolesGuard
-  @UseGuards(OracleGuard)     // oracle keypair signature required
+  @Public()
+  @UseGuards(OracleGuard)
   submitMonitoring(@Body() dto: SubmitMonitoringDto) {
     return this.oracleService.submitMonitoring(dto);
   }
@@ -84,24 +80,32 @@ export class OracleController {
 
   @Post('price-approvals/hold')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('hold', OracleDataSubject))
   holdPriceUpdate(@Body() dto: HoldPriceUpdateDto) {
     return this.oracleService.holdPriceUpdate(dto);
   }
 
   @Get('price-approvals')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', OracleDataSubject))
   getPriceApprovals() {
     return this.oracleService.getPriceApprovals();
   }
 
   @Post('price-approvals/:id/approve')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('approve', OracleDataSubject))
   approvePriceUpdate(@Param('id') id: string) {
     return this.oracleService.approvePriceUpdate(id);
   }
 
   @Post('price-approvals/:id/reject')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('reject', OracleDataSubject))
   rejectPriceUpdate(@Param('id') id: string, @Body('reason') reason?: string) {
     return this.oracleService.rejectPriceUpdate(id, reason);
   }

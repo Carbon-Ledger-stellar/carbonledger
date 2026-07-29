@@ -11,9 +11,11 @@ import { UploadsModule } from "../uploads/uploads.module";
 import { QueueModule } from "../queue/queue.module";
 import { CertificateService } from "./certificate.service";
 import { ZkProofService } from "./zk-proof.service";
+import { PoliciesModule } from "../policies/policies.module";
+import { AbilityFactory } from "../policies/ability.factory";
 
 @Module({
-  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule],
+  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule, PoliciesModule],
   controllers: [RetirementsController, CertificatesController],
   providers: [
     RetirementsService,
@@ -22,6 +24,7 @@ import { ZkProofService } from "./zk-proof.service";
     RetirementIndexerService,
     CertificateService,
     ZkProofService,
+    AbilityFactory,
   ],
   exports: [RetirementsService],
 })

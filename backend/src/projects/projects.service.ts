@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
-import { RedisService } from "../redis.service"; // ⚠️ ASSUMED PATH — verify this matches your actual file
-import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants"; // ⚠️ ASSUMED — verify these exist here
+import { RedisService } from "../redis.service";
+import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import {
   RegisterProjectDto,
   UpdateProjectStatusDto,
@@ -14,8 +14,6 @@ import {
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
-import { RedisService } from "../redis.service";
-import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { randomUUID } from "crypto";
 
 /**
@@ -92,34 +90,11 @@ export class ProjectsService {
       oracleFreshness, cursor, limit = 20, sortBy = 'createdAt', sortOrder = 'desc',
     } = searchDto;
 
-
-    const where: any = {};
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    if (methodology && methodology.length > 0) {
-      where.methodology = { in: methodology };
-    }
-
-    if (country && country.length > 0) {
-      where.country = { in: country };
-    }
-
-    if (status && status.length > 0) {
-      where.status = { in: status };
-    }
-
-
     // When a free-text query is present, use the PostgreSQL tsvector GIN index
     // for ranked full-text search (#670). Fall back to prisma-only filters
     // otherwise so simple list calls stay on the ORM path.
     if (search) {
-      return this.searchProjectsFullText(searchDto);
+      return this.searchProjectsFullText(searchDto, caller);
     }
 
     // Build where clause (no free-text)
@@ -134,7 +109,6 @@ export class ProjectsService {
     if (status && status.length > 0) {
       where.status = { in: status };
     }
-
     if (vintageYear && vintageYear.length > 0) {
       where.vintageYear = { in: vintageYear };
     }
@@ -146,14 +120,7 @@ export class ProjectsService {
           where.lastMonitoringAt = { gte: thirtyDaysAgo };
           break;
         case OracleFreshness.STALE:
-
-          where.OR = [
-            { lastMonitoringAt: { lt: thirtyDaysAgo } },
-            { lastMonitoringAt: null },
-          ];
-
           where.OR = [{ lastMonitoringAt: { lt: thirtyDaysAgo } }, { lastMonitoringAt: null }];
-
           break;
         case OracleFreshness.UNKNOWN:
           where.lastMonitoringAt = null;
@@ -161,11 +128,9 @@ export class ProjectsService {
       }
     }
 
-
     // Ownership scoping — added right before execution, after all filter
     // building, so it always applies regardless of which branches above ran.
     scopeWhereForCaller(where, caller);
-
 
     const orderBy: any = {};
     orderBy[sortBy] = sortOrder;
@@ -174,11 +139,7 @@ export class ProjectsService {
       this.prisma.carbonProject.findMany({
         where,
         orderBy,
-
-        take: limit + 1,
-
         take:   limit + 1,
-
         cursor: cursor ? { id: cursor } : undefined,
         skip:   cursor ? 1 : 0,
         select: {
@@ -193,13 +154,7 @@ export class ProjectsService {
       this.prisma.carbonProject.count({ where }),
     ]);
 
-
-    const hasMore = projects.length > limit;
-    const nextCursor = hasMore ? projects[projects.length - 2].id : undefined;
-    if (hasMore) {
-      projects.pop();
-
-    const hasMore   = projects.length > limit;
+    const hasMore    = projects.length > limit;
     const nextCursor = hasMore ? projects[projects.length - 2].id : undefined;
     if (hasMore) projects.pop();
 
@@ -213,8 +168,11 @@ export class ProjectsService {
    * relevance ordering, then applies structured filters in a sub-select.
    * Falls back gracefully if the searchVector column is not yet present
    * (e.g., running against a pre-migration DB in tests).
+   *
+   * The `caller` is used to add an ownership filter for project_developer
+   * role so the scoping applied by the ORM path is consistent here.
    */
-  private async searchProjectsFullText(searchDto: SearchProjectsDto): Promise<PaginatedProjectsResponse> {
+  private async searchProjectsFullText(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
     const { search, methodology, country, status, vintageYear, limit = 20, cursor } = searchDto;
 
     // Build parameterised clause fragments. Prisma raw accepts $1, $2 … style.
@@ -242,6 +200,12 @@ export class ProjectsService {
     if (vintageYear && vintageYear.length > 0) {
       conditions.push(`"vintageYear" = ANY($${idx}::int[])`);
       args.push(vintageYear);
+      idx++;
+    }
+    // Ownership scoping: project_developer sees only their own projects
+    if (caller.role === 'project_developer') {
+      conditions.push(`"ownerAddress" = $${idx}`);
+      args.push(caller.publicKey);
       idx++;
     }
     if (cursor) {
@@ -406,9 +370,6 @@ export class ProjectsService {
   }
 
   async createProject(dto: CreateProjectDto, ownerAddress?: string) {
-
-    const projectId = uuidv4();
-
     const projectId = randomUUID();
     // Upload documents to IPFS: store CIDs as metadataCid (first doc) and coordinates as JSON
 
@@ -497,13 +458,5 @@ export class ProjectsService {
     });
     await this.invalidateProjectCache(projectId);
     return updated;
-  }
-
-  // ⚠️ ASSUMED implementation — you had a working invalidateProjectCache
-  // that wasn't in the snippet you pasted. If yours does more (e.g. also
-  // invalidating a list cache), keep yours and discard this stub.
-  private async invalidateProjectCache(projectId: string): Promise<void> {
-    const cacheKey = projectDetailCacheKey(projectId);
-    await this.redisService.del(cacheKey);
   }
 }

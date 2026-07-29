@@ -1,14 +1,24 @@
 import { Module } from "@nestjs/common";
 import { MarketplaceController } from "./marketplace.controller";
 import { MarketplaceService } from "./marketplace.service";
+import { MarketplaceSearchService } from "./marketplace-search.service";
 import { MarketplaceContractService } from "./marketplace-contract.service";
 import { ListingsCacheService } from "./listings-cache.service";
 import { PrismaService } from "../prisma.service";
 import { AuthModule } from "../auth/auth.module";
+import { PoliciesModule } from "../policies/policies.module";
+import { AbilityFactory } from "../policies/ability.factory";
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, PoliciesModule],
   controllers: [MarketplaceController],
-  providers: [MarketplaceService, MarketplaceContractService, ListingsCacheService, PrismaService],
+  providers: [
+    MarketplaceService,
+    MarketplaceSearchService,
+    MarketplaceContractService,
+    ListingsCacheService,
+    PrismaService,
+    AbilityFactory,
+  ],
 })
 export class MarketplaceModule {}

@@ -34,6 +34,7 @@ import { ThrottleModule, RoleLimitGuard } from "./throttle";
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
 import { RedisModule } from "./redis.module";
+import { PoliciesModule } from "./policies/policies.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -153,6 +154,7 @@ class HealthController {
     GraphqlModule,
     RedisModule,
     IdempotencyModule,
+    PoliciesModule,
   ],
   controllers: [HealthController],
   providers: [

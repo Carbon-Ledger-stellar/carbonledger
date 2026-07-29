@@ -91,6 +91,8 @@ model RetirementRecord {
   zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+  // Supports scoped list queries: WHERE retiredBy = $1 ORDER BY retiredAt DESC
+  @@index([retiredBy, retiredAt])
 }
 
 model ZkRetirementProof {
@@ -149,6 +151,10 @@ model MarketListing {
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
 
   @@index([methodology, vintageYear, status, pricePerCredit])
+  // Supports queries that filter active/partial listings by seller (My Listings page)
+  @@index([seller, status])
+  // Supports ORDER BY status, createdAt DESC on the listings browse page
+  @@index([status, createdAt])
 }
 
 model MonitoringData {
@@ -416,6 +422,8 @@ model CreditEvent {
 
   @@index([creditBatchId])
   @@index([timestamp])
+  // Covering index for the provenance query: WHERE creditBatchId = $1 ORDER BY timestamp ASC
+  @@index([creditBatchId, timestamp])
 }
 
 model SatelliteWebhookProvider {

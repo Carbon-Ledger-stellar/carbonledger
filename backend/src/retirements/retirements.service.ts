@@ -143,9 +143,12 @@ export class RetirementsService {
     return { retirements: rows, next_cursor, total_count: Number(countRows[0]?.count ?? 0) };
   }
 
-  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {    const take = Math.min(Math.max(limit, 1), 100);
+  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
+    const take = Math.min(Math.max(limit, 1), 100);
     const where = retiredBy ? { retiredBy } : {};
 
+    // Use explicit select to avoid loading the large serialNumbers[] array on list pages.
+    // The composite index on (retiredBy, retiredAt) is used when retiredBy is present.
     const [retirements, total_count] = await Promise.all([
       this.prisma.retirementRecord.findMany({
         where,
@@ -153,6 +156,24 @@ export class RetirementsService {
         take: take + 1,
         cursor: cursor ? { id: cursor } : undefined,
         skip: cursor ? 1 : 0,
+        select: {
+          id: true,
+          retirementId: true,
+          batchId: true,
+          projectId: true,
+          amount: true,
+          retiredBy: true,
+          beneficiary: true,
+          retirementReason: true,
+          vintageYear: true,
+          serialStart: true,
+          serialEnd: true,
+          txHash: true,
+          certificateCid: true,
+          isValid: true,
+          validatedAt: true,
+          retiredAt: true,
+        },
       }),
       this.prisma.retirementRecord.count({ where }),
     ]);
