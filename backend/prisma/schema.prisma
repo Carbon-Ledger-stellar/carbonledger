@@ -25,6 +25,7 @@ model CarbonProject {
   verifierAddress     String
   ownerAddress        String
   coordinates         Json?
+  migrationVersion    String?
   lastMonitoringAt    DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
@@ -41,6 +42,7 @@ model CarbonProject {
   @@index([vintageYear])
   @@index([createdAt])
   @@index([methodology, country, status])
+  @@index([migrationVersion])
   @@index([lastMonitoringAt])
 }
 
@@ -84,6 +86,7 @@ model RetirementRecord {
   certificateRetries       Int       @default(0)
   certificateFailedAt      DateTime?
   certificateGeneratedAt   DateTime?
+  legacyStatus             String?
   isValid                  Boolean   @default(true)
   validatedAt              DateTime?
   retiredAt                DateTime  @default(now())
@@ -95,6 +98,7 @@ model RetirementRecord {
   zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+  @@index([legacyStatus])
 }
 
 model ZkRetirementProof {
@@ -472,19 +476,6 @@ model CreditEvent {
   @@index([timestamp])
 }
 
-
-model OracleSyncState {
-  id                String    @id @default(cuid())
-  lastSyncedAt      DateTime  @default(now())
-  lastSyncedBlock   Int       @default(0)
-  recordsSynced     Int       @default(0)
-  lastError         String?
-  lastErrorAt       DateTime?
-  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
-  updatedAt         DateTime  @updatedAt
-
-  @@unique([id])
-
 model SatelliteWebhookProvider {
   id          String   @id @default(cuid())
   providerId  String   @unique
@@ -496,5 +487,4 @@ model SatelliteWebhookProvider {
 
   @@index([providerId])
   @@index([isActive])
-
 }
