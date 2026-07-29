@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { useListing, purchaseCredits } from "../../lib/api";
+import { useBuyButton } from "../../lib/useBuyButton";
+import ErrorBoundary from "../../components/ErrorBoundary";
 import { formatStroops, formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
 import { connectFreighter, getPublicKey } from "../../lib/freighter";
 import { getWalletErrorMessage } from "../../lib/wallet-errors";

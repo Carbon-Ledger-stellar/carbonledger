@@ -8,6 +8,8 @@ import {
   FlagProjectDto,
   HoldPriceUpdateDto,
 } from './oracle.service';
+import { OracleSyncService } from './oracle-sync.service';
+import { OracleSchedulerService } from './oracle-scheduler.service';
 import { OracleGuard } from './oracle.guard';
 import { Public, Roles } from '../auth/decorators';
 

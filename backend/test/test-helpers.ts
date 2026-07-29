@@ -18,6 +18,7 @@ export async function cleanDatabase(app: INestApplication) {
   
   // Clean tables in correct order to respect foreign key constraints
   await prisma.monitoringData.deleteMany();
+  await prisma.oracleJob.deleteMany();
   await prisma.oracleUpdate.deleteMany();
   await prisma.marketListing.deleteMany();
   await prisma.retirementRecord.deleteMany();

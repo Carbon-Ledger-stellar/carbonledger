@@ -17,7 +17,7 @@ export async function getOrderBook(
   sellingAsset: Asset,
   buyingAsset: Asset,
   limit = 20,
-): Promise<Horizon.HorizonApi.OrderbookRecord> {
+): Promise<{ bids: { price: string; amount: string }[]; asks: { price: string; amount: string }[] }> {
   return server.orderbook(sellingAsset, buyingAsset).limit(limit).call();
 }
 
@@ -86,7 +86,7 @@ export async function getTradeHistory(
   baseAsset: Asset,
   counterAsset: Asset,
   limit = 50,
-): Promise<Horizon.HorizonApi.TradeRecord[]> {
+) {
   const trades = await server
     .trades()
     .forAssetPair(baseAsset, counterAsset)
