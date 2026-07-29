@@ -25,7 +25,11 @@ model CarbonProject {
   verifierAddress     String
   ownerAddress        String
   coordinates         Json?
+  migrationVersion    String?
   lastMonitoringAt    DateTime?
+  deletedAt           DateTime?
+  deletionReason      String?
+  retentionUntil      DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   ipfsFiles           IPFSFile[]
@@ -41,7 +45,10 @@ model CarbonProject {
   @@index([vintageYear])
   @@index([createdAt])
   @@index([methodology, country, status])
+  @@index([migrationVersion])
   @@index([lastMonitoringAt])
+  @@index([deletedAt])
+  @@index([retentionUntil])
 }
 
 model CreditBatch {
@@ -84,6 +91,7 @@ model RetirementRecord {
   certificateRetries       Int       @default(0)
   certificateFailedAt      DateTime?
   certificateGeneratedAt   DateTime?
+  legacyStatus             String?
   isValid                  Boolean   @default(true)
   validatedAt              DateTime?
   retiredAt                DateTime  @default(now())
@@ -95,6 +103,9 @@ model RetirementRecord {
   zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+  // Supports scoped list queries: WHERE retiredBy = $1 ORDER BY retiredAt DESC
+  @@index([retiredBy, retiredAt])
+  @@index([legacyStatus])
 }
 
 model ZkRetirementProof {
@@ -153,6 +164,10 @@ model MarketListing {
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
 
   @@index([methodology, vintageYear, status, pricePerCredit])
+  // Supports queries that filter active/partial listings by seller (My Listings page)
+  @@index([seller, status])
+  // Supports ORDER BY status, createdAt DESC on the listings browse page
+  @@index([status, createdAt])
 }
 
 model MonitoringData {
@@ -211,8 +226,14 @@ model User {
   email                   String?                  @unique
   role                    String                   @default("corporation")
   isSubscribed            Boolean                  @default(true)
+  deletedAt               DateTime?
+  deletionReason          String?
+  retentionUntil          DateTime?
   createdAt               DateTime                 @default(now())
   notificationPreferences NotificationPreference?
+
+  @@index([deletedAt])
+  @@index([retentionUntil])
 }
 
 model NotificationPreference {
@@ -470,41 +491,9 @@ model CreditEvent {
 
   @@index([creditBatchId])
   @@index([timestamp])
+  // Covering index for the provenance query: WHERE creditBatchId = $1 ORDER BY timestamp ASC
+  @@index([creditBatchId, timestamp])
 }
-
-/// Derived read-model projection reconstructed by replaying CreditEvent logs.
-model CreditProjection {
-  id              String   @id @default(cuid())
-  creditBatchId   String   @unique
-  projectId       String
-  ownerPublicKey  String
-  status          String   /// Issued | Verified | Listed | Sold | Retired
-  amountAvailable Float    @default(0)
-  amountRetired   Float    @default(0)
-  pricePerCredit  String?
-  txHash          String?
-  lastEventType   String
-  version         Int      @default(1)
-  updatedAt       DateTime @updatedAt
-  createdAt       DateTime @default(now())
-
-  @@index([creditBatchId])
-  @@index([status])
-  @@index([ownerPublicKey])
-}
-
-
-model OracleSyncState {
-  id                String    @id @default(cuid())
-  lastSyncedAt      DateTime  @default(now())
-  lastSyncedBlock   Int       @default(0)
-  recordsSynced     Int       @default(0)
-  lastError         String?
-  lastErrorAt       DateTime?
-  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
-  updatedAt         DateTime  @updatedAt
-
-  @@unique([id])
 
 model SatelliteWebhookProvider {
   id          String   @id @default(cuid())
@@ -517,5 +506,4 @@ model SatelliteWebhookProvider {
 
   @@index([providerId])
   @@index([isActive])
-
 }

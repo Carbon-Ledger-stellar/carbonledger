@@ -52,6 +52,166 @@ fn report(name: &str, cpu_instructions: u64, mem_bytes: u64, io: DeclaredIo) {
 /// CreditContract) + ~9 reads / 8 writes per listing. Benchmarked with a
 /// 2-listing batch: reads = 3 + 9*2 = 21, writes = 8*2 = 16.
 #[test]
+fn bench_list_credits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set(ledger_info());
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let usdc = env.register_stellar_asset_contract(admin.clone());
+
+    let credit_id = env.register_contract(None, CarbonCreditContract);
+    let credit_client = CarbonCreditContractClient::new(&env, &credit_id);
+    credit_client.initialize(&admin, &registry);
+
+    let mkt_id = env.register_contract(None, CarbonMarketplaceContract);
+    let mkt = CarbonMarketplaceContractClient::new(&env, &mkt_id);
+    mkt.initialize(&admin, &usdc, &credit_id, &treasury);
+
+    credit_client.mint_credits(
+        &admin,
+        &s(&env, "proj-001"),
+        &100_i128,
+        &2023_u32,
+        &s(&env, "batch-001"),
+        &1_u64,
+        &100_u64,
+        &s(&env, "QmCID"),
+        &seller,
+    );
+
+    let before_cpu = env.budget().cpu_instruction_cost();
+    let before_mem = env.budget().memory_bytes_cost();
+
+    mkt.list_credits(
+        &seller,
+        &s(&env, "list-001"),
+        &s(&env, "batch-001"),
+        &s(&env, "proj-001"),
+        &100_i128,
+        &1_0000000_i128,
+        &2023_u32,
+        &s(&env, "VCS"),
+        &s(&env, "Brazil"),
+    );
+
+    let cpu = env.budget().cpu_instruction_cost() - before_cpu;
+    let mem = env.budget().memory_bytes_cost() - before_mem;
+    report("list_credits", cpu, mem, DeclaredIo { reads: 2, writes: 2 });
+}
+
+#[test]
+fn bench_purchase_credits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set(ledger_info());
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let usdc = env.register_stellar_asset_contract(admin.clone());
+
+    let credit_id = env.register_contract(None, CarbonCreditContract);
+    let credit_client = CarbonCreditContractClient::new(&env, &credit_id);
+    credit_client.initialize(&admin, &registry);
+
+    let mkt_id = env.register_contract(None, CarbonMarketplaceContract);
+    let mkt = CarbonMarketplaceContractClient::new(&env, &mkt_id);
+    mkt.initialize(&admin, &usdc, &credit_id, &treasury);
+
+    credit_client.mint_credits(
+        &admin,
+        &s(&env, "proj-001"),
+        &100_i128,
+        &2023_u32,
+        &s(&env, "batch-001"),
+        &1_u64,
+        &100_u64,
+        &s(&env, "QmCID"),
+        &seller,
+    );
+    mkt.list_credits(
+        &seller,
+        &s(&env, "list-001"),
+        &s(&env, "batch-001"),
+        &s(&env, "proj-001"),
+        &100_i128,
+        &1_0000000_i128,
+        &2023_u32,
+        &s(&env, "VCS"),
+        &s(&env, "Brazil"),
+    );
+    token::StellarAssetClient::new(&env, &usdc).mint(&buyer, &1_000_0000000_i128);
+
+    let before_cpu = env.budget().cpu_instruction_cost();
+    let before_mem = env.budget().memory_bytes_cost();
+
+    mkt.purchase_credits(&buyer, &s(&env, "list-001"), &10_i128);
+
+    let cpu = env.budget().cpu_instruction_cost() - before_cpu;
+    let mem = env.budget().memory_bytes_cost() - before_mem;
+    report("purchase_credits", cpu, mem, DeclaredIo { reads: 4, writes: 3 });
+}
+
+#[test]
+fn bench_get_active_listings() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set(ledger_info());
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let usdc = env.register_stellar_asset_contract(admin.clone());
+
+    let credit_id = env.register_contract(None, CarbonCreditContract);
+    let credit_client = CarbonCreditContractClient::new(&env, &credit_id);
+    credit_client.initialize(&admin, &registry);
+
+    let mkt_id = env.register_contract(None, CarbonMarketplaceContract);
+    let mkt = CarbonMarketplaceContractClient::new(&env, &mkt_id);
+    mkt.initialize(&admin, &usdc, &credit_id, &treasury);
+
+    credit_client.mint_credits(
+        &admin,
+        &s(&env, "proj-001"),
+        &100_i128,
+        &2023_u32,
+        &s(&env, "batch-001"),
+        &1_u64,
+        &100_u64,
+        &s(&env, "QmCID"),
+        &seller,
+    );
+    mkt.list_credits(
+        &seller,
+        &s(&env, "list-001"),
+        &s(&env, "batch-001"),
+        &s(&env, "proj-001"),
+        &100_i128,
+        &1_0000000_i128,
+        &2023_u32,
+        &s(&env, "VCS"),
+        &s(&env, "Brazil"),
+    );
+
+    let before_cpu = env.budget().cpu_instruction_cost();
+    let before_mem = env.budget().memory_bytes_cost();
+
+    let _active = mkt.get_active_listings();
+
+    let cpu = env.budget().cpu_instruction_cost() - before_cpu;
+    let mem = env.budget().memory_bytes_cost() - before_mem;
+    report("get_active_listings", cpu, mem, DeclaredIo { reads: 2, writes: 0 });
+}
+
+#[test]
 fn bench_bulk_purchase() {
     let env = Env::default();
     env.mock_all_auths();
