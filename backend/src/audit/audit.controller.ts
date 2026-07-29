@@ -16,4 +16,17 @@ export class AuditController {
   ) {
     return this.auditService.findAll({ limit, offset, userId, action });
   }
+
+  /**
+   * GET /audit/verify
+   *
+   * Walks the entire AuditLog chain and confirms every SHA-256 hash link is
+   * intact.  A broken link means a row was inserted, deleted, or modified.
+   * Admin-only.
+   */
+  @Get('verify')
+  @Roles('admin')
+  verifyChain() {
+    return this.auditService.verifyChain();
+  }
 }

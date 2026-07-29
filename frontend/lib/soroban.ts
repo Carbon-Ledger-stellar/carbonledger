@@ -1,12 +1,12 @@
 import {
-  SorobanRpc,
+  rpc,
   TransactionBuilder,
   Networks,
   BASE_FEE,
   xdr,
   scValToNative,
-  nativeToScVal,
   Address,
+  Operation,
 } from "@stellar/stellar-sdk";
 
 const RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL!;
@@ -14,7 +14,7 @@ const NETWORK = process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet"
   ? Networks.PUBLIC
   : Networks.TESTNET;
 
-export const sorobanServer = new SorobanRpc.Server(RPC_URL);
+export const sorobanServer = new rpc.Server(RPC_URL);
 
 export interface ContractCallParams {
   contractId: string;
@@ -23,22 +23,20 @@ export interface ContractCallParams {
   sourcePublicKey: string;
 }
 
-export async function simulateContract(params: ContractCallParams): Promise<SorobanRpc.Api.SimulateTransactionResponse> {
+export async function simulateContract(params: ContractCallParams): Promise<rpc.Api.SimulateTransactionResponse> {
   const account = await sorobanServer.getAccount(params.sourcePublicKey);
   const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK })
     .addOperation(
-      // @ts-ignore — soroban invoke
-      {
-        type: "invokeHostFunction",
+      Operation.invokeHostFunction({
         func: xdr.HostFunction.hostFunctionTypeInvokeContract(
           new xdr.InvokeContractArgs({
-            contractAddress: new Address(params.contractId).toScAddress(),
-            functionName:    params.method,
-            args:            params.args,
+            contractAddress: Address.fromString(params.contractId).toScAddress(),
+            functionName: params.method,
+            args: params.args,
           }),
         ),
         auth: [],
-      },
+      }),
     )
     .setTimeout(30)
     .build();
@@ -55,14 +53,14 @@ export async function invokeContract(params: ContractCallParams, signedXdr: stri
   for (let i = 0; i < 20; i++) {
     await new Promise(r => setTimeout(r, 3000));
     const result = await sorobanServer.getTransaction(response.hash);
-    if (result.status === SorobanRpc.Api.GetTransactionStatus.SUCCESS) return response.hash;
-    if (result.status === SorobanRpc.Api.GetTransactionStatus.FAILED)
+    if (result.status === rpc.Api.GetTransactionStatus.SUCCESS) return response.hash;
+    if (result.status === rpc.Api.GetTransactionStatus.FAILED)
       throw new Error("Transaction failed on-chain");
   }
   throw new Error("Transaction confirmation timeout");
 }
 
-export async function getContractEvents(contractId: string, startLedger: number): Promise<SorobanRpc.Api.EventResponse[]> {
+export async function getContractEvents(contractId: string, startLedger: number): Promise<rpc.Api.EventResponse[]> {
   const response = await sorobanServer.getEvents({
     startLedger,
     filters: [{ type: "contract", contractIds: [contractId] }],
