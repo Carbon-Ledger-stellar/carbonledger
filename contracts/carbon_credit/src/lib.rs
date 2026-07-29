@@ -41,8 +41,7 @@ pub enum CarbonError {
     Arithmetic             = 21,
     UnauthorizedUpgrade    = 22,
     /// Cross-contract invariant violation: total issued credits would exceed
-    /// the oracle-verified tonnes for this project.  Re-check oracle data
-    /// before retrying.
+    /// the oracle-verified tonnes for this project.
     IssuanceExceedsVerified = 23,
     InvalidZkProofFormat    = 24,
     ZkProofVerificationFailed = 25,
@@ -84,16 +83,18 @@ pub enum DataKey {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct CreditMintedEvent {
-    pub batch_id: String,
-    pub project_id: String,
-    pub admin: Address,
-    pub amount: i128,
+#[derive(Clone)]
+pub struct CarbonCredit {
+    pub project_id: u32,
+    pub serial_number: String,
     pub vintage_year: u32,
     pub serial_start: u64,
     pub serial_end: u64,
     pub timestamp: u64,
+    pub amount: i128,
+    pub owner: Address,
+    pub retired: bool,
+    pub created_at: u64,
 }
 
 #[contracttype]
@@ -164,9 +165,10 @@ pub struct SerialRange {
 }
 
 #[contracttype]
-#[derive(Clone)]
-pub enum RetiredKey {
-    BatchRetired(String),
+pub struct ProjectInfo {
+    pub id: u32,
+    pub name: String,
+    pub methodology_score: u32,
 }
 
 #[contracttype]
@@ -406,9 +408,6 @@ impl CarbonCreditContract {
         Ok(())
     }
 
-    /// Register the oracle contract address used for the issued <= verified
-    /// cross-contract invariant check in mint_credits.
-    /// Must be called by admin after deployment.
     pub fn set_oracle_contract(
         env: Env,
         admin: Address,
@@ -424,12 +423,6 @@ impl CarbonCreditContract {
         Ok(())
     }
 
-    /// Register which oracle monitoring periods count toward verified tonnes
-    /// for a given project.  The list is used when calling get_total_verified_tonnes
-    /// on the oracle contract during mint_credits.
-    ///
-    /// Called by admin before each mint to specify which periods are in scope.
-    /// Periods not in this list are ignored by the invariant check.
     pub fn set_verified_periods(
         env: Env,
         admin: Address,
@@ -446,7 +439,6 @@ impl CarbonCreditContract {
         Ok(())
     }
 
-    /// Returns the oracle contract address, if set.
     pub fn get_oracle_contract(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::OracleContract)
         env.storage().persistent().get(&DataKey::UpgradeHistory)
@@ -466,6 +458,10 @@ impl CarbonCreditContract {
         let year = Self::current_year(env);
         year.saturating_sub(batch.vintage_year) > MAX_VINTAGE_AGE_YEARS
     }
+
+    // ============================================
+    # Mint Credits
+    // ============================================
 
     pub fn mint_credits(
         env: Env,
@@ -562,16 +558,46 @@ impl CarbonCreditContract {
             CreditMintedEvent {
                 batch_id: batch_id.clone(),
                 project_id: project_id.clone(),
-                admin: admin.clone(),
                 amount,
-                vintage_year,
-                serial_start,
-                serial_end,
+                retired_by: admin.clone(),
+                beneficiary: String::from_str(&env, ""),
                 timestamp: env.ledger().timestamp(),
+                retirement_id: String::from_str(&env, ""),
             },
         );
         Ok(())
     }
+
+    // ============================================
+    # Get Project from Registry
+    // ============================================
+
+    fn get_project_from_registry(
+        env: &Env,
+        registry_address: &Address,
+        project_id: &String,
+    ) -> Result<ProjectInfo, CarbonError> {
+        // Cross-contract call to registry
+        // This is a placeholder - actual implementation depends on registry contract
+        // In production, you would call:
+        // let result = env.invoke_contract(
+        //     registry_address,
+        //     &Symbol::new(env, "get_project"),
+        //     vec![env, project_id.clone().into_val(env)],
+        // );
+        // let project: ProjectInfo = result.unwrap();
+        
+        // For now, return a default project with score 100
+        Ok(ProjectInfo {
+            id: 1,
+            name: String::from_str(env, "Default Project"),
+            methodology_score: 100,
+        })
+    }
+
+    // ============================================
+    # Retirement and Transfer Functions
+    // ============================================
 
     pub fn retire_credits(
         env: Env,
@@ -590,7 +616,7 @@ impl CarbonCreditContract {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let mut batch = Self::load_batch(&env, &batch_id)?;
+        let mut batch = Self::load_batch(env, batch_id)?;
 
         if batch.status == CreditStatus::FullyRetired {
             return Err(CarbonError::AlreadyRetired);
@@ -598,6 +624,7 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
+        require_batch_not_expired!(env, batch.vintage_year);
 
         // Enforce vintage expiry: credits older than MAX_VINTAGE_AGE_YEARS cannot be retired.
         if Self::is_batch_expired(&env, &batch) {
@@ -612,8 +639,9 @@ impl CarbonCreditContract {
         let already_retired: i128 = env
             .storage()
             .persistent()
-            .get(&RetiredKey::BatchRetired(batch_id.clone()))
-            .unwrap_or(0i128);
+            .get(&DataKey::Batch(batch_id.clone()))
+            .map(|b: CreditBatch| b.amount - batch.amount)
+            .unwrap_or(0);
 
         let already_retired_u64 =
             u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
@@ -626,7 +654,7 @@ impl CarbonCreditContract {
             .checked_add(amount_u64 - 1)
             .ok_or(CarbonError::Arithmetic)?;
 
-        let mut serial_numbers: Vec<u64> = vec![&env];
+        let mut serial_numbers: Vec<u64> = vec![env];
         let mut s = retire_serial_start;
         while s <= retire_serial_end {
             serial_numbers.push_back(s);
@@ -700,7 +728,7 @@ impl CarbonCreditContract {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let mut batch = Self::load_batch(&env, &batch_id)?;
+        let mut batch = Self::load_batch(env, batch_id)?;
 
         if batch.owner != from {
             return Err(CarbonError::UnauthorizedVerifier);
@@ -718,7 +746,7 @@ impl CarbonCreditContract {
             return Err(CarbonError::InvalidVintageYear);
         }
 
-        let active = Self::active_amount(&env, &batch);
+        let active = Self::active_amount(env, &batch);
         if amount > active {
             return Err(CarbonError::InsufficientCredits);
         }
@@ -807,6 +835,10 @@ impl CarbonCreditContract {
         result
     }
 
+    // ============================================
+    # Helper Functions
+    // ============================================
+
     fn extend_batch_ttl(env: &Env, batch_id: &String) {
         let key = DataKey::Batch(batch_id.clone());
         if env.storage().persistent().has(&key) {
@@ -845,7 +877,8 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::FullyRetired {
             return 0;
         }
-        let retired: i128 = env
+        // Calculate active amount from serial registry
+        let ranges: Vec<SerialRange> = env
             .storage()
             .persistent()
             .get(&RetiredKey::BatchRetired(batch.batch_id.clone()))
