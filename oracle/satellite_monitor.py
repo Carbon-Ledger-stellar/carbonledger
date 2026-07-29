@@ -1,7 +1,8 @@
 """
 satellite_monitor.py
 Flask webhook receiver for Google Earth Engine satellite data.
-Validates deforestation/land-use data against registered project coordinates,
+Validates HMAC-SHA256 signatures on incoming webhooks, checks for replay attacks,
+validates deforestation/land-use data against registered project coordinates,
 submits monitoring evidence CIDs to carbon_oracle, and flags projects where
 satellite data contradicts reported sequestration.
 
@@ -180,6 +181,55 @@ def verify_webhook_signature(req) -> tuple[bool, int, str]:
     return True, 200, "ok"
 
 
+# Maximum payload age in seconds before rejecting (5 minutes)
+MAX_PAYLOAD_AGE_SECS = 5 * 60
+
+# ── HMAC Signature Verification ───────────────────────────────────────────────
+
+def verify_gee_signature(payload_body: bytes, signature_header: str) -> bool:
+    """Verify the X-GEE-Signature header using HMAC-SHA256.
+
+    Args:
+        payload_body: The raw request body bytes.
+        signature_header: The value of the X-GEE-Signature header (e.g. "sha256=abc123...").
+
+    Returns:
+        True if the signature is valid, False otherwise.
+    """
+    if not signature_header:
+        return False
+    if not signature_header.startswith("sha256="):
+        return False
+
+    expected_sig = signature_header[7:]  # strip "sha256=" prefix
+    if not expected_sig:
+        return False
+
+    computed = hmac.new(
+        GEE_WEBHOOK_SECRET.encode("utf-8"),
+        payload_body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    return hmac.compare_digest(computed, expected_sig)
+
+
+def verify_payload_timestamp(payload: dict) -> bool:
+    """Check that the payload timestamp is within MAX_PAYLOAD_AGE_SECS.
+
+    Returns True if the payload is fresh, False if it's a replay.
+    """
+    payload_time = payload.get("timestamp")
+    if payload_time is None:
+        # If no timestamp, allow (backwards compatibility)
+        return True
+    try:
+        payload_ts = int(payload_time)
+    except (ValueError, TypeError):
+        return False
+    age = abs(int(time.time()) - payload_ts)
+    return age <= MAX_PAYLOAD_AGE_SECS
+
 # ── Stellar helpers ───────────────────────────────────────────────────────────
 
 def build_and_submit(function_name: str, args: list) -> str:
@@ -271,6 +321,17 @@ def detect_contradiction(report: dict) -> bool:
 
 @app.route("/webhook/satellite", methods=["POST"])
 def satellite_webhook():
+    # ── HMAC signature verification ──────────────────────────────────────────
+    if GEE_WEBHOOK_SECRET:
+        signature = request.headers.get("X-GEE-Signature", "")
+        if not signature:
+            log.warning("Missing X-GEE-Signature header")
+            return jsonify({"error": "Missing signature header"}), 401
+
+        payload_body = request.get_data()
+        if not verify_gee_signature(payload_body, signature):
+            log.warning("Invalid GEE webhook signature")
+            return jsonify({"error": "Invalid signature"}), 403
     """
     Receive satellite monitoring data from Google Earth Engine or other providers.
 
@@ -305,8 +366,13 @@ def satellite_webhook():
     if not data:
         return jsonify({"error": "Empty payload"}), 400
 
-    project_id    = data.get("project_id", "")
-    period        = data.get("period", "")
+    # ── Replay-attack protection ─────────────────────────────────────────────
+    if not verify_payload_timestamp(data):
+        log.warning("Rejected stale/replayed payload (timestamp too old)")
+        return jsonify({"error": "Payload timestamp too old", "status": "rejected"}), 403
+
+    project_id  = data.get("project_id", "")
+    period      = data.get("period", "")
     satellite_cid = data.get("satellite_cid", "")
     tonnes        = safe_int(data.get("tonnes_verified", 0))
     score         = safe_int(data.get("methodology_score", 80))

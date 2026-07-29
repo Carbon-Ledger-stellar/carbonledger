@@ -11,6 +11,10 @@ import { AbilityFactory } from "../policies/ability.factory";
 
 @Module({
   imports: [AuthModule, PoliciesModule],
+import { WebhookModule } from "../webhook/webhook.module";
+
+@Module({
+  imports: [AuthModule, WebhookModule],
   controllers: [MarketplaceController],
   providers: [
     MarketplaceService,
