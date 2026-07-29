@@ -23,6 +23,10 @@ cargo test --test lifecycle_integration_test -- --nocapture
 echo -e "${YELLOW}⬆️ Running upgrade path tests...${NC}"
 cargo test --test upgrade_path_test -- --nocapture
 
+# Run adversarial red-team tests (issue #629)
+echo -e "${YELLOW}🔴 Running adversarial red-team tests...${NC}"
+cargo test -p adversarial_tests -- --nocapture
+
 # Run with coverage if available
 if command -v cargo-tarpaulin &> /dev/null; then
     echo -e "${YELLOW}📊 Running coverage...${NC}"

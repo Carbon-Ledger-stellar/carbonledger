@@ -21,6 +21,8 @@ import {
   performConnect,
   performDisconnect,
   performNetworkCheck,
+  performRestoreSession,
+  performCheckExtensionAvailable,
   ConnectionStatus,
 } from '../lib/wallet-state-machine';
 
@@ -46,19 +48,33 @@ jest.mock('../lib/freighter', () => ({
   connectFreighter: jest.fn(),
   checkNetwork: jest.fn(),
   isWrongNetwork: jest.fn(),
+  getPublicKey: jest.fn(),
+}));
+
+jest.mock('../lib/wallet-session', () => ({
+  loadWalletSession: jest.fn(),
+  saveWalletSession: jest.fn(),
+  clearWalletSession: jest.fn(),
 }));
 
 import {
   isFreighterInstalled,
+  isFreighterConnected,
   connectFreighter,
   checkNetwork,
   isWrongNetwork,
+  getPublicKey,
 } from '../lib/freighter';
+import { loadWalletSession, clearWalletSession } from '../lib/wallet-session';
 
 const mockInstalled = isFreighterInstalled as jest.MockedFunction<typeof isFreighterInstalled>;
+const mockIsConnected = isFreighterConnected as jest.MockedFunction<typeof isFreighterConnected>;
 const mockConnect = connectFreighter as jest.MockedFunction<typeof connectFreighter>;
 const mockCheckNetwork = checkNetwork as jest.MockedFunction<typeof checkNetwork>;
 const mockIsWrongNetwork = isWrongNetwork as jest.MockedFunction<typeof isWrongNetwork>;
+const mockGetPublicKey = getPublicKey as jest.MockedFunction<typeof getPublicKey>;
+const mockLoadSession = loadWalletSession as jest.MockedFunction<typeof loadWalletSession>;
+const mockClearSession = clearWalletSession as jest.MockedFunction<typeof clearWalletSession>;
 
 // ---------------------------------------------------------------------------
 // State machine — reducer unit tests
@@ -217,6 +233,29 @@ describe('walletReducer — ACCOUNT_CHANGED transition', () => {
   it('is a no-op when disconnected', () => {
     const next = walletReducer(INITIAL_STATE, { type: 'ACCOUNT_CHANGED', publicKey: 'GNEW' });
     expect(next).toBe(INITIAL_STATE);
+  });
+});
+
+describe('walletReducer — SESSION_EXPIRED transition', () => {
+  it('moves connected → error with SESSION_EXPIRED code', () => {
+    const connected = stateWith({ status: 'connected', publicKey: 'GABC', network: 'TESTNET', connectedAt: 123 });
+    const next = walletReducer(connected, { type: 'SESSION_EXPIRED' });
+    expect(next.status).toBe('error');
+    expect(next.errorCode).toBe('SESSION_EXPIRED');
+    expect(next.connectedAt).toBeNull();
+  });
+
+  it('is a no-op when not connected', () => {
+    const next = walletReducer(INITIAL_STATE, { type: 'SESSION_EXPIRED' });
+    expect(next).toBe(INITIAL_STATE);
+  });
+
+  it('is recoverable via RETRY, like other error states', () => {
+    const expired = walletReducer(
+      stateWith({ status: 'connected', publicKey: 'GABC', network: 'TESTNET' }),
+      { type: 'SESSION_EXPIRED' },
+    );
+    expect(canRetry(expired.status)).toBe(true);
   });
 });
 
@@ -530,6 +569,107 @@ describe('performNetworkCheck', () => {
     const events: WalletEvent[] = [];
     await expect(performNetworkCheck((e) => events.push(e))).resolves.not.toThrow();
     expect(events).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// performRestoreSession — silent session restore on mount
+// ---------------------------------------------------------------------------
+
+describe('performRestoreSession', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('does nothing when there is no stored session', async () => {
+    mockLoadSession.mockReturnValue(null);
+
+    const events: WalletEvent[] = [];
+    await performRestoreSession((e) => events.push(e));
+
+    expect(events).toHaveLength(0);
+    expect(mockIsConnected).not.toHaveBeenCalled();
+  });
+
+  it('restores to connected without a permission prompt when the extension is still authorized', async () => {
+    mockLoadSession.mockReturnValue({ publicKey: 'GABC', network: 'TESTNET', connectedAt: 1000 });
+    mockIsConnected.mockResolvedValue(true);
+    mockGetPublicKey.mockResolvedValue('GABC');
+    mockCheckNetwork.mockResolvedValue('TESTNET');
+
+    const events: WalletEvent[] = [];
+    await performRestoreSession((e) => events.push(e));
+
+    const finalState = dispatch(events, INITIAL_STATE);
+    expect(finalState.status).toBe('connected');
+    expect(finalState.publicKey).toBe('GABC');
+    // No CONNECT_FAILURE / prompt-driving events — restore is silent.
+    expect(events.some((e) => e.type === 'CONNECT_FAILURE')).toBe(false);
+  });
+
+  it('discards the stored session and stays disconnected when the extension is no longer authorized', async () => {
+    mockLoadSession.mockReturnValue({ publicKey: 'GABC', network: 'TESTNET', connectedAt: 1000 });
+    mockIsConnected.mockResolvedValue(false);
+
+    const events: WalletEvent[] = [];
+    await performRestoreSession((e) => events.push(e));
+
+    expect(events).toHaveLength(0);
+    expect(mockClearSession).toHaveBeenCalled();
+  });
+
+  it('discards the stored session when the current address no longer matches', async () => {
+    mockLoadSession.mockReturnValue({ publicKey: 'GABC', network: 'TESTNET', connectedAt: 1000 });
+    mockIsConnected.mockResolvedValue(true);
+    mockGetPublicKey.mockResolvedValue('GDIFFERENT');
+
+    const events: WalletEvent[] = [];
+    await performRestoreSession((e) => events.push(e));
+
+    expect(events).toHaveLength(0);
+    expect(mockClearSession).toHaveBeenCalled();
+  });
+
+  it('lands in network_switch when the restored session is on the wrong network', async () => {
+    mockLoadSession.mockReturnValue({ publicKey: 'GABC', network: 'TESTNET', connectedAt: 1000 });
+    mockIsConnected.mockResolvedValue(true);
+    mockGetPublicKey.mockResolvedValue('GABC');
+    mockCheckNetwork.mockResolvedValue('PUBLIC');
+
+    const events: WalletEvent[] = [];
+    await performRestoreSession((e) => events.push(e));
+
+    const finalState = dispatch(events, INITIAL_STATE);
+    expect(finalState.status).toBe('network_switch');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// performCheckExtensionAvailable — auto-reconnect polling
+// ---------------------------------------------------------------------------
+
+describe('performCheckExtensionAvailable', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('returns false and dispatches nothing while the extension is still absent', async () => {
+    mockInstalled.mockResolvedValue(false);
+
+    const events: WalletEvent[] = [];
+    const result = await performCheckExtensionAvailable((e) => events.push(e));
+
+    expect(result).toBe(false);
+    expect(events).toHaveLength(0);
+  });
+
+  it('automatically resumes the connect flow once the extension becomes available', async () => {
+    mockInstalled.mockResolvedValue(true);
+    mockConnect.mockResolvedValue('GABC');
+    mockCheckNetwork.mockResolvedValue('TESTNET');
+
+    const events: WalletEvent[] = [];
+    const result = await performCheckExtensionAvailable((e) => events.push(e));
+
+    expect(result).toBe(true);
+    const finalState = dispatch(events, INITIAL_STATE);
+    expect(finalState.status).toBe('connected');
   });
 });
 

@@ -19,6 +19,12 @@ function passphraseFor(network: FreighterNetwork): string {
   return network === "PUBLIC" ? PUBLIC_PASSPHRASE : TESTNET_PASSPHRASE;
 }
 
+/** Freighter surfaces a locked wallet as an error string on getAddress(), not as a distinct API flag. */
+function isLockedError(message: string | undefined | null): boolean {
+  if (!message) return false;
+  return /locked|unlock/i.test(message);
+}
+
 export async function connectFreighter(): Promise<string> {
   const connected = await isConnected();
   if (!connected.isConnected) {
@@ -34,9 +40,15 @@ export async function connectFreighter(): Promise<string> {
 
 export async function getPublicKey(): Promise<string> {
   const result = await getAddress();
-  if (result.error) throw new Error(result.error);
+  if (result.error) {
+    const message = typeof result.error === "string" ? result.error : String(result.error);
+    if (isLockedError(message)) throw new Error("WALLET_LOCKED");
+    throw new Error(message);
+  }
   return result.address;
 }
+
+const SIGNING_DECLINED_PATTERNS = [/declin/i, /reject/i, /denied/i, /closed/i, /cancel/i];
 
 export async function signTransaction(
   xdr: string,
@@ -45,7 +57,13 @@ export async function signTransaction(
   const result = await freighterSignTransaction(xdr, {
     networkPassphrase: passphraseFor(network),
   });
-  if (result.error) throw new Error(result.error);
+  if (result.error) {
+    const message = typeof result.error === "string" ? result.error : String(result.error);
+    if (SIGNING_DECLINED_PATTERNS.some((p) => p.test(message))) {
+      throw new Error("SIGNING_CANCELLED");
+    }
+    throw new Error(message);
+  }
   return result.signedTxXdr;
 }
 
