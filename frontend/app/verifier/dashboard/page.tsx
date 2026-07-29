@@ -55,6 +55,15 @@ export default function VerifierDashboardPage() {
         Review projects pending your accreditation. Open a project to inspect documentation and submit an on-chain attestation.
       </p>
 
+      <div style={{ display: "flex", gap: "1.25rem", marginBottom: "1rem" }}>
+        <Link href="/verifier/history" style={{ fontSize: "0.875rem", color: colors.primary[700] }}>
+          Attestation history →
+        </Link>
+        <Link href="/verifier/fees" style={{ fontSize: "0.875rem", color: colors.primary[700] }}>
+          Fee tracker →
+        </Link>
+      </div>
+
       {error && (
         <p role="alert" style={{ color: "#dc2626" }}>
           {error.message}

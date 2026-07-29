@@ -9,7 +9,7 @@ import ErrorBoundary from "../../components/ErrorBoundary";
 import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
 import { connectFreighter, getPublicKey } from "../../lib/freighter";
-import { getWalletErrorMessage } from "../../lib/wallet-errors";
+import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import Toast, { useToast } from "../../components/Toast";
@@ -146,7 +146,12 @@ export default function BuyPage() {
 
           {/* Transaction status */}
           {txStatus && (
-            <TransactionStatus status={txStatus} txHash={txHash ?? undefined} />
+            <TransactionStatus
+              status={txStatus}
+              txHash={txHash ?? undefined}
+              message={txStatus === "failed" ? getContractErrorMessage(buyError) : undefined}
+              onRetry={txStatus === "failed" ? handlePurchase : undefined}
+            />
           )}
 
           {/* CTA / Wallet Prompt */}

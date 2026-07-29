@@ -1,3 +1,5 @@
+import { getCarbonErrorPlainMessage, type ContractName } from "./carbon-error-codes";
+
 export type WalletErrorCode =
   | "WALLET_NOT_INSTALLED"
   | "WALLET_LOCKED"
@@ -5,6 +7,7 @@ export type WalletErrorCode =
   | "WRONG_NETWORK"
   | "SESSION_EXPIRED"
   | "TRANSACTION_REJECTED"
+  | "SIGNING_CANCELLED"
   | "INSUFFICIENT_XLM"
   | "ACCOUNT_NOT_ACTIVATED"
   | "UNKNOWN";
@@ -22,6 +25,8 @@ const messages: Record<WalletErrorCode, string> = {
     "Your wallet session has expired. Please reconnect to continue.",
   TRANSACTION_REJECTED:
     "Transaction was rejected. Please try again or contact support if the issue persists.",
+  SIGNING_CANCELLED:
+    "Signing was cancelled.",
   INSUFFICIENT_XLM:
     "Insufficient XLM balance to cover transaction fees. Please add XLM to your account.",
   ACCOUNT_NOT_ACTIVATED:
@@ -30,45 +35,72 @@ const messages: Record<WalletErrorCode, string> = {
     "An unexpected error occurred. Please try again.",
 };
 
-// Contract error codes from CarbonError enum (error number → plain language)
-const contractErrors: Record<number, string> = {
-  1:  "Project not found. The project ID may be incorrect.",
-  2:  "Project is not yet verified. Credits cannot be retired until the project is approved.",
-  3:  "Project is suspended. Retirement is not allowed while the project is under investigation.",
-  4:  "Insufficient credits. You don't have enough credits in this batch to retire that amount.",
-  5:  "These credits have already been retired and cannot be retired again.",
-  6:  "Serial number conflict detected. Please contact support.",
-  7:  "You are not an authorized verifier for this action.",
-  8:  "You are not an authorized oracle for this action.",
-  9:  "Invalid vintage year.",
-  10: "Listing not found.",
-  11: "Insufficient liquidity in this listing.",
-  12: "Price has not been set for this credit type.",
-  13: "Monitoring data is stale. The project's satellite data is more than 365 days old.",
-  14: "Double-counting detected. These credits may have already been issued elsewhere.",
-  15: "Retirement is irreversible. This operation cannot be undone.",
-  16: "Amount must be greater than zero.",
-  17: "A project with this ID already exists.",
-  18: "Invalid serial number range.",
-};
+/** Patterns matching how Freighter/wallets report that the user closed or declined a signing prompt. */
+const SIGNING_CANCELLED_PATTERNS = [
+  /SIGNING_CANCELLED/,
+  /user declined/i,
+  /user rejected/i,
+  /request declined/i,
+  /popup closed/i,
+  /window closed/i,
+];
+
+/** True when `error` represents the user dismissing/declining a wallet signing prompt (not a real failure). */
+export function isSigningCancellation(error: unknown): boolean {
+  const str = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return SIGNING_CANCELLED_PATTERNS.some((p) => p.test(str));
+}
+
+export interface BalanceShortfall {
+  /** Amount the transaction required. */
+  required: number;
+  /** Amount actually available in the wallet. */
+  available: number;
+  asset: string;
+}
+
+/** Attach a shortfall to an Error so downstream UI (see ErrorBoundary.classifyError) can render the exact amount. */
+export function createInsufficientBalanceError(required: number, available: number, asset = "XLM"): Error {
+  const err = new Error("INSUFFICIENT_XLM") as Error & { shortfall: BalanceShortfall };
+  err.shortfall = { required, available, asset };
+  return err;
+}
+
+export function getShortfall(error: unknown): BalanceShortfall | undefined {
+  if (error instanceof Error && "shortfall" in error) {
+    return (error as Error & { shortfall?: BalanceShortfall }).shortfall;
+  }
+  return undefined;
+}
+
+export function formatShortfallMessage(shortfall: BalanceShortfall): string {
+  const missing = Math.max(0, shortfall.required - shortfall.available);
+  return `You need ${missing.toFixed(7).replace(/0+$/, "").replace(/\.$/, "")} more ${shortfall.asset} to complete this transaction (${shortfall.available} available, ${shortfall.required} required).`;
+}
 
 /** Extract a plain-language message from a contract error response. */
-export function getContractErrorMessage(error: unknown): string {
+export function getContractErrorMessage(error: unknown, contract?: ContractName): string {
   if (!error) return messages.UNKNOWN;
+
+  const shortfall = getShortfall(error);
+  if (shortfall) return formatShortfallMessage(shortfall);
 
   const str = error instanceof Error ? error.message : String(error);
 
-  // Soroban contract errors surface as "Error(Contract, #N)" or "contract error: N"
-  const match = str.match(/Error\(Contract,\s*#(\d+)\)|contract error[:\s]+(\d+)/i);
+  // Soroban contract errors surface as "Error(Contract, #N)", "contract error: N", or "CarbonError(N)"
+  const match = str.match(/Error\(Contract,\s*#(\d+)\)|contract error[:\s]+(\d+)|CarbonError\((\d+)\)/i);
   if (match) {
-    const code = parseInt(match[1] ?? match[2], 10);
-    return contractErrors[code] ?? `Contract error ${code}. Please contact support.`;
+    const code = parseInt(match[1] ?? match[2] ?? match[3], 10);
+    return getCarbonErrorPlainMessage(code, contract);
   }
 
   return getWalletErrorMessage(error);
 }
 
 export function getWalletErrorMessage(error: unknown): string {
+  const shortfall = getShortfall(error);
+  if (shortfall) return formatShortfallMessage(shortfall);
+
   if (typeof error === "string") {
     const code = error as WalletErrorCode;
     return messages[code] ?? messages.UNKNOWN;

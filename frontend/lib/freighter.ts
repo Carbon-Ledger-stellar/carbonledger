@@ -48,6 +48,8 @@ export async function getPublicKey(): Promise<string> {
   return result.address;
 }
 
+const SIGNING_DECLINED_PATTERNS = [/declin/i, /reject/i, /denied/i, /closed/i, /cancel/i];
+
 export async function signTransaction(
   xdr: string,
   network: FreighterNetwork = "TESTNET",
@@ -55,7 +57,13 @@ export async function signTransaction(
   const result = await freighterSignTransaction(xdr, {
     networkPassphrase: passphraseFor(network),
   });
-  if (result.error) throw new Error(result.error);
+  if (result.error) {
+    const message = typeof result.error === "string" ? result.error : String(result.error);
+    if (SIGNING_DECLINED_PATTERNS.some((p) => p.test(message))) {
+      throw new Error("SIGNING_CANCELLED");
+    }
+    throw new Error(message);
+  }
   return result.signedTxXdr;
 }
 
