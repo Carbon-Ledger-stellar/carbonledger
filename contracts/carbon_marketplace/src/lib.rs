@@ -34,6 +34,7 @@ pub enum CarbonError {
     AlreadyInitialized = 19,
     Arithmetic = 20,
     UnauthorizedUpgrade = 21,
+    FeeConfigInvalid = 22,
 }
 
 #[contracttype]
@@ -48,6 +49,19 @@ pub enum DataKey {
     SuspendedProject(String),
     ContractVersion,
     UpgradeHistory,
+    FeeConfig,
+}
+
+/// Governance-controlled fee configuration.
+/// Fee = numerator / denom of total_cost. Max fee is denom/10 (10%).
+/// If unset, defaults to 1/100 (1%) matching compile-time constants.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfig {
+    pub numerator: i128,
+    pub denom: i128,
+    pub updated_at: u64,
+    pub updated_by: Address,
 }
 
 #[contracttype]
@@ -194,6 +208,58 @@ impl CarbonMarketplaceContract {
 
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
         env.storage().persistent().get(&DataKey::UpgradeHistory)
+    }
+
+    // ── Fee Configuration (#651) ──────────────────────────────────────────────
+
+    /// Admin-only: set the protocol fee rate.
+    /// Guardrails: denom > 0, numerator >= 0, numerator <= denom / 10 (max 10%).
+    /// Migration: if FeeConfig was never set, the default of 1/100 (1%) applies.
+    pub fn set_fee_rate(
+        env: Env,
+        admin: Address,
+        numerator: i128,
+        denom: i128,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        if denom <= 0 || numerator < 0 || numerator > denom / 10 {
+            return Err(CarbonError::FeeConfigInvalid);
+        }
+
+        let config = FeeConfig {
+            numerator,
+            denom,
+            updated_at: env.ledger().timestamp(),
+            updated_by: admin.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeConfig, &config);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("fee_set")),
+            (numerator, denom, admin),
+        );
+        Ok(())
+    }
+
+    /// Returns the current fee configuration. Defaults to 1/100 (1%) if never set.
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        Self::load_fee_config(&env)
+    }
+
+    fn load_fee_config(env: &Env) -> FeeConfig {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeConfig)
+            .unwrap_or(FeeConfig {
+                numerator: 1,
+                denom: 100,
+                updated_at: 0,
+                updated_by: env.current_contract_address(),
+            })
     }
 
     pub fn update_treasury(
@@ -363,7 +429,12 @@ impl CarbonMarketplaceContract {
             .price_per_credit
             .checked_mul(amount)
             .ok_or(CarbonError::Arithmetic)?;
-        let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+        let fee_cfg = Self::load_fee_config(&env);
+        let protocol_fee = total_cost
+            .checked_mul(fee_cfg.numerator)
+            .ok_or(CarbonError::Arithmetic)?
+            .checked_div(fee_cfg.denom)
+            .ok_or(CarbonError::Arithmetic)?;
         let seller_proceeds = total_cost
             .checked_sub(protocol_fee)
             .ok_or(CarbonError::Arithmetic)?;
@@ -497,7 +568,12 @@ impl CarbonMarketplaceContract {
                 .price_per_credit
                 .checked_mul(amount)
                 .ok_or(CarbonError::Arithmetic)?;
-            let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+            let fee_cfg = Self::load_fee_config(&env);
+            let protocol_fee = total_cost
+                .checked_mul(fee_cfg.numerator)
+                .ok_or(CarbonError::Arithmetic)?
+                .checked_div(fee_cfg.denom)
+                .ok_or(CarbonError::Arithmetic)?;
             let seller_proceeds = total_cost
                 .checked_sub(protocol_fee)
                 .ok_or(CarbonError::Arithmetic)?;
@@ -1334,5 +1410,172 @@ mod edge_case_tests {
             result.unwrap_err().unwrap(),
             CarbonError::InvalidSerialRange
         );
+    }
+}
+
+// ── Fee Config Tests (#651) ───────────────────────────────────────────────────
+
+#[cfg(test)]
+mod fee_config_tests {
+    use super::*;
+    use carbon_credit::CarbonCreditContract;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    fn setup(
+        env: &Env,
+    ) -> (
+        CarbonMarketplaceContractClient,
+        Address, // admin
+        Address, // treasury
+        Address, // seller
+        Address, // usdc
+    ) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        let admin = Address::generate(env);
+        let treasury = Address::generate(env);
+        let seller = Address::generate(env);
+        let usdc = env.register_stellar_asset_contract(admin.clone());
+        let credit_id = env.register_contract(None, CarbonCreditContract);
+        let id = env.register_contract(None, CarbonMarketplaceContract);
+        let client = CarbonMarketplaceContractClient::new(env, &id);
+        client.initialize(&admin, &usdc, &credit_id, &treasury);
+        (client, admin, treasury, seller, usdc)
+    }
+
+    /// Admin can change fee rate to 2%
+    #[test]
+    fn test_fee_change_by_admin() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        client.set_fee_rate(&admin, &2_i128, &100_i128);
+
+        let cfg = client.get_fee_config();
+        assert_eq!(cfg.numerator, 2);
+        assert_eq!(cfg.denom, 100);
+        assert_eq!(cfg.updated_by, admin);
+    }
+
+    /// Non-admin cannot change fee rate
+    #[test]
+    fn test_fee_change_rejected_by_non_admin() {
+        let env = Env::default();
+        let (client, _admin, _, _, _) = setup(&env);
+        let rogue = Address::generate(&env);
+
+        let result = client.try_set_fee_rate(&rogue, &2_i128, &100_i128);
+        assert!(result.is_err());
+    }
+
+    /// Fee rate above 10% (numerator > denom/10) is rejected
+    #[test]
+    fn test_fee_above_max_rejected() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        // 11/100 = 11% — exceeds max of 10%
+        let result = client.try_set_fee_rate(&admin, &11_i128, &100_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::FeeConfigInvalid
+        );
+    }
+
+    /// denom = 0 is rejected
+    #[test]
+    fn test_fee_zero_denom_rejected() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        let result = client.try_set_fee_rate(&admin, &1_i128, &0_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::FeeConfigInvalid
+        );
+    }
+
+    /// negative numerator is rejected
+    #[test]
+    fn test_fee_negative_numerator_rejected() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        let result = client.try_set_fee_rate(&admin, &-1_i128, &100_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::FeeConfigInvalid
+        );
+    }
+
+    /// Default fee (before any set_fee_rate call) is 1/100 = 1%
+    #[test]
+    fn test_default_fee_is_1_percent() {
+        let env = Env::default();
+        let (client, _, _, _, _) = setup(&env);
+
+        let cfg = client.get_fee_config();
+        assert_eq!(cfg.numerator, 1);
+        assert_eq!(cfg.denom, 100);
+    }
+
+    /// After set_fee_rate(2, 100), a purchase of price=1000, amount=1
+    /// should route 980 to seller and 20 to treasury
+    #[test]
+    fn test_purchase_uses_new_fee_rate() {
+        let env = Env::default();
+        let (client, admin, treasury, seller, usdc) = setup(&env);
+
+        // Set 2% fee
+        client.set_fee_rate(&admin, &2_i128, &100_i128);
+
+        // List 100 credits at price 1000 stroop each
+        client.list_credits(
+            &seller,
+            &s(&env, "list-fee"),
+            &s(&env, "batch-fee"),
+            &s(&env, "proj-fee"),
+            &100_i128,
+            &1000_i128,
+            &2023_u32,
+            &s(&env, "VCS"),
+            &s(&env, "Brazil"),
+        );
+
+        // Fund buyer
+        let buyer = Address::generate(&env);
+        let usdc_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &usdc);
+        usdc_admin_client.mint(&buyer, &200_000_i128);
+
+        let usdc_client = soroban_sdk::token::Client::new(&env, &usdc);
+        let seller_before = usdc_client.balance(&seller);
+        let treasury_before = usdc_client.balance(&treasury);
+
+        // Purchase 10 credits: total = 10 * 1000 = 10_000
+        // fee = 10_000 * 2 / 100 = 200
+        // seller gets = 10_000 - 200 = 9_800
+        client.purchase_credits(&buyer, &s(&env, "list-fee"), &10_i128);
+
+        let seller_after = usdc_client.balance(&seller);
+        let treasury_after = usdc_client.balance(&treasury);
+
+        assert_eq!(seller_after - seller_before, 9_800);
+        assert_eq!(treasury_after - treasury_before, 200);
     }
 }

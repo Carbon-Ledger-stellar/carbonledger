@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN, Env,
-    String, Vec,
+    Map, String, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -37,6 +37,7 @@ pub enum CarbonError {
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
+pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
 
 #[contracttype]
 #[derive(Clone)]
@@ -98,6 +99,13 @@ pub struct CreditBatch {
     pub status: CreditStatus,
     pub metadata_cid: String,
     pub owner: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreditBatchWithExpiry {
+    pub batch: CreditBatch,
+    pub is_expired: bool,
 }
 
 #[contracttype]
