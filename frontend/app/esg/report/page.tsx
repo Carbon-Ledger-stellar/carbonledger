@@ -43,6 +43,7 @@ export default function EsgReportPage() {
     batchId: "",
   });
 
+  const [exporting, setExporting] = useState(false);
   const filteredRetirements = retirements.filter((r) => {
     if (filters.methodology && r.project?.methodology !== filters.methodology) return false;
     if (filters.country && r.project?.country !== filters.country) return false;
