@@ -11,40 +11,45 @@ class RejectDto { @IsString() verifierPublicKey: string; @IsString() reason: str
 export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
-  // ── Public read endpoints ────────────────────────────────────────────────
+  // ── Authenticated, role-scoped read endpoints ────────────────────────────
+  // @Public() removed from all three below — RolesGuard now requires a valid
+  // JWT. No @Roles(...) means "any authenticated role is admitted"; scoping
+  // by role happens inside ProjectsService, not by gating roles out here.
 
   @Get()
-  @Public()
   findAll(
+    @Request() req: any,
     @Query('methodology') methodology?: string,
     @Query('country')     country?: string,
     @Query('vintage')     vintage?: string,
     @Query('cursor')      cursor?: string,
     @Query('limit')       limit?: string,
   ) {
-    // Sanitize: reject non-string values (e.g. operator injection via ?methodology[$ne]=VCS)
     const safeMethodology = typeof methodology === 'string' ? methodology : undefined;
     const safeCountry     = typeof country     === 'string' ? country     : undefined;
-    return this.projectsService.findAll({
-      methodology: safeMethodology,
-      country:     safeCountry,
-      vintage: vintage ? Number(vintage) : undefined,
-      cursor,
-      limit: limit ? Number(limit) : 20,
-    });
+    return this.projectsService.findAll(
+      {
+        methodology: safeMethodology,
+        country:     safeCountry,
+        vintage: vintage ? Number(vintage) : undefined,
+        cursor,
+        limit: limit ? Number(limit) : 20,
+      },
+      req.user,
+    );
   }
 
   @Get('search')
-  @Public()
-  searchProjects(@Query() searchDto: SearchProjectsDto) {
-    return this.projectsService.searchProjects(searchDto);
+  searchProjects(@Query() searchDto: SearchProjectsDto, @Request() req: any) {
+    return this.projectsService.searchProjects(searchDto, req.user);
   }
 
   @Get(':id')
-  @Public()
-  @Header('Cache-Control', 'public, max-age=60')
-  findOne(@Param('id') id: string) {
-    return this.projectsService.findOne(id);
+  @Header('Cache-Control', 'private, max-age=60')
+  // Note: was "public, max-age=60" — this endpoint now returns caller-specific
+  // data (a project_developer's own draft), so a shared/public cache is wrong.
+  findOne(@Param('id') id: string, @Request() req: any) {
+    return this.projectsService.findOne(id, req.user);
   }
 
   // ── Project developer actions ────────────────────────────────────────────
