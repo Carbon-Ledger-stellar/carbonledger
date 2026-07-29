@@ -172,9 +172,43 @@ export function useProject(id: string) {
   return useSWR<CarbonProject>(id ? `${API_URL}/projects/${id}` : null, fetcher, swrConfig);
 }
 
-export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string; projectType?: string; search?: string }) {
-  const query = new URLSearchParams(params as Record<string, string>).toString();
-  return useSWR<MarketListing[]>(`${API_URL}/marketplace/listings?${query}`, fetcher, swrConfig);
+export type ListingSortField = "price" | "vintageYear" | "methodology" | "verificationDate";
+export type SortOrder = "asc" | "desc";
+
+export interface PaginatedListingsResponse {
+  listings: MarketListing[];
+  next_cursor?: string;
+  total_count: number;
+  page?: number;
+  total_pages?: number;
+}
+
+export interface ListingsQueryParams {
+  methodology?: string;
+  vintage?: number;
+  country?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  projectType?: string;
+  search?: string;
+  sortBy?: ListingSortField;
+  sortOrder?: SortOrder;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Backend returns a paginated wrapper ({ listings, total_count, ... }), not a bare
+ * array — refreshInterval defaults to 30s so displayed prices are never more than
+ * 30s stale (see issue #619's "no more than 60s stale" requirement).
+ */
+export function useListings(params?: ListingsQueryParams, refreshInterval = 30_000) {
+  const query = new URLSearchParams(params as unknown as Record<string, string>).toString();
+  return useSWR<PaginatedListingsResponse>(
+    `${API_URL}/marketplace/listings?${query}`,
+    fetcher,
+    { ...swrConfig, refreshInterval },
+  );
 }
 
 export function useListing(id: string) {
