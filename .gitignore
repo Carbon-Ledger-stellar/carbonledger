@@ -41,6 +41,14 @@ coverage/
 *.log
 npm-debug.log*
 
+# ZK circuit build intermediates (regenerate via scripts/zk/)
+circuits/**/node_modules/
+circuits/**/artifacts/*.ptau
+circuits/**/artifacts/witness.wtns
+circuits/**/artifacts/input.json
+circuits/**/artifacts/fixture_retirement.json
+zk-out/
+
 .agents/
 .claude/
 skills-lock.json

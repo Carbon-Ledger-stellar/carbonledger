@@ -94,7 +94,7 @@ export class OracleService {
     });
 
     // 2. Log the oracle event — upsert so duplicate submissions don't create duplicate records
-    const oracleUpdate = await this.prisma.oracleUpdate.upsert({
+    const oracleUpdate = await this.prisma.oracleJob.upsert({
       where:  { idempotencyKey },
       update: {
         tonnesVerified:   dto.tonnesVerified,
@@ -142,7 +142,7 @@ export class OracleService {
   async submitPrice(dto: UpdatePriceDto) {
     const idempotencyKey = `price:${dto.methodology}:${dto.vintageYear}`;
 
-    const oracleUpdate = await this.prisma.oracleUpdate.upsert({
+    const oracleUpdate = await this.prisma.oracleJob.upsert({
       where:  { idempotencyKey },
       update: { priceUsdc: dto.priceUsdc, status: 'pending', lastError: null, updatedAt: new Date() },
       create: {
@@ -212,13 +212,13 @@ export class OracleService {
     const PRICE_STALE_MS      =       24 * 60 * 60 * 1000; // 24 hours
 
     // ── Verification listener: last 'monitoring' oracle update ──────────────
-    const lastMonitoring = await this.prisma.oracleUpdate.findFirst({
+    const lastMonitoring = await this.prisma.oracleJob.findFirst({
       where:   { type: 'monitoring' },
       orderBy: { updatedAt: 'desc' },
     });
 
     // ── Price oracle: last 'price' oracle update ─────────────────────────────
-    const lastPrice = await this.prisma.oracleUpdate.findFirst({
+    const lastPrice = await this.prisma.oracleJob.findFirst({
       where:   { type: 'price' },
       orderBy: { updatedAt: 'desc' },
     });

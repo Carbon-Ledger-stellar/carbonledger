@@ -25,6 +25,12 @@ export interface AggregatedOrderBook {
   midPrice: number | null;
   totalBidVolume: number;
   totalAskVolume: number;
+export async function getOrderBook(
+  sellingAsset: Asset,
+  buyingAsset: Asset,
+  limit = 20,
+): Promise<{ bids: { price: string; amount: string }[]; asks: { price: string; amount: string }[] }> {
+  return server.orderbook(sellingAsset, buyingAsset).limit(limit).call();
 }
 
 export interface OrderBookQuote {
@@ -225,6 +231,40 @@ export function formatOrderBookVolume(volume: number | null): string {
     return "—";
   }
   return volume.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  amount: string,
+  price: string,
+): Promise<string> {
+  const account = await server.loadAccount(sellerKeypair.publicKey);
+  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK })
+    .addOperation(
+      Operation.manageSellOffer({
+        selling: sellingAsset,
+        buying:  buyingAsset,
+        amount,
+        price,
+      }),
+    )
+    .setTimeout(30)
+    .build();
+  const signed = await sellerKeypair.sign(tx.toXDR());
+  const { TransactionBuilder: TB } = await import("@stellar/stellar-sdk");
+  const signedTx = TB.fromXDR(signed, NETWORK);
+  const result = await server.submitTransaction(signedTx);
+  return result.hash;
+}
+
+export async function getTradeHistory(
+  baseAsset: Asset,
+  counterAsset: Asset,
+  limit = 50,
+) {
+  const trades = await server
+    .trades()
+    .forAssetPair(baseAsset, counterAsset)
+    .limit(limit)
+    .order("desc")
+    .call();
+  return trades.records;
 }
 
 export function saveSdexEstimate(quote: StoredOrderBookQuote | null): void {
