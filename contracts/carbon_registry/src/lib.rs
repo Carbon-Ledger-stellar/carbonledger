@@ -33,17 +33,11 @@ pub enum CarbonError {
     MethodologyScoreLow   = 20,
     UnauthorizedUpgrade   = 21,
     PageSizeTooLarge      = 22,
-    ZeroAmountNotAllowed = 16,
-    ProjectAlreadyExists = 17,
-    InvalidSerialRange = 18,
-    AlreadyInitialized = 19,
-    MethodologyScoreLow = 20,
-    UnauthorizedUpgrade = 21,
-    Arithmetic = 22,
-    ProposalNotFound = 23,
-    ProposalExpired = 24,
-    DuplicateApproval = 25,
-    ThresholdNotMet = 26,
+    Arithmetic            = 23,
+    ProposalNotFound      = 24,
+    ProposalExpired       = 25,
+    DuplicateApproval     = 26,
+    ThresholdNotMet       = 27,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────

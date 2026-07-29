@@ -235,8 +235,8 @@ describe('IdempotencyMiddleware (integration)', () => {
 
   // 5. Different key executes fresh
   it('executes fresh request when a different key is supplied', async () => {
-    const key1 = uuidv4();
-    const key2 = uuidv4();
+    const key1 = '11111111-1111-4111-8111-111111111111';
+    const key2 = '22222222-2222-4222-8222-222222222222';
     const body = { listingId: 'lst-1', amount: 5 };
 
     const res1 = await request(app.getHttpServer())

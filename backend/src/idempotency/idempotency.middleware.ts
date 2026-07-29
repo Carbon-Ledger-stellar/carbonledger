@@ -99,6 +99,18 @@ export class IdempotencyMiddleware implements NestMiddleware {
   }
 
   async use(req: Request, res: Response, next: NextFunction): Promise<void> {
+    res.removeHeader('idempotent-replayed');
+    res.removeHeader('Idempotent-Replayed');
+    res.removeHeader('x-tx-hash');
+    res.removeHeader('X-Tx-Hash');
+    if ((res as any)._headers) {
+      delete (res as any)._headers['idempotent-replayed'];
+      delete (res as any)._headers['x-tx-hash'];
+    }
+    if ((res as any)._headerNames) {
+      delete (res as any)._headerNames['idempotent-replayed'];
+      delete (res as any)._headerNames['x-tx-hash'];
+    }
     const rawKey = req.headers['idempotency-key'] as string | undefined;
     const endpoint = normaliseEndpoint(req);
 
@@ -175,11 +187,28 @@ export class IdempotencyMiddleware implements NestMiddleware {
     }
 
     // ── First execution: intercept response to store ─────────────────────────
-    const originalJson = res.json.bind(res);
+    const originalJson = res.json;
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this;
 
-    res.json = function (body: unknown) {
+    const ctx = {
+      key: rawKey,
+      endpoint,
+      requestHash,
+      ttlSeconds,
+      backend,
+    };
+
+    res.json = function (this: Response, body: unknown) {
+      // Restore original res.json to prevent prototype pollution
+      res.json = originalJson;
+
+      // Ensure fresh (non-replayed) responses do not retain replayed headers
+      res.removeHeader('idempotent-replayed');
+      res.removeHeader('Idempotent-Replayed');
+      res.removeHeader('x-tx-hash');
+      res.removeHeader('X-Tx-Hash');
+
       if (res.statusCode >= 200 && res.statusCode < 300) {
         const txHash: string | undefined =
           body && typeof body === 'object'
@@ -187,28 +216,28 @@ export class IdempotencyMiddleware implements NestMiddleware {
             : undefined;
 
         const payload: IdempotencyRecordPayload = {
-          idempotencyKey: rawKey,
-          endpoint,
-          requestHash,
+          idempotencyKey: ctx.key,
+          endpoint: ctx.endpoint,
+          requestHash: ctx.requestHash,
           responseStatus: res.statusCode,
           responseBody: JSON.stringify(body),
           txHash: txHash ?? null,
           createdAt: new Date().toISOString(),
         };
 
-        self.saveRecord(payload, ttlSeconds, backend)
+        self.saveRecord(payload, ctx.ttlSeconds, ctx.backend)
           .catch((err) =>
             self.logger.error(
               `Failed to persist idempotency record: ${(err as Error).message}`,
             ),
           )
           .finally(() => {
-            self.releaseLock(rawKey, endpoint, backend).catch(() => undefined);
+            self.releaseLock(ctx.key, ctx.endpoint, ctx.backend).catch(() => undefined);
           });
       } else {
-        self.releaseLock(rawKey, endpoint, backend).catch(() => undefined);
+        self.releaseLock(ctx.key, ctx.endpoint, ctx.backend).catch(() => undefined);
       }
-      return originalJson(body);
+      return originalJson.call(this, body);
     };
 
     next();

@@ -46,13 +46,6 @@ pub enum CarbonError {
     InvalidZkProofFormat    = 24,
     ZkProofVerificationFailed = 25,
     PageSizeTooLarge          = 26,
-    ZeroAmountNotAllowed = 16,
-    ProjectAlreadyExists = 17,
-    InvalidSerialRange = 18,
-    BatchTooLarge = 19,
-    AlreadyInitialized = 20,
-    Arithmetic = 21,
-    UnauthorizedUpgrade = 22,
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
