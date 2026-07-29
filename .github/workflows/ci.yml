@@ -155,6 +155,63 @@ jobs:
           fi
           echo "All FROM statements are digest-pinned."
 
+  pre-commit:
+    name: Pre-commit hook suite (#647)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-precommit-${{ hashFiles('contracts/**/Cargo.lock') }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pre-commit tooling
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Check Conventional Commits format for this PR
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git log --format=%H "${BASE_SHA}..${HEAD_SHA}" | while read -r sha; do
+            git log -1 --format=%B "$sha" > /tmp/msg.txt
+            python3 scripts/check_conventional_commit.py /tmp/msg.txt || {
+              echo "Commit $sha does not follow Conventional Commits format.";
+              exit 1;
+            }
+          done
+
   contracts:
     name: Soroban Contract Tests
     runs-on: ubuntu-latest
@@ -198,6 +255,9 @@ jobs:
         working-directory: contracts
         run: cargo test --workspace
 
+      - name: Check contract event docs are in sync (#640)
+        run: python3 scripts/check_event_docs_sync.py
+
       - name: Generate coverage report (llvm-cov)
         working-directory: contracts
         run: |
@@ -235,6 +295,56 @@ jobs:
           gh api repos/${REPO}/issues/${PR_NUMBER}/comments \
             --method POST \
             --field body="$(printf '%b' "$REPORT")"
+
+  contract-benchmarks:
+    name: Contract Performance Benchmarks (#642)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('contracts/**/Cargo.lock') }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run benchmarks and compare against baseline
+        id: compare
+        run: |
+          python3 scripts/compare_benchmarks.py --run
+        continue-on-error: true
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-benchmarks
+          path: |
+            benchmarks/current.json
+            benchmark-report.md
+          retention-days: 90
+
+      - name: Post regression report to job summary
+        if: always() && hashFiles('benchmark-report.md') != ''
+        run: cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if a regression was found
+        if: steps.compare.outcome == 'failure'
+        run: |
+          echo "Benchmark regression check failed — see the report above / job summary."
+          exit 1
 
   security-tests:
     name: Security Tests (XSS / SQL Injection)
@@ -425,7 +535,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: oracle
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Syntax check
         working-directory: oracle
@@ -433,6 +543,9 @@ jobs:
           python3 -m py_compile verification_listener.py
           python3 -m py_compile price_oracle.py
           python3 -m py_compile satellite_monitor.py
+
+      - name: Run Hypothesis fuzz tests (#641)
+        run: pytest tests/fuzz/oracle/test_hypothesis_*.py -v
 
   fuzz:
     name: Property-Based Fuzz Tests
@@ -455,6 +568,29 @@ jobs:
             ~/.cargo/git
             contracts/target
           key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('contracts/**/Cargo.lock') }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install oracle + atheris dependencies
+        working-directory: oracle
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install atheris || echo "atheris unavailable on this runner — harnesses will replay corpus only"
+
+      - name: Run Atheris deep fuzz (oracle, #641, 60s budget each)
+        run: |
+          python tests/fuzz/oracle/verification_listener/fuzz_validate_methodology_report.py \
+            tests/fuzz/oracle/verification_listener/corpus/ -max_total_time=60 -close_fd_mask=3 || \
+            python tests/fuzz/oracle/verification_listener/fuzz_validate_methodology_report.py
+          python tests/fuzz/oracle/price_oracle/fuzz_cross_validate_prices.py \
+            tests/fuzz/oracle/price_oracle/corpus/ -max_total_time=60 -close_fd_mask=3 || \
+            python tests/fuzz/oracle/price_oracle/fuzz_cross_validate_prices.py
+          python tests/fuzz/oracle/satellite_monitor/fuzz_detect_contradiction.py \
+            tests/fuzz/oracle/satellite_monitor/corpus/ -max_total_time=60 -close_fd_mask=3 || \
+            python tests/fuzz/oracle/satellite_monitor/fuzz_detect_contradiction.py
 
       - name: Run fuzz tests (carbon_credit)
         working-directory: contracts
@@ -508,6 +644,9 @@ jobs:
       - name: Run tests (all four contracts)
         working-directory: contracts
         run: cargo test --all
+
+      - name: Check contract event docs are in sync (#640)
+        run: python3 scripts/check_event_docs_sync.py
 
       - name: Run Clippy (fail on warnings)
         working-directory: contracts
