@@ -88,6 +88,8 @@ pub enum DataKey {
     LivenessSlaSeconds,
     /// Address of the carbon_registry contract for cross-contract suspend calls.
     RegistryAddress,
+    /// Configurable benchmark price staleness window in seconds. Default: 24h (86_400 s).
+    PriceStalenessSeconds,
 }
 
 // -- Types --------------------------------------------------------------------
@@ -492,13 +494,34 @@ impl CarbonOracleContract {
         Ok(())
     }
 
+    /// Admin-only: adjust the benchmark price staleness window in seconds (default 24h).
+    pub fn set_price_staleness_window(env: Env, admin: Address, seconds: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::PriceStalenessSeconds, &seconds);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("p_sla_upd")),
+            (admin, seconds),
+        );
+        Ok(())
+    }
+
     /// Returns true if the benchmark price for (methodology, vintage_year) was
-    /// updated within the last 24 hours.  Returns false if the price was never
-    /// set or was last updated more than PRICE_STALENESS_SECS (24 h) ago.
+    /// updated within the staleness window (default 24 hours). Returns false if
+    /// the price was never set or was last updated more than the staleness threshold ago.
     ///
-    /// This is the primary gate used by the marketplace circuit breaker:
-    /// purchase_credits() calls this before allowing any trade to proceed.
+    /// # Interaction with `is_monitoring_current`:
+    /// - `is_monitoring_current(env, project_id)` checks project-level liveness SLA for satellite/MRV monitoring data (default 365 days).
+    ///   Stale monitoring data flags projects and triggers cross-contract suspension via registry.
+    /// - `is_price_current(env, methodology, vintage_year)` checks financial benchmark price freshness for credit trading (default 24 hours).
+    ///   Stale benchmark prices block credit purchases in `purchase_credits()` with a `MonitoringDataStale` error until updated by the oracle.
     pub fn is_price_current(env: Env, methodology: String, vintage_year: u32) -> bool {
+        let staleness_window: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceStalenessSeconds)
+            .unwrap_or(PRICE_STALENESS_SECS);
         let ts: Option<u64> = env
             .storage()
             .persistent()
@@ -508,7 +531,7 @@ impl CarbonOracleContract {
             None => false,
             Some(updated_at) => {
                 let now = env.ledger().timestamp();
-                now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS
+                now.saturating_sub(updated_at) <= staleness_window
             }
         }
     }
@@ -1879,5 +1902,40 @@ mod liveness_tests {
 
         let p = registry_client.get_project(&project_id);
         assert_ne!(p.status, ProjectStatus::Suspended);
+    }
+
+    #[test]
+    fn test_price_staleness_window_config_and_enforcement() {
+        let env = Env::default();
+        let (client, admin, oracle, signing_key) = setup(&env);
+
+        let meth = s(&env, "VCS-001");
+        let vintage = 2024_u32;
+        let price = 5000_i128;
+        let nonce = 0_u64;
+
+        let payload = (meth.clone(), vintage, price).to_xdr(&env);
+        let sig = signing_key.sign(payload.to_alloc_vec().as_slice());
+        let signature = BytesN::from_array(&env, &sig.to_bytes());
+
+        client.update_credit_price(&oracle, &meth, &vintage, &price, &signature, &nonce);
+        assert!(client.is_price_current(&meth, &vintage));
+
+        // Advance 25 hours -> stale under default 24h window
+        env.ledger().set(LedgerInfo {
+            timestamp: 1735689600 + (25 * 3600),
+            protocol_version: 20,
+            sequence_number: 2,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        assert!(!client.is_price_current(&meth, &vintage));
+
+        // Adjust staleness window to 48 hours -> fresh again
+        client.set_price_staleness_window(&admin, &(48 * 3600));
+        assert!(client.is_price_current(&meth, &vintage));
     }
 }

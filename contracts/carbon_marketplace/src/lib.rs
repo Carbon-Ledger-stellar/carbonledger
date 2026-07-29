@@ -67,6 +67,8 @@ pub enum DataKey {
     ContractVersion,
     UpgradeHistory,
     FeeConfig,
+    OracleContract,
+    PriceFreshnessWindow,
 }
 
 /// Governance-controlled fee configuration.
@@ -327,6 +329,39 @@ impl CarbonMarketplaceContract {
         Ok(())
     }
 
+    pub fn set_oracle_contract(
+        env: Env,
+        admin: Address,
+        oracle_contract: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::OracleContract, &oracle_contract);
+        Ok(())
+    }
+
+    pub fn set_price_freshness_window(
+        env: Env,
+        admin: Address,
+        seconds: u64,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::PriceFreshnessWindow, &seconds);
+        Ok(())
+    }
+
+    pub fn get_price_freshness_window(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PriceFreshnessWindow)
+            .unwrap_or(24 * 60 * 60)
+    }
+
     /// List carbon credits for sale at a fixed USDC price per credit (in stroops).
     pub fn list_credits(
         env: Env,
@@ -454,6 +489,28 @@ impl CarbonMarketplaceContract {
         }
 
         let mut listing = Self::load_listing(&env, &listing_id)?;
+
+        // ── Oracle Benchmark Price Freshness Check (#587) ────────────────────
+        if let Some(oracle_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::OracleContract)
+        {
+            let price_current: bool = env.invoke_contract(
+                &oracle_address,
+                &soroban_sdk::Symbol::new(&env, "is_price_current"),
+                soroban_sdk::vec![
+                    &env,
+                    listing.methodology.clone().into_val(&env),
+                    listing.vintage_year.into_val(&env),
+                ],
+            );
+
+            if !price_current {
+                Self::release_lock(&env);
+                return Err(CarbonError::MonitoringDataStale);
+            }
+        }
 
         if listing.status == ListingStatus::Delisted || listing.status == ListingStatus::Sold {
             Self::release_lock(&env);
@@ -2261,5 +2318,20 @@ mod pagination_tests {
         let page = client.get_listings_page(&0, &3);
         assert_eq!(page.total, 10);
         assert_eq!(page.items.len(), 3);
+    }
+
+    // ── Issue #587: Oracle Benchmark Price Freshness Tests ─────────────────────
+
+    #[test]
+    fn test_configurable_price_freshness_window() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+
+        let default_window = client.get_price_freshness_window();
+        assert_eq!(default_window, 86400);
+
+        client.set_price_freshness_window(&admin, &3600);
+        let custom_window = client.get_price_freshness_window();
+        assert_eq!(custom_window, 3600);
     }
 }

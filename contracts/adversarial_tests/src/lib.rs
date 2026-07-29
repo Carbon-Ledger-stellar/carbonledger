@@ -1,0 +1,1 @@
+//! Adversarial integration test suite
