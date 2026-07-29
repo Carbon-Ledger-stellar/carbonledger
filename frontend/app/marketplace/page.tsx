@@ -19,6 +19,7 @@ import Toast, { useToast } from "../../components/Toast";
 import Highlight from "../../components/Highlight";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import MarketplaceError from "../../components/MarketplaceError";
+import OrderBookChart from "../../components/OrderBookChart";
 
 // Leaflet touches `window` at import time, so it must never be pulled into
 // the server bundle — ssr: false keeps it out entirely.
@@ -145,6 +146,10 @@ function MarketplaceContent() {
         </div>
 
         <MarketplaceFilter filters={filters} onChange={setFilters} />
+
+        <div style={{ marginTop: "1.5rem" }}>
+          <OrderBookChart />
+        </div>
 
         {!isLoading && !error && (
           <div style={{ marginTop: "1.5rem" }}>
