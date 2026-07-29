@@ -170,7 +170,7 @@
             },
             "ext": "v0"
           },
-          1
+          518400
         ]
       ],
       [
@@ -203,7 +203,7 @@
             },
             "ext": "v0"
           },
-          1
+          518400
         ]
       ],
       [
@@ -236,7 +236,7 @@
             },
             "ext": "v0"
           },
-          1
+          518400
         ]
       ],
       [
@@ -345,6 +345,45 @@
                       "string": "list-fuzz"
                     }
                   ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          1
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "ContractVersion"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "ContractVersion"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 1
                 }
               }
             },
@@ -1149,8 +1188,8 @@
                 },
                 {
                   "i128": {
-                    "hi": -9137016508725610722,
-                    "lo": 4472928290379783161
+                    "hi": -3402303501899526809,
+                    "lo": 738276310897389861
                   }
                 }
               ]
@@ -1245,8 +1284,8 @@
                     },
                     {
                       "i128": {
-                        "hi": -9137016508725610722,
-                        "lo": 4472928290379783161
+                        "hi": -3402303501899526809,
+                        "lo": 738276310897389861
                       }
                     }
                   ]

@@ -7,7 +7,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
-    "test": "jest --passWithNoTests --coverage",
+    "test": "jest --coverage --ci || exit 1",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:cov": "jest --coverage",
@@ -21,29 +21,15 @@
     "pretest:e2e": "npm run test:db:up && npm run test:db:migrate",
     "export:openapi": "npx ts-node --transpile-only src/export-openapi.ts"
   },
-  "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
-    "setupFiles": [
-      "<rootDir>/jest.setup.ts"
-    ],
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
-  },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1096.0",
     "@nest-lab/throttler-storage-redis": "1.2.0",
+    "@nestjs/apollo": "^12.2.2",
     "@nestjs/bullmq": "^11.0.4",
+    "@nestjs/graphql": "^12.2.2",
+    "apollo-server-express": "^3.13.0",
+    "graphql": "^16.9.0",
+    "graphql-type-json": "^0.3.2",
     "@nestjs/common": "^11.1.24",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.24",
@@ -51,16 +37,20 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.24",
     "@nestjs/schedule": "^6.1.3",
+    "@nestjs/swagger": "^11.4.6",
     "@nestjs/throttler": "^6.5.0",
-    "@prisma/client": "^7.8.0",
+    "@prisma/client": "6.19.2",
     "@stellar/stellar-sdk": "^15.1.0",
+    "@types/nodemailer": "^8.0.1",
     "axios": "^1.16.0",
     "bullmq": "^5.78.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "dotenv": "^17.4.2",
     "form-data": "^4.0.5",
     "ioredis": "^5.11.1",
     "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^9.0.3",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pdfkit": "^0.13.0",
@@ -75,13 +65,15 @@
   "devDependencies": {
     "@nestjs/cli": "^11.0.21",
     "@nestjs/testing": "^11.1.24",
+    "@swc/cli": "^0.8.1",
+    "@swc/core": "^1.15.46",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.9.2",
+    "@types/node": "^25.9.5",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^7.2.0",
     "jest": "^30.4.2",
-    "prisma": "^7.8.0",
+    "prisma": "6.19.2",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.11",
     "ts-node": "^10.9.1",

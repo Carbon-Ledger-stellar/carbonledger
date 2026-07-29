@@ -10,12 +10,19 @@ import {
   ForbiddenException,
   HttpCode,
   Header,
+  HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { IsString } from 'class-validator';
 import { RetirementsService } from './retirements.service';
-import { ExportRetirementsDto, RetireCreditsDto } from './retirements.dto';
+import {
+  ExportRetirementsDto,
+  RetireCreditsDto,
+  BulkRetirementsDto,
+} from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
+import { QuotaBucket } from '../throttle';
+import { ZkProofService } from './zk-proof.service';
 
 class VerifyCertificateDto {
   @IsString() retirementId: string;
@@ -24,7 +31,10 @@ class VerifyCertificateDto {
 
 @Controller('retirements')
 export class RetirementsController {
-  constructor(private readonly retirementsService: RetirementsService) {}
+  constructor(
+    private readonly retirementsService: RetirementsService,
+    private readonly zkProofService: ZkProofService,
+  ) {}
 
   // Fix IDOR: require auth; scope list to the caller's own retirements
   @Get()
@@ -36,10 +46,52 @@ export class RetirementsController {
     return this.retirementsService.findAll(cursor, limit ? Number(limit) : 20, req.user.publicKey);
   }
 
+  /**
+   * Full-text search over retirements using the PostgreSQL tsvector GIN index (#670).
+   * Scoped to the authenticated caller's retirements.
+   */
+  @Get('search')
+  searchRetirements(
+    @Request() req: any,
+    @Query('search')      search?: string,
+    @Query('projectId')   projectId?: string,
+    @Query('vintageYear') vintageYear?: string,
+    @Query('cursor')      cursor?: string,
+    @Query('limit')       limit?: string,
+  ) {
+    return this.retirementsService.searchRetirements({
+      search,
+      projectId,
+      retiredBy: req.user.publicKey,
+      vintageYear: vintageYear ? Number(vintageYear) : undefined,
+      cursor,
+      limit: limit ? Number(limit) : 20,
+    });
+  }
   @Post()
   @Roles('corporation', 'admin')
   retireCredits(@Body() dto: RetireCreditsDto) {
     return this.retirementsService.retireCredits(dto);
+  }
+
+  @Post('bulk')
+  @Roles('corporation', 'admin')
+  @QuotaBucket('bulkRetire')
+  async bulkRetireCredits(
+    @Body() dto: BulkRetirementsDto,
+    @Request() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.retirementsService.bulkRetireCredits({
+      ...dto,
+      retiredBy: req.user.publicKey,
+    });
+
+    if ('jobId' in result) {
+      res.status(HttpStatus.ACCEPTED);
+    }
+
+    return result;
   }
 
   // Fix IDOR: require auth; only the owner or admin may read a specific retirement
@@ -126,5 +178,25 @@ export class RetirementsController {
   @HttpCode(200)
   verifyCertificateIntegrity(@Body() dto: VerifyCertificateDto) {
     return this.retirementsService.verifyCertificateIntegrity(dto.retirementId, dto.content);
+  }
+
+  @Post(':id/zk-proof')
+  @Roles('corporation', 'admin')
+  async createZkProof(@Param('id') id: string, @Request() req: any) {
+    const retirement = await this.retirementsService.findOne(id);
+    if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
+      throw new ForbiddenException('Access denied');
+    }
+    return this.zkProofService.generateProof(id);
+  }
+
+  @Get(':id/zk-proof')
+  @Roles('corporation', 'admin')
+  async getZkProof(@Param('id') id: string, @Request() req: any) {
+    const retirement = await this.retirementsService.findOne(id);
+    if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
+      throw new ForbiddenException('Access denied');
+    }
+    return this.zkProofService.getProof(id);
   }
 }

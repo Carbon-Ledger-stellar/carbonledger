@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma.service";
 import { MintCreditsDto, RetireCreditsDto } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
+import { IpfsService } from "../common/ipfs.service";
 import { randomBytes } from "crypto";
 import { EventSourcingService } from "../events/event-sourcing.service";
 import { CreditEventType } from "../events/credit-event.types";
@@ -67,6 +68,13 @@ export class CreditsService {
     const batch = await this.prisma.creditBatch.findUnique({ where: { batchId } });
     if (!batch) throw new NotFoundException(`Batch ${batchId} not found`);
     return batch;
+  }
+
+  async getBatchesByProject(projectId: string) {
+    return this.prisma.creditBatch.findMany({
+      where: { projectId },
+      orderBy: { issuedAt: 'desc' },
+    });
   }
 
   async retireCredits(dto: RetireCreditsDto) {

@@ -2,8 +2,10 @@
 
 import { useRef } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { useLocale, useTranslations } from "next-intl";
 import { RetirementRecord } from "../lib/api";
 import { formatTonnes, calculateCO2Equivalent } from "../lib/carbon-utils";
+import { toBcp47 } from "../lib/i18n/locale-tag";
 import { colors } from "../styles/design-system";
 
 interface Props {
@@ -12,9 +14,13 @@ interface Props {
 }
 
 export default function RetirementCertificate({ retirement, publicUrl }: Props) {
+  const t = useTranslations("retirementCertificate");
+  const locale = useLocale();
   const certRef = useRef<HTMLDivElement>(null);
   const co2eq   = calculateCO2Equivalent(retirement.amount);
   const url     = publicUrl ?? `${typeof window !== "undefined" ? window.location.origin : ""}/retire/${retirement.retirementId}`;
+
+  const dateLocale = toBcp47(locale);
 
   async function downloadPdf() {
     const { default: jsPDF }       = await import("jspdf");
@@ -29,12 +35,12 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
   }
 
   const details = [
-    { label: "Project",          value: retirement.project?.name ?? retirement.projectName ?? retirement.projectId },
-    { label: "Vintage Year",     value: `${retirement.vintageYear}` },
-    { label: "Retirement Reason",value: retirement.retirementReason },
-    { label: "Retirement Date",  value: new Date(retirement.retiredAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) },
-    { label: "Serial Range",     value: `${retirement.serialNumbers[0]} – ${retirement.serialNumbers[retirement.serialNumbers.length - 1]}` },
-    { label: "Certificate ID",   value: retirement.retirementId },
+    { label: t("project"),          value: retirement.project?.name ?? retirement.projectName ?? retirement.projectId },
+    { label: t("vintageYear"),     value: `${retirement.vintageYear}` },
+    { label: t("retirementReason"),value: retirement.retirementReason },
+    { label: t("retirementDate"),  value: new Date(retirement.retiredAt).toLocaleDateString(dateLocale, { year: "numeric", month: "long", day: "numeric" }) },
+    { label: t("serialRange"),     value: `${retirement.serialNumbers[0]} – ${retirement.serialNumbers[retirement.serialNumbers.length - 1]}` },
+    { label: t("certificateId"),   value: retirement.retirementId },
   ];
 
   return (
@@ -307,11 +313,11 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
 
       <div className="cert-root">
         {/* Certificate page */}
-        <div ref={certRef} className="cert-page" role="main" aria-label="Carbon Credit Retirement Certificate">
+        <div ref={certRef} className="cert-page" role="main" aria-label={t("mainAria")}>
           <div className="cert-accent-bar" aria-hidden="true" />
 
           {/* Watermark */}
-          <div className="cert-watermark" aria-hidden="true">RETIRED</div>
+          <div className="cert-watermark" aria-hidden="true">{t("watermark")}</div>
 
           {/* Branding header */}
           <header className="cert-header">
@@ -319,20 +325,20 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
               <div className="cert-logo-icon" aria-hidden="true">🌿</div>
               <span className="cert-logo-text">CARBONLEDGER</span>
             </div>
-            <h1 className="cert-title">Carbon Credit Retirement Certificate</h1>
-            <p className="cert-subtitle">Permanent on-chain retirement · Verified and irreversible</p>
+            <h1 className="cert-title">{t("title")}</h1>
+            <p className="cert-subtitle">{t("subtitle")}</p>
           </header>
 
           <hr className="cert-divider" />
 
           {/* Beneficiary */}
-          <section className="cert-beneficiary" aria-label="Retirement details">
-            <p className="cert-certifies-label">This certifies that</p>
+          <section className="cert-beneficiary" aria-label={t("detailsAria")}>
+            <p className="cert-certifies-label">{t("certifiesThat")}</p>
             <h2 className="cert-beneficiary-name">{retirement.beneficiary}</h2>
-            <p className="cert-retired-label">has permanently retired</p>
+            <p className="cert-retired-label">{t("hasPermanentlyRetired")}</p>
             <p className="cert-amount">{formatTonnes(retirement.amount)}</p>
             <p className="cert-co2-note">
-              equivalent to removing {co2eq.cars.toLocaleString()} cars from the road for one year
+              {t("co2Equivalent", { cars: co2eq.cars.toLocaleString(dateLocale) })}
             </p>
           </section>
 
@@ -349,16 +355,16 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
           {/* Footer: tx hash + QR */}
           <footer className="cert-footer">
             <div>
-              <p className="cert-tx-label">Stellar Transaction Hash</p>
+              <p className="cert-tx-label">{t("stellarTxHash")}</p>
               <p className="cert-tx-hash">{retirement.txHash}</p>
               <a
                 href={`https://stellar.expert/explorer/testnet/tx/${retirement.txHash}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="cert-tx-link"
-                aria-label="View retirement transaction on Stellar Explorer (opens in new tab)"
+                aria-label={t("viewExplorerAria")}
               >
-                View on Stellar Explorer →
+                {t("viewExplorer")}
               </a>
             </div>
             <div className="cert-qr-block">
@@ -366,17 +372,17 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
                 value={url}
                 size={88}
                 fgColor={colors.primary[800]}
-                aria-label={`QR code to verify certificate at ${url}`}
+                aria-label={t("qrAria", { url })}
               />
-              <p className="cert-qr-caption">Scan to verify</p>
+              <p className="cert-qr-caption">{t("scanToVerify")}</p>
             </div>
           </footer>
 
           {/* Seal */}
           <div className="cert-seal" aria-hidden="true">
             <span>✓</span>
-            <span>On-Chain</span>
-            <span>Verified</span>
+            <span>{t("sealOnChain")}</span>
+            <span>{t("sealVerified")}</span>
           </div>
         </div>
 
@@ -386,25 +392,25 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
             type="button"
             className="cert-btn-primary"
             onClick={downloadPdf}
-            aria-label={`Download PDF certificate for ${retirement.beneficiary}`}
+            aria-label={t("downloadPdfAria", { beneficiary: retirement.beneficiary })}
           >
-            Download PDF Certificate
+            {t("downloadPdf")}
           </button>
           <button
             type="button"
             className="cert-btn-secondary"
             onClick={() => window.print()}
-            aria-label="Print certificate"
+            aria-label={t("printAria")}
           >
-            Print Certificate
+            {t("print")}
           </button>
           <button
             type="button"
             className="cert-btn-secondary"
             onClick={() => navigator.clipboard.writeText(url)}
-            aria-label="Copy shareable certificate link to clipboard"
+            aria-label={t("copyLinkAria")}
           >
-            Copy Shareable Link
+            {t("copyLink")}
           </button>
         </div>
       </div>
