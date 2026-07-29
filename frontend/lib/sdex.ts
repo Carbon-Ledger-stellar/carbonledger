@@ -16,6 +16,15 @@ export interface OrderBookLevel {
   cumulative: number;
 }
 
+export interface AggregatedOrderBook {
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  bestBid: number | null;
+  bestAsk: number | null;
+  spread: number | null;
+  midPrice: number | null;
+  totalBidVolume: number;
+  totalAskVolume: number;
 export async function getOrderBook(
   sellingAsset: Asset,
   buyingAsset: Asset,
@@ -200,6 +209,28 @@ export function estimateAskFill(levels: OrderBookLevel[], requestedQuantity: num
 export async function fetchOrderBook(
   sellingAsset: Asset,
   buyingAsset: Asset,
+  limit = DEFAULT_DEPTH_LIMIT,
+): Promise<RawOrderBookResponse> {
+  const url = `${buildOrderBookUrl(sellingAsset, buyingAsset)}&limit=${limit}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to load order book: ${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export function formatOrderBookPrice(price: number | null): string {
+  if (price === null || !Number.isFinite(price)) {
+    return "—";
+  }
+  return price.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+export function formatOrderBookVolume(volume: number | null): string {
+  if (volume === null || !Number.isFinite(volume)) {
+    return "—";
+  }
+  return volume.toLocaleString(undefined, { maximumFractionDigits: 2 });
   amount: string,
   price: string,
 ): Promise<string> {
