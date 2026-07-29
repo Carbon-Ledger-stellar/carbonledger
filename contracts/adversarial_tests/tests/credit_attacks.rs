@@ -123,6 +123,36 @@ fn test_mint_negative_amount() {
     assert_eq!(result.unwrap_err().unwrap(), CarbonError::ZeroAmountNotAllowed);
 }
 
+// ── Valid vintage-year mint ────────────────────────────────────────────────
+#[test]
+fn test_mint_valid_vintage() {
+    let env = Env::default();
+    let (client, admin) = setup_credit(&env);
+    let owner = Address::generate(&env);
+
+    let result = client.try_mint_credits(
+        &admin, &s(&env, "proj-001"), &100_i128, &2023_u32,
+        &s(&env, "batch-valid"), &1_u64, &100_u64,
+        &s(&env, "QmCID"), &owner,
+    );
+    assert!(result.is_ok(), "valid vintage years should be accepted");
+}
+
+// ── Too-old vintage-year mint ──────────────────────────────────────────────
+#[test]
+fn test_mint_too_old_vintage() {
+    let env = Env::default();
+    let (client, admin) = setup_credit(&env);
+    let owner = Address::generate(&env);
+
+    let result = client.try_mint_credits(
+        &admin, &s(&env, "proj-001"), &100_i128, &1989_u32,
+        &s(&env, "batch-old"), &1_u64, &100_u64,
+        &s(&env, "QmCID"), &owner,
+    );
+    assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+}
+
 // ── Attack 4: mint with vintage_year = 3000 ───────────────────────────────────
 /// ATTACK: Attacker mints credits with vintage_year = 3000 to create credits for
 /// carbon that will supposedly be offset in the far future, selling them today.
