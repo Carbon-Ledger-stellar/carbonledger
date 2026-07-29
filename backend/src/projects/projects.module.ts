@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ProjectsController } from "./projects.controller";
+import { PublicProjectsController } from "./public-projects.controller";
 import { ProjectsService } from "./projects.service";
 import { ProjectStateMachineService } from "./project-state-machine.service";
 import { RegistryContractClient } from "./registry-contract.client";
@@ -11,7 +12,7 @@ import { OracleContractClient } from "../oracle/oracle-contract.client";
 
 @Module({
   imports: [AuthModule, MailModule],
-  controllers: [ProjectsController],
+  controllers: [ProjectsController, PublicProjectsController],
   providers: [ProjectsService, ProjectStateMachineService, PrismaService, RedisService, RegistryContractClient, OracleContractClient],
   exports: [ProjectsService],
 })

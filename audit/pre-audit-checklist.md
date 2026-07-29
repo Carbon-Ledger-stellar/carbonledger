@@ -161,3 +161,42 @@ Before tagging `audit/v1.0`, confirm:
 | KG-8 | `retirement_id` not deduplicated in `retire_credits` | Medium | `carbon_credit` |
 | KG-9 | `list_credits` does not verify seller holds the batch | Medium | `carbon_marketplace` |
 | KG-10 | `SerialRegistry` grows unboundedly | Low | `carbon_credit` |
+
+---
+
+## Vector 5 — Formal Verification (Kani Bounded Model Checking)
+
+Added in #692.  The Kani proofs are in
+`contracts/carbon_credit/src/proofs.rs` and run automatically in CI
+(`.github/workflows/ci.yml` job `kani`, 5-minute timeout).
+
+### Invariant verification status
+
+| ID     | Invariant | Proof harness | Bounded | Kani status |
+|--------|-----------|---------------|---------|-------------|
+| INV-1  | `amount_available + amount_retired == minted_amount` | `proof_conservation` | No loops → effectively unbounded | ✅ Proved |
+| INV-1b | INV-1 holds across multi-step retirements | `proof_conservation_multi_step` | No loops | ✅ Proved |
+| INV-2  | `retire_credits(amount > available)` always returns `InsufficientCredits` | `proof_insufficient_credits` | Single comparison | ✅ Proved |
+| INV-3  | Serial ranges never overlap after any sequence of valid mints | `proof_serial_no_overlap` | `--unwind 8` (≤7 existing ranges) | ✅ Proved (bounded) |
+
+### INV-3 bounded proof justification
+
+INV-3 requires scanning an existing `Vec<SerialRange>` which contains a loop.
+With `--unwind 8` Kani unrolls the loop up to 7 iterations, proving the invariant
+for registries of up to 7 existing ranges.
+
+**Why this is sufficient:** The proptest suite in `serial_fuzz_tests` generates
+10,000+ random inputs and covers arbitrarily large registries.  The Kani proof
+provides exhaustive coverage over all 64-bit input values for the small-registry
+case; proptest covers scale.  Together they provide a strong combined assurance.
+
+If the unwind bound is insufficient at a future registry size, increase `--unwind`
+in the CI step and add a comment with the new bound and justification here.
+
+### Invariants NOT amenable to Kani (require unbounded proof or different tool)
+
+| Invariant | Reason | Alternative |
+|-----------|--------|-------------|
+| Serial non-overlap for arbitrarily large registries | Unbounded loop | Proptest (10,000 cases) |
+| Cross-contract oracle invariant (`issued ≤ verified`) | Requires live Soroban Env and cross-contract call | Integration tests on testnet |
+| Double-init guard | Requires persistent storage state from prior invocation | Unit test (`test_double_init`) |
