@@ -433,13 +433,30 @@ impl CarbonMarketplaceContract {
     ) -> Result<(), CarbonError> {
         buyer.require_auth();
 
+        // ── Re-entrancy guard ────────────────────────────────────────────────
+        Self::acquire_lock(&env)?;
+
         if amount <= 0 {
+            Self::release_lock(&env);
             return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+
+        // ── Circuit breaker gate ──────────────────────────────────────────────
+        // Block all purchases if the circuit breaker has been tripped (either
+        // manually by an admin or automatically due to stale oracle prices).
+        if env.storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::CircuitBreaker)
+            .unwrap_or(false)
+        {
+            Self::release_lock(&env);
+            return Err(CarbonError::CircuitBreakerTripped);
         }
 
         let mut listing = Self::load_listing(&env, &listing_id)?;
 
         if listing.status == ListingStatus::Delisted || listing.status == ListingStatus::Sold {
+            Self::release_lock(&env);
             return Err(CarbonError::ListingNotFound);
         }
         if env
@@ -451,6 +468,7 @@ impl CarbonMarketplaceContract {
             return Err(CarbonError::ProjectSuspended);
         }
         if amount > listing.amount_available {
+            Self::release_lock(&env);
             return Err(CarbonError::InsufficientLiquidity);
         }
 
@@ -479,6 +497,16 @@ impl CarbonMarketplaceContract {
         };
         env.storage()
             .persistent()
+            .get(&DataKey::FeeLedger)
+            .unwrap_or_else(|| vec![&env]);
+        fee_ledger.push_back(fee_id.clone());
+        env.storage().persistent().set(&DataKey::FeeLedger, &fee_ledger);
+
+        // Update accumulator
+        let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
+        let new_acc = acc.checked_add(protocol_fee)
+            .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &new_acc);
             .set(&DataKey::Listing(listing_id.clone()), &listing);
         Self::extend_listing_ttl(&env, &listing_id);
 
@@ -517,6 +545,21 @@ impl CarbonMarketplaceContract {
                 timestamp: env.ledger().timestamp(),
             },
         );
+
+        // ── Auto-sweep if accumulator reaches threshold ───────────────────────
+        let threshold: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SweepThreshold)
+            .unwrap_or(DEFAULT_SWEEP_THRESHOLD);
+        if new_acc >= threshold {
+            Self::do_sweep(&env, new_acc, &usdc_client, &treasury).map_err(|e| {
+                Self::release_lock(&env);
+                e
+            })?;
+        }
+
+        Self::release_lock(&env);
         Ok(())
     }
 
@@ -528,8 +571,22 @@ impl CarbonMarketplaceContract {
     ) -> Result<(), CarbonError> {
         buyer.require_auth();
 
+        // ── Re-entrancy guard ────────────────────────────────────────────────
+        Self::acquire_lock(&env)?;
+
+        // ── Circuit breaker gate ──────────────────────────────────────────────
+        if env.storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::CircuitBreaker)
+            .unwrap_or(false)
+        {
+            Self::release_lock(&env);
+            return Err(CarbonError::CircuitBreakerTripped);
+        }
+
         let len = listing_ids.len();
         if len != amounts.len() || len > MAX_BATCH_SIZE {
+            Self::release_lock(&env);
             return Err(CarbonError::InvalidSerialRange);
         }
 
@@ -539,11 +596,13 @@ impl CarbonMarketplaceContract {
             let amount = amounts.get(i).unwrap();
 
             if amount <= 0 {
+                Self::release_lock(&env);
                 return Err(CarbonError::ZeroAmountNotAllowed);
             }
 
             let listing = Self::load_listing(&env, &listing_id)?;
             if listing.status == ListingStatus::Delisted || listing.status == ListingStatus::Sold {
+                Self::release_lock(&env);
                 return Err(CarbonError::ListingNotFound);
             }
             if env
@@ -552,9 +611,53 @@ impl CarbonMarketplaceContract {
                 .get::<DataKey, bool>(&DataKey::SuspendedProject(listing.project_id.clone()))
                 .unwrap_or(false)
             {
+                Self::release_lock(&env);
                 return Err(CarbonError::ProjectSuspended);
             }
+
+            // ── Expired vintage check per listing ─────────────────────────────
+            if Self::is_vintage_expired(&env, listing.vintage_year) {
+                Self::release_lock(&env);
+                return Err(CarbonError::InvalidVintageYear);
+            }
+
+            // Oracle staleness check for each listing in the batch
+            if let Some(oracle_address) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::OracleContract)
+            {
+                let price_current: bool = env.invoke_contract(
+                    &oracle_address,
+                    &soroban_sdk::Symbol::new(&env, "is_price_current"),
+                    soroban_sdk::vec![
+                        &env,
+                        listing.methodology.clone().into_val(&env),
+                        listing.vintage_year.into_val(&env),
+                    ],
+                );
+
+                if !price_current {
+                    let now = env.ledger().timestamp();
+                    env.storage().persistent().set(&DataKey::CircuitBreaker, &true);
+                    env.storage().persistent().set(&DataKey::CircuitBreakerTrippedAt, &now);
+                    env.events().publish(
+                        (symbol_short!("c_ledger"), symbol_short!("cb_trip")),
+                        CircuitBreakerEvent {
+                            methodology:    listing.methodology.clone(),
+                            vintage_year:   listing.vintage_year,
+                            price_age_secs: 24 * 60 * 60,
+                            threshold_secs: 24 * 60 * 60,
+                            tripped_at:     now,
+                        },
+                    );
+                    Self::release_lock(&env);
+                    return Err(CarbonError::CircuitBreakerTripped);
+                }
+            }
+
             if amount > listing.amount_available {
+                Self::release_lock(&env);
                 return Err(CarbonError::InsufficientLiquidity);
             }
             validated_listings.push_back(listing);
@@ -564,6 +667,15 @@ impl CarbonMarketplaceContract {
             let amount = amounts.get(i).unwrap();
             let mut listing = validated_listings.get(i).unwrap();
 
+            let total_cost = listing.price_per_credit.checked_mul(amount)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+            let protocol_fee = total_cost.checked_div(FEE_RATE_DENOM)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+            let seller_proceeds = total_cost.checked_sub(protocol_fee)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+
+        listing.amount_available = listing.amount_available.checked_sub(amount)
+            .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
             listing.amount_available = listing
                 .amount_available
                 .checked_sub(amount)
@@ -591,6 +703,36 @@ impl CarbonMarketplaceContract {
         let usdc_client = token::Client::new(&env, &usdc);
 
         for i in 0..len {
+            let listing       = validated_listings.get(i).unwrap();
+            let amount        = amounts.get(i).unwrap();
+            let total_cost    = listing.price_per_credit.checked_mul(amount)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+            let protocol_fee  = total_cost.checked_div(FEE_RATE_DENOM)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+            let seller_proceeds = total_cost.checked_sub(protocol_fee)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+
+            // ── Record fee in immutable ledger ────────────────────────────────
+            let fee_id = Self::make_fee_id(&env, &listing.listing_id, now.saturating_add(i as u64));
+            let fee_record = FeeRecord {
+                fee_id:      fee_id.clone(),
+                listing_id:  listing.listing_id.clone(),
+                buyer:       buyer.clone(),
+                seller:      listing.seller.clone(),
+                total_cost,
+                fee_amount:  protocol_fee,
+                recorded_at: now,
+            };
+            env.storage().persistent().set(&DataKey::FeeRecord(fee_id.clone()), &fee_record);
+            let mut fee_ledger: Vec<String> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::FeeLedger)
+                .unwrap_or_else(|| vec![&env]);
+            fee_ledger.push_back(fee_id);
+            env.storage().persistent().set(&DataKey::FeeLedger, &fee_ledger);
+            bulk_fee_total = bulk_fee_total.checked_add(protocol_fee)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
             let listing = validated_listings.get(i).unwrap();
             let amount = amounts.get(i).unwrap();
             let total_cost = listing
@@ -635,6 +777,25 @@ impl CarbonMarketplaceContract {
             );
         }
 
+        // ── Update accumulator and auto-sweep if threshold met ────────────────
+        let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
+        let new_acc = acc.checked_add(bulk_fee_total)
+            .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &new_acc);
+
+        let threshold: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SweepThreshold)
+            .unwrap_or(DEFAULT_SWEEP_THRESHOLD);
+        if new_acc >= threshold {
+            Self::do_sweep(&env, new_acc, &usdc_client, &treasury).map_err(|e| {
+                Self::release_lock(&env);
+                e
+            })?;
+        }
+
+        Self::release_lock(&env);
         Ok(())
     }
 
@@ -907,6 +1068,31 @@ impl CarbonMarketplaceContract {
             return Err(CarbonError::UnauthorizedVerifier);
         }
         Ok(())
+    }
+
+    // ── Re-entrancy guard helpers ───────────────────────────────────────────
+
+    /// Acquire the re-entrancy lock.  Returns `ReentrancyDetected` if already locked.
+    fn acquire_lock(env: &Env) -> Result<(), CarbonError> {
+        let locked: bool = env
+            .storage()
+            .persistent()
+            .get::<DataKey, bool>(&DataKey::ReentrancyGuard)
+            .unwrap_or(false);
+        if locked {
+            return Err(CarbonError::ReentrancyDetected);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReentrancyGuard, &true);
+        Ok(())
+    }
+
+    /// Release the re-entrancy lock.
+    fn release_lock(env: &Env) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReentrancyGuard, &false);
     }
 }
 
