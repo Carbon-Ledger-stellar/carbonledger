@@ -126,8 +126,6 @@ export class ProjectsService {
     }
 
     // Build where clause (no free-text)
-    const where: any = {};
-
     if (methodology && methodology.length > 0) {
       where.methodology = { in: methodology };
     }

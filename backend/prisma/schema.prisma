@@ -472,6 +472,27 @@ model CreditEvent {
   @@index([timestamp])
 }
 
+/// Derived read-model projection reconstructed by replaying CreditEvent logs.
+model CreditProjection {
+  id              String   @id @default(cuid())
+  creditBatchId   String   @unique
+  projectId       String
+  ownerPublicKey  String
+  status          String   /// Issued | Verified | Listed | Sold | Retired
+  amountAvailable Float    @default(0)
+  amountRetired   Float    @default(0)
+  pricePerCredit  String?
+  txHash          String?
+  lastEventType   String
+  version         Int      @default(1)
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  @@index([creditBatchId])
+  @@index([status])
+  @@index([ownerPublicKey])
+}
+
 
 model OracleSyncState {
   id                String    @id @default(cuid())

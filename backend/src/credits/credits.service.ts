@@ -13,6 +13,8 @@ import { CreditEventType } from "../events/credit-event.types";
  * 1 tCO₂e = 100 serial units, 0.5 tCO₂e = 50 serial units, 0.01 tCO₂e = 1 serial unit.
  * This allows fractional batches while keeping serial arithmetic in integers.
  */
+import { Optional } from "@nestjs/common";
+
 const SERIAL_SCALE = 100;
 
 function toSerialUnits(tonnes: number): bigint {
@@ -25,6 +27,7 @@ export class CreditsService {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly ipfsService: IpfsService,
+    @Optional() private readonly eventSourcing?: EventSourcingService,
   ) {}
 
   async mintCredits(dto: MintCreditsDto, actor?: string) {
@@ -50,6 +53,26 @@ export class CreditsService {
     if (overlap) throw new BadRequestException("Serial number range overlaps existing batch — double counting prevented");
 
     const batch = await this.prisma.creditBatch.create({ data: dto });
+
+    // Record MINT event in event store
+    if (this.eventSourcing) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: batch.batchId,
+        eventType: CreditEventType.MINT,
+        actor: actor ?? dto.projectId ?? 'system',
+        newState: {
+          batchId: batch.batchId,
+          projectId: batch.projectId,
+          amountAvailable: Number(batch.amount),
+          amountRetired: 0,
+          status: 'Issued',
+          vintageYear: batch.vintageYear,
+          serialStart: batch.serialStart,
+          serialEnd: batch.serialEnd,
+        },
+        txHash: (batch as any).txHash ?? 'STUB_MINT_HASH',
+      }).catch(() => undefined);
+    }
 
     // Notify project owner (respects per-event preferences)
     const project = await this.prisma.carbonProject.findUnique({ where: { projectId: dto.projectId } });
