@@ -206,6 +206,7 @@ export class AppModule implements NestModule {
         { path: 'credits/mint',           method: RequestMethod.POST },
         { path: 'marketplace/purchase',   method: RequestMethod.POST },
         { path: 'retirements',            method: RequestMethod.POST },
+        { path: 'retirements/bulk',        method: RequestMethod.POST },
       );
   }
 }

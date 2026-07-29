@@ -1,4 +1,4 @@
-import useSWR, { SWRConfiguration } from "swr";
+import useSWR, { SWRConfiguration, mutate as globalMutate } from "swr";
 import type { SerialRangeSegment } from "./serial-range-segments";
 import useSWRInfinite from "swr/infinite";
 
@@ -124,6 +124,17 @@ async function fetcher<T>(url: string): Promise<T> {
   return res.json();
 }
 
+/** SWR fetcher for endpoints gated behind a verifier/admin JWT bearer token. */
+function authFetcher<T>([url, token]: [string, string | null]): Promise<T> {
+  return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }).then(async (res) => {
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.message || "API error");
+    }
+    return res.json();
+  });
+}
+
 const swrConfig: SWRConfiguration = {
   revalidateOnFocus: true,
   errorRetryCount: 3,
@@ -161,9 +172,89 @@ export function useProject(id: string) {
   return useSWR<CarbonProject>(id ? `${API_URL}/projects/${id}` : null, fetcher, swrConfig);
 }
 
-export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string; projectType?: string; search?: string }) {
-  const query = new URLSearchParams(params as Record<string, string>).toString();
-  return useSWR<MarketListing[]>(`${API_URL}/marketplace/listings?${query}`, fetcher, swrConfig);
+export type ListingSortField = "price" | "vintageYear" | "methodology" | "verificationDate";
+export type SortOrder = "asc" | "desc";
+
+export interface PaginatedListingsResponse {
+  listings: MarketListing[];
+  next_cursor?: string;
+  total_count: number;
+  page?: number;
+  total_pages?: number;
+}
+
+export interface ListingsQueryParams {
+  methodology?: string;
+  vintage?: number;
+  country?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  projectType?: string;
+  search?: string;
+  sortBy?: ListingSortField;
+  sortOrder?: SortOrder;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Backend returns a paginated wrapper ({ listings, total_count, ... }), not a bare
+ * array — refreshInterval defaults to 30s so displayed prices are never more than
+ * 30s stale (see issue #619's "no more than 60s stale" requirement).
+ */
+export function useListings(params?: ListingsQueryParams, refreshInterval = 30_000) {
+  const query = new URLSearchParams(params as unknown as Record<string, string>).toString();
+  return useSWR<PaginatedListingsResponse>(
+    `${API_URL}/marketplace/listings?${query}`,
+    fetcher,
+    { ...swrConfig, refreshInterval },
+  );
+}
+
+/** Paginated listing response from get_listings_page. */
+export interface ListingsPage {
+  items: MarketListing[];
+  total: number;
+  offset: number;
+}
+
+/**
+ * Fetch a single page of active marketplace listings.
+ * `offset` is 0-based; `limit` is capped at 50 by the contract.
+ */
+export function useListingsPage(
+  offset: number,
+  limit: number,
+) {
+  const params = new URLSearchParams({
+    offset: String(offset),
+    limit: String(limit),
+  });
+  return useSWR<ListingsPage>(
+    `${API_URL}/marketplace/listings/page?${params}`,
+    fetcher,
+    swrConfig,
+  );
+}
+
+/**
+ * Fetch a single page of marketplace listings filtered by vintage year.
+ */
+export function useListingsByVintagePage(
+  vintageYear: number,
+  offset: number,
+  limit: number,
+) {
+  const params = new URLSearchParams({
+    vintage: String(vintageYear),
+    offset: String(offset),
+    limit: String(limit),
+  });
+  return useSWR<ListingsPage>(
+    `${API_URL}/marketplace/listings/by-vintage/page?${params}`,
+    fetcher,
+    swrConfig,
+  );
 }
 
 export function useListing(id: string) {
@@ -570,6 +661,80 @@ export async function updateNotificationPreferences(
 export function useLeaderboard(year?: number) {
   const query = year ? `?year=${year}` : "";
   return useSWR<LeaderboardEntry[]>(`${API_URL}/stats/leaderboard${query}`, fetcher, swrConfig);
+}
+
+// ── Verifier dashboard ────────────────────────────────────────────────────────
+
+export interface PendingVerifierProject extends CarbonProject {
+  /** IPFS CID of the project's supporting documentation, if separate from metadataCid. */
+  documentCid?: string;
+}
+
+export function usePendingVerifierProjects(publicKey: string | null, token: string | null) {
+  return useSWR<PendingVerifierProject[]>(
+    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/pending-projects`, token] : null,
+    authFetcher,
+    swrConfig,
+  );
+}
+
+export interface VerifierAttestationHistoryPage {
+  projects: PendingVerifierProject[];
+  nextCursor?: string;
+  hasMore: boolean;
+  total: number;
+}
+
+export function useVerifierAttestationHistory(publicKey: string | null, token: string | null, cursor?: string) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return useSWR<VerifierAttestationHistoryPage>(
+    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/history${query}`, token] : null,
+    authFetcher,
+    swrConfig,
+  );
+}
+
+export interface VerifierAttestationFee {
+  id: string;
+  verifierPublicKey: string;
+  projectId: string;
+  decision: "Verified" | "Rejected";
+  feeStroops: string;
+  txHash: string;
+  createdAt: string;
+}
+
+export interface VerifierFeeHistoryPage {
+  fees: VerifierAttestationFee[];
+  nextCursor?: string;
+  hasMore: boolean;
+  total: number;
+}
+
+export function useVerifierFeeHistory(publicKey: string | null, token: string | null, cursor?: string) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return useSWR<VerifierFeeHistoryPage>(
+    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/fees${query}`, token] : null,
+    authFetcher,
+    swrConfig,
+  );
+}
+
+export async function exportVerifierFeesCsv(publicKey: string, token: string): Promise<Blob> {
+  const res = await fetch(`${API_URL}/verifiers/${publicKey}/fees/export`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Fee export failed");
+  return res.blob();
+}
+
+/** Revalidate every cached SWR key scoped to this verifier's dashboard/history/fees data. */
+export async function invalidateVerifierCaches(publicKey: string): Promise<void> {
+  await globalMutate(
+    (key) => Array.isArray(key) && typeof key[0] === "string" && key[0].includes(`/verifiers/${publicKey}/`),
+    undefined,
+    { revalidate: true },
+  );
 }
 
 export function useCreditBatches(projectId: string) {

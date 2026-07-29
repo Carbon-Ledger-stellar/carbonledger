@@ -8,6 +8,8 @@ use soroban_sdk::{
 const TTL_LEDGERS: u32 = 518_400;
 const MAX_BATCH_SIZE: u32 = 10;
 const CURRENT_VERSION: u32 = 1;
+/// Maximum number of listings returned per page by paginated endpoints.
+pub const MAX_PAGE_SIZE: u32 = 50;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -28,12 +30,28 @@ pub enum CarbonError {
     MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
+    ZeroAmountNotAllowed   = 16,
+    ProjectAlreadyExists   = 17,
+    InvalidSerialRange     = 18,
+    AlreadyInitialized     = 19,
+    Arithmetic             = 20,
+    UnauthorizedUpgrade    = 21,
+    /// Oracle price data is more than 24 hours old; the circuit breaker has
+    /// tripped and all purchases are halted until the oracle is updated.
+    CircuitBreakerTripped  = 22,
+    /// The caller-supplied `expected_amount_available` did not match the
+    /// current on-chain value.  A concurrent buyer already modified the listing.
+    /// Re-read the listing and resubmit with the updated amount.
+    StaleExpectedAmount    = 23,
+    /// Page size exceeds the maximum allowed limit.
+    PageSizeTooLarge       = 24,
     ZeroAmountNotAllowed = 16,
     ProjectAlreadyExists = 17,
     InvalidSerialRange = 18,
     AlreadyInitialized = 19,
     Arithmetic = 20,
     UnauthorizedUpgrade = 21,
+    FeeConfigInvalid = 22,
 }
 
 #[contracttype]
@@ -48,6 +66,19 @@ pub enum DataKey {
     SuspendedProject(String),
     ContractVersion,
     UpgradeHistory,
+    FeeConfig,
+}
+
+/// Governance-controlled fee configuration.
+/// Fee = numerator / denom of total_cost. Max fee is denom/10 (10%).
+/// If unset, defaults to 1/100 (1%) matching compile-time constants.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfig {
+    pub numerator: i128,
+    pub denom: i128,
+    pub updated_at: u64,
+    pub updated_by: Address,
 }
 
 #[contracttype]
@@ -105,6 +136,18 @@ pub struct UpgradeRecord {
     pub timestamp: u64,
     pub upgraded_by: Address,
     pub wasm_hash: BytesN<32>,
+}
+
+/// A paginated slice of marketplace listings.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ListingsPage {
+    /// The listing items in this page.
+    pub items: Vec<MarketListing>,
+    /// Total number of listings that match the query (across all pages).
+    pub total: u32,
+    /// The offset (0-based) of the first item in this page.
+    pub offset: u32,
 }
 
 #[contract]
@@ -194,6 +237,58 @@ impl CarbonMarketplaceContract {
 
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
         env.storage().persistent().get(&DataKey::UpgradeHistory)
+    }
+
+    // ── Fee Configuration (#651) ──────────────────────────────────────────────
+
+    /// Admin-only: set the protocol fee rate.
+    /// Guardrails: denom > 0, numerator >= 0, numerator <= denom / 10 (max 10%).
+    /// Migration: if FeeConfig was never set, the default of 1/100 (1%) applies.
+    pub fn set_fee_rate(
+        env: Env,
+        admin: Address,
+        numerator: i128,
+        denom: i128,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        if denom <= 0 || numerator < 0 || numerator > denom / 10 {
+            return Err(CarbonError::FeeConfigInvalid);
+        }
+
+        let config = FeeConfig {
+            numerator,
+            denom,
+            updated_at: env.ledger().timestamp(),
+            updated_by: admin.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeConfig, &config);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("fee_set")),
+            (numerator, denom, admin),
+        );
+        Ok(())
+    }
+
+    /// Returns the current fee configuration. Defaults to 1/100 (1%) if never set.
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        Self::load_fee_config(&env)
+    }
+
+    fn load_fee_config(env: &Env) -> FeeConfig {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeConfig)
+            .unwrap_or(FeeConfig {
+                numerator: 1,
+                denom: 100,
+                updated_at: 0,
+                updated_by: env.current_contract_address(),
+            })
     }
 
     pub fn update_treasury(
@@ -363,7 +458,12 @@ impl CarbonMarketplaceContract {
             .price_per_credit
             .checked_mul(amount)
             .ok_or(CarbonError::Arithmetic)?;
-        let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+        let fee_cfg = Self::load_fee_config(&env);
+        let protocol_fee = total_cost
+            .checked_mul(fee_cfg.numerator)
+            .ok_or(CarbonError::Arithmetic)?
+            .checked_div(fee_cfg.denom)
+            .ok_or(CarbonError::Arithmetic)?;
         let seller_proceeds = total_cost
             .checked_sub(protocol_fee)
             .ok_or(CarbonError::Arithmetic)?;
@@ -497,7 +597,12 @@ impl CarbonMarketplaceContract {
                 .price_per_credit
                 .checked_mul(amount)
                 .ok_or(CarbonError::Arithmetic)?;
-            let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+            let fee_cfg = Self::load_fee_config(&env);
+            let protocol_fee = total_cost
+                .checked_mul(fee_cfg.numerator)
+                .ok_or(CarbonError::Arithmetic)?
+                .checked_div(fee_cfg.denom)
+                .ok_or(CarbonError::Arithmetic)?;
             let seller_proceeds = total_cost
                 .checked_sub(protocol_fee)
                 .ok_or(CarbonError::Arithmetic)?;
@@ -549,6 +654,200 @@ impl CarbonMarketplaceContract {
 
     pub fn get_listings_by_vintage(env: Env, vintage_year: u32) -> Vec<MarketListing> {
         Self::filter_listings(&env, |l| l.vintage_year == vintage_year)
+    }
+
+    /// Returns a paginated slice of active (or partially filled) listings.
+    ///
+    /// `offset` is 0-based (skip the first `offset` matching items).
+    /// `limit` is capped at `MAX_PAGE_SIZE` (50).  Returns `PageSizeTooLarge`
+    /// if `limit` exceeds the cap *before* capping.
+    pub fn get_listings_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<ListingsPage, CarbonError> {
+        if limit > MAX_PAGE_SIZE {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllListings)
+            .unwrap_or_else(|| vec![&env]);
+
+        // First pass: collect matching items + count total
+        let mut total: u32 = 0;
+        let mut matching: Vec<MarketListing> = vec![&env];
+        for id in all.iter() {
+            if let Some(l) = env.storage().persistent().get(&DataKey::Listing(id.clone())) {
+                if l.status == ListingStatus::Active || l.status == ListingStatus::PartiallyFilled {
+                    total += 1;
+                    matching.push_back(l);
+                }
+            }
+        }
+
+        // Second pass: apply offset + limit
+        let mut page: Vec<MarketListing> = vec![&env];
+        let mut skipped: u32 = 0;
+        for i in 0..matching.len() {
+            let item = matching.get(i).unwrap();
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            if page.len() >= limit as u32 {
+                break;
+            }
+            page.push_back(item);
+        }
+
+        Ok(ListingsPage {
+            items: page,
+            total,
+            offset,
+        })
+    }
+
+    /// Returns a paginated slice of listings filtered by vintage year.
+    pub fn get_listings_by_vintage_page(
+        env: Env,
+        vintage_year: u32,
+        offset: u32,
+        limit: u32,
+    ) -> Result<ListingsPage, CarbonError> {
+        if limit > MAX_PAGE_SIZE {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllListings)
+            .unwrap_or_else(|| vec![&env]);
+
+        let mut total: u32 = 0;
+        let mut matching: Vec<MarketListing> = vec![&env];
+        for id in all.iter() {
+            if let Some(l) = env.storage().persistent().get(&DataKey::Listing(id.clone())) {
+                if l.vintage_year == vintage_year {
+                    total += 1;
+                    matching.push_back(l);
+                }
+            }
+        }
+
+        let mut page: Vec<MarketListing> = vec![&env];
+        let mut skipped: u32 = 0;
+        for i in 0..matching.len() {
+            let item = matching.get(i).unwrap();
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            if page.len() >= limit as u32 {
+                break;
+            }
+            page.push_back(item);
+        }
+
+        Ok(ListingsPage {
+            items: page,
+            total,
+            offset,
+        })
+    }
+
+    // ── Fee collection API ────────────────────────────────────────────────────
+
+    /// Returns the immutable fee record for a given fee_id.
+    pub fn get_fee_record(env: Env, fee_id: String) -> Option<FeeRecord> {
+        env.storage().persistent().get(&DataKey::FeeRecord(fee_id))
+    }
+
+    /// Returns all fee record IDs in insertion order (append-only ledger).
+    pub fn get_fee_ledger(env: Env) -> Vec<String> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeLedger)
+            .unwrap_or_else(|| vec![&env])
+    }
+
+    /// Returns all fee records (full details) in insertion order.
+    /// Use for audit: every fee ever collected, immutable.
+    pub fn get_fee_history(env: Env) -> Vec<FeeRecord> {
+        let ids: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeLedger)
+            .unwrap_or_else(|| vec![&env]);
+
+        let mut records: Vec<FeeRecord> = vec![&env];
+        for id in ids.iter() {
+            if let Some(r) = env.storage().persistent().get(&DataKey::FeeRecord(id.clone())) {
+                records.push_back(r);
+            }
+        }
+        records
+    }
+
+    /// Returns the running uncollected fee accumulator balance (stroops).
+    pub fn get_fee_accumulator(env: Env) -> i128 {
+        env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0)
+    }
+
+    /// Returns the total fees swept to treasury since contract deployment.
+    pub fn get_total_fees_swept(env: Env) -> i128 {
+        env.storage().persistent().get(&DataKey::TotalFeesSwept).unwrap_or(0)
+    }
+
+    /// Returns the current auto-sweep threshold (USDC stroops).
+    pub fn get_sweep_threshold(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SweepThreshold)
+            .unwrap_or(DEFAULT_SWEEP_THRESHOLD)
+    }
+
+    /// Admin: update the auto-sweep threshold.
+    pub fn set_sweep_threshold(env: Env, admin: Address, threshold: i128) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        if threshold <= 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+        env.storage().persistent().set(&DataKey::SweepThreshold, &threshold);
+        Ok(())
+    }
+
+    /// Manually sweep all accumulated fees to treasury.
+    /// Can be called by anyone; the funds always go to the configured treasury address.
+    pub fn sweep_fees(env: Env) -> Result<i128, CarbonError> {
+        let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
+        if acc == 0 {
+            return Ok(0);
+        }
+        let usdc: Address    = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
+        let treasury: Address = env.storage().persistent().get(&DataKey::Treasury).unwrap();
+        let usdc_client = token::Client::new(&env, &usdc);
+        let contract_self = env.current_contract_address();
+        // Fees were already transferred to treasury during purchase — accumulator
+        // tracks the accounting total; reset it to zero.
+        let _ = contract_self; // no on-chain re-transfer needed; treasury already received funds
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &0_i128);
+        let swept_total: i128 = env.storage().persistent().get(&DataKey::TotalFeesSwept).unwrap_or(0);
+        let new_swept = swept_total.checked_add(acc).ok_or(CarbonError::Arithmetic)?;
+        env.storage().persistent().set(&DataKey::TotalFeesSwept, &new_swept);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("swept")),
+            FeeSweptEvent {
+                swept_by:  env.current_contract_address(),
+                amount:    acc,
+                swept_at:  env.ledger().timestamp(),
+            },
+        );
+        Ok(acc)
     }
 
     fn extend_listing_ttl(env: &Env, listing_id: &String) {
@@ -1334,5 +1633,447 @@ mod edge_case_tests {
             result.unwrap_err().unwrap(),
             CarbonError::InvalidSerialRange
         );
+    }
+
+    // ── Mutation-testing survivor kills (issue #632) ──────────────────────────
+    //
+    // `len != amounts.len() || len > MAX_BATCH_SIZE` guards bulk_purchase.
+    // These tests exercise the MAX_BATCH_SIZE (10) boundary directly, without
+    // requiring real listings/cross-contract transfers: the length check runs
+    // before any listing is loaded, so a request that passes the length check
+    // but references nonexistent listings surfaces ListingNotFound instead of
+    // InvalidSerialRange, proving the boundary comparison is `>` not `>=`.
+
+    #[test]
+    fn test_bulk_purchase_exact_max_batch_size_passes_length_check() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let buyer = Address::generate(&env);
+        let ids = soroban_sdk::vec![
+            &env,
+            s(&env, "l0"),
+            s(&env, "l1"),
+            s(&env, "l2"),
+            s(&env, "l3"),
+            s(&env, "l4"),
+            s(&env, "l5"),
+            s(&env, "l6"),
+            s(&env, "l7"),
+            s(&env, "l8"),
+            s(&env, "l9"),
+        ];
+        let amounts = soroban_sdk::vec![
+            &env, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128,
+            10_i128,
+        ];
+        let result = client.try_bulk_purchase(&buyer, &ids, &amounts);
+        // Exactly MAX_BATCH_SIZE (10) listings must pass the length guard and
+        // fail downstream on the (nonexistent) listing lookup instead.
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::ListingNotFound);
+    }
+
+    #[test]
+    fn test_bulk_purchase_over_max_batch_size_fails_length_check() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let buyer = Address::generate(&env);
+        let ids = soroban_sdk::vec![
+            &env,
+            s(&env, "l0"),
+            s(&env, "l1"),
+            s(&env, "l2"),
+            s(&env, "l3"),
+            s(&env, "l4"),
+            s(&env, "l5"),
+            s(&env, "l6"),
+            s(&env, "l7"),
+            s(&env, "l8"),
+            s(&env, "l9"),
+            s(&env, "l10"),
+        ];
+        let amounts = soroban_sdk::vec![
+            &env, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128, 10_i128,
+            10_i128, 10_i128,
+        ];
+        let result = client.try_bulk_purchase(&buyer, &ids, &amounts);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidSerialRange
+        );
+    }
+
+    /// Kills mutation of `vintage_year < 1990` -> `<= 1990` in list_credits:
+    /// vintage 1990 is the minimum valid year and must be accepted.
+    #[test]
+    fn test_list_vintage_1990_succeeds() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let seller = Address::generate(&env);
+        client.list_credits(
+            &seller,
+            &s(&env, "l-1990"),
+            &s(&env, "b-1990"),
+            &s(&env, "p1"),
+            &100_i128,
+            &10_0000000_i128,
+            &1990_u32,
+            &s(&env, "VCS"),
+            &s(&env, "BR"),
+        );
+        let l = client.get_listing(&s(&env, "l-1990"));
+        assert_eq!(l.vintage_year, 1990);
+    }
+}
+
+// ── Fee Config Tests (#651) ───────────────────────────────────────────────────
+
+#[cfg(test)]
+mod fee_config_tests {
+    use super::*;
+    use carbon_credit::CarbonCreditContract;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    fn setup(
+        env: &Env,
+    ) -> (
+        CarbonMarketplaceContractClient,
+        Address, // admin
+        Address, // treasury
+        Address, // seller
+        Address, // usdc
+    ) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        let admin = Address::generate(env);
+        let treasury = Address::generate(env);
+        let seller = Address::generate(env);
+        let usdc = env.register_stellar_asset_contract(admin.clone());
+        let credit_id = env.register_contract(None, CarbonCreditContract);
+        let id = env.register_contract(None, CarbonMarketplaceContract);
+        let client = CarbonMarketplaceContractClient::new(env, &id);
+        client.initialize(&admin, &usdc, &credit_id, &treasury);
+        (client, admin, treasury, seller, usdc)
+    }
+
+    /// Admin can change fee rate to 2%
+    #[test]
+    fn test_fee_change_by_admin() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        client.set_fee_rate(&admin, &2_i128, &100_i128);
+
+        let cfg = client.get_fee_config();
+        assert_eq!(cfg.numerator, 2);
+        assert_eq!(cfg.denom, 100);
+        assert_eq!(cfg.updated_by, admin);
+    }
+
+    /// Non-admin cannot change fee rate
+    #[test]
+    fn test_fee_change_rejected_by_non_admin() {
+        let env = Env::default();
+        let (client, _admin, _, _, _) = setup(&env);
+        let rogue = Address::generate(&env);
+
+        let result = client.try_set_fee_rate(&rogue, &2_i128, &100_i128);
+        assert!(result.is_err());
+    }
+
+    /// Fee rate above 10% (numerator > denom/10) is rejected
+    #[test]
+    fn test_fee_above_max_rejected() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        // 11/100 = 11% — exceeds max of 10%
+        let result = client.try_set_fee_rate(&admin, &11_i128, &100_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::FeeConfigInvalid
+        );
+    }
+
+    /// denom = 0 is rejected
+    #[test]
+    fn test_fee_zero_denom_rejected() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        let result = client.try_set_fee_rate(&admin, &1_i128, &0_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::FeeConfigInvalid
+        );
+    }
+
+    /// negative numerator is rejected
+    #[test]
+    fn test_fee_negative_numerator_rejected() {
+        let env = Env::default();
+        let (client, admin, _, _, _) = setup(&env);
+
+        let result = client.try_set_fee_rate(&admin, &-1_i128, &100_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::FeeConfigInvalid
+        );
+    }
+
+    /// Default fee (before any set_fee_rate call) is 1/100 = 1%
+    #[test]
+    fn test_default_fee_is_1_percent() {
+        let env = Env::default();
+        let (client, _, _, _, _) = setup(&env);
+
+        let cfg = client.get_fee_config();
+        assert_eq!(cfg.numerator, 1);
+        assert_eq!(cfg.denom, 100);
+    }
+
+    /// After set_fee_rate(2, 100), a purchase of price=1000, amount=1
+    /// should route 980 to seller and 20 to treasury
+    #[test]
+    fn test_purchase_uses_new_fee_rate() {
+        let env = Env::default();
+        let (client, admin, treasury, seller, usdc) = setup(&env);
+
+        // Set 2% fee
+        client.set_fee_rate(&admin, &2_i128, &100_i128);
+
+        // List 100 credits at price 1000 stroop each
+        client.list_credits(
+            &seller,
+            &s(&env, "list-fee"),
+            &s(&env, "batch-fee"),
+            &s(&env, "proj-fee"),
+            &100_i128,
+            &1000_i128,
+            &2023_u32,
+            &s(&env, "VCS"),
+            &s(&env, "Brazil"),
+        );
+
+        // Fund buyer
+        let buyer = Address::generate(&env);
+        let usdc_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &usdc);
+        usdc_admin_client.mint(&buyer, &200_000_i128);
+
+        let usdc_client = soroban_sdk::token::Client::new(&env, &usdc);
+        let seller_before = usdc_client.balance(&seller);
+        let treasury_before = usdc_client.balance(&treasury);
+
+        // Purchase 10 credits: total = 10 * 1000 = 10_000
+        // fee = 10_000 * 2 / 100 = 200
+        // seller gets = 10_000 - 200 = 9_800
+        client.purchase_credits(&buyer, &s(&env, "list-fee"), &10_i128);
+
+        let seller_after = usdc_client.balance(&seller);
+        let treasury_after = usdc_client.balance(&treasury);
+
+        assert_eq!(seller_after - seller_before, 9_800);
+        assert_eq!(treasury_after - treasury_before, 200);
+    }
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn setup(env: &Env) -> (CarbonMarketplaceContractClient, Address, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let admin    = Address::generate(env);
+        let treasury = Address::generate(env);
+        let seller   = Address::generate(env);
+        let usdc     = env.register_stellar_asset_contract(admin.clone());
+        let credit_id = env.register_contract(None, carbon_credit::CarbonCreditContract);
+        let id       = env.register_contract(None, CarbonMarketplaceContract);
+        let client   = CarbonMarketplaceContractClient::new(env, &id);
+        client.initialize(&admin, &usdc, &credit_id, &treasury);
+        (client, admin, seller)
+    }
+
+    fn add_listing(env: &Env, client: &CarbonMarketplaceContractClient, seller: &Address, id: &str, vintage: u32) {
+        client.list_credits(
+            seller,
+            &s(env, id),
+            &s(env, &format!("batch-{id}")),
+            &s(env, &format!("proj-{id}")),
+            &100_i128,
+            &10_0000000_i128,
+            &vintage,
+            &s(env, "VCS"),
+            &s(env, "Brazil"),
+        );
+    }
+
+    // ── Empty marketplace ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_empty_page_returns_zero_total() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let page = client.get_listings_page(&0, &10);
+        assert_eq!(page.total, 0);
+        assert_eq!(page.items.len(), 0);
+        assert_eq!(page.offset, 0);
+    }
+
+    // ── Single page ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_single_page_all_items_fit() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "l1", 2023);
+        add_listing(&env, &client, &seller, "l2", 2024);
+
+        let page = client.get_listings_page(&0, &10);
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.offset, 0);
+    }
+
+    // ── Multi-page ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_multi_page_paging_through() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        for i in 0..5 {
+            add_listing(&env, &client, &seller, &format!("mp-{i}"), 2023);
+        }
+
+        let page1 = client.get_listings_page(&0, &2);
+        assert_eq!(page1.total, 5);
+        assert_eq!(page1.items.len(), 2);
+        assert_eq!(page1.offset, 0);
+
+        let page2 = client.get_listings_page(&2, &2);
+        assert_eq!(page2.total, 5);
+        assert_eq!(page2.items.len(), 2);
+        assert_eq!(page2.offset, 2);
+
+        let page3 = client.get_listings_page(&4, &2);
+        assert_eq!(page3.total, 5);
+        assert_eq!(page3.items.len(), 1);
+        assert_eq!(page3.offset, 4);
+    }
+
+    // ── Offset beyond end ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_offset_beyond_total_returns_empty_page() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "oob-1", 2023);
+
+        let page = client.get_listings_page(&100, &10);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 0);
+        assert_eq!(page.offset, 100);
+    }
+
+    // ── PageSizeTooLarge ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_page_size_too_large_returns_error() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let result = client.try_get_listings_page(&0, &51);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::PageSizeTooLarge);
+    }
+
+    #[test]
+    fn test_exact_max_page_size_accepted() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let page = client.get_listings_page(&0, &MAX_PAGE_SIZE);
+        assert_eq!(page.total, 0);
+    }
+
+    // ── Delisted listings excluded ──────────────────────────────────────────
+
+    #[test]
+    fn test_delisted_excluded_from_page() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "d1", 2023);
+        add_listing(&env, &client, &seller, "d2", 2023);
+        client.delist_credits(&seller, &s(&env, "d1"));
+
+        let page = client.get_listings_page(&0, &10);
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+    }
+
+    // ── get_listings_by_vintage_page ────────────────────────────────────────
+
+    #[test]
+    fn test_vintage_page_filters_correctly() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        add_listing(&env, &client, &seller, "vp1", 2023);
+        add_listing(&env, &client, &seller, "vp2", 2023);
+        add_listing(&env, &client, &seller, "vp3", 2024);
+
+        let page = client.get_listings_by_vintage_page(&2023, &0, &10);
+        assert_eq!(page.total, 2);
+        assert_eq!(page.items.len(), 2);
+    }
+
+    #[test]
+    fn test_vintage_page_page_size_too_large() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let result = client.try_get_listings_by_vintage_page(&2023, &0, &51);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::PageSizeTooLarge);
+    }
+
+    // ── Total count unaffected by offset/limit ──────────────────────────────
+
+    #[test]
+    fn test_total_count_reflects_all_matches_not_page_size() {
+        let env = Env::default();
+        let (client, _, seller) = setup(&env);
+        for i in 0..10 {
+            add_listing(&env, &client, &seller, &format!("tc-{i}"), 2023);
+        }
+
+        let page = client.get_listings_page(&0, &3);
+        assert_eq!(page.total, 10);
+        assert_eq!(page.items.len(), 3);
     }
 }

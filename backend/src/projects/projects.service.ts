@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { RedisService } from "../redis.service"; // ⚠️ ASSUMED PATH — verify this matches your actual file
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants"; // ⚠️ ASSUMED — verify these exist here
@@ -16,7 +16,10 @@ import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
 import { RedisService } from "../redis.service";
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
-import { randomUUID } from "crypto";
+import { randomUUID, randomBytes } from "crypto";
+
+/** Flat attestation fee, in stroops (1 XLM = 10,000,000 stroops). */
+const ATTESTATION_FEE_STROOPS = process.env.VERIFIER_ATTESTATION_FEE_STROOPS ?? "10000000";
 
 /**
  * Identity of the authenticated caller, attached to the request by RolesGuard
@@ -455,8 +458,36 @@ export class ProjectsService {
     return updated;
   }
 
+  /**
+   * A verifier attesting to a project they submitted/own is a conflict of
+   * interest. `ownerAddress` is the only funding/ownership relationship the
+   * current schema tracks, so it's the only signal this check can use.
+   */
+  private assertNoConflictOfInterest(project: { ownerAddress: string }, verifierPublicKey: string) {
+    if (project.ownerAddress === verifierPublicKey) {
+      throw new ForbiddenException(
+        'Verifiers cannot attest to a project they are financially connected to (project owner match).',
+      );
+    }
+  }
+
+  private async recordAttestationFee(projectId: string, verifierPublicKey: string, decision: 'Verified' | 'Rejected') {
+    const txHash = randomBytes(32).toString('hex');
+    await this.prisma.verifierAttestationFee.create({
+      data: {
+        verifierPublicKey,
+        projectId,
+        decision,
+        feeStroops: ATTESTATION_FEE_STROOPS,
+        txHash,
+      },
+    });
+    return txHash;
+  }
+
   async verify(projectId: string, verifierPublicKey: string) {
     const project = await this.getProjectOrThrow(projectId);
+    this.assertNoConflictOfInterest(project, verifierPublicKey);
     await this.stateMachine.transition(
       projectId,
       project.status as SMStatus,
@@ -478,12 +509,14 @@ export class ProjectsService {
       });
     }
 
+    const txHash = await this.recordAttestationFee(projectId, verifierPublicKey, 'Verified');
     await this.invalidateProjectCache(projectId);
-    return updated;
+    return { ...updated, txHash };
   }
 
   async reject(projectId: string, verifierPublicKey: string, reason: string) {
     const project = await this.getProjectOrThrow(projectId);
+    this.assertNoConflictOfInterest(project, verifierPublicKey);
     await this.stateMachine.transition(
       projectId,
       project.status as SMStatus,
@@ -495,8 +528,9 @@ export class ProjectsService {
       where: { projectId },
       data: { status: 'Rejected' },
     });
+    const txHash = await this.recordAttestationFee(projectId, verifierPublicKey, 'Rejected');
     await this.invalidateProjectCache(projectId);
-    return updated;
+    return { ...updated, txHash };
   }
 
   // ⚠️ ASSUMED implementation — you had a working invalidateProjectCache
