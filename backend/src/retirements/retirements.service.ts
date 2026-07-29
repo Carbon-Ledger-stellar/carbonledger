@@ -18,6 +18,10 @@ import { QueueService } from "../queue/queue.service";
 import { JobType } from "../queue/queue.constants";
 import { sanitizeRetirementPayload, sanitizeRetirementForResponse } from "../common/sanitization.util";
 
+import { Optional } from "@nestjs/common";
+import { EventSourcingService } from "../events/event-sourcing.service";
+import { CreditEventType } from "../events/credit-event.types";
+
 export interface BulkRetirementResult {
   batchId: string;
   retirementId: string;
@@ -62,6 +66,7 @@ export class RetirementsService {
     private readonly ipfsService: IpfsService,
     private readonly certificateService: CertificateService,
     private readonly queueService: QueueService,
+    @Optional() private readonly eventSourcing?: EventSourcingService,
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
@@ -106,6 +111,22 @@ export class RetirementsService {
         txHash: sanitizedDto.txHash,
       },
     });
+
+    if (this.eventSourcing) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: dto.batchId,
+        eventType: CreditEventType.RETIRE,
+        actor: dto.retiredBy,
+        oldState: { status: batch.status ?? 'Active' },
+        newState: {
+          batchId: dto.batchId,
+          amountRetired: dto.amount,
+          status: 'Retired',
+          beneficiary: dto.beneficiary,
+        },
+        txHash: dto.txHash,
+      }).catch(() => undefined);
+    }
 
     // Enqueue certificate generation job via BullMQ for async PDF generation
     try {
