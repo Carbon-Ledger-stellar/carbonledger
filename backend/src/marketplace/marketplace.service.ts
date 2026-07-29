@@ -6,6 +6,9 @@ import { ListingsCacheService } from "./listings-cache.service";
 import { MarketplaceContractService } from "./marketplace-contract.service";
 import { WebhookService } from "../webhook/webhook.service";
 
+import { EventSourcingService } from "../events/event-sourcing.service";
+import { CreditEventType } from "../events/credit-event.types";
+
 @Injectable()
 export class MarketplaceService {
   private readonly logger = new Logger(MarketplaceService.name);
@@ -15,6 +18,7 @@ export class MarketplaceService {
     private readonly cache: ListingsCacheService,
     private readonly contractService: MarketplaceContractService,
     @Optional() private readonly webhookService?: WebhookService,
+    @Optional() private readonly eventSourcing?: EventSourcingService,
   ) {}
 
   /** projectName isn't a MarketListing column — it's joined in from the related project for display. */
@@ -195,11 +199,30 @@ export class MarketplaceService {
       },
     });
     await this.cache.invalidateAll();
+
+    if (this.eventSourcing) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: dto.credit_batch_id,
+        eventType: CreditEventType.LIST,
+        actor: dto.seller,
+        newState: {
+          listingId: dto.listingId,
+          batchId: dto.credit_batch_id,
+          projectId: dto.projectId,
+          seller: dto.seller,
+          pricePerCredit: dto.price_per_tonne,
+          amountAvailable: dto.amount,
+          status: 'Listed',
+        },
+        txHash,
+      }).catch(() => undefined);
+    }
+
     return { ...result, txHash };
   }
 
   async delistListing(listingId: string) {
-    await this.findOne(listingId);
+    const listing = await this.findOne(listingId);
     
     // Call delist_credits on the carbon_marketplace contract
     const txHash = await this.contractService.delistCredits(listingId);
@@ -211,6 +234,17 @@ export class MarketplaceService {
     });
     await this.cache.invalidateAll();
     
+    if (this.eventSourcing && listing.batchId) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: listing.batchId,
+        eventType: CreditEventType.DELIST,
+        actor: listing.seller,
+        oldState: { status: 'Listed' },
+        newState: { listingId, status: 'Delisted' },
+        txHash,
+      }).catch(() => undefined);
+    }
+
     return { ...result, txHash };
   }
 
@@ -237,6 +271,22 @@ export class MarketplaceService {
       batchId: listing.batchId,
       amount: dto.amount,
     };
+
+    if (this.eventSourcing && listing.batchId) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: listing.batchId,
+        eventType: CreditEventType.PURCHASE,
+        actor: dto.buyerPublicKey,
+        oldState: { amountAvailable: listing.amountAvailable, ownerPublicKey: listing.seller },
+        newState: {
+          batchId: listing.batchId,
+          amountAvailable: newAmount,
+          ownerPublicKey: dto.buyerPublicKey,
+          status: newStatus === 'Sold' ? 'Sold' : 'Listed',
+        },
+        txHash,
+      }).catch(() => undefined);
+    }
 
     // Dispatch webhook: credit.purchased
     try {
