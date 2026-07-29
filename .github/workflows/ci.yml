@@ -253,7 +253,18 @@ jobs:
 
       - name: Run contract tests
         working-directory: contracts
-        run: cargo test --workspace
+        run: |
+          # Capture output for annotation parsing by ci-test-annotations workflow
+          cargo test --workspace 2>&1 | tee /tmp/rust-test-output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload Rust test output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contract-test-output
+          path: /tmp/rust-test-output.txt
+          retention-days: 7
 
       - name: Check contract event docs are in sync (#640)
         run: python3 scripts/check_event_docs_sync.py
@@ -446,7 +457,15 @@ jobs:
         env:
           DATABASE_URL: postgresql://carbonledger:testpassword@localhost:5432/carbonledger_test
           JWT_SECRET: test-secret
-        run: npm test
+        run: npm test -- --reporters=default --reporters=jest-junit
+
+      - name: Upload backend JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-junit
+          path: backend/junit.xml
+          retention-days: 7
 
   frontend:
     name: Next.js Frontend

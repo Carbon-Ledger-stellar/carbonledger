@@ -16,12 +16,28 @@
 
 import { defineConfig, devices } from '@playwright/test';
 
+const isCI = !!process.env.CI;
+
+/**
+ * Playwright configuration for CarbonLedger.
+ *
+ * Browser / wallet matrix:
+ *   - chrome   × Freighter
+ *   - chrome   × Xbull
+ *   - firefox  × Freighter
+ *   - firefox  × Xbull
+ *   - brave    × Freighter
+ *   - brave    × Xbull
+ *
+ * JUnit output is always written to test-results/junit.xml so the
+ * ci-test-annotations workflow can parse it for inline PR annotations.
+ */
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
-  forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  forbidOnly: isCI,
+  retries: isCI ? 2 : 0,
+  workers: isCI ? 6 : undefined,
   reporter: [
     ['html', { open: 'never' }],
     ['json', { outputFile: 'test-results/results.json' }],
@@ -34,6 +50,7 @@ export default defineConfig({
     // Capture a screenshot at every lifecycle stage assertion (#628).
     screenshot: 'on',
     video: 'retain-on-failure',
+    ignoreHTTPSErrors: true,
   },
 
   projects: process.env.CI
