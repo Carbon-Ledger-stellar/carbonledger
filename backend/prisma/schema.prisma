@@ -78,7 +78,7 @@ model RetirementRecord {
   serialStart      String
   serialEnd        String
   serialNumbers    String[]
-  txHash           String
+  txHash           String   @unique
   certificateCid   String?
   isValid          Boolean  @default(true)
   validatedAt      DateTime?
@@ -88,8 +88,27 @@ model RetirementRecord {
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   ipfsFiles IPFSFile[]
   certificates RetirementCertificate[]
+  zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+}
+
+model ZkRetirementProof {
+  id                     String   @id @default(cuid())
+  retirementId           String
+  beneficiaryCommitment  String
+  nullifier              String   @unique
+  retiredByHash          String
+  proofJson              Json
+  publicSignals          Json
+  verifiedOnChain        Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  retirement RetirementRecord @relation(fields: [retirementId], references: [id], onDelete: Cascade)
+
+  @@index([retirementId])
+  @@index([retiredByHash])
 }
 
 model RetirementCertificate {
@@ -147,7 +166,7 @@ model MonitoringData {
   @@unique([projectId, period])
 }
 
-model OracleUpdate {
+model OracleJob {
   id               String    @id @default(cuid())
   idempotencyKey   String    @unique  // projectId:period or methodology:vintageYear
   type             String    // "monitoring" | "price"
@@ -221,19 +240,24 @@ model EmailLog {
 }
 
 model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  action     String
-  resourceId String?
-  ipAddress  String?
-  result     String?  // e.g., "Success", "Failure: <error>"
-  metadata   Json?    // Optional extra info
-  timestamp  DateTime @default(now())
+  id           String   @id @default(cuid())
+  userId       String?
+  action       String
+  resourceId   String?
+  ipAddress    String?
+  result       String?  // e.g., "Success", "Failure: <error>"
+  metadata     Json?    // Optional extra info
+  timestamp    DateTime @default(now())
+  /// SHA-256 hex digest of the preceding AuditLog entry's entryHash (null for first entry)
+  previousHash String?
+  /// SHA-256 hex digest over the canonical entry payload — tamper detection (#674)
+  entryHash    String?
 
   @@index([userId])
   @@index([action])
   @@index([resourceId])
   @@index([timestamp])
+  @@index([entryHash])
 }
 
 model SyncMetadata {
@@ -295,6 +319,19 @@ model VerifierApplication {
   rejectionReason  String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+}
+
+model VerifierAttestationFee {
+  id                String   @id @default(cuid())
+  verifierPublicKey String
+  projectId         String
+  decision          String   // Verified | Rejected
+  feeStroops        String
+  txHash            String   @unique
+  createdAt         DateTime @default(now())
+
+  @@index([verifierPublicKey, createdAt])
+  @@index([projectId])
 }
 
 model PriceApproval {
@@ -392,4 +429,17 @@ model CreditEvent {
 
   @@index([creditBatchId])
   @@index([timestamp])
+}
+
+model SatelliteWebhookProvider {
+  id          String   @id @default(cuid())
+  providerId  String   @unique
+  name        String
+  hmacKey     String   // stored as hex-encoded bytes, encrypted at rest ideally
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([providerId])
+  @@index([isActive])
 }

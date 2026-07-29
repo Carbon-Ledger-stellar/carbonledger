@@ -1,4 +1,5 @@
-import useSWR, { SWRConfiguration } from "swr";
+import useSWR, { SWRConfiguration, mutate as globalMutate } from "swr";
+import type { SerialRangeSegment } from "./serial-range-segments";
 import useSWRInfinite from "swr/infinite";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
@@ -123,6 +124,17 @@ async function fetcher<T>(url: string): Promise<T> {
   return res.json();
 }
 
+/** SWR fetcher for endpoints gated behind a verifier/admin JWT bearer token. */
+function authFetcher<T>([url, token]: [string, string | null]): Promise<T> {
+  return fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : undefined }).then(async (res) => {
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.message || "API error");
+    }
+    return res.json();
+  });
+}
+
 const swrConfig: SWRConfiguration = {
   revalidateOnFocus: true,
   errorRetryCount: 3,
@@ -160,9 +172,43 @@ export function useProject(id: string) {
   return useSWR<CarbonProject>(id ? `${API_URL}/projects/${id}` : null, fetcher, swrConfig);
 }
 
-export function useListings(params?: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string; projectType?: string; search?: string }) {
-  const query = new URLSearchParams(params as Record<string, string>).toString();
-  return useSWR<MarketListing[]>(`${API_URL}/marketplace/listings?${query}`, fetcher, swrConfig);
+export type ListingSortField = "price" | "vintageYear" | "methodology" | "verificationDate";
+export type SortOrder = "asc" | "desc";
+
+export interface PaginatedListingsResponse {
+  listings: MarketListing[];
+  next_cursor?: string;
+  total_count: number;
+  page?: number;
+  total_pages?: number;
+}
+
+export interface ListingsQueryParams {
+  methodology?: string;
+  vintage?: number;
+  country?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  projectType?: string;
+  search?: string;
+  sortBy?: ListingSortField;
+  sortOrder?: SortOrder;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Backend returns a paginated wrapper ({ listings, total_count, ... }), not a bare
+ * array — refreshInterval defaults to 30s so displayed prices are never more than
+ * 30s stale (see issue #619's "no more than 60s stale" requirement).
+ */
+export function useListings(params?: ListingsQueryParams, refreshInterval = 30_000) {
+  const query = new URLSearchParams(params as unknown as Record<string, string>).toString();
+  return useSWR<PaginatedListingsResponse>(
+    `${API_URL}/marketplace/listings?${query}`,
+    fetcher,
+    { ...swrConfig, refreshInterval },
+  );
 }
 
 export function useListing(id: string) {
@@ -239,6 +285,9 @@ export interface SerialLookupResult {
   txHash?: string;
   // Chain of custody
   provenance: ProvenanceEvent[];
+  batchSerialStart?: string;
+  batchSerialEnd?: string;
+  rangeSegments?: SerialRangeSegment[];
 }
 
 export function useSerialLookup(serial: string) {
@@ -460,6 +509,46 @@ export async function generateCertificatePdf(retirementId: string): Promise<Blob
   return res.blob();
 }
 
+export interface PrivateZkCertificate {
+  retirementId: string;
+  scheme: string;
+  circuit: string;
+  beneficiaryCommitment: string;
+  nullifier: string;
+  retiredByHash: string;
+  proof: unknown;
+  publicSignals: string[];
+  verifiedOnChain: boolean;
+  createdAt: string;
+  note: string;
+}
+
+/** Generate (or error if exists) a private ZK retirement certificate. */
+export async function generateZkProof(retirementId: string): Promise<PrivateZkCertificate> {
+  const res = await fetch(`${API_URL}/retirements/${retirementId}/zk-proof`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || "Failed to generate private certificate");
+  }
+  return res.json();
+}
+
+/** Fetch a previously stored private ZK certificate. */
+export async function fetchZkProof(retirementId: string): Promise<PrivateZkCertificate> {
+  const res = await fetch(`${API_URL}/retirements/${retirementId}/zk-proof`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || "Private certificate not found");
+  }
+  return res.json();
+}
+
 export interface EsgExportFilters {
   methodology?: string;
   country?: string;
@@ -491,4 +580,126 @@ export async function exportEsgPdf(filters: EsgExportFilters): Promise<Blob> {
   });
   if (!res.ok) throw new Error("PDF export failed");
   return res.blob();
+}
+
+// ── Notification preferences ───────────────────────────────────────────────────
+
+export interface NotificationPreferences {
+  projectApproved: boolean;
+  creditsMinted: boolean;
+  purchaseConfirmed: boolean;
+  retirementConfirmed: boolean;
+}
+
+export function useNotificationPreferences(publicKey: string) {
+  return useSWR<NotificationPreferences>(
+    publicKey ? `${API_URL}/notifications/preferences/${encodeURIComponent(publicKey)}` : null,
+    fetcher,
+    swrConfig,
+  );
+}
+
+export async function updateNotificationPreferences(
+  publicKey: string,
+  patch: Partial<NotificationPreferences>,
+): Promise<NotificationPreferences> {
+  const res = await fetch(`${API_URL}/notifications/preferences/${encodeURIComponent(publicKey)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Update failed");
+  return res.json();
+}
+
+export function useLeaderboard(year?: number) {
+  const query = year ? `?year=${year}` : "";
+  return useSWR<LeaderboardEntry[]>(`${API_URL}/stats/leaderboard${query}`, fetcher, swrConfig);
+}
+
+// ── Verifier dashboard ────────────────────────────────────────────────────────
+
+export interface PendingVerifierProject extends CarbonProject {
+  /** IPFS CID of the project's supporting documentation, if separate from metadataCid. */
+  documentCid?: string;
+}
+
+export function usePendingVerifierProjects(publicKey: string | null, token: string | null) {
+  return useSWR<PendingVerifierProject[]>(
+    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/pending-projects`, token] : null,
+    authFetcher,
+    swrConfig,
+  );
+}
+
+export interface VerifierAttestationHistoryPage {
+  projects: PendingVerifierProject[];
+  nextCursor?: string;
+  hasMore: boolean;
+  total: number;
+}
+
+export function useVerifierAttestationHistory(publicKey: string | null, token: string | null, cursor?: string) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return useSWR<VerifierAttestationHistoryPage>(
+    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/history${query}`, token] : null,
+    authFetcher,
+    swrConfig,
+  );
+}
+
+export interface VerifierAttestationFee {
+  id: string;
+  verifierPublicKey: string;
+  projectId: string;
+  decision: "Verified" | "Rejected";
+  feeStroops: string;
+  txHash: string;
+  createdAt: string;
+}
+
+export interface VerifierFeeHistoryPage {
+  fees: VerifierAttestationFee[];
+  nextCursor?: string;
+  hasMore: boolean;
+  total: number;
+}
+
+export function useVerifierFeeHistory(publicKey: string | null, token: string | null, cursor?: string) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return useSWR<VerifierFeeHistoryPage>(
+    publicKey && token ? [`${API_URL}/verifiers/${publicKey}/fees${query}`, token] : null,
+    authFetcher,
+    swrConfig,
+  );
+}
+
+export async function exportVerifierFeesCsv(publicKey: string, token: string): Promise<Blob> {
+  const res = await fetch(`${API_URL}/verifiers/${publicKey}/fees/export`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error("Fee export failed");
+  return res.blob();
+}
+
+/** Revalidate every cached SWR key scoped to this verifier's dashboard/history/fees data. */
+export async function invalidateVerifierCaches(publicKey: string): Promise<void> {
+  await globalMutate(
+    (key) => Array.isArray(key) && typeof key[0] === "string" && key[0].includes(`/verifiers/${publicKey}/`),
+    undefined,
+    { revalidate: true },
+  );
+}
+
+export function useCreditBatches(projectId: string) {
+  return useSWR<CreditBatch[]>(
+    projectId ? `${API_URL}/credits/project/${encodeURIComponent(projectId)}/batches` : null,
+    async (url: string) => {
+      const res = await fetch(url);
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error("Failed to load credit batches");
+      return res.json();
+    },
+    swrConfig,
+  );
 }

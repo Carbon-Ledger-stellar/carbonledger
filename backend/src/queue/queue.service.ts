@@ -7,8 +7,13 @@ import { QUEUE_NAME, JobType } from './queue.constants';
 export class QueueService {
   constructor(@InjectQueue(QUEUE_NAME) private readonly queue: Queue) {}
 
-  async enqueue(type: JobType, payload: Record<string, unknown>): Promise<Job> {
+  async enqueue(
+    type: JobType,
+    payload: Record<string, unknown>,
+    options?: { jobId?: string },
+  ): Promise<Job> {
     return this.queue.add(type, payload, {
+      jobId: options?.jobId,
       attempts: 3,
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: false,

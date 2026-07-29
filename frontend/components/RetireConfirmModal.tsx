@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useTranslations } from "next-intl";
 import { colors } from "../styles/design-system";
 import { formatTonnes } from "../lib/carbon-utils";
 
@@ -23,6 +24,7 @@ export default function RetireConfirmModal({
   onConfirm,
   onCancel,
 }: Props) {
+  const t = useTranslations("retireConfirmModal");
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
@@ -78,10 +80,10 @@ export default function RetireConfirmModal({
           id="retire-modal-title"
           style={{ fontSize: "1.25rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}
         >
-          Confirm Retirement
+          {t("title")}
         </h2>
         <p style={{ color: colors.neutral[500], fontSize: "0.875rem", margin: "0 0 1.5rem" }}>
-          This action is <strong>permanent and irreversible</strong> on the Stellar blockchain.
+          {t("descriptionPrefix")} <strong>{t("descriptionEmphasis")}</strong> {t("descriptionSuffix")}
         </p>
 
         <dl
@@ -90,27 +92,27 @@ export default function RetireConfirmModal({
             gap: "0.5rem 1rem", margin: "0 0 1.5rem", fontSize: "0.9rem",
           }}
         >
-          <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>Amount</dt>
+          <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>{t("amount")}</dt>
           <dd style={{ color: colors.neutral[900], margin: 0, fontWeight: 700 }}>{formatTonnes(amount)}</dd>
 
-          <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>Beneficiary</dt>
+          <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>{t("beneficiary")}</dt>
           <dd style={{ color: colors.neutral[900], margin: 0 }}>{beneficiary}</dd>
 
           {projectName && (
             <>
-              <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>Project</dt>
+              <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>{t("project")}</dt>
               <dd style={{ color: colors.neutral[900], margin: 0 }}>{projectName}</dd>
             </>
           )}
 
           {vintageYear && (
             <>
-              <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>Vintage Year</dt>
+              <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>{t("vintageYear")}</dt>
               <dd style={{ color: colors.neutral[900], margin: 0 }}>{vintageYear}</dd>
             </>
           )}
 
-          <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>Reason</dt>
+          <dt style={{ color: colors.neutral[500], fontWeight: 600 }}>{t("reason")}</dt>
           <dd style={{ color: colors.neutral[900], margin: 0 }}>{reason}</dd>
         </dl>
 
@@ -121,7 +123,7 @@ export default function RetireConfirmModal({
             fontSize: "0.8rem", color: "#854d0e", marginBottom: "1.5rem",
           }}
         >
-          ⚠️ You will be prompted to sign this transaction in Freighter. Once signed, retirement cannot be undone.
+          ⚠️ {t("freighterWarning")}
         </div>
 
         <div style={{ display: "flex", gap: "0.75rem" }}>
@@ -134,7 +136,7 @@ export default function RetireConfirmModal({
               color: colors.neutral[700], fontWeight: 600, cursor: "pointer", fontSize: "0.9rem",
             }}
           >
-            Cancel
+            {t("cancel")}
           </button>
           <button
             onClick={onConfirm}
@@ -145,7 +147,7 @@ export default function RetireConfirmModal({
               color: "#fff", fontWeight: 700, cursor: "pointer", fontSize: "0.9rem",
             }}
           >
-            Confirm Retirement
+            {t("title")}
           </button>
         </div>
       </div>
