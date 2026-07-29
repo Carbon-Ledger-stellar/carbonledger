@@ -1,0 +1,127 @@
+name: Smoke Tests (Post-Deploy)
+
+on:
+  # Runs automatically after the CD workflow completes
+  workflow_run:
+    workflows: ["Testnet CD"]
+    types:
+      - completed
+
+  # Also runnable manually with custom target URLs
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Backend API base URL (e.g. https://api.testnet.carbonledger.io/api/v1)"
+        required: false
+        default: ""
+      frontend_url:
+        description: "Frontend URL (e.g. https://testnet.carbonledger.io)"
+        required: false
+        default: ""
+
+jobs:
+  smoke:
+    name: Smoke Test Suite
+    runs-on: ubuntu-latest
+    # Only proceed if the triggering deployment was successful (or manual run)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install smoke test dependencies
+        working-directory: smoke-tests
+        run: npm install
+
+      # ── Backend API smoke tests ─────────────────────────────────────────
+      - name: Run backend API smoke tests
+        working-directory: smoke-tests
+        env:
+          SMOKE_API_URL: ${{ inputs.api_url || secrets.TESTNET_API_URL || 'http://localhost:3001/api/v1' }}
+          SMOKE_API_RAW_URL: ${{ secrets.TESTNET_API_RAW_URL || 'http://localhost:3001' }}
+        run: |
+          npx jest \
+            --config jest.smoke.json \
+            --testPathPattern='smoke-backend' \
+            --forceExit \
+            --reporters=default \
+            --reporters=jest-junit
+
+      # ── Contract smoke tests ────────────────────────────────────────────
+      - name: Run contract smoke tests
+        working-directory: smoke-tests
+        env:
+          NEXT_PUBLIC_SOROBAN_RPC_URL: ${{ secrets.TESTNET_SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org' }}
+          CARBON_REGISTRY_CONTRACT_ID: ${{ secrets.CARBON_REGISTRY_CONTRACT_ID }}
+          CARBON_CREDIT_CONTRACT_ID: ${{ secrets.CARBON_CREDIT_CONTRACT_ID }}
+          CARBON_MARKETPLACE_CONTRACT_ID: ${{ secrets.CARBON_MARKETPLACE_CONTRACT_ID }}
+          CARBON_ORACLE_CONTRACT_ID: ${{ secrets.CARBON_ORACLE_CONTRACT_ID }}
+        run: |
+          npx jest \
+            --config jest.smoke.json \
+            --testPathPattern='smoke-contracts' \
+            --forceExit \
+            --reporters=default \
+            --reporters=jest-junit
+
+      # ── Frontend smoke tests (Playwright) ──────────────────────────────
+      - name: Install Playwright chromium
+        working-directory: smoke-tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run frontend smoke tests
+        working-directory: smoke-tests
+        env:
+          SMOKE_FRONTEND_URL: ${{ inputs.frontend_url || secrets.TESTNET_FRONTEND_URL || 'http://localhost:3000' }}
+        run: |
+          npx playwright test \
+            --config playwright.smoke.config.ts \
+            --reporter=list,html,junit
+
+      # ── Upload artifacts ────────────────────────────────────────────────
+      - name: Upload smoke test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-results-${{ github.run_id }}
+          path: |
+            smoke-tests/smoke-junit.xml
+            smoke-tests/smoke-playwright-junit.xml
+            smoke-tests/smoke-playwright-report/
+          retention-days: 7
+
+      # Annotate PR / run with test results
+      - name: Annotate backend smoke results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "Smoke Tests — Backend API"
+          path: smoke-tests/smoke-junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+
+      - name: Annotate frontend smoke results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "Smoke Tests — Frontend"
+          path: smoke-tests/smoke-playwright-junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      # Gate: mark deployment failed if any smoke test fails
+      - name: Fail deployment on smoke test failure
+        if: failure()
+        run: |
+          echo "::error::Smoke tests failed. The deployment should be rolled back."
+          echo "See the smoke-test-results artifact for details."
+          exit 1

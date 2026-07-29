@@ -1,0 +1,39 @@
+name: Key Rotation Staging Test
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # 03:00 UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  rotate-and-verify:
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      id-token: write # OIDC assume-role into AWS
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.STAGING_ROTATION_TEST_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Run staging rotation test
+        run: ./scripts/test-key-rotation-staging.sh
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+          STAGING_JWT_SECRET_ARN: ${{ secrets.STAGING_JWT_SECRET_ARN }}
+          STAGING_POSTGRES_SECRET_ARN: ${{ secrets.STAGING_POSTGRES_SECRET_ARN }}
+          STAGING_REDIS_SECRET_ARN: ${{ secrets.STAGING_REDIS_SECRET_ARN }}
+
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {"text": "Scheduled key-rotation staging test failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_ALERTS_WEBHOOK_URL }}
