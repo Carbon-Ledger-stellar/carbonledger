@@ -1,3 +1,19 @@
+/**
+ * Playwright configuration — CarbonLedger frontend
+ *
+ * Issue #628: Added a dedicated `lifecycle-testnet` project that runs the
+ * full carbon credit lifecycle E2E suite (`tests/e2e/full-lifecycle.spec.ts`)
+ * against a live Stellar testnet deployment.  Screenshots are taken at every
+ * lifecycle stage; a JSON results report is produced for the CI artefact step.
+ *
+ * Issue #626: The `security-headers` project runs the header verification
+ * spec against the production build to confirm all six required headers are
+ * present on every response.
+ *
+ * Standard projects (chromium / firefox / webkit) run against localhost for
+ * unit-level UI tests and the existing E2E suite.
+ */
+
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
@@ -9,21 +25,58 @@ export default defineConfig({
   reporter: [
     ['html', { open: 'never' }],
     ['json', { outputFile: 'test-results/results.json' }],
+    // Machine-readable list for CI summary badge.
+    ['list'],
   ],
   use: {
     baseURL: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     trace: 'on-first-retry',
-    screenshot: 'only-on-failure',
+    // Capture a screenshot at every lifecycle stage assertion (#628).
+    screenshot: 'on',
     video: 'retain-on-failure',
   },
+
   projects: process.env.CI
     ? [
+        // ── Standard CI project: runs all non-lifecycle specs ────────────────
         {
           name: 'chromium',
           use: { ...devices['Desktop Chrome'] },
+          testIgnore: [
+            '**/e2e/full-lifecycle.spec.ts',
+            '**/e2e/security-headers.spec.ts',
+          ],
+        },
+
+        // ── Issue #628: Full lifecycle against testnet ────────────────────────
+        // Only runs when STELLAR_TESTNET_URL is provided (set in CI secrets).
+        {
+          name: 'lifecycle-testnet',
+          use: {
+            ...devices['Desktop Chrome'],
+            baseURL:
+              process.env.STELLAR_TESTNET_APP_URL ||
+              process.env.NEXT_PUBLIC_APP_URL ||
+              'http://localhost:3000',
+            // Every lifecycle stage screenshot is saved.
+            screenshot: 'on',
+          },
+          testMatch: ['**/e2e/full-lifecycle.spec.ts'],
+        },
+
+        // ── Issue #626: Security header verification ─────────────────────────
+        {
+          name: 'security-headers',
+          use: {
+            ...devices['Desktop Chrome'],
+            baseURL:
+              process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+          },
+          testMatch: ['**/e2e/security-headers.spec.ts'],
         },
       ]
     : [
+        // ── Local development: all browsers, all specs ───────────────────────
         {
           name: 'chromium',
           use: { ...devices['Desktop Chrome'] },
@@ -37,12 +90,15 @@ export default defineConfig({
           use: { ...devices['Desktop Safari'] },
         },
       ],
+
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     env: {
-      NEXT_PUBLIC_REGISTRY_CONTRACT: process.env.NEXT_PUBLIC_REGISTRY_CONTRACT || 'C_REGISTRY_TEST_CONTRACT_ID000000000000000001',
+      NEXT_PUBLIC_REGISTRY_CONTRACT:
+        process.env.NEXT_PUBLIC_REGISTRY_CONTRACT ||
+        'C_REGISTRY_TEST_CONTRACT_ID000000000000000001',
     },
   },
 });
