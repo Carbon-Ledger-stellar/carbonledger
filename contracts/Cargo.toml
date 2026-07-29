@@ -5,7 +5,7 @@ members = [
     "carbon_marketplace",
     "carbon_oracle",
     "carbon_zk_verifier",
-    "../tests",
+    "adversarial_tests",
 ]
 resolver = "2"
 
