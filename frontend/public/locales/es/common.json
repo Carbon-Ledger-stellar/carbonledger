@@ -131,6 +131,7 @@
     "processing": "Procesando…",
     "purchaseFor": "Comprar {tonnes} por ${amount} USDC",
     "openCartAria": "Abrir carrito con {count} artículos",
+    "closeCart": "Cerrar carrito",
     "walletConnectedTitle": "Billetera conectada",
     "walletErrorTitle": "Error de billetera",
     "purchaseConfirmedTitle": "¡Compra confirmada!",

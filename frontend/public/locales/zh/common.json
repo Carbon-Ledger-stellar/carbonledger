@@ -131,6 +131,7 @@
     "processing": "处理中…",
     "purchaseFor": "以 ${amount} USDC 购买 {tonnes}",
     "openCartAria": "打开购物车，共 {count} 件商品",
+    "closeCart": "关闭购物车",
     "walletConnectedTitle": "钱包已连接",
     "walletErrorTitle": "钱包错误",
     "purchaseConfirmedTitle": "购买已确认！",

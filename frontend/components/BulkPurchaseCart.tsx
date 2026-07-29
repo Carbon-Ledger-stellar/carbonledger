@@ -407,6 +407,7 @@ export default function BulkPurchaseCart() {
           </h3>
           <button
             onClick={() => setDrawerOpen(false)}
+            aria-label={t("closeCart")}
             style={{
               background: "transparent",
               border: "none",

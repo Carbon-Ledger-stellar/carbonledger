@@ -448,6 +448,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                   />
                   <button
                     onClick={() => removeItem(listing.listingId)}
+                    aria-label={t("remove")}
                     style={{
                       background: "transparent",
                       border: "none",
