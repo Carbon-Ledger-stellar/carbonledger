@@ -11,6 +11,7 @@
 import React, { createContext, useContext } from 'react';
 import { useWalletConnection, WalletConnectionState } from '../../hooks/useWalletConnection';
 import { ConnectionStatus } from '../wallet-state-machine';
+import { isSigningCancellation } from '../wallet-errors';
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -31,7 +32,7 @@ export interface WalletContextValue {
   error: string | null;
 
   // --- Actions ---
-  connect: () => Promise<void>;
+  connect: () => Promise<{ success: boolean; error?: string }>;
   disconnect: () => Promise<void>;
   /** Retry after error / wrong network / account change */
   retry: () => Promise<void>;
@@ -80,8 +81,22 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const { signTransaction: freighterSign } = await import('../freighter');
       return await freighterSign(xdr, state.network === 'TESTNET' ? 'TESTNET' : 'PUBLIC');
     } catch (err) {
+      // The user closing/declining the signing prompt is an expected action,
+      // not a failure — return to the previous state without logging or
+      // surfacing an error (see ErrorBoundary.getDerivedStateFromError).
+      if (isSigningCancellation(err)) return null;
       console.error('[WalletContext] signTransaction error', err);
       return null;
+    }
+  };
+
+  const connectWithResult = async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      await connect();
+      return { success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Connect failed";
+      return { success: false, error: message };
     }
   };
 
@@ -97,7 +112,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     error: state.errorMessage,
 
     // Actions
-    connect,
+    connect: connectWithResult,
     disconnect,
     retry,
     reset,

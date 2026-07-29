@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useMemo, useRef } from "react";
+import SerialRangeBar from "./SerialRangeBar";
+import type { SerialRangeSegment } from "../lib/serial-range-segments";
 import { colors } from "../styles/design-system";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -48,11 +50,19 @@ export interface ProvenanceFilters {
 
 export type ViewMode = "timeline" | "tree";
 
+export interface ProvenanceBatchDetail {
+  batchSerialStart: string;
+  batchSerialEnd: string;
+  segments: SerialRangeSegment[];
+}
+
 interface Props {
   events: ProvenanceEvent[] | null;
   /** Optional credit/project metadata shown in PDF header */
   creditId?: string;
   projectName?: string;
+  /** Batch serial range visualization (deep dive). */
+  batchDetail?: ProvenanceBatchDetail | null;
 }
 
 // ─── Event Config ─────────────────────────────────────────────────────────────
@@ -746,7 +756,7 @@ export async function exportProvenancePdf(
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export function ProvenanceTrail({ events, creditId, projectName }: Props) {
+export function ProvenanceTrail({ events, creditId, projectName, batchDetail }: Props) {
   const [view, setView] = useState<ViewMode>("timeline");
   const [filters, setFilters] = useState<ProvenanceFilters>(EMPTY_FILTERS);
   const [expandedSet, setExpandedSet] = useState<Set<number>>(new Set());
@@ -791,8 +801,10 @@ export function ProvenanceTrail({ events, creditId, projectName }: Props) {
     }
   }
 
+  const hasBatchRange = Boolean(batchDetail?.segments?.length);
+
   // Empty state
-  if (!events || events.length === 0) {
+  if ((!events || events.length === 0) && !hasBatchRange) {
     return (
       <div
         style={{
@@ -814,6 +826,18 @@ export function ProvenanceTrail({ events, creditId, projectName }: Props) {
     );
   }
 
+  if ((!events || events.length === 0) && hasBatchRange && batchDetail) {
+    return (
+      <div ref={trailRef} style={{ width: "100%", boxSizing: "border-box" }}>
+        <SerialRangeBar
+          batchSerialStart={batchDetail.batchSerialStart}
+          batchSerialEnd={batchDetail.batchSerialEnd}
+          segments={batchDetail.segments}
+        />
+      </div>
+    );
+  }
+
   const tabStyle = (active: boolean): React.CSSProperties => ({
     padding: "0.4rem 0.9rem",
     border: `1px solid ${active ? colors.primary[500] : colors.neutral[300]}`,
@@ -827,6 +851,13 @@ export function ProvenanceTrail({ events, creditId, projectName }: Props) {
 
   return (
     <div ref={trailRef} style={{ width: "100%", boxSizing: "border-box" }}>
+      {hasBatchRange && batchDetail && (
+        <SerialRangeBar
+          batchSerialStart={batchDetail.batchSerialStart}
+          batchSerialEnd={batchDetail.batchSerialEnd}
+          segments={batchDetail.segments}
+        />
+      )}
       <style>{`
         @media (max-width: 480px) {
           .pt-toolbar { flex-direction: column !important; align-items: stretch !important; }
