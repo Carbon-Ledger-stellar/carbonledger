@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { RetirementsController } from "./retirements.controller";
 import { CertificatesController } from "./certificates.controller";
 import { RetirementsService } from "./retirements.service";
@@ -16,6 +16,7 @@ import { AbilityFactory } from "../policies/ability.factory";
 
 @Module({
   imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule, PoliciesModule],
+  imports: [AuthModule, forwardRef(() => QueueModule), UploadsModule, CertificatesModule],
   controllers: [RetirementsController, CertificatesController],
   providers: [
     RetirementsService,

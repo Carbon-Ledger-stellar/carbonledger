@@ -1,9 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, forwardRef } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { QUEUE_NAME, JobType } from './queue.constants';
 import { PrismaService } from '../prisma.service';
 import { CertificateService } from '../retirements/certificate.service';
+import { RetirementsService } from '../retirements/retirements.service';
 
 @Processor(QUEUE_NAME)
 export class QueueProcessor extends WorkerHost {
@@ -12,6 +13,8 @@ export class QueueProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly certificateService: CertificateService,
+    @Inject(forwardRef(() => RetirementsService))
+    private readonly retirementsService: RetirementsService,
   ) {
     super();
   }
@@ -28,6 +31,8 @@ export class QueueProcessor extends WorkerHost {
         return this.handleOracleSubmission(job.data);
       case JobType.EMAIL_NOTIFICATION:
         return this.handleEmailNotification(job.data);
+      case JobType.BULK_RETIREMENT:
+        return this.handleBulkRetirement(job.data);
       default:
         throw new Error(`Unknown job type: ${job.name}`);
     }
@@ -86,5 +91,15 @@ export class QueueProcessor extends WorkerHost {
     this.logger.log(`Sending email to ${data['to']} template=${data['template']}`);
     // TODO: integrate with email provider
     return { to: data['to'], status: 'sent' };
+  }
+
+  private async handleBulkRetirement(data: Record<string, unknown>) {
+    this.logger.log(`Processing bulk retirement job with ${Array.isArray(data['items']) ? data['items'].length : 0} items`);
+    return this.retirementsService.executeBulkRetirements({
+      items: data['items'] as any,
+      beneficiary: data['beneficiary'] as string,
+      retirementReason: data['retirementReason'] as string,
+      retiredBy: data['retiredBy'] as string,
+    });
   }
 }

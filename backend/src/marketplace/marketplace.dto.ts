@@ -1,5 +1,11 @@
-import { IsString, IsInt, IsPositive, IsOptional, Min, Max, ArrayMaxSize, ArrayMinSize, Length, MaxLength } from "class-validator";
+import { IsString, IsInt, IsPositive, IsOptional, Min, Max, ArrayMaxSize, ArrayMinSize, Length, MaxLength, IsIn } from "class-validator";
 import { Type } from "class-transformer";
+
+export const LISTING_SORT_FIELDS = ["price", "vintageYear", "methodology", "verificationDate"] as const;
+export type ListingSortField = (typeof LISTING_SORT_FIELDS)[number];
+
+export const SORT_ORDERS = ["asc", "desc"] as const;
+export type SortOrder = (typeof SORT_ORDERS)[number];
 
 export class CreateListingDto {
   @IsString() @Length(1, 64) listingId: string;
@@ -46,6 +52,8 @@ export class ListingsQueryDto {
   @IsString() @IsOptional() @MaxLength(128) cursor?: string;
   @IsInt() @Min(1) @Max(1000) @IsOptional() @Type(() => Number) page?: number;
   @IsInt() @Min(1) @Max(100) @Type(() => Number) @IsOptional() limit?: number = 20;
+  @IsString() @IsOptional() @IsIn(LISTING_SORT_FIELDS) sortBy?: ListingSortField;
+  @IsString() @IsOptional() @IsIn(SORT_ORDERS) sortOrder?: SortOrder = "asc";
 }
 
 export class PaginatedListingsResponse {

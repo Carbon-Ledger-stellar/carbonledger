@@ -11,12 +11,18 @@ import {
   HttpCode,
   Header,
   UseGuards,
+  HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { IsString } from 'class-validator';
 import { RetirementsService } from './retirements.service';
-import { ExportRetirementsDto, RetireCreditsDto } from './retirements.dto';
+import {
+  ExportRetirementsDto,
+  RetireCreditsDto,
+  BulkRetirementsDto,
+} from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
+import { QuotaBucket } from '../throttle';
 import { ZkProofService } from './zk-proof.service';
 import {
   CheckPolicies,
@@ -87,6 +93,27 @@ export class RetirementsController {
    * Only the owner or admin may read a specific retirement record.
    * ABAC condition: RetirementSubject.retiredBy must match req.user.publicKey.
    */
+  @Post('bulk')
+  @Roles('corporation', 'admin')
+  @QuotaBucket('bulkRetire')
+  async bulkRetireCredits(
+    @Body() dto: BulkRetirementsDto,
+    @Request() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.retirementsService.bulkRetireCredits({
+      ...dto,
+      retiredBy: req.user.publicKey,
+    });
+
+    if ('jobId' in result) {
+      res.status(HttpStatus.ACCEPTED);
+    }
+
+    return result;
+  }
+
+  // Fix IDOR: require auth; only the owner or admin may read a specific retirement
   @Get(':id')
   async findOne(@Param('id') id: string, @Request() req: any) {
     const retirement = await this.retirementsService.findOne(id);

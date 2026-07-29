@@ -16,9 +16,11 @@ import {
   isFreighterConnected,
   isWrongNetwork,
   checkNetwork,
+  getPublicKey,
   FreighterNetwork,
 } from "./freighter";
 import { getWalletErrorMessage, WalletErrorCode } from "./wallet-errors";
+import { loadWalletSession, clearWalletSession } from "./wallet-session";
 
 // ---------------------------------------------------------------------------
 // State types
@@ -55,6 +57,7 @@ export type WalletEvent =
   | { type: "DISCONNECT" }
   | { type: "NETWORK_CHANGED"; network: FreighterNetwork }
   | { type: "ACCOUNT_CHANGED"; publicKey: string }
+  | { type: "SESSION_EXPIRED" }
   | { type: "RETRY" }
   | { type: "RESET" };
 
@@ -151,6 +154,22 @@ export function walletReducer(
       return state;
     }
 
+    case "SESSION_EXPIRED": {
+      // The extension revoked access (locked, disconnected, or permissions
+      // withdrawn) while we thought we were connected — surface it as a
+      // recoverable error rather than silently reverting to disconnected.
+      if (state.status === "connected") {
+        return {
+          ...state,
+          status: "error",
+          errorMessage: getWalletErrorMessage("SESSION_EXPIRED"),
+          errorCode: "SESSION_EXPIRED",
+          connectedAt: null,
+        };
+      }
+      return state;
+    }
+
     case "RETRY": {
       // Allow retry from error, network_switch, or account_changed
       if (
@@ -236,8 +255,10 @@ export async function performConnect(dispatch: Dispatch): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err);
     const knownCodes: WalletErrorCode[] = [
       "WALLET_NOT_INSTALLED",
+      "WALLET_LOCKED",
       "WALLET_PERMISSION_DENIED",
       "WRONG_NETWORK",
+      "SESSION_EXPIRED",
       "TRANSACTION_REJECTED",
       "INSUFFICIENT_XLM",
       "ACCOUNT_NOT_ACTIVATED",
@@ -266,4 +287,58 @@ export async function performNetworkCheck(dispatch: Dispatch): Promise<void> {
   } catch {
     // Swallow — network check failures are surfaced elsewhere
   }
+}
+
+/**
+ * Silently restores a previously-connected session on mount (e.g. after a page
+ * reload) — no permission prompt is shown. If the extension is no longer
+ * connected/allowed, or the current address no longer matches the persisted
+ * session, the stale session is discarded and the machine stays disconnected;
+ * this is a best-effort optimistic restore, not a failure the user needs to see.
+ */
+export async function performRestoreSession(dispatch: Dispatch): Promise<void> {
+  const stored = loadWalletSession();
+  if (!stored) return;
+
+  try {
+    const stillConnected = await isFreighterConnected();
+    if (!stillConnected) {
+      clearWalletSession();
+      return;
+    }
+
+    const currentKey = await getPublicKey();
+    if (currentKey !== stored.publicKey) {
+      clearWalletSession();
+      return;
+    }
+
+    let network: FreighterNetwork = stored.network;
+    try {
+      network = await checkNetwork();
+    } catch {
+      // Keep the persisted network if a live check fails transiently.
+    }
+
+    dispatch({ type: "CONNECT" });
+    dispatch({ type: "CONNECT_SUCCESS", publicKey: currentKey, network });
+    if (network !== "TESTNET") {
+      dispatch({ type: "NETWORK_CHANGED", network });
+    }
+  } catch {
+    clearWalletSession();
+  }
+}
+
+/**
+ * Polls for the Freighter extension becoming available (installed) while the
+ * machine is in the WALLET_NOT_INSTALLED error state, so the user doesn't need
+ * to reload the page after installing it mid-session.
+ */
+export async function performCheckExtensionAvailable(dispatch: Dispatch): Promise<boolean> {
+  const installed = await isFreighterInstalled();
+  if (installed) {
+    await performConnect(dispatch);
+  }
+  return installed;
 }
