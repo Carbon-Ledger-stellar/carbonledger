@@ -257,7 +257,7 @@ export class IndexerService implements OnModuleInit {
       // Let's at least update the status and amount if we have it.
       // In this implementation, we'll just ensure the batch exists and is updated.
       
-      const existingProject = projectId ? await this.prisma.carbonProject.findUnique({ where: { projectId } }) : null;
+      const existingProject = projectId ? await this.prisma.carbonProject.findFirst({ where: { projectId, deletedAt: null } }) : null;
       
       if (projectId && !existingProject) {
         this.logger.warn(`Project ${projectId} not found in DB, skipping batch sync`);

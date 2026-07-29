@@ -37,6 +37,7 @@ import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
 import { RedisModule } from "./redis.module";
+import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
@@ -158,6 +159,7 @@ class HealthController {
     WebhookModule,
     RedisModule,
     IdempotencyModule,
+    RetentionModule,
     ReconciliationModule,
   ],
   controllers: [HealthController],
