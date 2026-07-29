@@ -167,9 +167,15 @@ export class CreditsService {
    * been retired.  The endpoint is public — no authentication required.
    *
    * Returns 404 when the serial number does not belong to any known batch.
+   *
+   * Performance: the batch lookup happens first (required to get batchId),
+   * then retirement and event queries are issued in parallel to eliminate
+   * sequential round-trips.  The composite index on (creditBatchId, timestamp)
+   * covers the event query.
    */
   async getSerialProvenance(serial: string) {
-    // 1. Locate the credit batch that owns this serial number
+    // 1. Locate the credit batch that owns this serial number.
+    //    Must happen first — batchId is needed for all downstream queries.
     const batch = await this.prisma.creditBatch.findFirst({
       where: { serialStart: { lte: serial }, serialEnd: { gte: serial } },
       include: {
@@ -192,50 +198,50 @@ export class CreditsService {
       );
     }
 
-    // 2. Determine current owner and retirement status
-    //    Ownership is tracked through the event log (transfer events) and,
-    //    as a fallback, falls back to the project owner address.
-    const retirement = await this.prisma.retirementRecord.findFirst({
-      where: { serialNumbers: { has: serial } },
-      select: {
-        retirementId:     true,
-        retiredBy:        true,
-        beneficiary:      true,
-        retirementReason: true,
-        vintageYear:      true,
-        txHash:           true,
-        retiredAt:        true,
-        certificateCid:   true,
-      },
-    });
+    // 2. Issue retirement lookup and event log query in parallel —
+    //    both depend only on data already available (serial, batchId).
+    const [retirement, rawEvents] = await Promise.all([
+      // Retirement is keyed by the serialNumbers GIN index
+      this.prisma.retirementRecord.findFirst({
+        where: { serialNumbers: { has: serial } },
+        select: {
+          retirementId:     true,
+          retiredBy:        true,
+          beneficiary:      true,
+          retirementReason: true,
+          vintageYear:      true,
+          txHash:           true,
+          retiredAt:        true,
+          certificateCid:   true,
+        },
+      }),
+      // Events are covered by the (creditBatchId, timestamp) composite index
+      (this.prisma as any).creditEvent.findMany({
+        where:   { creditBatchId: batch.batchId },
+        orderBy: { timestamp: 'asc' },
+        select: {
+          id:           true,
+          creditBatchId:true,
+          eventType:    true,
+          actor:        true,
+          oldState:     true,
+          newState:     true,
+          timestamp:    true,
+          txHash:       true,
+        },
+      }) as Promise<Array<{
+        id: string;
+        creditBatchId: string;
+        eventType: string;
+        actor: string;
+        oldState: unknown;
+        newState: unknown;
+        timestamp: Date;
+        txHash: string;
+      }>>,
+    ]);
 
-    // 3. Fetch all CreditEvents for this batch (transfer / mint / retire) in
-    //    chronological order.  These come from the append-only event log.
-    const rawEvents: Array<{
-      id: string;
-      creditBatchId: string;
-      eventType: string;
-      actor: string;
-      oldState: unknown;
-      newState: unknown;
-      timestamp: Date;
-      txHash: string;
-    }> = await (this.prisma as any).creditEvent.findMany({
-      where:   { creditBatchId: batch.batchId },
-      orderBy: { timestamp: 'asc' },
-      select: {
-        id:           true,
-        creditBatchId:true,
-        eventType:    true,
-        actor:        true,
-        oldState:     true,
-        newState:     true,
-        timestamp:    true,
-        txHash:       true,
-      },
-    });
-
-    // 4. Derive current owner from the latest transfer event, or fall back to
+    // 3. Derive current owner from the latest transfer event, or fall back to
     //    the project's ownerAddress when no transfer events exist.
     const transferEvents = rawEvents.filter((e) => e.eventType === 'transfer');
     const lastTransfer   = transferEvents[transferEvents.length - 1] as
@@ -247,7 +253,7 @@ export class CreditsService {
       : (lastTransfer?.newState as { to?: string } | null)?.to
           ?? batch.project.ownerAddress;
 
-    // 5. Compose the provenance response
+    // 4. Compose the provenance response
     return {
       serialNumber: serial,
 

@@ -10,6 +10,7 @@ import {
   HttpException,
   HttpStatus,
   Req,
+  UseGuards,
 } from "@nestjs/common";
 import { IsString, IsOptional, IsIn, MaxLength, Matches } from "class-validator";
 import { FileInterceptor } from "@nestjs/platform-express";
@@ -17,6 +18,7 @@ import { IpfsUploadService } from "./ipfs-upload.service";
 import { UploadFileDto, UploadResponseDto } from "./uploads.dto";
 import { Request } from "express";
 import { Public, Roles } from "../auth/decorators";
+import { CheckPolicies, PoliciesGuard, UploadSubject } from "../policies";
 
 @Controller("uploads")
 export class UploadsController {
@@ -24,6 +26,8 @@ export class UploadsController {
 
   @Post("project/:projectId/documents")
   @Roles("project_developer", "admin")
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can("create", UploadSubject))
   @UseInterceptors(FileInterceptor("file"))
   async uploadProjectDocument(
     @Param("projectId") projectId: string,
@@ -92,6 +96,8 @@ export class UploadsController {
 
   @Post("certificate/:retirementId/certificate")
   @Roles("corporation", "admin")
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can("create", UploadSubject))
   @UseInterceptors(FileInterceptor("file"))
   async uploadCertificate(
     @Param("retirementId") retirementId: string,
@@ -190,6 +196,8 @@ export class UploadsController {
 
   @Get("files")
   @Roles("admin")
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can("read", UploadSubject))
   async getFiles(
     @Query("pinStatus") pinStatus?: string,
     @Query("linkedEntityType") linkedEntityType?: string,

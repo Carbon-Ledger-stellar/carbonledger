@@ -9,9 +9,10 @@ import { AuthModule } from "../auth/auth.module";
 import { MailModule } from "../mail/mail.module";
 import { RedisService } from "../redis.service";
 import { OracleContractClient } from "../oracle/oracle-contract.client";
+import { PoliciesModule } from "../policies/policies.module";
 
 @Module({
-  imports: [AuthModule, MailModule],
+  imports: [AuthModule, MailModule, PoliciesModule],
   controllers: [ProjectsController, PublicProjectsController],
   providers: [ProjectsService, ProjectStateMachineService, PrismaService, RedisService, RegistryContractClient, OracleContractClient],
   exports: [ProjectsService],

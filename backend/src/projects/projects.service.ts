@@ -96,7 +96,7 @@ export class ProjectsService {
     } = searchDto;
 
     if (search) {
-      return this.searchProjectsFullText(searchDto);
+      return this.searchProjectsFullText(searchDto, caller);
     }
 
     const where: any = { deletedAt: null };
@@ -112,7 +112,6 @@ export class ProjectsService {
     if (status && status.length > 0) {
       where.status = { in: status };
     }
-
     if (vintageYear && vintageYear.length > 0) {
       where.vintageYear = { in: vintageYear };
     }
@@ -172,8 +171,11 @@ export class ProjectsService {
    * relevance ordering, then applies structured filters in a sub-select.
    * Falls back gracefully if the searchVector column is not yet present
    * (e.g., running against a pre-migration DB in tests).
+   *
+   * The `caller` is used to add an ownership filter for project_developer
+   * role so the scoping applied by the ORM path is consistent here.
    */
-  private async searchProjectsFullText(searchDto: SearchProjectsDto): Promise<PaginatedProjectsResponse> {
+  private async searchProjectsFullText(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
     const { search, methodology, country, status, vintageYear, limit = 20, cursor } = searchDto;
     const take = limit + 1;
 
@@ -196,6 +198,12 @@ export class ProjectsService {
     }
     if (vintageYear && vintageYear.length > 0) {
       where.vintageYear = { in: vintageYear };
+    }
+    // Ownership scoping: project_developer sees only their own projects
+    if (caller.role === 'project_developer') {
+      conditions.push(`"ownerAddress" = $${idx}`);
+      args.push(caller.publicKey);
+      idx++;
     }
     if (cursor) {
       where.id = { lt: cursor };
