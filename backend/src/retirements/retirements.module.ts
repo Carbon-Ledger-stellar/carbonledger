@@ -11,8 +11,11 @@ import { QueueModule } from "../queue/queue.module";
 import { WebhookModule } from "../webhook/webhook.module";
 import { CertificateService } from "./certificate.service";
 import { ZkProofService } from "./zk-proof.service";
+import { PoliciesModule } from "../policies/policies.module";
+import { AbilityFactory } from "../policies/ability.factory";
 
 @Module({
+  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule, PoliciesModule],
   imports: [AuthModule, forwardRef(() => QueueModule), UploadsModule, CertificatesModule],
   controllers: [RetirementsController, CertificatesController],
   providers: [
@@ -22,6 +25,7 @@ import { ZkProofService } from "./zk-proof.service";
     RetirementIndexerService,
     CertificateService,
     ZkProofService,
+    AbilityFactory,
   ],
   exports: [RetirementsService],
 })

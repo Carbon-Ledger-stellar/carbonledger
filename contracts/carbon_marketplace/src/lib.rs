@@ -8,6 +8,9 @@ use soroban_sdk::{
 const TTL_LEDGERS: u32 = 518_400;
 const MAX_BATCH_SIZE: u32 = 10;
 const CURRENT_VERSION: u32 = 1;
+const MAX_VINTAGE_AGE_YEARS: u32 = 30;
+pub const DEFAULT_MIN_VINTAGE_YEAR: u32 = 1990;
+pub const DEFAULT_MAX_VINTAGE_YEAR: u32 = 0;
 /// Maximum number of listings returned per page by paginated endpoints.
 pub const MAX_PAGE_SIZE: u32 = 50;
 
@@ -30,28 +33,25 @@ pub enum CarbonError {
     MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
-    ZeroAmountNotAllowed   = 16,
-    ProjectAlreadyExists   = 17,
-    InvalidSerialRange     = 18,
-    AlreadyInitialized     = 19,
-    Arithmetic             = 20,
-    UnauthorizedUpgrade    = 21,
-    /// Oracle price data is more than 24 hours old; the circuit breaker has
-    /// tripped and all purchases are halted until the oracle is updated.
-    CircuitBreakerTripped  = 22,
-    /// The caller-supplied `expected_amount_available` did not match the
-    /// current on-chain value.  A concurrent buyer already modified the listing.
-    /// Re-read the listing and resubmit with the updated amount.
-    StaleExpectedAmount    = 23,
-    /// Page size exceeds the maximum allowed limit.
-    PageSizeTooLarge       = 24,
     ZeroAmountNotAllowed = 16,
     ProjectAlreadyExists = 17,
     InvalidSerialRange = 18,
     AlreadyInitialized = 19,
     Arithmetic = 20,
     UnauthorizedUpgrade = 21,
-    FeeConfigInvalid = 22,
+    /// Oracle price data is more than 24 hours old; the circuit breaker has
+    /// tripped and all purchases are halted until the oracle is updated.
+    CircuitBreakerTripped = 22,
+    /// The caller-supplied `expected_amount_available` did not match the
+    /// current on-chain value.  A concurrent buyer already modified the listing.
+    /// Re-read the listing and resubmit with the updated amount.
+    StaleExpectedAmount = 23,
+    /// Page size exceeds the maximum allowed limit.
+    PageSizeTooLarge = 24,
+    FeeConfigInvalid = 25,
+    InvalidPauseWindow = 26,
+    EmergencyPaused = 27,
+    ReentrancyDetected = 28,
 }
 
 #[contracttype]
@@ -67,13 +67,27 @@ pub enum DataKey {
     ContractVersion,
     UpgradeHistory,
     FeeConfig,
+    PauseEnabled,
+    PauseUntil,
+    VintageYearMin,
+    VintageYearMax,
+    ReentrancyGuard,
+    CircuitBreaker,
+    CircuitBreakerTrippedAt,
+    FeeLedger,
+    FeeRecord(String),
+    FeeAccumulator,
+    SweepThreshold,
+    TotalFeesSwept,
     OracleContract,
-    PriceFreshnessWindow,
 }
 
 /// Governance-controlled fee configuration.
 /// Fee = numerator / denom of total_cost. Max fee is denom/10 (10%).
 /// If unset, defaults to 1/100 (1%) matching compile-time constants.
+const FEE_RATE_DENOM: i128 = 100;
+const DEFAULT_SWEEP_THRESHOLD: i128 = 1_000_000_000;
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct FeeConfig {
@@ -81,6 +95,36 @@ pub struct FeeConfig {
     pub denom: i128,
     pub updated_at: u64,
     pub updated_by: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeRecord {
+    pub fee_id: String,
+    pub listing_id: String,
+    pub buyer: Address,
+    pub seller: Address,
+    pub total_cost: i128,
+    pub fee_amount: i128,
+    pub recorded_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeSweptEvent {
+    pub swept_by: Address,
+    pub amount: i128,
+    pub swept_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CircuitBreakerEvent {
+    pub methodology: String,
+    pub vintage_year: u32,
+    pub price_age_secs: u64,
+    pub threshold_secs: u64,
+    pub tripped_at: u64,
 }
 
 #[contracttype]
@@ -163,6 +207,35 @@ impl CarbonMarketplaceContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
+    fn min_vintage_year(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VintageYearMin)
+            .unwrap_or(DEFAULT_MIN_VINTAGE_YEAR)
+    }
+
+    fn max_vintage_year(env: &Env) -> u32 {
+        let configured: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VintageYearMax)
+            .unwrap_or(DEFAULT_MAX_VINTAGE_YEAR);
+        if configured == 0 {
+            Self::current_year(env)
+        } else {
+            configured
+        }
+    }
+
+    fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
+        let min_year = Self::min_vintage_year(env);
+        let max_year = Self::max_vintage_year(env);
+        if vintage_year < min_year || vintage_year > max_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        Ok(())
+    }
+
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -191,12 +264,18 @@ impl CarbonMarketplaceContract {
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        env.storage().persistent().set(&DataKey::ReentrancyGuard, &false);
+        env.storage().persistent().set(&DataKey::CircuitBreaker, &false);
+        env.storage().persistent().set(&DataKey::CircuitBreakerTrippedAt, &0_u64);
         Ok(())
     }
 
     pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         let current_version: u32 = env
             .storage()
@@ -254,6 +333,7 @@ impl CarbonMarketplaceContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         if denom <= 0 || numerator < 0 || numerator > denom / 10 {
             return Err(CarbonError::FeeConfigInvalid);
@@ -299,6 +379,7 @@ impl CarbonMarketplaceContract {
         new_treasury: Address,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
+        Self::require_not_paused(&env)?;
         let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         if stored_admin != admin {
             return Err(CarbonError::UnauthorizedVerifier);
@@ -315,6 +396,7 @@ impl CarbonMarketplaceContract {
         project_id: String,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
+        Self::require_not_paused(&env)?;
         let stored_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         if stored_admin != admin {
             return Err(CarbonError::UnauthorizedVerifier);
@@ -376,25 +458,24 @@ impl CarbonMarketplaceContract {
         country: String,
     ) -> Result<(), CarbonError> {
         seller.require_auth();
+        Self::require_not_paused(&env)?;
 
         if amount <= 0 || price_per_credit_usdc <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let current_year = Self::current_year(&env);
-        if vintage_year < 1990 || vintage_year > current_year + 1 {
-            return Err(CarbonError::InvalidVintageYear);
-        }
+        Self::validate_vintage_year(&env, vintage_year)?;
 
-        if env
+        let suspended = env
             .storage()
             .persistent()
             .get::<DataKey, bool>(&DataKey::SuspendedProject(project_id.clone()))
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        if suspended {
             return Err(CarbonError::ProjectSuspended);
         }
 
+        let timestamp = env.ledger().timestamp();
         let listing = MarketListing {
             listing_id: listing_id.clone(),
             seller: seller.clone(),
@@ -405,7 +486,7 @@ impl CarbonMarketplaceContract {
             vintage_year,
             methodology: methodology.clone(),
             country: country.clone(),
-            created_at: env.ledger().timestamp(),
+            created_at: timestamp,
             status: ListingStatus::Active,
         };
         env.storage()
@@ -429,7 +510,7 @@ impl CarbonMarketplaceContract {
                 batch_id: batch_id.clone(),
                 amount,
                 price_per_credit: price_per_credit_usdc,
-                timestamp: env.ledger().timestamp(),
+                timestamp,
             },
         );
         Ok(())
@@ -441,6 +522,7 @@ impl CarbonMarketplaceContract {
         listing_id: String,
     ) -> Result<(), CarbonError> {
         seller.require_auth();
+        Self::require_not_paused(&env)?;
 
         let mut listing = Self::load_listing(&env, &listing_id)?;
         if listing.seller != seller {
@@ -460,6 +542,43 @@ impl CarbonMarketplaceContract {
         Ok(())
     }
 
+    pub fn pause_operations(env: Env, admin: Address, until_timestamp: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        let now = env.ledger().timestamp();
+        if until_timestamp <= now || until_timestamp > now.saturating_add(72 * 60 * 60) {
+            return Err(CarbonError::InvalidPauseWindow);
+        }
+        env.storage().persistent().set(&DataKey::PauseEnabled, &true);
+        env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        Ok(())
+    }
+
+    pub fn unpause_operations(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        Ok(())
+    }
+
+    pub fn set_vintage_year_bounds(
+        env: Env,
+        admin: Address,
+        min_year: u32,
+        max_year: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        if min_year > max_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        env.storage().persistent().set(&DataKey::VintageYearMin, &min_year);
+        env.storage().persistent().set(&DataKey::VintageYearMax, &max_year);
+        Ok(())
+    }
+
     pub fn purchase_credits(
         env: Env,
         buyer: Address,
@@ -467,6 +586,7 @@ impl CarbonMarketplaceContract {
         amount: i128,
     ) -> Result<(), CarbonError> {
         buyer.require_auth();
+        Self::require_not_paused(&env)?;
 
         // ── Re-entrancy guard ────────────────────────────────────────────────
         Self::acquire_lock(&env)?;
@@ -552,19 +672,33 @@ impl CarbonMarketplaceContract {
         } else {
             ListingStatus::PartiallyFilled
         };
-        env.storage()
+
+        let now = env.ledger().timestamp();
+        let seller_addr = listing.seller.clone();
+        let fee_id = Self::make_fee_id(&env, &listing_id, now);
+        let fee_record = FeeRecord {
+            fee_id: fee_id.clone(),
+            listing_id: listing_id.clone(),
+            buyer: buyer.clone(),
+            seller: seller_addr,
+            total_cost,
+            fee_amount: protocol_fee,
+            recorded_at: now,
+        };
+        env.storage().persistent().set(&DataKey::FeeRecord(fee_id.clone()), &fee_record);
+        let mut fee_ledger: Vec<String> = env
+            .storage()
             .persistent()
             .get(&DataKey::FeeLedger)
             .unwrap_or_else(|| vec![&env]);
-        fee_ledger.push_back(fee_id.clone());
+        fee_ledger.push_back(fee_id);
         env.storage().persistent().set(&DataKey::FeeLedger, &fee_ledger);
 
-        // Update accumulator
         let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
         let new_acc = acc.checked_add(protocol_fee)
             .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
         env.storage().persistent().set(&DataKey::FeeAccumulator, &new_acc);
-            .set(&DataKey::Listing(listing_id.clone()), &listing);
+        env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
         Self::extend_listing_ttl(&env, &listing_id);
 
         let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
@@ -627,6 +761,7 @@ impl CarbonMarketplaceContract {
         amounts: Vec<i128>,
     ) -> Result<(), CarbonError> {
         buyer.require_auth();
+        Self::require_not_paused(&env)?;
 
         // ── Re-entrancy guard ────────────────────────────────────────────────
         Self::acquire_lock(&env)?;
@@ -647,7 +782,10 @@ impl CarbonMarketplaceContract {
             return Err(CarbonError::InvalidSerialRange);
         }
 
+        let now = env.ledger().timestamp();
+        let mut bulk_fee_total = 0_i128;
         let mut validated_listings: Vec<MarketListing> = vec![&env];
+        let mut expected_vintage: Option<u32> = None;
         for i in 0..len {
             let listing_id = listing_ids.get(i).unwrap();
             let amount = amounts.get(i).unwrap();
@@ -672,10 +810,14 @@ impl CarbonMarketplaceContract {
                 return Err(CarbonError::ProjectSuspended);
             }
 
-            // ── Expired vintage check per listing ─────────────────────────────
-            if Self::is_vintage_expired(&env, listing.vintage_year) {
-                Self::release_lock(&env);
-                return Err(CarbonError::InvalidVintageYear);
+            Self::validate_vintage_year(&env, listing.vintage_year)?;
+            if let Some(expected) = expected_vintage {
+                if listing.vintage_year != expected {
+                    Self::release_lock(&env);
+                    return Err(CarbonError::InvalidVintageYear);
+                }
+            } else {
+                expected_vintage = Some(listing.vintage_year);
             }
 
             // Oracle staleness check for each listing in the batch
@@ -760,24 +902,28 @@ impl CarbonMarketplaceContract {
         let usdc_client = token::Client::new(&env, &usdc);
 
         for i in 0..len {
-            let listing       = validated_listings.get(i).unwrap();
-            let amount        = amounts.get(i).unwrap();
-            let total_cost    = listing.price_per_credit.checked_mul(amount)
+            let listing = validated_listings.get(i).unwrap();
+            let amount = amounts.get(i).unwrap();
+            let total_cost = listing.price_per_credit.checked_mul(amount)
                 .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-            let protocol_fee  = total_cost.checked_div(FEE_RATE_DENOM)
+            let fee_cfg = Self::load_fee_config(&env);
+            let protocol_fee = total_cost
+                .checked_mul(fee_cfg.numerator)
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?
+                .checked_div(fee_cfg.denom)
                 .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-            let seller_proceeds = total_cost.checked_sub(protocol_fee)
+            let seller_proceeds = total_cost
+                .checked_sub(protocol_fee)
                 .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
 
-            // ── Record fee in immutable ledger ────────────────────────────────
             let fee_id = Self::make_fee_id(&env, &listing.listing_id, now.saturating_add(i as u64));
             let fee_record = FeeRecord {
-                fee_id:      fee_id.clone(),
-                listing_id:  listing.listing_id.clone(),
-                buyer:       buyer.clone(),
-                seller:      listing.seller.clone(),
+                fee_id: fee_id.clone(),
+                listing_id: listing.listing_id.clone(),
+                buyer: buyer.clone(),
+                seller: listing.seller.clone(),
                 total_cost,
-                fee_amount:  protocol_fee,
+                fee_amount: protocol_fee,
                 recorded_at: now,
             };
             env.storage().persistent().set(&DataKey::FeeRecord(fee_id.clone()), &fee_record);
@@ -790,21 +936,6 @@ impl CarbonMarketplaceContract {
             env.storage().persistent().set(&DataKey::FeeLedger, &fee_ledger);
             bulk_fee_total = bulk_fee_total.checked_add(protocol_fee)
                 .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-            let listing = validated_listings.get(i).unwrap();
-            let amount = amounts.get(i).unwrap();
-            let total_cost = listing
-                .price_per_credit
-                .checked_mul(amount)
-                .ok_or(CarbonError::Arithmetic)?;
-            let fee_cfg = Self::load_fee_config(&env);
-            let protocol_fee = total_cost
-                .checked_mul(fee_cfg.numerator)
-                .ok_or(CarbonError::Arithmetic)?
-                .checked_div(fee_cfg.denom)
-                .ok_or(CarbonError::Arithmetic)?;
-            let seller_proceeds = total_cost
-                .checked_sub(protocol_fee)
-                .ok_or(CarbonError::Arithmetic)?;
 
             usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
             usdc_client.transfer(&buyer, &treasury, &protocol_fee);
@@ -861,9 +992,23 @@ impl CarbonMarketplaceContract {
     }
 
     pub fn get_active_listings(env: Env) -> Vec<MarketListing> {
-        Self::filter_listings(&env, |l| {
-            l.status == ListingStatus::Active || l.status == ListingStatus::PartiallyFilled
-        })
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AllListings)
+            .unwrap_or_else(|| vec![&env]);
+
+        let mut result: Vec<MarketListing> = vec![&env];
+        for id in all.iter() {
+            if let Some(listing) = env.storage().persistent().get(&DataKey::Listing(id.clone())) {
+                if listing.status == ListingStatus::Active
+                    || listing.status == ListingStatus::PartiallyFilled
+                {
+                    result.push_back(listing);
+                }
+            }
+        }
+        result
     }
 
     pub fn get_listings_by_project(env: Env, project_id: String) -> Vec<MarketListing> {
@@ -1032,6 +1177,7 @@ impl CarbonMarketplaceContract {
     pub fn set_sweep_threshold(env: Env, admin: Address, threshold: i128) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
         if threshold <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
@@ -1042,6 +1188,7 @@ impl CarbonMarketplaceContract {
     /// Manually sweep all accumulated fees to treasury.
     /// Can be called by anyone; the funds always go to the configured treasury address.
     pub fn sweep_fees(env: Env) -> Result<i128, CarbonError> {
+        Self::require_not_paused(&env)?;
         let acc: i128 = env.storage().persistent().get(&DataKey::FeeAccumulator).unwrap_or(0);
         if acc == 0 {
             return Ok(0);
@@ -1066,6 +1213,41 @@ impl CarbonMarketplaceContract {
             },
         );
         Ok(acc)
+    }
+
+    fn make_fee_id(env: &Env, listing_id: &String, stamp: u64) -> String {
+        let _ = stamp;
+        let _ = listing_id;
+        String::from_str(env, "fee")
+    }
+
+    fn is_vintage_expired(env: &Env, vintage_year: u32) -> bool {
+        if Self::validate_vintage_year(env, vintage_year).is_err() {
+            return true;
+        }
+        let current_year = Self::current_year(env);
+        current_year.saturating_sub(vintage_year) > MAX_VINTAGE_AGE_YEARS
+    }
+
+    fn do_sweep(
+        env: &Env,
+        amount: i128,
+        _usdc_client: &token::Client,
+        _treasury: &Address,
+    ) -> Result<(), CarbonError> {
+        env.storage().persistent().set(&DataKey::FeeAccumulator, &0_i128);
+        let swept_total: i128 = env.storage().persistent().get(&DataKey::TotalFeesSwept).unwrap_or(0);
+        let new_swept = swept_total.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
+        env.storage().persistent().set(&DataKey::TotalFeesSwept, &new_swept);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("swept")),
+            FeeSweptEvent {
+                swept_by: env.current_contract_address(),
+                amount,
+                swept_at: env.ledger().timestamp(),
+            },
+        );
+        Ok(())
     }
 
     fn extend_listing_ttl(env: &Env, listing_id: &String) {
@@ -1123,6 +1305,20 @@ impl CarbonMarketplaceContract {
             .ok_or(CarbonError::UnauthorizedVerifier)?;
         if &admin != caller {
             return Err(CarbonError::UnauthorizedVerifier);
+        }
+        Ok(())
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), CarbonError> {
+        let paused: bool = env.storage().persistent().get(&DataKey::PauseEnabled).unwrap_or(false);
+        let until: u64 = env.storage().persistent().get(&DataKey::PauseUntil).unwrap_or(0);
+        let now = env.ledger().timestamp();
+        if paused && until > now {
+            return Err(CarbonError::EmergencyPaused);
+        }
+        if paused && until <= now {
+            env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+            env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         }
         Ok(())
     }
