@@ -1,5 +1,6 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
+import { poolMetricsRegistry } from "./common/metrics.registry";
 
 // Pool sizing: allow override via env, default to 10 for production safety.
 // Formula: (num_cores * 2) + effective_spindle_count — start conservative.
@@ -27,23 +28,38 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       log: process.env.NODE_ENV === "development" ? ["query", "warn", "error"] : ["warn", "error"],
     });
 
-    // Middleware to track active queries for metrics
-    this.$use(async (params, next) => {
-      this._activeQueries++;
-      this._totalQueries++;
-      try {
-        return await next(params);
-      } catch (err: any) {
-        if (err?.code === "P2024") this._poolErrors++; // pool timeout
-        throw err;
-      } finally {
-        this._activeQueries--;
-      }
-    });
+    // Prisma 6 removed client middleware ($use); register only when available.
+    const client = this as PrismaClient & {
+      $use?: (
+        middleware: (
+          params: { model?: string; action: string },
+          next: (params: { model?: string; action: string }) => Promise<unknown>,
+        ) => Promise<unknown>,
+      ) => void;
+    };
+    if (typeof client.$use === 'function') {
+      client.$use(async (params, next) => {
+        this._activeQueries++;
+        this._totalQueries++;
+        poolMetricsRegistry.update(this.getPoolMetrics());
+        try {
+          return await next(params);
+        } catch (err: unknown) {
+          const code = (err as { code?: string })?.code;
+          if (code === 'P2024') this._poolErrors++;
+          throw err;
+        } finally {
+          this._activeQueries--;
+          poolMetricsRegistry.update(this.getPoolMetrics());
+        }
+      });
+    }
   }
 
   async onModuleInit() {
     await this.$connect();
+    // Seed static config gauges immediately so /metrics is non-zero before first query
+    poolMetricsRegistry.update(this.getPoolMetrics());
     this.logger.log(
       `Prisma connected — pool_max=${POOL_MAX} pool_timeout=${POOL_TIMEOUT_MS}ms connect_timeout=${CONNECT_TIMEOUT_S}s`,
     );

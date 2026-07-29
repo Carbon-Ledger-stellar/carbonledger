@@ -1,0 +1,2 @@
+# Soroban contract methods routinely exceed the default argument limit.
+too-many-arguments-threshold = 12
