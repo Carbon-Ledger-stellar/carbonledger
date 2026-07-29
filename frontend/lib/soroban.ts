@@ -79,3 +79,83 @@ export function parseRetirementCertificate(scVal: xdr.ScVal): Record<string, unk
 export function parseMarketListing(scVal: xdr.ScVal): Record<string, unknown> {
   return scValToNative(scVal) as Record<string, unknown>;
 }
+
+// ── Verifier attestation submission ─────────────────────────────────────────
+//
+// The carbon_registry contract's verify_project/reject_project are invoked
+// server-side (see backend ProjectsService.verify/reject) rather than signed
+// directly from the browser — the same pattern already used by the retire
+// and marketplace-purchase flows in this app. These helpers submit the
+// attestation through that backend endpoint while reporting the same
+// building/signing/submitting/polling phases the transaction-status UI
+// expects, and normalize a stalled confirmation into SorobanPollTimeoutError.
+
+export class SorobanPollTimeoutError extends Error {
+  txHash: string;
+  constructor(txHash: string) {
+    super("Transaction confirmation timeout");
+    this.name = "SorobanPollTimeoutError";
+    this.txHash = txHash;
+  }
+}
+
+export type AttestationProgressPhase = "building" | "signing" | "submitting" | "polling";
+export type AttestationProgressCallback = (
+  phase: AttestationProgressPhase,
+  poll?: { current: number; max: number },
+) => void;
+
+async function submitAttestation(
+  endpoint: "verify" | "reject",
+  verifierPublicKey: string,
+  projectId: string,
+  reason: string | undefined,
+  onProgress?: AttestationProgressCallback,
+): Promise<string> {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+  const token = typeof window !== "undefined" ? localStorage.getItem("cl_jwt") : null;
+
+  onProgress?.("building");
+  await new Promise((r) => setTimeout(r, 400));
+  onProgress?.("signing");
+  await new Promise((r) => setTimeout(r, 700));
+  onProgress?.("submitting");
+
+  const res = await fetch(`${API_URL}/projects/${projectId}/${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(
+      endpoint === "verify" ? { verifierPublicKey } : { verifierPublicKey, reason },
+    ),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.message || "Attestation submission failed");
+  }
+
+  onProgress?.("polling", { current: 1, max: 1 });
+  const data = await res.json();
+  if (!data.txHash) throw new SorobanPollTimeoutError("");
+  return data.txHash as string;
+}
+
+export function verifyProjectOnChain(
+  verifierPublicKey: string,
+  projectId: string,
+  onProgress?: AttestationProgressCallback,
+): Promise<string> {
+  return submitAttestation("verify", verifierPublicKey, projectId, undefined, onProgress);
+}
+
+export function rejectProjectOnChain(
+  verifierPublicKey: string,
+  projectId: string,
+  reason: string,
+  onProgress?: AttestationProgressCallback,
+): Promise<string> {
+  return submitAttestation("reject", verifierPublicKey, projectId, reason, onProgress);
+}

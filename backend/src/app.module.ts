@@ -1,5 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { WebhookModule } from "./webhook/webhook.module";
 import { GraphqlModule } from "./graphql/graphql.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
@@ -151,6 +152,7 @@ class HealthController {
     AdminModule,
     PublicApiModule,
     GraphqlModule,
+    WebhookModule,
     RedisModule,
     IdempotencyModule,
   ],
@@ -206,6 +208,7 @@ export class AppModule implements NestModule {
         { path: 'credits/mint',           method: RequestMethod.POST },
         { path: 'marketplace/purchase',   method: RequestMethod.POST },
         { path: 'retirements',            method: RequestMethod.POST },
+        { path: 'retirements/bulk',        method: RequestMethod.POST },
       );
   }
 }
