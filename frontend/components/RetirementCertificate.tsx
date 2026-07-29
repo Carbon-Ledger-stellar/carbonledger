@@ -5,6 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { useLocale, useTranslations } from "next-intl";
 import { RetirementRecord } from "../lib/api";
 import { formatTonnes, calculateCO2Equivalent } from "../lib/carbon-utils";
+import { toBcp47 } from "../lib/i18n/locale-tag";
 import { colors } from "../styles/design-system";
 
 interface Props {
@@ -19,7 +20,7 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
   const co2eq   = calculateCO2Equivalent(retirement.amount);
   const url     = publicUrl ?? `${typeof window !== "undefined" ? window.location.origin : ""}/retire/${retirement.retirementId}`;
 
-  const dateLocale = locale === "es" ? "es-ES" : locale === "pt" ? "pt-BR" : "en-US";
+  const dateLocale = toBcp47(locale);
 
   async function downloadPdf() {
     const { default: jsPDF }       = await import("jspdf");

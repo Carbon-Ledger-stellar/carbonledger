@@ -26,6 +26,13 @@ pub enum CarbonError {
     MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
+    ZeroAmountNotAllowed  = 16,
+    ProjectAlreadyExists  = 17,
+    InvalidSerialRange    = 18,
+    AlreadyInitialized    = 19,
+    MethodologyScoreLow   = 20,
+    UnauthorizedUpgrade   = 21,
+    PageSizeTooLarge      = 22,
     ZeroAmountNotAllowed = 16,
     ProjectAlreadyExists = 17,
     InvalidSerialRange = 18,
@@ -33,6 +40,10 @@ pub enum CarbonError {
     MethodologyScoreLow = 20,
     UnauthorizedUpgrade = 21,
     Arithmetic = 22,
+    ProposalNotFound = 23,
+    ProposalExpired = 24,
+    DuplicateApproval = 25,
+    ThresholdNotMet = 26,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -46,6 +57,9 @@ pub enum DataKey {
     RegistryAdmin,
     ContractVersion,
     UpgradeHistory,
+    MultiSigConfig,
+    PendingUpgrade,
+    ProposalCounter,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -88,9 +102,36 @@ pub struct UpgradeRecord {
     pub wasm_hash: BytesN<32>,
 }
 
+/// Multi-signer configuration for contract upgrades.
+/// Once set, upgrade proposals require `threshold` approvals from `signers`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct MultiSigConfig {
+    pub signers: Vec<Address>,
+    pub threshold: u32,
+}
+
+/// A pending upgrade proposal waiting for approvals.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct UpgradeProposal {
+    pub proposal_id: u32,
+    pub wasm_hash: BytesN<32>,
+    /// Ledger sequence number after which this proposal expires.
+    pub expiry_ledger: u32,
+    pub approvals: Vec<Address>,
+    pub executed: bool,
+}
+
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 const CURRENT_VERSION: u32 = 1;
+/// Default maximum number of upgrade history entries retained.
+pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
+/// Minimum allowed value for max_history_entries.
+pub const MIN_HISTORY_ENTRIES: u32 = 10;
+/// Maximum allowed value for max_history_entries.
+pub const MAX_HISTORY_ENTRIES_LIMIT: u32 = 200;
 
 #[contract]
 pub struct CarbonRegistryContract;
@@ -147,6 +188,35 @@ impl CarbonRegistryContract {
             upgraded_by: admin.clone(),
             wasm_hash: new_wasm_hash,
         };
+
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        history.push_back(record);
+
+        let max_entries: u32 = env.storage()
+            .persistent()
+            .get(&DataKey::MaxHistoryEntries)
+            .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
+        let max = max_entries as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
         env.storage()
             .persistent()
             .set(&DataKey::UpgradeHistory, &record);
@@ -165,8 +235,292 @@ impl CarbonRegistryContract {
             .unwrap_or(1)
     }
 
+    /// Returns the most recent upgrade record, or None if no upgrades have occurred.
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history.get(history.len() - 1).unwrap())
+        }
+    }
+
+    /// Returns a paginated slice of the upgrade history.
+    /// `offset` is zero-based (0 = oldest record). `limit` caps at 50.
+    pub fn get_upgrade_history_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<UpgradeRecord>, CarbonError> {
+        let effective_limit = if limit > 50 { 50 } else { limit };
+        if effective_limit == 0 {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let len = history.len();
+
+        if offset >= len {
+            return Ok(vec![&env]);
+        }
+
+        let mut result: Vec<UpgradeRecord> = vec![&env];
+        let end = core::cmp::min(offset + effective_limit, len);
+        for i in offset..end {
+            result.push_back(history.get(i).unwrap());
+        }
+        Ok(result)
+    }
+
+    /// Admin: set the maximum number of upgrade history entries to retain.
+    /// Values are clamped to [MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES_LIMIT].
+    pub fn set_max_history_entries(
+        env: Env,
+        admin: Address,
+        n: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        let clamped = core::cmp::max(
+            MIN_HISTORY_ENTRIES,
+            core::cmp::min(n, MAX_HISTORY_ENTRIES_LIMIT),
+        );
+        env.storage().persistent().set(&DataKey::MaxHistoryEntries, &clamped);
+
+        // If current history exceeds the new cap, prune immediately
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let max = clamped as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        Ok(())
         env.storage().persistent().get(&DataKey::UpgradeHistory)
+    }
+
+    // ── MultiSig Upgrade Functions (#648) ────────────────────────────────────
+
+    /// Configure multi-sig upgrade policy. Admin must already be initialized.
+    /// `threshold` must be >= 1 and <= signers.len().
+    pub fn initialize_multisig(
+        env: Env,
+        admin: Address,
+        signers: Vec<Address>,
+        threshold: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        if threshold == 0 || threshold as usize > signers.len() as usize {
+            return Err(CarbonError::UnauthorizedUpgrade);
+        }
+
+        let config = MultiSigConfig { signers, threshold };
+        env.storage()
+            .persistent()
+            .set(&DataKey::MultiSigConfig, &config);
+        Ok(())
+    }
+
+    /// Propose a new WASM upgrade. Only callable by a registered signer.
+    /// Returns the proposal_id.
+    pub fn propose_upgrade(
+        env: Env,
+        proposer: Address,
+        wasm_hash: BytesN<32>,
+    ) -> Result<u32, CarbonError> {
+        proposer.require_auth();
+        Self::require_multisig_signer(&env, &proposer)?;
+
+        let proposal_id: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposalCounter)
+            .unwrap_or(0u32)
+            + 1;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProposalCounter, &proposal_id);
+
+        // Proposal expires after 518400 ledgers (~72 hours at ~5s/ledger)
+        let expiry_ledger = env
+            .ledger()
+            .sequence()
+            .saturating_add(518_400);
+
+        let mut initial_approvals: Vec<Address> = vec![&env];
+        initial_approvals.push_back(proposer.clone());
+
+        let proposal = UpgradeProposal {
+            proposal_id,
+            wasm_hash: wasm_hash.clone(),
+            expiry_ledger,
+            approvals: initial_approvals,
+            executed: false,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingUpgrade, &proposal);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("upg_prop")),
+            (proposal_id, proposer, wasm_hash),
+        );
+        Ok(proposal_id)
+    }
+
+    /// Approve a pending upgrade proposal. Executes when approvals reach threshold.
+    pub fn approve_upgrade(
+        env: Env,
+        approver: Address,
+        proposal_id: u32,
+    ) -> Result<(), CarbonError> {
+        approver.require_auth();
+        Self::require_multisig_signer(&env, &approver)?;
+
+        let mut proposal: UpgradeProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingUpgrade)
+            .ok_or(CarbonError::ProposalNotFound)?;
+
+        if proposal.proposal_id != proposal_id {
+            return Err(CarbonError::ProposalNotFound);
+        }
+        if proposal.executed {
+            return Err(CarbonError::ProposalNotFound);
+        }
+        if env.ledger().sequence() > proposal.expiry_ledger {
+            return Err(CarbonError::ProposalExpired);
+        }
+        if proposal.approvals.contains(&approver) {
+            return Err(CarbonError::DuplicateApproval);
+        }
+
+        proposal.approvals.push_back(approver.clone());
+
+        let config: MultiSigConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MultiSigConfig)
+            .ok_or(CarbonError::UnauthorizedUpgrade)?;
+
+        if proposal.approvals.len() as u32 >= config.threshold {
+            // Execute the upgrade
+            proposal.executed = true;
+            env.storage()
+                .persistent()
+                .set(&DataKey::PendingUpgrade, &proposal);
+
+            let current_version: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ContractVersion)
+                .unwrap_or(1);
+            env.deployer()
+                .update_current_contract_wasm(proposal.wasm_hash.clone());
+
+            let next_version = current_version + 1;
+            env.storage()
+                .persistent()
+                .set(&DataKey::ContractVersion, &next_version);
+
+            let record = UpgradeRecord {
+                from_version: current_version,
+                to_version: next_version,
+                timestamp: env.ledger().timestamp(),
+                upgraded_by: approver.clone(),
+                wasm_hash: proposal.wasm_hash.clone(),
+            };
+            env.storage()
+                .persistent()
+                .set(&DataKey::UpgradeHistory, &record);
+
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("upgraded")),
+                (current_version, next_version, approver, proposal_id),
+            );
+        } else {
+            env.storage()
+                .persistent()
+                .set(&DataKey::PendingUpgrade, &proposal);
+
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("upg_appr")),
+                (proposal_id, approver, proposal.approvals.len()),
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Cancel a pending upgrade proposal. Only callable by a registered signer.
+    pub fn cancel_upgrade(
+        env: Env,
+        canceller: Address,
+        proposal_id: u32,
+    ) -> Result<(), CarbonError> {
+        canceller.require_auth();
+        Self::require_multisig_signer(&env, &canceller)?;
+
+        let proposal: UpgradeProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingUpgrade)
+            .ok_or(CarbonError::ProposalNotFound)?;
+
+        if proposal.proposal_id != proposal_id {
+            return Err(CarbonError::ProposalNotFound);
+        }
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingUpgrade);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("upg_cncl")),
+            (proposal_id, canceller),
+        );
+        Ok(())
+    }
+
+    pub fn get_pending_upgrade(env: Env) -> Option<UpgradeProposal> {
+        env.storage().persistent().get(&DataKey::PendingUpgrade)
+    }
+
+    fn require_multisig_signer(env: &Env, caller: &Address) -> Result<(), CarbonError> {
+        let config: MultiSigConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MultiSigConfig)
+            .ok_or(CarbonError::UnauthorizedUpgrade)?;
+        if !config.signers.contains(caller) {
+            return Err(CarbonError::UnauthorizedUpgrade);
+        }
+        Ok(())
     }
 
     fn current_year(env: &Env) -> u32 {
@@ -793,6 +1147,25 @@ mod tests {
         assert_eq!(p.total_credits_retired, 300);
     }
 
+    /// Kills mutation of `total_credits_retired + amount > total_credits_issued`
+    /// -> `>=` in `retire_credits` (issue #632): retiring exactly the full
+    /// issued amount is the boundary case and must succeed, not be rejected.
+    #[test]
+    fn test_retire_exact_issued_amount_succeeds() {
+        let (env, admin, oracle, verifier) = setup();
+        let contract_id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
+
+        register(&env, &client, &admin);
+        client.increment_issued(&oracle, &make_str(&env, "proj-001"), &500_i128);
+        client.retire_credits(&admin, &make_str(&env, "proj-001"), &500_i128);
+
+        let p = client.get_project(&make_str(&env, "proj-001"));
+        assert_eq!(p.total_credits_retired, 500);
+        assert_eq!(p.total_credits_retired, p.total_credits_issued);
+    }
+
     #[test]
     fn test_retire_credits_cannot_exceed_issued() {
         let (env, admin, oracle, verifier) = setup();
@@ -1191,5 +1564,170 @@ mod oracle_suspend_tests {
 
         let result = client.try_oracle_suspend_project(&s(&env, "p1"), &s(&env, "reason"));
         assert_eq!(result.unwrap_err(), Ok(CarbonError::UnauthorizedOracle));
+    }
+}
+
+// ── MultiSig Upgrade Tests (#648) ─────────────────────────────────────────────
+
+#[cfg(test)]
+mod multisig_tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        vec, Env, String,
+    };
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    fn setup_multisig(
+        env: &Env,
+    ) -> (
+        CarbonRegistryContractClient,
+        Address, // admin
+        Address, // signer1
+        Address, // signer2
+        Address, // signer3
+    ) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600,
+            protocol_version: 20,
+            sequence_number: 100,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        let admin = Address::generate(env);
+        let oracle = Address::generate(env);
+        let signer1 = Address::generate(env);
+        let signer2 = Address::generate(env);
+        let signer3 = Address::generate(env);
+
+        let id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(env, &id);
+        client.initialize(&admin, &oracle, &vec![env, signer1.clone()]);
+
+        // Initialize 2-of-3 multisig
+        let signers = vec![env, signer1.clone(), signer2.clone(), signer3.clone()];
+        client.initialize_multisig(&admin, &signers, &2u32);
+
+        (client, admin, signer1, signer2, signer3)
+    }
+
+    /// 2-of-3 multisig: exactly 2 approvals reaches threshold and executes upgrade
+    #[test]
+    fn test_multisig_exact_threshold() {
+        let env = Env::default();
+        let (client, _admin, signer1, signer2, _signer3) = setup_multisig(&env);
+        let fake_hash = BytesN::from_array(&env, &[1u8; 32]);
+
+        // signer1 proposes (counts as first approval)
+        let proposal_id = client.propose_upgrade(&signer1, &fake_hash);
+        assert_eq!(proposal_id, 1u32);
+
+        // Proposal exists with 1 approval, not yet executed
+        let pending = client.get_pending_upgrade().unwrap();
+        assert_eq!(pending.approvals.len(), 1);
+        assert!(!pending.executed);
+
+        // signer2 approves → threshold reached → executes
+        client.approve_upgrade(&signer2, &1u32);
+
+        let pending_after = client.get_pending_upgrade().unwrap();
+        assert!(pending_after.executed);
+    }
+
+    /// 1-of-3 approval does NOT execute (threshold = 2)
+    #[test]
+    fn test_multisig_below_threshold() {
+        let env = Env::default();
+        let (client, _admin, signer1, _signer2, _signer3) = setup_multisig(&env);
+        let fake_hash = BytesN::from_array(&env, &[2u8; 32]);
+
+        client.propose_upgrade(&signer1, &fake_hash);
+
+        // Only proposer has approved — should still be pending, not executed
+        let pending = client.get_pending_upgrade().unwrap();
+        assert_eq!(pending.approvals.len(), 1);
+        assert!(!pending.executed);
+    }
+
+    /// Approval after expiry returns ProposalExpired
+    #[test]
+    fn test_multisig_expired_proposal() {
+        let env = Env::default();
+        let (client, _admin, signer1, signer2, _signer3) = setup_multisig(&env);
+        let fake_hash = BytesN::from_array(&env, &[3u8; 32]);
+
+        client.propose_upgrade(&signer1, &fake_hash);
+
+        // Advance ledger sequence past the expiry window (518400 ledgers)
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600,
+            protocol_version: 20,
+            sequence_number: 100 + 518_401, // past expiry
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+
+        let result = client.try_approve_upgrade(&signer2, &1u32);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ProposalExpired
+        );
+    }
+
+    /// Duplicate approval from the same signer is rejected
+    #[test]
+    fn test_multisig_duplicate_approval_rejected() {
+        let env = Env::default();
+        let (client, _admin, signer1, _signer2, _signer3) = setup_multisig(&env);
+        let fake_hash = BytesN::from_array(&env, &[4u8; 32]);
+
+        client.propose_upgrade(&signer1, &fake_hash);
+
+        // signer1 tries to approve again (already approved via propose)
+        let result = client.try_approve_upgrade(&signer1, &1u32);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::DuplicateApproval
+        );
+    }
+
+    /// Non-signer cannot propose
+    #[test]
+    fn test_multisig_non_signer_cannot_propose() {
+        let env = Env::default();
+        let (client, _admin, _signer1, _signer2, _signer3) = setup_multisig(&env);
+        let outsider = Address::generate(&env);
+        let fake_hash = BytesN::from_array(&env, &[5u8; 32]);
+
+        let result = client.try_propose_upgrade(&outsider, &fake_hash);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::UnauthorizedUpgrade
+        );
+    }
+
+    /// Signer can cancel a pending proposal
+    #[test]
+    fn test_multisig_cancel_upgrade() {
+        let env = Env::default();
+        let (client, _admin, signer1, signer2, _signer3) = setup_multisig(&env);
+        let fake_hash = BytesN::from_array(&env, &[6u8; 32]);
+
+        client.propose_upgrade(&signer1, &fake_hash);
+        client.cancel_upgrade(&signer2, &1u32);
+
+        // Proposal should be gone
+        let pending = client.get_pending_upgrade();
+        assert!(pending.is_none());
     }
 }

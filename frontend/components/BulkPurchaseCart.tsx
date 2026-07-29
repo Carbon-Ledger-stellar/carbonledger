@@ -10,6 +10,7 @@ import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import TransactionStatus, { TxStatus } from "./TransactionStatus";
 import Toast, { useToast } from "./Toast";
+import { clearSdexEstimate, loadSdexEstimate, StoredOrderBookQuote, formatOrderBookPrice } from "../lib/sdex";
 import {
   useTransactionPoller,
   TRANSACTION_MAX_POLLS,
@@ -28,6 +29,7 @@ export default function BulkPurchaseCart() {
   const { toasts, addToast, dismiss } = useToast();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [sdexEstimate, setSdexEstimate] = useState<StoredOrderBookQuote | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const fabRef = useRef<HTMLButtonElement>(null);
 
@@ -130,6 +132,54 @@ export default function BulkPurchaseCart() {
       document.body.style.overflow = 'unset';
     };
   }, [drawerOpen]);
+
+  useEffect(() => {
+    const syncEstimate = () => setSdexEstimate(loadSdexEstimate());
+    syncEstimate();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === "carbonledger:sdex:estimate") {
+        syncEstimate();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const renderEstimatePanel = () => sdexEstimate ? (
+    <div style={{ marginBottom: "1rem", padding: "1rem", background: colors.primary[50], borderRadius: "0.75rem", border: `1px solid ${colors.primary[200]}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "flex-start" }}>
+        <div>
+          <p style={{ margin: 0, fontSize: "0.75rem", fontWeight: 700, color: colors.primary[700], textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Live SDEX estimate
+          </p>
+          <p style={{ margin: "0.25rem 0 0", color: colors.neutral[800], fontSize: "0.875rem", fontWeight: 600 }}>
+            {formatTonnes(sdexEstimate.requestedQuantity)} targeted from the current order book.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            clearSdexEstimate();
+            setSdexEstimate(null);
+          }}
+          style={{ background: "transparent", border: "none", color: colors.neutral[500], cursor: "pointer", fontSize: "0.875rem" }}
+        >
+          Clear
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "0.75rem", marginTop: "0.75rem" }}>
+        <EstimateMetric label="Avg price" value={`${formatOrderBookPrice(sdexEstimate.averageExecutionPrice)} USDC / tCO₂e`} />
+        <EstimateMetric label="Total estimate" value={`${formatOrderBookPrice(sdexEstimate.estimatedTotalPrice)} USDC`} />
+        <EstimateMetric label="Filled volume" value={formatTonnes(sdexEstimate.filledQuantity)} />
+        <EstimateMetric label="Depth used" value={`${sdexEstimate.levelsUsed.length} levels`} />
+      </div>
+      <p style={{ margin: "0.75rem 0 0", color: colors.neutral[500], fontSize: "0.75rem" }}>
+        The cart still reflects your selected listings. This estimate helps you sanity-check the market depth before checkout.
+      </p>
+    </div>
+  ) : null;
 
   return (
     <>
@@ -236,6 +286,8 @@ export default function BulkPurchaseCart() {
       <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 1rem" }}>
         {t("title", { count: items.length })}
       </h3>
+
+      {renderEstimatePanel()}
 
       {items.length === 0 ? (
         <p style={{ color: colors.neutral[400], fontSize: "0.875rem", textAlign: "center", padding: "2rem 0" }}>
@@ -369,6 +421,8 @@ export default function BulkPurchaseCart() {
         </div>
 
         <div style={{ padding: "1.5rem" }}>
+          {renderEstimatePanel()}
+
           {items.length === 0 ? (
             <p style={{ color: colors.neutral[400], fontSize: "0.875rem", textAlign: "center", padding: "2rem 0" }}>
               {t("empty")}
@@ -462,6 +516,15 @@ function Row({ label, value, muted, bold }: { label: string; value: string; mute
     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.4rem" }}>
       <span style={{ fontSize: "0.875rem", color: muted ? colors.neutral[400] : colors.neutral[600] }}>{label}</span>
       <span style={{ fontWeight: bold ? 700 : 500, color: bold ? colors.primary[700] : colors.neutral[700], fontSize: bold ? "1rem" : "0.875rem" }}>{value}</span>
+    </div>
+  );
+}
+
+function EstimateMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p style={{ margin: 0, fontSize: "0.7rem", color: colors.neutral[500] }}>{label}</p>
+      <p style={{ margin: "0.2rem 0 0", fontSize: "0.875rem", fontWeight: 700, color: colors.neutral[900] }}>{value}</p>
     </div>
   );
 }
