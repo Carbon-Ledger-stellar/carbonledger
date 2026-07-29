@@ -42,8 +42,8 @@ export class QueueProcessor extends WorkerHost {
     const retirementId = data['retirementId'] as string;
     this.logger.log(`Generating certificate for retirement ${retirementId}`);
     try {
-      const result = await this.certificateService.generateAndPinCertificate(retirementId);
-      return { retirementId, cid: result.cid, status: 'generated_and_pinned' };
+      await this.certificateProcessor.processCertificateGeneration(retirementId);
+      return { retirementId, status: 'generated_and_pinned' };
     } catch (err: any) {
       this.logger.error(`Failed to generate certificate for ${retirementId}: ${err.message}`);
       throw err;

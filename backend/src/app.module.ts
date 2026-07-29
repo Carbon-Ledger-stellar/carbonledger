@@ -1,5 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { WebhookModule } from "./webhook/webhook.module";
 import { GraphqlModule } from "./graphql/graphql.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
@@ -30,11 +31,14 @@ import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
+import { RedisSlidingWindowRateLimitGuard } from "./common/redis-sliding-window-rate-limit.guard";
+import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
 import { RedisModule } from "./redis.module";
 import { RetentionModule } from "./retention/retention.module";
+import { ReconciliationModule } from "./reconciliation/reconciliation.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -152,9 +156,11 @@ class HealthController {
     AdminModule,
     PublicApiModule,
     GraphqlModule,
+    WebhookModule,
     RedisModule,
     IdempotencyModule,
     RetentionModule,
+    ReconciliationModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -176,6 +182,10 @@ class HealthController {
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RedisSlidingWindowRateLimitGuard,
     },
     // Role-based quota guard: enforces per-role daily/hourly limits
     {
@@ -199,6 +209,7 @@ class HealthController {
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+    consumer.apply(RateLimitMiddleware).forRoutes('*');
 
     // Apply idempotency enforcement to the three critical mutating endpoints.
     // The Idempotency-Key header is optional; omitting it simply bypasses the check.

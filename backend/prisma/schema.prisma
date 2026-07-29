@@ -25,6 +25,7 @@ model CarbonProject {
   verifierAddress     String
   ownerAddress        String
   coordinates         Json?
+  migrationVersion    String?
   lastMonitoringAt    DateTime?
   deletedAt           DateTime?
   deletionReason      String?
@@ -44,6 +45,7 @@ model CarbonProject {
   @@index([vintageYear])
   @@index([createdAt])
   @@index([methodology, country, status])
+  @@index([migrationVersion])
   @@index([lastMonitoringAt])
   @@index([deletedAt])
   @@index([retentionUntil])
@@ -82,11 +84,17 @@ model RetirementRecord {
   serialStart      String
   serialEnd        String
   serialNumbers    String[]
-  txHash           String   @unique
-  certificateCid   String?
-  isValid          Boolean  @default(true)
-  validatedAt      DateTime?
-  retiredAt        DateTime @default(now())
+  txHash           String
+  certificateCid           String?
+  certificateUrl           String?
+  certificateStatus        String    @default("pending_certificate")
+  certificateRetries       Int       @default(0)
+  certificateFailedAt      DateTime?
+  certificateGeneratedAt   DateTime?
+  legacyStatus             String?
+  isValid                  Boolean   @default(true)
+  validatedAt              DateTime?
+  retiredAt                DateTime  @default(now())
 
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
   project CarbonProject @relation(fields: [projectId], references: [projectId])
@@ -95,6 +103,7 @@ model RetirementRecord {
   zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+  @@index([legacyStatus])
 }
 
 model ZkRetirementProof {
@@ -422,6 +431,43 @@ model OracleUpdate {
   @@index([createdAt])
 }
 
+/// Tracks webhook subscriptions for corporate ESG platforms.
+/// Each subscription is tied to an owner address and listens for specified events.
+model WebhookSubscription {
+  id           String   @id @default(cuid())
+  ownerAddress String
+  url          String
+  secret       String
+  events       String[] // e.g. ["retirement.confirmed", "certificate.ready", "credit.purchased"]
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  deliveryLogs WebhookDeliveryLog[]
+
+  @@index([ownerAddress])
+  @@index([active])
+}
+
+/// Logs each webhook delivery attempt, including response details.
+model WebhookDeliveryLog {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  eventType      String
+  url            String
+  statusCode     Int?
+  responseBody   String?  @db.Text
+  success        Boolean  @default(false)
+  attempt        Int      @default(1)
+  error          String?
+  timestamp      DateTime @default(now())
+
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([eventType])
+  @@index([timestamp])
+}
+
 /// Append-only credit event log — never updated or deleted.
 /// Every mutation to a CreditBatch (mint / transfer / retire / list / delist)
 /// produces one row here.  The `signature` field holds an HMAC-SHA256 digest
@@ -441,19 +487,6 @@ model CreditEvent {
   @@index([timestamp])
 }
 
-
-model OracleSyncState {
-  id                String    @id @default(cuid())
-  lastSyncedAt      DateTime  @default(now())
-  lastSyncedBlock   Int       @default(0)
-  recordsSynced     Int       @default(0)
-  lastError         String?
-  lastErrorAt       DateTime?
-  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
-  updatedAt         DateTime  @updatedAt
-
-  @@unique([id])
-
 model SatelliteWebhookProvider {
   id          String   @id @default(cuid())
   providerId  String   @unique
@@ -465,5 +498,4 @@ model SatelliteWebhookProvider {
 
   @@index([providerId])
   @@index([isActive])
-
 }

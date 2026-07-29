@@ -107,22 +107,42 @@ export class RetirementsService {
       },
     });
 
-    // Generate and pin certificate to IPFS
-    let certificateCid: string | null = null;
+    // Enqueue certificate generation job via BullMQ for async PDF generation
     try {
-      const result = await this.certificateService.generateAndPinCertificate(retirementId);
-      certificateCid = result.cid;
-    } catch (err) {
-      this.logger.warn(`Certificate generation failed for ${retirementId}: ${err.message}`);
+      await this.queueService.enqueue(JobType.CERTIFICATE_GENERATION, {
+        retirementId,
+      });
+      this.logger.log(`Certificate generation job enqueued for ${retirementId}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to enqueue certificate generation for ${retirementId}: ${err.message}`);
+      // Don't fail retirement creation if queue enqueue fails
+    }
+
+    // Dispatch webhook: retirement.confirmed
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('retirement.confirmed', {
+          retirementId: retirement.retirementId,
+          batchId: retirement.batchId,
+          projectId: retirement.projectId,
+          amount: Number(retirement.amount),
+          retiredBy: retirement.retiredBy,
+          beneficiary: retirement.beneficiary,
+          vintageYear: retirement.vintageYear,
+          txHash: retirement.txHash,
+          retiredAt: retirement.retiredAt.toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
     }
 
     return {
       retirementId: retirement.retirementId,
       txHash: retirement.txHash,
-      certificateCid,
-      certificateUrl: certificateCid
-        ? `https://gateway.pinata.cloud/ipfs/${certificateCid}`
-        : null,
+      certificateCid: null,
+      certificateUrl: null,
+      certificateStatus: 'pending_certificate',
     };
   }
 
