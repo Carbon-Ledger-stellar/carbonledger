@@ -1,9 +1,82 @@
 version: "3.9"
 
+# ── Shared logging driver ─────────────────────────────────────────────────────
+# All app services use json-file so Promtail can tail them via the Docker socket.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# ── Resource limit anchors ────────────────────────────────────────────────────
+# Override via env vars (e.g. BACKEND_MEM_LIMIT=1g) for non-testnet environments.
+x-resources-backend: &resources-backend
+  deploy:
+    resources:
+      limits:
+        memory: ${BACKEND_MEM_LIMIT:-512m}
+        cpus:   "${BACKEND_CPU_LIMIT:-0.75}"
+      reservations:
+        memory: ${BACKEND_MEM_RESERVATION:-128m}
+        cpus:   "${BACKEND_CPU_RESERVATION:-0.25}"
+
+x-resources-frontend: &resources-frontend
+  deploy:
+    resources:
+      limits:
+        memory: ${FRONTEND_MEM_LIMIT:-256m}
+        cpus:   "${FRONTEND_CPU_LIMIT:-0.50}"
+      reservations:
+        memory: ${FRONTEND_MEM_RESERVATION:-64m}
+        cpus:   "${FRONTEND_CPU_RESERVATION:-0.10}"
+
+x-resources-postgres: &resources-postgres
+  deploy:
+    resources:
+      limits:
+        memory: ${POSTGRES_MEM_LIMIT:-1g}
+        cpus:   "${POSTGRES_CPU_LIMIT:-1.00}"
+      reservations:
+        memory: ${POSTGRES_MEM_RESERVATION:-256m}
+        cpus:   "${POSTGRES_CPU_RESERVATION:-0.25}"
+
+x-resources-redis: &resources-redis
+  deploy:
+    resources:
+      limits:
+        memory: ${REDIS_MEM_LIMIT:-256m}
+        cpus:   "${REDIS_CPU_LIMIT:-0.25}"
+      reservations:
+        memory: ${REDIS_MEM_RESERVATION:-32m}
+        cpus:   "${REDIS_CPU_RESERVATION:-0.05}"
+
+x-resources-oracle: &resources-oracle
+  deploy:
+    resources:
+      limits:
+        memory: ${ORACLE_MEM_LIMIT:-256m}
+        cpus:   "${ORACLE_CPU_LIMIT:-0.50}"
+      reservations:
+        memory: ${ORACLE_MEM_RESERVATION:-64m}
+        cpus:   "${ORACLE_CPU_RESERVATION:-0.10}"
+
+x-resources-observability: &resources-observability
+  deploy:
+    resources:
+      limits:
+        memory: ${OBSERVABILITY_MEM_LIMIT:-256m}
+        cpus:   "${OBSERVABILITY_CPU_LIMIT:-0.25}"
+      reservations:
+        memory: ${OBSERVABILITY_MEM_RESERVATION:-64m}
+        cpus:   "${OBSERVABILITY_CPU_RESERVATION:-0.05}"
+
 services:
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    <<: *resources-postgres
     environment:
       POSTGRES_DB:       carbonledger
       POSTGRES_USER:     carbonledger
@@ -17,35 +90,101 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging: *default-logging
+
+  redis-primary:
+    image: redis:7-alpine
+    restart: unless-stopped
+    <<: *resources-redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-}
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  redis-replica:
+    image: redis:7-alpine
+    restart: unless-stopped
+    <<: *resources-redis
+    command: redis-server --replicaof redis-primary 6379 --masterauth ${REDIS_PASSWORD:-} --requirepass ${REDIS_PASSWORD:-}
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    logging: *default-logging
+
+  redis-sentinel:
+    image: bitnami/redis-sentinel:7.2
+    restart: unless-stopped
+    <<: *resources-redis
+    environment:
+      - REDIS_SENTINEL_QUORUM=1
+      - REDIS_MASTER_HOST=redis-primary
+      - REDIS_MASTER_PORT_NUMBER=6379
+      - REDIS_MASTER_SET=mymaster
+      - REDIS_SENTINEL_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_MASTER_PASSWORD=${REDIS_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    logging: *default-logging
+
+  # ── Application services ────────────────────────────────────────────────────
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    <<: *resources-backend
     depends_on:
       postgres:
+        condition: service_healthy
+      redis-sentinel:
         condition: service_healthy
     environment:
       DATABASE_URL:      postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@postgres:5432/carbonledger
       JWT_SECRET:        ${JWT_SECRET}
       JWT_EXPIRY:        7d
+      REDIS_URL:         redis://redis:6379
       STELLAR_NETWORK:   ${STELLAR_NETWORK:-testnet}
       STELLAR_RPC_URL:   ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
       FRONTEND_URL:      http://localhost:3000
+      ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-http://localhost:3000}
       PORT:              3001
+      REDIS_SENTINELS:   redis-sentinel:26379
+      REDIS_SENTINEL_NAME: mymaster
+      REDIS_PASSWORD:    ${REDIS_PASSWORD:-}
+      LOG_LEVEL:         ${LOG_LEVEL:-info}
     ports:
       - "3001:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001/health/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     command: >
       sh -c "npx prisma migrate deploy && node dist/main"
+    logging: *default-logging
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
+    <<: *resources-frontend
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       NEXT_PUBLIC_API_URL:              http://localhost:3001/api/v1
       NEXT_PUBLIC_STELLAR_NETWORK:      ${STELLAR_NETWORK:-testnet}
@@ -58,12 +197,20 @@ services:
       NEXT_PUBLIC_USDC_CONTRACT:        ${USDC_CONTRACT_ID}
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
 
   oracle_verification:
     build:
       context: ./oracle
       dockerfile: Dockerfile
     restart: unless-stopped
+    <<: *resources-oracle
     environment:
       ORACLE_SECRET_KEY:           ${ORACLE_SECRET_KEY}
       CARBON_ORACLE_CONTRACT_ID:   ${CARBON_ORACLE_CONTRACT_ID}
@@ -75,15 +222,25 @@ services:
       GOLD_STANDARD_API_KEY:       ${GOLD_STANDARD_API_KEY}
       VERRA_VCS_API_URL:           ${VERRA_VCS_API_URL}
       VERRA_VCS_API_KEY:           ${VERRA_VCS_API_KEY}
+      LOG_LEVEL:                   ${LOG_LEVEL:-INFO}
     command: python3 verification_listener.py
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep verification_listener.py | grep -v grep || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
 
   oracle_price:
     build:
       context: ./oracle
       dockerfile: Dockerfile
     restart: unless-stopped
+    <<: *resources-oracle
     environment:
       ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
       CARBON_ORACLE_CONTRACT_ID: ${CARBON_ORACLE_CONTRACT_ID}
@@ -91,13 +248,22 @@ services:
       XPANSIV_API_KEY:           ${XPANSIV_API_KEY}
       TOUCAN_API_KEY:            ${TOUCAN_API_KEY}
       ADMIN_ALERT_WEBHOOK:       ${ADMIN_ALERT_WEBHOOK}
+      LOG_LEVEL:                 ${LOG_LEVEL:-INFO}
     command: python3 price_oracle.py
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep price_oracle.py | grep -v grep || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
 
   oracle_satellite:
     build:
       context: ./oracle
       dockerfile: Dockerfile
     restart: unless-stopped
+    <<: *resources-oracle
     environment:
       ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
       CARBON_ORACLE_CONTRACT_ID: ${CARBON_ORACLE_CONTRACT_ID}
@@ -106,9 +272,71 @@ services:
       GEE_WEBHOOK_SECRET:        ${GEE_WEBHOOK_SECRET}
       ADMIN_ALERT_WEBHOOK:       ${ADMIN_ALERT_WEBHOOK}
       SATELLITE_MONITOR_PORT:    5001
+      LOG_LEVEL:                 ${LOG_LEVEL:-INFO}
     command: python3 satellite_monitor.py
     ports:
       - "5001:5001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  # ── Log aggregation stack ───────────────────────────────────────────────────
+
+  loki:
+    image: grafana/loki:2.9.8
+    restart: unless-stopped
+    <<: *resources-observability
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./logging/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki.yml
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  promtail:
+    image: grafana/promtail:2.9.8
+    restart: unless-stopped
+    <<: *resources-observability
+    volumes:
+      - ./logging/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/promtail.yml
+    depends_on:
+      loki:
+        condition: service_healthy
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    restart: unless-stopped
+    <<: *resources-observability
+    ports:
+      - "3200:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+      GF_ALERTING_ENABLED:        "true"
+      GF_UNIFIED_ALERTING_ENABLED: "true"
+    volumes:
+      - ./logging/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      loki:
+        condition: service_healthy
+    logging: *default-logging
 
 volumes:
   postgres_data:
+  redis_data:
+  loki_data:
+  grafana_data:
