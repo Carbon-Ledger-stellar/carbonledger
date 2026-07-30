@@ -31,6 +31,9 @@ import { ThrottleModule, RoleLimitGuard } from "./throttle";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+// API versioning — v2 controllers + deprecation middleware
+import { VersioningModule } from "./versioning/versioning.module";
+import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -148,6 +151,8 @@ class HealthController {
     PublicApiModule,
     RedisModule,
     IdempotencyModule,
+    // API v2 controllers (shared service layer, no duplication)
+    VersioningModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -192,6 +197,10 @@ class HealthController {
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+
+    // Adds RFC 8594 Deprecation + Sunset headers to all v1 responses.
+    // v2 routes only receive X-API-Version: 2 (no deprecation headers).
+    consumer.apply(DeprecationMiddleware).forRoutes('*');
 
     // Apply idempotency enforcement to the three critical mutating endpoints.
     // The Idempotency-Key header is optional; omitting it simply bypasses the check.
