@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN, Env,
-    String, Vec,
+    Map, String, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -44,7 +44,11 @@ pub enum DataKey {
     Batch(String),
     Retirement(String),
     ProjectBatches(String),
+    /// Legacy flat-Vec registry — kept for one-time migration on first mint after upgrade.
     SerialRegistry,
+    /// O(log n) registry: Map<serial_start, serial_end> sorted by key.
+    /// Binary-search on the sorted keys to detect overlap in O(log n).
+    SerialMap,
     Admin,
     RegistryContract,
     ContractVersion,
@@ -117,6 +121,8 @@ pub struct RetirementCertificate {
     pub certificate_cid: String,
 }
 
+/// Legacy flat-list type kept only for migration during the first call after upgrade.
+/// New code uses `SerialMap` (a `Map<u64, u64>` stored under `DataKey::SerialMap`).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SerialRange {
@@ -158,10 +164,11 @@ impl CarbonCreditContract {
         env.storage()
             .persistent()
             .set(&DataKey::RegistryContract, &registry_contract);
-        let ranges: Vec<SerialRange> = vec![&env];
+        // Initialize the O(log n) serial-range Map (start → end).
+        let serial_map: Map<u64, u64> = Map::new(&env);
         env.storage()
             .persistent()
-            .set(&DataKey::SerialRegistry, &ranges);
+            .set(&DataKey::SerialMap, &serial_map);
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
@@ -273,18 +280,17 @@ impl CarbonCreditContract {
             return Err(CarbonError::DoubleCountingDetected);
         }
 
-        let mut ranges: Vec<SerialRange> = env
+        // Insert the new range into the sorted Map (start → end).
+        // Soroban Map keeps keys sorted, so subsequent lookups are O(log n).
+        let mut serial_map: Map<u64, u64> = env
             .storage()
             .persistent()
-            .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| vec![&env]);
-        ranges.push_back(SerialRange {
-            start: serial_start,
-            end: serial_end,
-        });
+            .get(&DataKey::SerialMap)
+            .unwrap_or_else(|| Map::new(&env));
+        serial_map.set(serial_start, serial_end);
         env.storage()
             .persistent()
-            .set(&DataKey::SerialRegistry, &ranges);
+            .set(&DataKey::SerialMap, &serial_map);
 
         let batch = CreditBatch {
             batch_id: batch_id.clone(),
@@ -581,18 +587,118 @@ impl CarbonCreditContract {
     // Production Groth16 verification lives in `contracts/carbon_zk_verifier`
     // (Circom BLS12-381 / CAP-0059). See docs/zk-proof-spec.md.
 
+    /// Check whether [start, end] overlaps any previously registered range.
+    ///
+    /// ## Algorithm  O(log n)
+    /// The registry is a `Map<u64, u64>` where each key is a `serial_start`
+    /// and the value is the corresponding `serial_end`. Soroban `Map` keeps
+    /// keys in sorted order, so we can use two targeted lookups:
+    ///
+    /// 1. **Left neighbour**: the entry with the largest key ≤ `start`.
+    ///    If it exists, its range `[lk, lv]` overlaps iff `lv >= start`.
+    /// 2. **Right neighbour**: the entry with the smallest key > `start`.
+    ///    If it exists, its range `[rk, rv]` overlaps iff `rk <= end`.
+    ///
+    /// These two comparisons replace the full O(n) linear scan.
+    ///
+    /// ## Migration from legacy Vec registry
+    /// Contracts upgraded from v1 may still have a `SerialRegistry` (Vec)
+    /// entry. On the first invocation we migrate all existing ranges into
+    /// the Map and remove the legacy key.
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
-        let ranges: Vec<SerialRange> = env
+        // ── One-time migration from legacy flat Vec ───────────────────────────
+        if env.storage().persistent().has(&DataKey::SerialRegistry) {
+            let legacy: Vec<SerialRange> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::SerialRegistry)
+                .unwrap_or_else(|| vec![env]);
+            let mut migrated: Map<u64, u64> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::SerialMap)
+                .unwrap_or_else(|| Map::new(env));
+            for r in legacy.iter() {
+                migrated.set(r.start, r.end);
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKey::SerialMap, &migrated);
+            env.storage()
+                .persistent()
+                .remove(&DataKey::SerialRegistry);
+        }
+
+        let map: Map<u64, u64> = env
             .storage()
             .persistent()
-            .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| vec![env]);
+            .get(&DataKey::SerialMap)
+            .unwrap_or_else(|| Map::new(env));
 
-        for r in ranges.iter() {
-            if start <= r.end && end >= r.start {
+        if map.is_empty() {
+            return true;
+        }
+
+        let keys: Vec<u64> = map.keys();
+        let n = keys.len();
+
+        // Binary-search helpers —————————————————————————————————————————————
+        // Find the index of the largest key ≤ `start` (left neighbour).
+        // Returns None if all keys are > start.
+        let left_idx: Option<u32> = {
+            let mut lo: u32 = 0;
+            let mut hi: u32 = n;
+            let mut found: Option<u32> = None;
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                let k = keys.get(mid).unwrap();
+                if k <= start {
+                    found = Some(mid);
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            found
+        };
+
+        // Check left neighbour: its range may extend into [start, end].
+        if let Some(li) = left_idx {
+            let lk = keys.get(li).unwrap();
+            let lv = map.get(lk).unwrap();
+            // Overlap if lv >= start  (the existing range ends at or after our start)
+            if lv >= start {
                 return false;
             }
         }
+
+        // Find the index of the smallest key > `start` (right neighbour).
+        let right_idx: Option<u32> = {
+            let mut lo: u32 = 0;
+            let mut hi: u32 = n;
+            let mut found: Option<u32> = None;
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                let k = keys.get(mid).unwrap();
+                if k > start {
+                    found = Some(mid);
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            found
+        };
+
+        // Check right neighbour: its start may fall inside [start, end].
+        if let Some(ri) = right_idx {
+            let rk = keys.get(ri).unwrap();
+            // Overlap if rk <= end  (the next range starts before our range ends)
+            if rk <= end {
+                return false;
+            }
+        }
+
         true
     }
 }
