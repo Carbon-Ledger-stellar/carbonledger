@@ -1,5 +1,9 @@
-import { IsString, IsInt, IsPositive, IsOptional, Min, Max, ArrayMaxSize, ArrayMinSize, Length, MaxLength, IsIn } from "class-validator";
+import { IsString, IsInt, IsPositive, IsOptional, Min, Max, ArrayMaxSize, ArrayMinSize, Length, MaxLength, IsIn, Matches } from "class-validator";
 import { Type } from "class-transformer";
+import { IsVintageYear } from '../common/validators';
+
+/** Regex for a positive decimal price string, e.g. "12.50" or "100". */
+const PRICE_REGEX = /^\d+(\.\d{1,7})?$/;
 
 export const LISTING_SORT_FIELDS = ["price", "vintageYear", "methodology", "verificationDate"] as const;
 export type ListingSortField = (typeof LISTING_SORT_FIELDS)[number];

@@ -7,6 +7,7 @@ import { validateEnv } from './env.validation';
 import * as express from 'express';
 import { StellarNetworkService } from './common/stellar-network.service';
 import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
+import { ValidationExceptionFilter } from './common/validation-exception.filter';
 
 /**
  * Enhanced JSON logger with correlation ID support.

@@ -1,4 +1,5 @@
 import { IsString, IsOptional, Length, IsIn, IsInt, Min, Max } from 'class-validator';
+import { IsStellarAddress } from '../common/validators';
 
 /**
  * DTO for whitelisting a verifier address.
