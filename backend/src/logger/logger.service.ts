@@ -34,8 +34,11 @@ export class LoggerService implements NestLoggerService {
       );
     }
 
+    const configuredLevel = (process.env.LOG_LEVEL ?? "info").toLowerCase();
+    const moduleLevel = process.env.LOG_LEVEL_FINANCIAL ?? configuredLevel;
+
     this.logger = winston.createLogger({
-      level: process.env.LOG_LEVEL ?? "info",
+      level: configuredLevel,
       format: winston.format.combine(
         winston.format.timestamp(),
         winston.format.errors({ stack: true }),
@@ -49,11 +52,25 @@ export class LoggerService implements NestLoggerService {
   private getContextWithCorrelationId(context?: LogContext | string): LogContext {
     const baseContext = typeof context === "string" ? { context } : (context ?? {});
     const correlationId = CorrelationIdContext.getCorrelationId();
-    
+    const sanitizedContext = this.sanitizeContext(baseContext);
+
     return {
-      ...baseContext,
-      correlationId: baseContext.correlationId || correlationId,
+      ...sanitizedContext,
+      correlationId: sanitizedContext.correlationId || correlationId,
     };
+  }
+
+  private sanitizeContext(context: LogContext): LogContext {
+    const sanitized: LogContext = { ...context };
+    const secretKeys = ["password", "secret", "token", "key", "api_key", "private_key", "authorization"];
+
+    for (const key of Object.keys(sanitized)) {
+      if (secretKeys.some((secretKey) => key.toLowerCase().includes(secretKey))) {
+        sanitized[key] = "[REDACTED]";
+      }
+    }
+
+    return sanitized;
   }
 
   private write(level: string, message: string, context?: LogContext | string) {

@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
+import { RedisService } from '../redis.service';
+import { StellarNetworkService } from '../common/stellar-network.service';
+import { UpdateCanaryDto } from './admin.dto';
 
 @Injectable()
 export class AdminService {
@@ -9,6 +12,8 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly indexer: IndexerService,
     private readonly oracle: OracleService,
+    private readonly redis: RedisService,
+    private readonly stellarNetwork: StellarNetworkService,
   ) {}
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
@@ -74,6 +79,41 @@ export class AdminService {
     };
   }
 
+  // ── Canary deployment ─────────────────────────────────────────────────────
+
+  updateCanary(dto: UpdateCanaryDto) {
+    const config = this.stellarNetwork.setCanaryConfig({
+      canaryContractId: dto.canaryContractId,
+      trafficPct: dto.trafficPct,
+    });
+
+    if (dto.trafficPct !== undefined) {
+      void this.prisma.adminConfig.upsert({
+        where: { key: 'canary_traffic_pct' },
+        update: { value: String(config.trafficPct) },
+        create: { key: 'canary_traffic_pct', value: String(config.trafficPct) },
+      });
+    }
+
+    if (dto.canaryContractId !== undefined) {
+      const contractValue = config.canaryContractId ?? '';
+      void this.prisma.adminConfig.upsert({
+        where: { key: 'canary_contract_id' },
+        update: { value: contractValue },
+        create: { key: 'canary_contract_id', value: contractValue },
+      });
+    }
+
+    return { config };
+  }
+
+  getCanaryStatus() {
+    return {
+      config: this.stellarNetwork.getCanaryConfig(),
+      errorRates: this.stellarNetwork.getErrorRates(),
+    };
+  }
+
   // ── Re-index ────────────────────────────────────────────────────────────────
 
   async triggerReindex() {
@@ -96,5 +136,15 @@ export class AdminService {
       skip:    Number(query.offset) || 0,
       orderBy: { timestamp: 'desc' },
     });
+  }
+
+  // ── Abuse Log ───────────────────────────────────────────────────────────────
+
+  async getAbuseLog() {
+    const client = this.redis.getClient();
+    if (!client) return [];
+    
+    const logs = await client.lrange('abuse:log', 0, -1);
+    return logs.map(log => JSON.parse(log));
   }
 }

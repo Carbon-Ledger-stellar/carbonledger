@@ -18,9 +18,11 @@ export async function cleanDatabase(app: INestApplication) {
   
   // Clean tables in correct order to respect foreign key constraints
   await prisma.monitoringData.deleteMany();
+  await prisma.oracleJob.deleteMany();
   await prisma.oracleUpdate.deleteMany();
   await prisma.marketListing.deleteMany();
   await prisma.retirementRecord.deleteMany();
+  await prisma.idempotencyRecord.deleteMany();
   await prisma.creditBatch.deleteMany();
   await prisma.carbonProject.deleteMany();
   await prisma.job.deleteMany();
@@ -83,8 +85,11 @@ export async function seedTestData(app: INestApplication) {
       beneficiary: 'Test Corporation',
       retirementReason: 'Carbon neutrality goal',
       vintageYear: 2024,
+      serialStart: 'KE-001-2024-0001',
+      serialEnd: 'KE-001-2024-0100',
       serialNumbers: ['KE-001-2024-0001', 'KE-001-2024-0100'],
       txHash: '0xtest123',
+      certificateStatus: 'pending_certificate',
     },
   });
 }
