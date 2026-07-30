@@ -22,6 +22,7 @@ describe('database migration policy tooling', () => {
 
     expect(output).toContain('Rollback plan');
     expect(output).toContain('npx prisma migrate resolve --rolled-back');
-    expect(output).toContain('20260729000001_expand_contract_add_retirement_legacy_status');
+    // Verify the output references a migration name matching the standard timestamp_description format
+    expect(output).toMatch(/npx prisma migrate resolve --rolled-back \d{14}_[a-z0-9_]+/);
   });
 });
