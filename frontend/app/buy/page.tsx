@@ -2,10 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { useListing, purchaseCredits } from "../../lib/api";
-import { formatStroops, formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
+import { useBuyButton } from "../../lib/useBuyButton";
+import ErrorBoundary from "../../components/ErrorBoundary";
+import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
+import { useLocaleFormatters } from "../../lib/i18n/format";
 import { connectFreighter, getPublicKey } from "../../lib/freighter";
-import { getWalletErrorMessage } from "../../lib/wallet-errors";
+import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import Toast, { useToast } from "../../components/Toast";
@@ -13,6 +17,8 @@ import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
 
 export default function BuyPage() {
+  const t = useTranslations("buyPage");
+  const { formatCurrency } = useLocaleFormatters();
   const searchParams = useSearchParams();
   const listingId    = searchParams.get("listing") ?? "";
 
@@ -30,7 +36,7 @@ export default function BuyPage() {
     : 0n;
 
   async function handleConnect(key: string) {
-    addToast({ type: "success", title: "Wallet connected", message: key.slice(0, 8) + "…" });
+    addToast({ type: "success", title: t("walletConnectedTitle"), message: key.slice(0, 8) + "…" });
   }
 
   async function handlePurchase() {
@@ -41,7 +47,7 @@ export default function BuyPage() {
       const result = await purchaseCredits(listing.listingId, amount, walletKey);
       setTxHash(result.txHash);
       setTxStatus("confirmed");
-      addToast({ type: "success", title: "Purchase confirmed!", message: `${formatTonnes(amount)} acquired`, txHash: result.txHash });
+      addToast({ type: "success", title: t("purchaseConfirmedTitle"), message: t("purchaseConfirmedMessage", { tonnes: formatTonnes(amount) }), txHash: result.txHash });
       if (retireAfter) {
         window.location.href = `/retire?batch=${result.batchId}`;
       }
@@ -56,15 +62,15 @@ export default function BuyPage() {
     <div style={{ maxWidth: "700px", margin: "0 auto", padding: "2.5rem 2rem" }}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <a href="/marketplace" style={{ fontSize: "0.875rem", color: colors.primary[600], textDecoration: "none" }}>
-        ← Back to Marketplace
+        {t("backToMarketplace")}
       </a>
 
       <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "1rem 0 0.5rem" }}>
-        Purchase Carbon Credits
+        {t("title")}
       </h1>
 
       {!listing ? (
-        <p style={{ color: colors.neutral[400] }}>Select a listing from the marketplace.</p>
+        <p style={{ color: colors.neutral[400] }}>{t("selectListing")}</p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem", marginTop: "1.5rem" }}>
           {/* Listing summary */}
@@ -73,19 +79,19 @@ export default function BuyPage() {
             borderRadius: "0.75rem", padding: "1.25rem",
           }}>
             <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0 0 0.25rem" }}>
-              {listing.country} · {listing.vintageYear} Vintage · {listing.methodology}
+              {listing.country} · {t("vintageLabel", { year: listing.vintageYear })} · {listing.methodology}
             </p>
             <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 0.75rem" }}>
               {listing.projectName || listing.projectId}
             </h2>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
               <div>
-                <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.1rem" }}>Available</p>
+                <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.1rem" }}>{t("available")}</p>
                 <p style={{ fontWeight: 700, color: colors.neutral[800], margin: 0 }}>{formatTonnes(listing.amountAvailable)}</p>
               </div>
               <div>
-                <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.1rem" }}>Price per tonne</p>
-                <p style={{ fontWeight: 700, color: colors.primary[700], margin: 0 }}>${formatStroops(listing.pricePerCredit)} USDC</p>
+                <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.1rem" }}>{t("pricePerTonne")}</p>
+                <p style={{ fontWeight: 700, color: colors.primary[700], margin: 0 }}>${formatCurrency(listing.pricePerCredit)} USDC</p>
               </div>
             </div>
           </div>
@@ -96,7 +102,7 @@ export default function BuyPage() {
             borderRadius: "0.75rem", padding: "1.25rem",
           }}>
             <label style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.5rem" }}>
-              Amount (tonnes CO₂e) — minimum 0.01 tCO₂e
+              {t("amountLabel")}
             </label>
             <input
               id="buy-amount"
@@ -117,9 +123,9 @@ export default function BuyPage() {
               }}
             />
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: "0.75rem" }}>
-              <span style={{ fontSize: "0.875rem", color: colors.neutral[500] }}>Total cost</span>
+              <span style={{ fontSize: "0.875rem", color: colors.neutral[500] }}>{t("totalCost")}</span>
               <span id="buy-total-cost" style={{ fontSize: "1.25rem", fontWeight: 800, color: colors.primary[700] }}>
-                ${formatStroops(totalCost)} USDC
+                ${formatCurrency(totalCost)} USDC
               </span>
             </div>
           </div>
@@ -134,13 +140,18 @@ export default function BuyPage() {
               style={{ width: "1.1rem", height: "1.1rem", accentColor: colors.primary[600] }}
             />
             <span style={{ fontSize: "0.875rem", color: colors.neutral[700] }}>
-              Retire immediately after purchase (for ESG reporting)
+              {t("retireAfterPurchase")}
             </span>
           </label>
 
           {/* Transaction status */}
           {txStatus && (
-            <TransactionStatus status={txStatus} txHash={txHash ?? undefined} />
+            <TransactionStatus
+              status={txStatus}
+              txHash={txHash ?? undefined}
+              message={txStatus === "failed" ? getContractErrorMessage(buyError) : undefined}
+              onRetry={txStatus === "failed" ? handlePurchase : undefined}
+            />
           )}
 
           {/* CTA / Wallet Prompt */}
@@ -172,12 +183,12 @@ export default function BuyPage() {
                     borderTopColor: "#fff", borderRadius: "50%",
                     display: "inline-block", animation: "spin 0.7s linear infinite",
                   }} />
-                  Processing…
+                  {t("processing")}
                 </>
               )}
-              {buyState === "success" && <>✓ Purchase Complete</>}
-              {buyState === "error"   && <>✕ {buyError || "Purchase failed"}</>}
-              {buyState === "idle"    && <>Buy Credits</>}
+              {buyState === "success" && <>✓ {t("purchaseComplete")}</>}
+              {buyState === "error"   && <>✕ {buyError || t("purchaseFailed")}</>}
+              {buyState === "idle"    && <>{t("buyCredits")}</>}
             </button>
           )}
         </div>

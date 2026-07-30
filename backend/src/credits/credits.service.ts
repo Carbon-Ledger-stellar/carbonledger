@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma.service";
 import { MintCreditsDto, RetireCreditsDto } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
+import { IpfsService } from "../common/ipfs.service";
 import { randomBytes } from "crypto";
 import { EventSourcingService } from "../events/event-sourcing.service";
 import { CreditEventType } from "../events/credit-event.types";
@@ -12,6 +13,8 @@ import { CreditEventType } from "../events/credit-event.types";
  * 1 tCO₂e = 100 serial units, 0.5 tCO₂e = 50 serial units, 0.01 tCO₂e = 1 serial unit.
  * This allows fractional batches while keeping serial arithmetic in integers.
  */
+import { Optional } from "@nestjs/common";
+
 const SERIAL_SCALE = 100;
 
 function toSerialUnits(tonnes: number): bigint {
@@ -24,6 +27,7 @@ export class CreditsService {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly ipfsService: IpfsService,
+    @Optional() private readonly eventSourcing?: EventSourcingService,
   ) {}
 
   async mintCredits(dto: MintCreditsDto, actor?: string) {
@@ -50,8 +54,28 @@ export class CreditsService {
 
     const batch = await this.prisma.creditBatch.create({ data: dto });
 
+    // Record MINT event in event store
+    if (this.eventSourcing) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: batch.batchId,
+        eventType: CreditEventType.MINT,
+        actor: actor ?? dto.projectId ?? 'system',
+        newState: {
+          batchId: batch.batchId,
+          projectId: batch.projectId,
+          amountAvailable: Number(batch.amount),
+          amountRetired: 0,
+          status: 'Issued',
+          vintageYear: batch.vintageYear,
+          serialStart: batch.serialStart,
+          serialEnd: batch.serialEnd,
+        },
+        txHash: (batch as any).txHash ?? 'STUB_MINT_HASH',
+      }).catch(() => undefined);
+    }
+
     // Notify project owner (respects per-event preferences)
-    const project = await this.prisma.carbonProject.findUnique({ where: { projectId: dto.projectId } });
+    const project = await this.prisma.carbonProject.findFirst({ where: { projectId: dto.projectId, deletedAt: null } });
     if (project?.ownerAddress) {
       await this.mailService.sendIfEnabled(project.ownerAddress, MailEvent.CREDITS_MINTED, {
         batchId: batch.batchId,
@@ -67,6 +91,13 @@ export class CreditsService {
     const batch = await this.prisma.creditBatch.findUnique({ where: { batchId } });
     if (!batch) throw new NotFoundException(`Batch ${batchId} not found`);
     return batch;
+  }
+
+  async getBatchesByProject(projectId: string) {
+    return this.prisma.creditBatch.findMany({
+      where: { projectId },
+      orderBy: { issuedAt: 'desc' },
+    });
   }
 
   async retireCredits(dto: RetireCreditsDto) {
@@ -159,9 +190,15 @@ export class CreditsService {
    * been retired.  The endpoint is public — no authentication required.
    *
    * Returns 404 when the serial number does not belong to any known batch.
+   *
+   * Performance: the batch lookup happens first (required to get batchId),
+   * then retirement and event queries are issued in parallel to eliminate
+   * sequential round-trips.  The composite index on (creditBatchId, timestamp)
+   * covers the event query.
    */
   async getSerialProvenance(serial: string) {
-    // 1. Locate the credit batch that owns this serial number
+    // 1. Locate the credit batch that owns this serial number.
+    //    Must happen first — batchId is needed for all downstream queries.
     const batch = await this.prisma.creditBatch.findFirst({
       where: { serialStart: { lte: serial }, serialEnd: { gte: serial } },
       include: {
@@ -184,50 +221,50 @@ export class CreditsService {
       );
     }
 
-    // 2. Determine current owner and retirement status
-    //    Ownership is tracked through the event log (transfer events) and,
-    //    as a fallback, falls back to the project owner address.
-    const retirement = await this.prisma.retirementRecord.findFirst({
-      where: { serialNumbers: { has: serial } },
-      select: {
-        retirementId:     true,
-        retiredBy:        true,
-        beneficiary:      true,
-        retirementReason: true,
-        vintageYear:      true,
-        txHash:           true,
-        retiredAt:        true,
-        certificateCid:   true,
-      },
-    });
+    // 2. Issue retirement lookup and event log query in parallel —
+    //    both depend only on data already available (serial, batchId).
+    const [retirement, rawEvents] = await Promise.all([
+      // Retirement is keyed by the serialNumbers GIN index
+      this.prisma.retirementRecord.findFirst({
+        where: { serialNumbers: { has: serial } },
+        select: {
+          retirementId:     true,
+          retiredBy:        true,
+          beneficiary:      true,
+          retirementReason: true,
+          vintageYear:      true,
+          txHash:           true,
+          retiredAt:        true,
+          certificateCid:   true,
+        },
+      }),
+      // Events are covered by the (creditBatchId, timestamp) composite index
+      (this.prisma as any).creditEvent.findMany({
+        where:   { creditBatchId: batch.batchId },
+        orderBy: { timestamp: 'asc' },
+        select: {
+          id:           true,
+          creditBatchId:true,
+          eventType:    true,
+          actor:        true,
+          oldState:     true,
+          newState:     true,
+          timestamp:    true,
+          txHash:       true,
+        },
+      }) as Promise<Array<{
+        id: string;
+        creditBatchId: string;
+        eventType: string;
+        actor: string;
+        oldState: unknown;
+        newState: unknown;
+        timestamp: Date;
+        txHash: string;
+      }>>,
+    ]);
 
-    // 3. Fetch all CreditEvents for this batch (transfer / mint / retire) in
-    //    chronological order.  These come from the append-only event log.
-    const rawEvents: Array<{
-      id: string;
-      creditBatchId: string;
-      eventType: string;
-      actor: string;
-      oldState: unknown;
-      newState: unknown;
-      timestamp: Date;
-      txHash: string;
-    }> = await (this.prisma as any).creditEvent.findMany({
-      where:   { creditBatchId: batch.batchId },
-      orderBy: { timestamp: 'asc' },
-      select: {
-        id:           true,
-        creditBatchId:true,
-        eventType:    true,
-        actor:        true,
-        oldState:     true,
-        newState:     true,
-        timestamp:    true,
-        txHash:       true,
-      },
-    });
-
-    // 4. Derive current owner from the latest transfer event, or fall back to
+    // 3. Derive current owner from the latest transfer event, or fall back to
     //    the project's ownerAddress when no transfer events exist.
     const transferEvents = rawEvents.filter((e) => e.eventType === 'transfer');
     const lastTransfer   = transferEvents[transferEvents.length - 1] as
@@ -239,7 +276,7 @@ export class CreditsService {
       : (lastTransfer?.newState as { to?: string } | null)?.to
           ?? batch.project.ownerAddress;
 
-    // 5. Compose the provenance response
+    // 4. Compose the provenance response
     return {
       serialNumber: serial,
 

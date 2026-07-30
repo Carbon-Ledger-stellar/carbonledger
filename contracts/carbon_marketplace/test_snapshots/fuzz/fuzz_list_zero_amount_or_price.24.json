@@ -55,7 +55,7 @@
     []
   ],
   "ledger": {
-    "protocol_version": 20,
+    "protocol_version": 21,
     "sequence_number": 0,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -122,7 +122,7 @@
             },
             "ext": "v0"
           },
-          15
+          6311999
         ]
       ],
       [
@@ -155,7 +155,7 @@
             },
             "ext": "v0"
           },
-          15
+          6311999
         ]
       ],
       [
@@ -260,6 +260,45 @@
                 "durability": "persistent",
                 "val": {
                   "vec": []
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "ContractVersion"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "ContractVersion"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 1
                 }
               }
             },
@@ -767,8 +806,8 @@
                 },
                 {
                   "i128": {
-                    "hi": -736766715823950300,
-                    "lo": 13795087135904928865
+                    "hi": -4559644856691889250,
+                    "lo": 12122036520940072822
                   }
                 },
                 {
@@ -884,8 +923,8 @@
                     },
                     {
                       "i128": {
-                        "hi": -736766715823950300,
-                        "lo": 13795087135904928865
+                        "hi": -4559644856691889250,
+                        "lo": 12122036520940072822
                       }
                     },
                     {
@@ -952,8 +991,8 @@
                 },
                 {
                   "i128": {
-                    "hi": -8397215633586667275,
-                    "lo": 18093681083534005662
+                    "hi": -6563260364836671985,
+                    "lo": 11978364945921053246
                   }
                 },
                 {
@@ -1069,8 +1108,8 @@
                     },
                     {
                       "i128": {
-                        "hi": -8397215633586667275,
-                        "lo": 18093681083534005662
+                        "hi": -6563260364836671985,
+                        "lo": 11978364945921053246
                       }
                     },
                     {

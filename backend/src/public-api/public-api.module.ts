@@ -3,9 +3,13 @@ import { PublicApiController, ApiKeyProvisionController } from './public-api.con
 import { PublicApiService } from './public-api.service';
 import { ApiKeyGuard } from './api-key.guard';
 import { PrismaService } from '../prisma.service';
+import { CreditsModule } from '../credits/credits.module';
+import { PublicSerialController } from './serial.controller';
+import { AbuseDetectorGuard } from '../security/abuse.guard';
 
 @Module({
-  controllers: [PublicApiController, ApiKeyProvisionController],
-  providers: [PublicApiService, ApiKeyGuard, PrismaService],
+  imports: [CreditsModule],
+  controllers: [PublicApiController, ApiKeyProvisionController, PublicSerialController],
+  providers: [PublicApiService, ApiKeyGuard, PrismaService, AbuseDetectorGuard],
 })
 export class PublicApiModule {}

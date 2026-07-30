@@ -1,6 +1,9 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { WebhookModule } from "./webhook/webhook.module";
+import { GraphqlModule } from "./graphql/graphql.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -28,13 +31,18 @@ import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
+import { RedisSlidingWindowRateLimitGuard } from "./common/redis-sliding-window-rate-limit.guard";
+import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+import { RedisModule } from "./redis.module";
+import { RetentionModule } from "./retention/retention.module";
+import { ReconciliationModule } from "./reconciliation/reconciliation.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
-import { Server } from "@stellar/stellar-sdk";
+import { Horizon } from "@stellar/stellar-sdk";
 import { Redis } from "ioredis";
 
 @Controller("health")
@@ -71,7 +79,7 @@ class HealthController {
     // Check Stellar
     try {
       const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
-      const server = new Server(horizonUrl);
+      const server = new Horizon.Server(horizonUrl);
       await server.root();
       checks.stellar = "up";
     } catch (e) {
@@ -100,6 +108,7 @@ class HealthController {
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     // Built-in NestJS throttler (IP-based, Redis-backed) — handles burst/DDoS at infra level
     ThrottlerModule.forRoot({
       throttlers: [
@@ -146,8 +155,12 @@ class HealthController {
     VerifiersModule,
     AdminModule,
     PublicApiModule,
+    GraphqlModule,
+    WebhookModule,
     RedisModule,
     IdempotencyModule,
+    RetentionModule,
+    ReconciliationModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -169,6 +182,10 @@ class HealthController {
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RedisSlidingWindowRateLimitGuard,
     },
     // Role-based quota guard: enforces per-role daily/hourly limits
     {
@@ -192,6 +209,7 @@ class HealthController {
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+    consumer.apply(RateLimitMiddleware).forRoutes('*');
 
     // Apply idempotency enforcement to the three critical mutating endpoints.
     // The Idempotency-Key header is optional; omitting it simply bypasses the check.
@@ -201,6 +219,7 @@ export class AppModule implements NestModule {
         { path: 'credits/mint',           method: RequestMethod.POST },
         { path: 'marketplace/purchase',   method: RequestMethod.POST },
         { path: 'retirements',            method: RequestMethod.POST },
+        { path: 'retirements/bulk',        method: RequestMethod.POST },
       );
   }
 }

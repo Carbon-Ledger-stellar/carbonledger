@@ -4,25 +4,16 @@ import {
   IsNumber,
   IsInt,
   Min,
+  Max,
   IsNotEmpty,
-  MaxLength,
-  Length,
-} from 'class-validator';
-import { Type } from 'class-transformer';
-import { IsISO8601 } from 'class-validator';
-import { IsCreditAmount, IsStellarAddress } from '../common/validators';
+  IsPositive,
+  ArrayMinSize,
+  ArrayMaxSize,
+  ValidateNested,
+} from "class-validator";
+import { Type } from "class-transformer";
+import { IsISO8601 } from "class-validator";
 
-/**
- * DTO for recording a credit retirement.
- *
- * Validation:
- *  - batchId / projectId: non-empty, max 64 chars
- *  - amount: positive tCO₂e amount via @IsCreditAmount (≥ 0.01, ≤ 2dp)
- *  - beneficiary: non-empty, max 100 chars (company name or person)
- *  - retirementReason: non-empty, max 500 chars
- *  - retiredBy: valid Stellar G... key via @IsStellarAddress
- *  - txHash: non-empty Stellar transaction hash, max 128 chars
- */
 export class RetireCreditsDto {
   @IsString()
   @Length(1, 64)
@@ -61,9 +52,43 @@ export class RetireCreditsDto {
   txHash: string;
 }
 
-/**
- * DTO for filtering/exporting retirements with optional date range and filters.
- */
+export class BulkRetirementItemDto {
+  @IsString()
+  @IsNotEmpty()
+  batchId: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  @Type(() => Number)
+  amount: number;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  beneficiary?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  reason?: string;
+}
+
+export class BulkRetirementsDto {
+  @ValidateNested({ each: true })
+  @Type(() => BulkRetirementItemDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  items: BulkRetirementItemDto[];
+
+  @IsString()
+  @IsNotEmpty()
+  beneficiary: string;
+
+  @IsString()
+  @IsNotEmpty()
+  retirementReason: string;
+}
+
 export class ExportRetirementsDto {
   @IsOptional()
   @IsString()

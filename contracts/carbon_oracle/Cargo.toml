@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk = { version = "21.7.7", features = ["alloc"] }
 
@@ -13,6 +16,7 @@ soroban-sdk = { version = "21.7.7", features = ["alloc"] }
 ed25519-dalek = "2"
 rand = "0.9"
 soroban-sdk = { version = "21.7.7", features = ["testutils", "alloc"] }
+carbon_registry = { path = "../carbon_registry" }
 
 [profile.release]
 opt-level = "z"

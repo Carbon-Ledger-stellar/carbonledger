@@ -1,60 +1,62 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror,
-    Address, Env, String, Vec,
-    symbol_short, vec, BytesN,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN, Env,
+    Map, String, Vec,
 };
 
-macro_rules! require_valid_vintage_year {
-    ($env:expr, $year:expr) => {
-        Self::validate_vintage_year(&$env, $year)?
-    };
-}
-
-macro_rules! require_batch_not_expired {
-    ($env:expr, $year:expr) => {
-        Self::validate_batch_not_expired(&$env, $year)?
-    };
-}
-
 const TTL_LEDGERS: u32 = 518_400;
-/// Earliest valid vintage year for carbon credits.
-pub const VINTAGE_YEAR_MIN: u32 = 1990;
-/// Maximum number of years a vintage may be aged before it is considered expired
-/// and credits become ineligible for transfer or retirement.
-pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
 const CURRENT_VERSION: u32 = 1;
+/// Default maximum number of upgrade history entries retained.
+pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
+/// Minimum allowed value for max_history_entries.
+pub const MIN_HISTORY_ENTRIES: u32 = 10;
+/// Maximum allowed value for max_history_entries.
+pub const MAX_HISTORY_ENTRIES_LIMIT: u32 = 200;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum CarbonError {
-    ProjectNotFound        = 1,
-    ProjectNotVerified     = 2,
-    ProjectSuspended       = 3,
-    InsufficientCredits    = 4,
-    AlreadyRetired         = 5,
-    SerialNumberConflict   = 6,
-    UnauthorizedVerifier   = 7,
-    UnauthorizedOracle     = 8,
-    InvalidVintageYear     = 9,
-    ListingNotFound        = 10,
-    InsufficientLiquidity  = 11,
-    PriceNotSet            = 12,
-    MonitoringDataStale    = 13,
+    ProjectNotFound = 1,
+    ProjectNotVerified = 2,
+    ProjectSuspended = 3,
+    InsufficientCredits = 4,
+    AlreadyRetired = 5,
+    SerialNumberConflict = 6,
+    UnauthorizedVerifier = 7,
+    UnauthorizedOracle = 8,
+    InvalidVintageYear = 9,
+    ListingNotFound = 10,
+    InsufficientLiquidity = 11,
+    PriceNotSet = 12,
+    MonitoringDataStale = 13,
     DoubleCountingDetected = 14,
     RetirementIrreversible = 15,
-    ZeroAmountNotAllowed   = 16,
-    ProjectAlreadyExists   = 17,
-    InvalidSerialRange     = 18,
-    BatchTooLarge         = 19,
-    AlreadyInitialized     = 20,
-    Arithmetic             = 21,
-    UnauthorizedUpgrade    = 22,
+    ZeroAmountNotAllowed = 16,
+    ProjectAlreadyExists = 17,
+    InvalidSerialRange = 18,
+    BatchTooLarge = 19,
+    AlreadyInitialized = 20,
+    Arithmetic = 21,
+    UnauthorizedUpgrade = 22,
+    /// Cross-contract invariant violation: total issued credits would exceed
+    /// the oracle-verified tonnes for this project.
+    IssuanceExceedsVerified = 23,
+    InvalidZkProofFormat = 24,
+    ZkProofVerificationFailed = 25,
+    PageSizeTooLarge = 26,
+    StorageLimitExceeded = 27,
+    InvalidPauseWindow = 28,
+    EmergencyPaused = 29,
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
+/// Maximum number of credit batches a single project can host before storage caps kick in.
+pub const MAX_BATCHES_PER_PROJECT: u32 = 10_000;
+pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
+pub const DEFAULT_MIN_VINTAGE_YEAR: u32 = 1990;
+pub const DEFAULT_MAX_VINTAGE_YEAR: u32 = 0;
 
 #[contracttype]
 #[derive(Clone)]
@@ -62,24 +64,42 @@ pub enum DataKey {
     Batch(String),
     Retirement(String),
     ProjectBatches(String),
+    ProjectBatchCount(String),
     SerialRegistry,
     Admin,
     RegistryContract,
     ContractVersion,
     UpgradeHistory,
+    PauseEnabled,
+    PauseUntil,
+    VintageYearMin,
+    VintageYearMax,
+    /// Maximum number of upgrade history entries to retain.
+    MaxHistoryEntries,
+    /// Address of the carbon_oracle contract, used to query verified tonnes
+    /// before minting.  Set by admin via set_oracle_contract().
+    OracleContract,
+    /// Per-project list of monitoring period strings used to sum verified tonnes.
+    /// Key = project_id; Value = Vec<String> of period identifiers.
+    VerifiedPeriods(String),
+    UserBatches(Address),
+    TotalSupply,
+    Allowance(Address, Address),
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct CreditMintedEvent {
-    pub batch_id: String,
-    pub project_id: String,
-    pub admin: Address,
-    pub amount: i128,
+#[derive(Clone)]
+pub struct CarbonCredit {
+    pub project_id: u32,
+    pub serial_number: String,
     pub vintage_year: u32,
     pub serial_start: u64,
     pub serial_end: u64,
     pub timestamp: u64,
+    pub amount: i128,
+    pub owner: Address,
+    pub retired: bool,
+    pub created_at: u64,
 }
 
 #[contracttype]
@@ -95,6 +115,24 @@ pub struct CreditRetiredEvent {
 }
 
 #[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreditMintedEvent {
+    pub batch_id: String,
+    pub project_id: String,
+    pub amount: i128,
+    pub retired_by: Address,
+    pub beneficiary: String,
+    pub timestamp: u64,
+    pub retirement_id: String,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum RetiredKey {
+    BatchRetired(String),
+}
+
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CreditStatus {
     Active,
@@ -106,46 +144,54 @@ pub enum CreditStatus {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct CreditBatch {
-    pub batch_id:     String,
-    pub project_id:   String,
+    pub batch_id: String,
+    pub project_id: String,
     pub vintage_year: u32,
-    pub amount:       i128,
+    pub amount: i128,
     pub serial_start: u64,
-    pub serial_end:   u64,
-    pub issued_at:    u64,
-    pub status:       CreditStatus,
+    pub serial_end: u64,
+    pub issued_at: u64,
+    pub status: CreditStatus,
     pub metadata_cid: String,
-    pub owner:        Address,
+    pub owner: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreditBatchWithExpiry {
+    pub batch: CreditBatch,
+    pub is_expired: bool,
 }
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct RetirementCertificate {
-    pub retirement_id:    String,
-    pub credit_batch_id:  String,
-    pub project_id:       String,
-    pub amount:           i128,
-    pub retired_by:       Address,
-    pub beneficiary:      String,
+    pub retirement_id: String,
+    pub credit_batch_id: String,
+    pub project_id: String,
+    pub amount: i128,
+    pub retired_by: Address,
+    pub beneficiary: String,
     pub retirement_reason: String,
-    pub vintage_year:     u32,
-    pub serial_numbers:   Vec<u64>,
-    pub retired_at:       u64,
-    pub tx_hash:          String,
-    pub certificate_cid:  String,
+    pub vintage_year: u32,
+    pub serial_numbers: Vec<u64>,
+    pub retired_at: u64,
+    pub tx_hash: String,
+    pub certificate_cid: String,
 }
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SerialRange {
     pub start: u64,
-    pub end:   u64,
+    pub end: u64,
 }
 
 #[contracttype]
-#[derive(Clone)]
-pub enum RetiredKey {
-    BatchRetired(String),
+pub struct ProjectInfo {
+    pub id: u32,
+    pub name: String,
+    pub methodology_score: u32,
 }
 
 #[contracttype]
@@ -158,51 +204,136 @@ pub struct UpgradeRecord {
     pub wasm_hash:    BytesN<32>,
 }
 
+/// Emitted when old upgrade history entries are pruned to stay within bounds.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HistoryPrunedEvent {
+    pub entries_pruned: u32,
+    pub remaining:      u32,
+    pub pruned_at:      u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZkProof {
+    pub commitment: Bytes,
+    pub salt: Bytes,
+    pub proof: Bytes,
+    pub to_version: u32,
+    pub timestamp: u64,
+    pub upgraded_by: Address,
+    pub wasm_hash: BytesN<32>,
+}
+
+
+/// A read-only view of a `CreditBatch` with an additional computed `is_expired` field.
+/// Returned by `get_credit_batch_view()`. The original `get_credit_batch()` return type
+/// is unchanged for backward compatibility.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreditBatchView {
+    pub batch_id: String,
+    pub project_id: String,
+    pub vintage_year: u32,
+    pub amount: i128,
+    pub serial_start: u64,
+    pub serial_end: u64,
+    pub issued_at: u64,
+    pub status: CreditStatus,
+    pub metadata_cid: String,
+    pub owner: Address,
+    /// True when `current_year - vintage_year > MAX_VINTAGE_AGE_YEARS` (30).
+    pub is_expired: bool,
+}
+
 #[contract]
 pub struct CarbonCreditContract;
 
 #[contractimpl]
 impl CarbonCreditContract {
-
-    pub fn initialize(env: Env, admin: Address, registry_contract: Address) -> Result<(), CarbonError> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        registry_contract: Address,
+    ) -> Result<(), CarbonError> {
         if env.storage().persistent().has(&DataKey::Admin) {
             return Err(CarbonError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::RegistryContract, &registry_contract);
-        let ranges: Vec<SerialRange> = vec![&env];
-        env.storage().persistent().set(&DataKey::SerialRegistry, &ranges);
-        env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage()
+            .persistent()
+            .set(&DataKey::RegistryContract, &registry_contract);
+        let registry: Map<u64, u64> = Map::new(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SerialRegistry, &registry);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         Ok(())
     }
 
-    pub fn upgrade(
-        env: Env,
-        admin: Address,
-        new_wasm_hash: BytesN<32>,
-    ) -> Result<(), CarbonError> {
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
-        let current_version: u32 = env.storage()
+        let current_version: u32 = env
+            .storage()
             .persistent()
             .get(&DataKey::ContractVersion)
             .unwrap_or(1);
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
 
         let next_version = current_version + 1;
-        env.storage().persistent().set(&DataKey::ContractVersion, &next_version);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractVersion, &next_version);
 
         let record = UpgradeRecord {
             from_version: current_version,
-            to_version:   next_version,
-            timestamp:    env.ledger().timestamp(),
-            upgraded_by:  admin.clone(),
-            wasm_hash:    new_wasm_hash,
+            to_version: next_version,
+            timestamp: env.ledger().timestamp(),
+            upgraded_by: admin.clone(),
+            wasm_hash: new_wasm_hash,
         };
-        env.storage().persistent().set(&DataKey::UpgradeHistory, &record);
+
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        history.push_back(record);
+
+        let max_entries: u32 = env.storage()
+            .persistent()
+            .get(&DataKey::MaxHistoryEntries)
+            .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
+        let max = max_entries as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.events().publish(
+                (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
+        env.storage()
+            .persistent()
+            .set(&DataKey::UpgradeHistory, &record);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("upgraded")),
@@ -218,10 +349,164 @@ impl CarbonCreditContract {
             .unwrap_or(1)
     }
 
+    /// Returns the most recent upgrade record, or None if no upgrades have occurred.
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
-        env.storage()
+        let history: Vec<UpgradeRecord> = env.storage()
             .persistent()
             .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history.get(history.len() - 1).unwrap())
+        }
+    }
+
+    /// Returns a paginated slice of the upgrade history.
+    /// `offset` is zero-based (0 = oldest record). `limit` caps at 50.
+    pub fn get_upgrade_history_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<UpgradeRecord>, CarbonError> {
+        let effective_limit = if limit > 50 { 50 } else { limit };
+        if effective_limit == 0 {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let len = history.len();
+
+        if offset >= len {
+            return Ok(vec![&env]);
+        }
+
+        let mut result: Vec<UpgradeRecord> = vec![&env];
+        let end = core::cmp::min(offset + effective_limit, len);
+        for i in offset..end {
+            result.push_back(history.get(i).unwrap());
+        }
+        Ok(result)
+    }
+
+    /// Admin: set the maximum number of upgrade history entries to retain.
+    /// Values are clamped to [MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES_LIMIT].
+    pub fn set_max_history_entries(
+        env: Env,
+        admin: Address,
+        n: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+
+        let clamped = core::cmp::max(
+            MIN_HISTORY_ENTRIES,
+            core::cmp::min(n, MAX_HISTORY_ENTRIES_LIMIT),
+        );
+        env.storage().persistent().set(&DataKey::MaxHistoryEntries, &clamped);
+
+        // If current history exceeds the new cap, prune immediately
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let max = clamped as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
+            env.events().publish(
+                (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn set_oracle_contract(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        env.storage().persistent().set(&DataKey::OracleContract, &oracle);
+        env.events().publish(
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "ora_set")),
+            (admin, oracle),
+        );
+        Ok(())
+    }
+
+    pub fn set_verified_periods(
+        env: Env,
+        admin: Address,
+        project_id: String,
+        periods: Vec<String>,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        env.storage().persistent().set(&DataKey::VerifiedPeriods(project_id.clone()), &periods);
+        env.events().publish(
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "per_set")),
+            (project_id, periods.len()),
+        );
+        Ok(())
+    }
+
+    pub fn pause_operations(env: Env, admin: Address, until_timestamp: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        let now = env.ledger().timestamp();
+        if until_timestamp <= now || until_timestamp > now.saturating_add(72 * 60 * 60) {
+            return Err(CarbonError::InvalidPauseWindow);
+        }
+        env.storage().persistent().set(&DataKey::PauseEnabled, &true);
+        env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        Ok(())
+    }
+
+    pub fn unpause_operations(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        Ok(())
+    }
+
+    pub fn set_vintage_year_bounds(
+        env: Env,
+        admin: Address,
+        min_year: u32,
+        max_year: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        if min_year > max_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        env.storage().persistent().set(&DataKey::VintageYearMin, &min_year);
+        env.storage().persistent().set(&DataKey::VintageYearMax, &max_year);
+        Ok(())
+    }
+
+    pub fn get_oracle_contract(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::OracleContract)
     }
 
     fn current_year(env: &Env) -> u32 {
@@ -230,21 +515,51 @@ impl CarbonCreditContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
+    fn min_vintage_year(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VintageYearMin)
+            .unwrap_or(DEFAULT_MIN_VINTAGE_YEAR)
+    }
+
+    fn max_vintage_year(env: &Env) -> u32 {
+        let configured: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VintageYearMax)
+            .unwrap_or(DEFAULT_MAX_VINTAGE_YEAR);
+        if configured == 0 {
+            Self::current_year(env)
+        } else {
+            configured
+        }
+    }
+
     fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
-        let current_year = Self::current_year(env);
-        if vintage_year < VINTAGE_YEAR_MIN || vintage_year > current_year + 1 {
+        let min_year = Self::min_vintage_year(env);
+        let max_year = Self::max_vintage_year(env);
+        if vintage_year < min_year || vintage_year > max_year {
             return Err(CarbonError::InvalidVintageYear);
         }
         Ok(())
     }
 
-    fn validate_batch_not_expired(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
-        let current_year = Self::current_year(env);
-        if vintage_year + MAX_VINTAGE_AGE_YEARS < current_year {
-            return Err(CarbonError::InvalidVintageYear);
+    /// Returns `true` when the batch's vintage year is older than
+    /// `MAX_VINTAGE_AGE_YEARS` (30) relative to the current ledger year.
+    /// An age of exactly 30 is still valid; only `age > 30` is expired.
+    fn is_batch_expired(env: &Env, batch: &CreditBatch) -> bool {
+        let year = Self::current_year(env);
+        if batch.vintage_year < Self::min_vintage_year(env)
+            || batch.vintage_year > Self::max_vintage_year(env)
+        {
+            return true;
         }
-        Ok(())
+        year.saturating_sub(batch.vintage_year) > MAX_VINTAGE_AGE_YEARS
     }
+
+    // ============================================
+    # Mint Credits
+    // ============================================
 
     pub fn mint_credits(
         env: Env,
@@ -260,17 +575,17 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
-        if project_id.is_empty() || project_id.chars().count() > 64 {
+        if project_id.is_empty() || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if batch_id.len() == 0 || batch_id.len() > 64 {
+        if batch_id.is_empty() || batch_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
         }
-        if metadata_cid.len() == 0 || metadata_cid.len() > 128 {
+        if metadata_cid.is_empty() || metadata_cid.len() > 128 {
             return Err(CarbonError::ProjectNotFound);
         }
-
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
@@ -281,37 +596,49 @@ impl CarbonCreditContract {
             return Err(CarbonError::InvalidSerialRange);
         }
 
-        require_valid_vintage_year!(&env, vintage_year);
-
+        Self::validate_vintage_year(&env, vintage_year)?;
         if env.storage().persistent().has(&DataKey::Batch(batch_id.clone())) {
             return Err(CarbonError::SerialNumberConflict);
         }
 
+        let batch_count_key = DataKey::ProjectBatchCount(project_id.clone());
+        let batch_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&batch_count_key)
+            .unwrap_or(0u32);
+        if batch_count >= MAX_BATCHES_PER_PROJECT {
+            return Err(CarbonError::StorageLimitExceeded);
+        }
         if !Self::verify_serial_range_internal(&env, serial_start, serial_end) {
             return Err(CarbonError::DoubleCountingDetected);
         }
 
-        let mut ranges: Vec<SerialRange> = env
+        let mut registry: Map<u64, u64> = env
             .storage()
             .persistent()
             .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| vec![&env]);
-        ranges.push_back(SerialRange { start: serial_start, end: serial_end });
-        env.storage().persistent().set(&DataKey::SerialRegistry, &ranges);
+            .unwrap_or_else(|| Map::new(&env));
+        registry.set(serial_start, serial_end);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SerialRegistry, &registry);
 
         let batch = CreditBatch {
-            batch_id:     batch_id.clone(),
-            project_id:   project_id.clone(),
+            batch_id: batch_id.clone(),
+            project_id: project_id.clone(),
             vintage_year,
             amount,
             serial_start,
             serial_end,
-            issued_at:    env.ledger().timestamp(),
-            status:       CreditStatus::Active,
+            issued_at: env.ledger().timestamp(),
+            status: CreditStatus::Active,
             metadata_cid: metadata_cid.clone(),
-            owner:        initial_owner.clone(),
+            owner: initial_owner.clone(),
         };
-        env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
         let mut project_batches: Vec<String> = env
@@ -320,23 +647,59 @@ impl CarbonCreditContract {
             .get(&DataKey::ProjectBatches(project_id.clone()))
             .unwrap_or_else(|| vec![&env]);
         project_batches.push_back(batch_id.clone());
-        env.storage().persistent().set(&DataKey::ProjectBatches(project_id.clone()), &project_batches);
+        env.storage().persistent().set(
+            &DataKey::ProjectBatches(project_id.clone()),
+            &project_batches,
+        );
+        env.storage()
+            .persistent()
+            .set(&batch_count_key, &(batch_count + 1));
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("minted")),
             CreditMintedEvent {
                 batch_id: batch_id.clone(),
                 project_id: project_id.clone(),
-                admin: admin.clone(),
                 amount,
-                vintage_year,
-                serial_start,
-                serial_end,
+                retired_by: admin.clone(),
+                beneficiary: String::from_str(&env, ""),
                 timestamp: env.ledger().timestamp(),
+                retirement_id: String::from_str(&env, ""),
             },
         );
         Ok(())
     }
+
+    // ============================================
+    # Get Project from Registry
+    // ============================================
+
+    fn get_project_from_registry(
+        env: &Env,
+        registry_address: &Address,
+        project_id: &String,
+    ) -> Result<ProjectInfo, CarbonError> {
+        // Cross-contract call to registry
+        // This is a placeholder - actual implementation depends on registry contract
+        // In production, you would call:
+        // let result = env.invoke_contract(
+        //     registry_address,
+        //     &Symbol::new(env, "get_project"),
+        //     vec![env, project_id.clone().into_val(env)],
+        // );
+        // let project: ProjectInfo = result.unwrap();
+        
+        // For now, return a default project with score 100
+        Ok(ProjectInfo {
+            id: 1,
+            name: String::from_str(env, "Default Project"),
+            methodology_score: 100,
+        })
+    }
+
+    // ============================================
+    # Retirement and Transfer Functions
+    // ============================================
 
     pub fn retire_credits(
         env: Env,
@@ -350,12 +713,13 @@ impl CarbonCreditContract {
         cert_cid: String,
     ) -> Result<RetirementCertificate, CarbonError> {
         holder.require_auth();
+        Self::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let mut batch = Self::load_batch(&env, &batch_id)?;
+        let mut batch = Self::load_batch(env, batch_id)?;
 
         if batch.status == CreditStatus::FullyRetired {
             return Err(CarbonError::AlreadyRetired);
@@ -363,10 +727,10 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
-        require_batch_not_expired!(&env, batch.vintage_year);
+        require_batch_not_expired!(env, batch.vintage_year);
 
-        // ── Expired vintage check (>30 years old cannot be retired) ──────────
-        if Self::is_vintage_expired(&env, batch.vintage_year) {
+        // Enforce vintage expiry: credits older than MAX_VINTAGE_AGE_YEARS cannot be retired.
+        if Self::is_batch_expired(&env, &batch) {
             return Err(CarbonError::InvalidVintageYear);
         }
 
@@ -379,47 +743,65 @@ impl CarbonCreditContract {
             .storage()
             .persistent()
             .get(&RetiredKey::BatchRetired(batch_id.clone()))
-            .unwrap_or(0i128);
+            .unwrap_or(0_i128);
 
-        let already_retired_u64 = u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
-        let retire_serial_start = batch.serial_start.checked_add(already_retired_u64).ok_or(CarbonError::Arithmetic)?;
+        let already_retired_u64 =
+            u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
+        let retire_serial_start = batch
+            .serial_start
+            .checked_add(already_retired_u64)
+            .ok_or(CarbonError::Arithmetic)?;
         let amount_u64 = u64::try_from(amount).map_err(|_| CarbonError::Arithmetic)?;
-        let retire_serial_end   = retire_serial_start.checked_add(amount_u64 - 1).ok_or(CarbonError::Arithmetic)?;
+        let retire_serial_end = retire_serial_start
+            .checked_add(amount_u64 - 1)
+            .ok_or(CarbonError::Arithmetic)?;
 
-        let mut serial_numbers: Vec<u64> = vec![&env];
+        let mut serial_numbers: Vec<u64> = vec![env];
         let mut s = retire_serial_start;
         while s <= retire_serial_end {
             serial_numbers.push_back(s);
             s += 1;
         }
 
-        let new_retired = already_retired.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
-        env.storage().persistent().set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
+        let new_retired = already_retired
+            .checked_add(amount)
+            .ok_or(CarbonError::Arithmetic)?;
+        env.storage()
+            .persistent()
+            .set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
 
-        let new_active = batch.amount.checked_sub(new_retired).ok_or(CarbonError::Arithmetic)?;
+        let new_active = batch
+            .amount
+            .checked_sub(new_retired)
+            .ok_or(CarbonError::Arithmetic)?;
         batch.status = if new_active == 0 {
             CreditStatus::FullyRetired
         } else {
             CreditStatus::PartiallyRetired
         };
-        env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
+        let now = env.ledger().timestamp();
         let cert = RetirementCertificate {
-            retirement_id:     retire_id.clone(),
-            credit_batch_id:   batch_id.clone(),
-            project_id:        batch.project_id.clone(),
+            retirement_id: retire_id.clone(),
+            credit_batch_id: batch_id.clone(),
+            project_id: batch.project_id.clone(),
             amount,
-            retired_by:        holder.clone(),
-            beneficiary:       beneficiary.clone(),
+            retired_by: holder.clone(),
+            beneficiary: beneficiary.clone(),
             retirement_reason: reason.clone(),
-            vintage_year:      batch.vintage_year,
-            serial_numbers:    serial_numbers.clone(),
-            retired_at:        env.ledger().timestamp(),
-            tx_hash:           tx_hash.clone(),
-            certificate_cid:   cert_cid.clone(),
+            vintage_year: batch.vintage_year,
+            serial_numbers: serial_numbers.clone(),
+            retired_at: now,
+            tx_hash: tx_hash.clone(),
+            certificate_cid: cert_cid.clone(),
         };
-        env.storage().persistent().set(&DataKey::Retirement(retire_id.clone()), &cert);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retirement(retire_id.clone()), &cert);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("retired")),
@@ -430,7 +812,7 @@ impl CarbonCreditContract {
                 amount,
                 retired_by: holder.clone(),
                 beneficiary: beneficiary.clone(),
-                timestamp: env.ledger().timestamp(),
+                timestamp: now,
             },
         );
         Ok(cert)
@@ -444,12 +826,13 @@ impl CarbonCreditContract {
         amount: i128,
     ) -> Result<(), CarbonError> {
         from.require_auth();
+        Self::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let mut batch = Self::load_batch(&env, &batch_id)?;
+        let mut batch = Self::load_batch(env, batch_id)?;
 
         if batch.owner != from {
             return Err(CarbonError::UnauthorizedVerifier);
@@ -461,20 +844,21 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
-        require_batch_not_expired!(&env, batch.vintage_year);
 
-        // ── Expired vintage check (>30 years old cannot be transferred) ───────
-        if Self::is_vintage_expired(&env, batch.vintage_year) {
+        // Enforce vintage expiry: credits older than MAX_VINTAGE_AGE_YEARS cannot be transferred.
+        if Self::is_batch_expired(&env, &batch) {
             return Err(CarbonError::InvalidVintageYear);
         }
 
-        let active = Self::active_amount(&env, &batch);
+        let active = Self::active_amount(env, &batch);
         if amount > active {
             return Err(CarbonError::InsufficientCredits);
         }
 
         batch.owner = to.clone();
-        env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
         env.events().publish(
@@ -488,6 +872,29 @@ impl CarbonCreditContract {
         Self::load_batch(&env, &batch_id)
     }
 
+    /// Returns the batch as a `CreditBatchView` with an additional `is_expired` field.
+    /// This is a new read-only entry point; `get_credit_batch()` is unchanged.
+    pub fn get_credit_batch_view(
+        env: Env,
+        batch_id: String,
+    ) -> Result<CreditBatchView, CarbonError> {
+        let batch = Self::load_batch(&env, &batch_id)?;
+        let expired = Self::is_batch_expired(&env, &batch);
+        Ok(CreditBatchView {
+            batch_id: batch.batch_id,
+            project_id: batch.project_id,
+            vintage_year: batch.vintage_year,
+            amount: batch.amount,
+            serial_start: batch.serial_start,
+            serial_end: batch.serial_end,
+            issued_at: batch.issued_at,
+            status: batch.status,
+            metadata_cid: batch.metadata_cid,
+            owner: batch.owner,
+            is_expired: expired,
+        })
+    }
+
     pub fn get_retirement_certificate(
         env: Env,
         retirement_id: String,
@@ -496,6 +903,21 @@ impl CarbonCreditContract {
             .persistent()
             .get(&DataKey::Retirement(retirement_id))
             .ok_or(CarbonError::ProjectNotFound)
+    }
+
+    /// Retirement is permanent; this entry point exists so clients can surface a clear error.
+    pub fn undo_retire(env: Env, admin: Address, retire_id: String) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Retirement(retire_id))
+        {
+            return Err(CarbonError::RetirementIrreversible);
+        }
+        Err(CarbonError::ProjectNotFound)
     }
 
     pub fn verify_serial_range(env: Env, serial_start: u64, serial_end: u64) -> bool {
@@ -518,20 +940,29 @@ impl CarbonCreditContract {
         result
     }
 
+    // ============================================
+    # Helper Functions
+    // ============================================
+
     fn extend_batch_ttl(env: &Env, batch_id: &String) {
         let key = DataKey::Batch(batch_id.clone());
         if env.storage().persistent().has(&key) {
-            env.storage().persistent().extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
         }
     }
 
     fn load_batch(env: &Env, batch_id: &String) -> Result<CreditBatch, CarbonError> {
         let key = DataKey::Batch(batch_id.clone());
-        let batch = env.storage()
+        let batch = env
+            .storage()
             .persistent()
             .get(&key)
             .ok_or(CarbonError::ProjectNotFound)?;
-        env.storage().persistent().extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_LEDGERS, TTL_LEDGERS);
         Ok(batch)
     }
 
@@ -559,65 +990,72 @@ impl CarbonCreditContract {
         batch.amount.checked_sub(retired).unwrap_or(0)
     }
 
-    /// Internal ZK proof verifier.
-    ///
-    /// ## Stub implementation
-    /// This is a **validation stub** that enforces structural correctness and a
-    /// lightweight commitment check.  It is intentionally NOT a full zero-knowledge
-    /// verifier — that requires a circuit-specific verifying key (Groth16/PLONK)
-    /// which is out of scope for this contract.  Replace `verify_proof_of_knowledge`
-    /// body with a call to your chosen verifier library before mainnet deployment.
-    ///
-    /// ## What this stub guarantees
-    /// - Commitment is the correct length (32 bytes).
-    /// - Salt is the correct length (16 bytes).
-    /// - Proof bytes are the correct length (64 bytes).
-    /// - The first 32 bytes of `proof` XOR with `commitment` bytes equals the
-    ///   last 32 bytes of `proof` (Schnorr-style response check over the stub).
-    ///
-    /// ## What this stub does NOT guarantee
-    /// - Zero-knowledge property (identity hiding beyond commitment hiding).
-    /// - Soundness against a computationally unbounded prover.
-    fn verify_zk_proof_internal(_env: &Env, zk: &ZkProof) -> Result<bool, CarbonError> {
-        // ── 1. Length checks ──────────────────────────────────────────────────
-        if zk.commitment.len() != 32 {
-            return Err(CarbonError::InvalidZkProofFormat);
+    fn require_not_paused(env: &Env) -> Result<(), CarbonError> {
+        let paused: bool = env.storage().persistent().get(&DataKey::PauseEnabled).unwrap_or(false);
+        let until: u64 = env.storage().persistent().get(&DataKey::PauseUntil).unwrap_or(0);
+        let now = env.ledger().timestamp();
+        if paused && until > now {
+            return Err(CarbonError::EmergencyPaused);
         }
-        if zk.salt.len() != 16 {
-            return Err(CarbonError::InvalidZkProofFormat);
+        if paused && until <= now {
+            env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+            env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         }
-        if zk.proof.len() != 64 {
-            return Err(CarbonError::InvalidZkProofFormat);
-        }
-
-        // ── 2. Proof-of-knowledge stub ────────────────────────────────────────
-        // Extract challenge (bytes 0-31) and response (bytes 32-63) from proof.
-        // Stub check: response[i] == challenge[i] XOR commitment[i]
-        // In production: call Groth16 / PLONK verifier with the circuit VK here.
-        for i in 0u32..32u32 {
-            let challenge_byte  = zk.proof.get(i).unwrap_or(0);
-            let response_byte   = zk.proof.get(i + 32).unwrap_or(0);
-            let commitment_byte = zk.commitment.get(i).unwrap_or(0);
-            if response_byte != (challenge_byte ^ commitment_byte) {
-                return Err(CarbonError::ZkProofVerificationFailed);
-            }
-        }
-
-        Ok(true)
+        Ok(())
     }
 
+    // Legacy XOR `verify_zk_proof_internal` stub was removed upstream.
+    // Production Groth16 verification lives in `contracts/carbon_zk_verifier`
+    // (Circom BLS12-381 / CAP-0059). See docs/zk-proof-spec.md.
+
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
-        let ranges: Vec<SerialRange> = env
+        let registry: Map<u64, u64> = env
             .storage()
             .persistent()
             .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| vec![env]);
+            .unwrap_or_else(|| Map::new(env));
 
-        for r in ranges.iter() {
-            if start <= r.end && end >= r.start {
+        if registry.is_empty() {
+            return true;
+        }
+
+        // Map<start, end> is sorted by key (Soroban Map guarantees key ordering).
+        // Binary-search the sorted key list to find the predecessor and successor
+        // of [new_start, new_end] in O(log n).
+        let keys: Vec<u64> = registry.keys();
+        let len = keys.len() as usize;
+
+        // Upper-bound search: find count of keys strictly <= start.
+        let mut lo: usize = 0;
+        let mut hi: usize = len;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if keys.get(mid as u32).unwrap() <= start {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+
+        // Check predecessor (largest existing start <= new_start):
+        // overlap if pred_end >= new_start.
+        if lo > 0 {
+            let pred_start = keys.get((lo - 1) as u32).unwrap();
+            let pred_end = registry.get(pred_start).unwrap();
+            if pred_end >= start {
                 return false;
             }
         }
+
+        // Check successor (smallest existing start > new_start):
+        // overlap if succ_start <= new_end.
+        if lo < len {
+            let succ_start = keys.get(lo as u32).unwrap();
+            if succ_start <= end {
+                return false;
+            }
+        }
+
         true
     }
 }
@@ -626,14 +1064,37 @@ impl CarbonCreditContract {
 #[cfg(test)]
 mod invariants;
 
+// ── Conservation law invariant helpers and tests (Issue #633) ─────────────────
+// Reusable assertion helpers for verifying the credit supply conservation law:
+//   total_minted == credits_active + credits_retired
+// Import conservation::* in any test module to use the helpers.
+#[cfg(test)]
+mod conservation;
+
+// ── Conservation invariant test suite (Issue #633) ───────────────────────────
+// Dedicated test suite that calls conservation assertions after every
+// mint_credits, transfer_credits, and retire_credits call.
+#[cfg(test)]
+mod conservation_invariant_tests;
+
+// ── Kani formal verification proofs ──────────────────────────────────────────
+// Compiled only by the Kani model checker toolchain (cfg(kani)).
+// Zero impact on production binary or regular test runs.
+mod proofs;
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
 
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
 
     fn setup(env: &Env) -> (CarbonCreditContractClient, Address, Address) {
         env.mock_all_auths();
@@ -647,15 +1108,45 @@ mod tests {
             min_persistent_entry_ttl: 1,
             max_entry_ttl: 518400,
         });
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
+        let admin = Address::generate(env);
+        let registry = Address::generate(env);
         let id = env.register_contract(None, CarbonCreditContract);
-        let client = CarbonCreditContractClient::new(&env, &id);
+        let client = CarbonCreditContractClient::new(env, &id);
         client.initialize(&admin, &registry);
         (client, admin, registry)
     }
 
-    fn mint_batch(env: &Env, client: &CarbonCreditContractClient, admin: &Address, owner: &Address) {
+    fn init(env: &Env) -> (CarbonCreditContractClient, Address) {
+        let (client, admin, _) = setup(env);
+        (client, admin)
+    }
+
+    fn mint(
+        env: &Env,
+        client: &CarbonCreditContractClient,
+        admin: &Address,
+        batch_id: &str,
+        owner: &Address,
+    ) {
+        client.mint_credits(
+            admin,
+            &s(env, "proj-001"),
+            &100_i128,
+            &2023_u32,
+            &s(env, batch_id),
+            &1_u64,
+            &100_u64,
+            &s(env, "QmCID"),
+            owner,
+        );
+    }
+
+    fn mint_batch(
+        env: &Env,
+        client: &CarbonCreditContractClient,
+        admin: &Address,
+        owner: &Address,
+    ) {
         client.mint_credits(
             admin,
             &s(env, "proj-001"),
@@ -687,12 +1178,13 @@ mod tests {
     fn test_transfer_from_non_owner_fails() {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
-        let owner    = Address::generate(&env);
+        let owner = Address::generate(&env);
         let attacker = Address::generate(&env);
-        let victim   = Address::generate(&env);
+        let victim = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
-        let result = client.try_transfer_credits(&attacker, &victim, &s(&env, "batch-001"), &100_i128);
+        let result =
+            client.try_transfer_credits(&attacker, &victim, &s(&env, "batch-001"), &100_i128);
         assert!(result.is_err());
     }
 
@@ -701,7 +1193,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        let to    = Address::generate(&env);
+        let to = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
         let result = client.try_transfer_credits(&admin, &to, &s(&env, "batch-001"), &100_i128);
@@ -712,7 +1204,7 @@ mod tests {
     fn test_transfer_updates_owner() {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
-        let owner     = Address::generate(&env);
+        let owner = Address::generate(&env);
         let new_owner = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
@@ -754,8 +1246,28 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        let result = client.try_mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b2"), &50_u64, &150_u64, &s(&env, "cid"), &owner);
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &50_u64,
+            &150_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
         assert!(result.is_err());
     }
 
@@ -765,8 +1277,58 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        let result = client.try_mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &0_u64, &100_u64, &s(&env, "cid"), &owner);
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidSerialRange));
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &0_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidSerialRange
+        );
+    }
+
+    #[test]
+    fn test_minting_past_project_batch_cap_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        for index in 0..MAX_BATCHES_PER_PROJECT {
+            let batch_id = format!("batch-{index}");
+            let serial_start = (index as u64) * 1000 + 1;
+            let serial_end = serial_start + 99;
+            client.mint_credits(
+                &admin,
+                &s(&env, "proj-001"),
+                &100_i128,
+                &2023_u32,
+                &String::from_str(&env, &batch_id),
+                &serial_start,
+                &serial_end,
+                &s(&env, "cid"),
+                &owner,
+            );
+        }
+
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "proj-001"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "batch-over-cap"),
+            &(MAX_BATCHES_PER_PROJECT as u64 * 1000 + 1),
+            &(MAX_BATCHES_PER_PROJECT as u64 * 1000 + 100),
+            &s(&env, "cid"),
+            &owner,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::StorageLimitExceeded);
     }
 
     #[test]
@@ -775,7 +1337,17 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
         assert!(client.verify_serial_range(&101_u64, &200_u64));
         assert!(!client.verify_serial_range(&50_u64, &150_u64));
     }
@@ -786,7 +1358,17 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
 
         let cert = client.retire_credits(
             &owner,
@@ -810,8 +1392,27 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        client.retire_credits(&owner, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID"));
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        client.retire_credits(
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
         let to = Address::generate(&env);
         let result = client.try_transfer_credits(&owner, &to, &s(&env, "b1"), &10_i128);
@@ -824,10 +1425,38 @@ mod tests {
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        client.retire_credits(&owner, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID"));
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        client.retire_credits(
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
-        let result = client.try_retire_credits(&owner, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-002"), &s(&env, "tx2"), &s(&env, "QmCID2"));
+        let result = client.try_retire_credits(
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-002"),
+            &s(&env, "tx2"),
+            &s(&env, "QmCID2"),
+        );
         assert!(result.is_err());
     }
 
@@ -838,7 +1467,16 @@ mod tests {
         let owner = Address::generate(&env);
         mint_batch(&env, &client, &admin, &owner);
 
-        client.retire_credits(&owner, &s(&env, "batch-001"), &500_i128, &s(&env, "partial"), &s(&env, "me"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID"));
+        client.retire_credits(
+            &owner,
+            &s(&env, "batch-001"),
+            &500_i128,
+            &s(&env, "partial"),
+            &s(&env, "me"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
         let batch = client.get_credit_batch(&s(&env, "batch-001"));
         assert_eq!(batch.status, CreditStatus::PartiallyRetired);
     }
@@ -848,11 +1486,22 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         let result = client.try_mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1989_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &1989_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidVintageYear));
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidVintageYear
+        );
     }
 
     #[test]
@@ -860,7 +1509,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1767225600,
             protocol_version: 20,
@@ -873,7 +1522,15 @@ mod tests {
         });
 
         client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1990_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &1990_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
     }
 
@@ -882,7 +1539,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1767225600,
             protocol_version: 20,
@@ -895,7 +1552,15 @@ mod tests {
         });
 
         client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2027_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2027_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
     }
 
@@ -904,7 +1569,7 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             timestamp: 1767225600,
             protocol_version: 20,
@@ -917,9 +1582,20 @@ mod tests {
         });
 
         let result = client.try_mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2028_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2028_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
         );
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidVintageYear));
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InvalidVintageYear
+        );
     }
 
     #[test]
@@ -930,7 +1606,7 @@ mod tests {
         let registry = Address::generate(&env);
         let id = env.register_contract(None, CarbonCreditContract);
         let client = CarbonCreditContractClient::new(&env, &id);
-        client.initialize(&admin, &registry).unwrap();
+        client.initialize(&admin, &registry);
 
         let attacker = Address::generate(&env);
         let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
@@ -946,7 +1622,7 @@ mod tests {
         let registry = Address::generate(&env);
         let id = env.register_contract(None, CarbonCreditContract);
         let client = CarbonCreditContractClient::new(&env, &id);
-        client.initialize(&admin, &registry).unwrap();
+        client.initialize(&admin, &registry);
 
         assert_eq!(client.get_version(), 1);
     }
@@ -962,13 +1638,22 @@ mod tests {
         // Mint and retire credits
         mint(&env, &client, &admin, "b1", &owner);
         client.retire_credits(
-            &owner, &s(&env, "b1"), &100_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID")
-        ).unwrap();
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-001"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
         // Attempt to reverse the retirement - must fail
         let result = client.try_undo_retire(&admin, &s(&env, "ret-001"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::RetirementIrreversible));
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::RetirementIrreversible
+        );
     }
 
     #[test]
@@ -980,16 +1665,25 @@ mod tests {
         // Mint and retire credits
         mint(&env, &client, &admin, "b1", &owner);
         client.retire_credits(
-            &owner, &s(&env, "b1"), &50_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-002"), &s(&env, "tx"), &s(&env, "QmCID")
-        ).unwrap();
+            &owner,
+            &s(&env, "b1"),
+            &50_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-002"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
         // Even admin cannot reverse retirement
         let result = client.try_undo_retire(&admin, &s(&env, "ret-002"));
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::RetirementIrreversible));
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::RetirementIrreversible
+        );
 
         // Verify retirement certificate still exists and is unchanged
-        let cert = client.get_retirement_certificate(&s(&env, "ret-002")).unwrap();
+        let cert = client.get_retirement_certificate(&s(&env, "ret-002"));
         assert_eq!(cert.amount, 50);
         assert_eq!(cert.retirement_id, s(&env, "ret-002"));
     }
@@ -1002,15 +1696,28 @@ mod tests {
 
         // Mint batch with serials 1-100
         client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), 
-            &1_u64, &100_u64, &s(&env, "cid"), &owner
-        ).unwrap();
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
 
         // Retire 50 credits (serials 1-50)
         let cert = client.retire_credits(
-            &owner, &s(&env, "b1"), &50_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-003"), &s(&env, "tx"), &s(&env, "QmCID")
-        ).unwrap();
+            &owner,
+            &s(&env, "b1"),
+            &50_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-003"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
         // Verify serial numbers are recorded in certificate
         assert_eq!(cert.serial_numbers.len(), 50);
@@ -1018,13 +1725,20 @@ mod tests {
         assert_eq!(cert.serial_numbers.get(49).unwrap(), 50);
 
         // Verify batch status reflects retirement
-        let batch = client.get_credit_batch(&s(&env, "b1")).unwrap();
+        let batch = client.get_credit_batch(&s(&env, "b1"));
         assert_eq!(batch.status, CreditStatus::PartiallyRetired);
 
         // Attempt to mint new batch with overlapping serials - should fail
         let result = client.try_mint_credits(
-            &admin, &s(&env, "p2"), &50_i128, &2023_u32, &s(&env, "b2"), 
-            &25_u64, &75_u64, &s(&env, "cid2"), &owner
+            &admin,
+            &s(&env, "p2"),
+            &50_i128,
+            &2023_u32,
+            &s(&env, "b2"),
+            &25_u64,
+            &75_u64,
+            &s(&env, "cid2"),
+            &owner,
         );
         assert!(result.is_err());
     }
@@ -1038,15 +1752,21 @@ mod tests {
         // Mint and retire
         mint(&env, &client, &admin, "b1", &owner);
         let original_cert = client.retire_credits(
-            &owner, &s(&env, "b1"), &100_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-004"), &s(&env, "tx123"), &s(&env, "QmCID")
-        ).unwrap();
+            &owner,
+            &s(&env, "b1"),
+            &100_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-004"),
+            &s(&env, "tx123"),
+            &s(&env, "QmCID"),
+        );
 
         // Attempt reversal
         let _ = client.try_undo_retire(&admin, &s(&env, "ret-004"));
 
         // Verify certificate is unchanged
-        let cert = client.get_retirement_certificate(&s(&env, "ret-004")).unwrap();
+        let cert = client.get_retirement_certificate(&s(&env, "ret-004"));
         assert_eq!(cert.retirement_id, original_cert.retirement_id);
         assert_eq!(cert.amount, original_cert.amount);
         assert_eq!(cert.retired_by, original_cert.retired_by);
@@ -1062,78 +1782,272 @@ mod tests {
 
         // Mint 1000 credits
         client.mint_credits(
-            &admin, &s(&env, "p1"), &1000_i128, &2023_u32, &s(&env, "b1"), 
-            &1_u64, &1000_u64, &s(&env, "cid"), &owner
-        ).unwrap();
+            &admin,
+            &s(&env, "p1"),
+            &1000_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &1000_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
 
         // Retire 600 credits
         client.retire_credits(
-            &owner, &s(&env, "b1"), &600_i128, &s(&env, "offset"), 
-            &s(&env, "Corp"), &s(&env, "ret-005"), &s(&env, "tx"), &s(&env, "QmCID")
-        ).unwrap();
+            &owner,
+            &s(&env, "b1"),
+            &600_i128,
+            &s(&env, "offset"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-005"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
 
         // Verify batch state
-        let batch_after_retirement = client.get_credit_batch(&s(&env, "b1")).unwrap();
-        assert_eq!(batch_after_retirement.status, CreditStatus::PartiallyRetired);
+        let batch_after_retirement = client.get_credit_batch(&s(&env, "b1"));
+        assert_eq!(
+            batch_after_retirement.status,
+            CreditStatus::PartiallyRetired
+        );
         assert_eq!(batch_after_retirement.amount, 1000); // Total amount unchanged
 
         // Attempt reversal
         let _ = client.try_undo_retire(&admin, &s(&env, "ret-005"));
 
         // Verify batch state is still the same - no change
-        let batch_after_reversal_attempt = client.get_credit_batch(&s(&env, "b1")).unwrap();
-        assert_eq!(batch_after_reversal_attempt.status, CreditStatus::PartiallyRetired);
+        let batch_after_reversal_attempt = client.get_credit_batch(&s(&env, "b1"));
+        assert_eq!(
+            batch_after_reversal_attempt.status,
+            CreditStatus::PartiallyRetired
+        );
         assert_eq!(batch_after_reversal_attempt.amount, 1000);
 
         // Verify only 400 credits remain active (1000 - 600)
         // Attempting to retire more than 400 should fail
         let result = client.try_retire_credits(
-            &owner, &s(&env, "b1"), &500_i128, &s(&env, "offset2"), 
-            &s(&env, "Corp"), &s(&env, "ret-006"), &s(&env, "tx2"), &s(&env, "QmCID2")
+            &owner,
+            &s(&env, "b1"),
+            &500_i128,
+            &s(&env, "offset2"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-006"),
+            &s(&env, "tx2"),
+            &s(&env, "QmCID2"),
         );
-        assert_eq!(result.unwrap_err(), Ok(CarbonError::InsufficientCredits));
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InsufficientCredits
+        );
 
         // Retiring exactly 400 should succeed
         client.retire_credits(
-            &owner, &s(&env, "b1"), &400_i128, &s(&env, "offset3"), 
-            &s(&env, "Corp"), &s(&env, "ret-007"), &s(&env, "tx3"), &s(&env, "QmCID3")
-        ).unwrap();
+            &owner,
+            &s(&env, "b1"),
+            &400_i128,
+            &s(&env, "offset3"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-007"),
+            &s(&env, "tx3"),
+            &s(&env, "QmCID3"),
+        );
 
         // Now batch should be fully retired
-        let final_batch = client.get_credit_batch(&s(&env, "b1")).unwrap();
+        let final_batch = client.get_credit_batch(&s(&env, "b1"));
         assert_eq!(final_batch.status, CreditStatus::FullyRetired);
+    }
+
+    // ── Mutation-testing survivor kills (issue #632) ──────────────────────────
+    //
+    // Targeted tests for boundary conditions and status branches identified as
+    // likely mutation survivors during manual mutation analysis of
+    // retire_credits, transfer_credits, verify_serial_range and mint_credits.
+    // See audit/mutation-testing-report.md for the full analysis.
+
+    /// Kills mutation of `batch.status == CreditStatus::Suspended` (condition
+    /// removed / flipped) in `retire_credits`. A Suspended batch can only be
+    /// reached by writing storage directly since no public entry point sets
+    /// this status on carbon_credit; we simulate it to exercise the guard.
+    #[test]
+    fn test_retire_suspended_batch_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        env.as_contract(&client.address, || {
+            let mut batch: CreditBatch = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Batch(s(&env, "batch-001")))
+                .unwrap();
+            batch.status = CreditStatus::Suspended;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Batch(s(&env, "batch-001")), &batch);
+        });
+
+        let result = client.try_retire_credits(
+            &owner,
+            &s(&env, "batch-001"),
+            &100_i128,
+            &s(&env, "reason"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-susp"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ProjectSuspended
+        );
+    }
+
+    /// Kills mutation of the same Suspended guard in `transfer_credits`.
+    #[test]
+    fn test_transfer_suspended_batch_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let to = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        env.as_contract(&client.address, || {
+            let mut batch: CreditBatch = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Batch(s(&env, "batch-001")))
+                .unwrap();
+            batch.status = CreditStatus::Suspended;
+            env.storage()
+                .persistent()
+                .set(&DataKey::Batch(s(&env, "batch-001")), &batch);
+        });
+
+        let result = client.try_transfer_credits(&owner, &to, &s(&env, "batch-001"), &100_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::ProjectSuspended
+        );
+    }
+
+    /// Kills mutation of `amount > active` -> `amount >= active` in
+    /// `transfer_credits`: transferring more than active must fail, and
+    /// transferring exactly the active amount must succeed.
+    #[test]
+    fn test_transfer_exceeds_active_amount_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let to = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        let result = client.try_transfer_credits(&owner, &to, &s(&env, "batch-001"), &1001_i128);
+        assert_eq!(
+            result.unwrap_err().unwrap(),
+            CarbonError::InsufficientCredits
+        );
+    }
+
+    #[test]
+    fn test_transfer_exact_active_amount_succeeds() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let to = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        client.transfer_credits(&owner, &to, &s(&env, "batch-001"), &1000_i128);
+        let batch = client.get_credit_batch(&s(&env, "batch-001"));
+        assert_eq!(batch.owner, to);
+    }
+
+    /// Kills mutation of `amount > MAX_BATCH_SIZE` -> `amount >= MAX_BATCH_SIZE`
+    /// in `mint_credits`: minting exactly MAX_BATCH_SIZE must succeed, and
+    /// minting one more than MAX_BATCH_SIZE must fail with BatchTooLarge.
+    #[test]
+    fn test_mint_exact_max_batch_size_succeeds() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &MAX_BATCH_SIZE,
+            &2023_u32,
+            &s(&env, "b-max"),
+            &1_u64,
+            &(MAX_BATCH_SIZE as u64),
+            &s(&env, "QmCID"),
+            &owner,
+        );
+        let b = client.get_credit_batch(&s(&env, "b-max"));
+        assert_eq!(b.amount, MAX_BATCH_SIZE);
+    }
+
+    #[test]
+    fn test_mint_over_max_batch_size_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        let over = MAX_BATCH_SIZE + 1;
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &over,
+            &2023_u32,
+            &s(&env, "b-over"),
+            &1_u64,
+            &(over as u64),
+            &s(&env, "QmCID"),
+            &owner,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::BatchTooLarge);
+    }
+
+    /// Kills mutation of the overlap condition `start <= r.end && end >= r.start`
+    /// in `verify_serial_range_internal`: a range that shares exactly one serial
+    /// number with an existing range (touching, not merely adjacent) must be
+    /// detected as an overlap.
+    #[test]
+    fn test_serial_range_single_serial_overlap_detected() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits(
+            &admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &101_u64,
+            &200_u64,
+            &s(&env, "cid"),
+            &owner,
+        );
+        // [50,101] shares serial 101 with [101,200] — this IS an overlap.
+        assert!(!client.verify_serial_range(&50_u64, &101_u64));
+        // [201, 300] is strictly adjacent with no shared serial — not an overlap.
+        assert!(client.verify_serial_range(&201_u64, &300_u64));
     }
 }
 
+    // ── Vintage Expiry Tests (#649) ───────────────────────────────────────────
+    // seconds_per_year = 31_557_600
+    // year 2024 timestamp = (2024-1970) * 31_557_600 = 1_703_983_200 (approx)
+    // At year 2024: vintage 1993 → age 31 → EXPIRED, vintage 1994 → age 30 → VALID
 
-// ── Vintage Year Validation Tests ─────────────────────────────────────────────
-//
-// 50+ edge-case tests covering:
-//   - Minimum boundary (VINTAGE_YEAR_MIN = 1990)
-//   - Below minimum (0, 1, 1900, 1989)
-//   - Future boundary (current_year, current_year+1 allowed; current_year+2 rejected)
-//   - Batch expiry boundary (vintage_year + 30 >= current_year → valid)
-//   - Century boundaries (1999/2000/2001, 2099/2100)
-//   - Year u32::MAX (overflow guard)
-//   - Retirement and transfer blocked for expired batches
-//   - Ledger timestamp variations (different simulated years)
-#[cfg(test)]
-mod vintage_year_validation_tests {
-    use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
-
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
-
-    /// Set up environment with timestamp for a given approximate year.
-    /// Uses seconds_per_year = 31557600 to match contract logic.
     fn set_year(env: &Env, year: u32) {
-        let seconds_per_year: u64 = 31_557_600;
-        let timestamp = (year as u64 - 1970) * seconds_per_year + 86_400; // +1 day buffer
+        let ts = (year as u64 - 1970) * 31_557_600_u64;
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
-            timestamp,
+            timestamp: ts,
             protocol_version: 20,
             sequence_number: 1,
-            network_id: [0; 32],
+            network_id: [0u8; 32],
             base_reserve: 10,
             min_temp_entry_ttl: 1,
             min_persistent_entry_ttl: 1,
@@ -1141,451 +2055,500 @@ mod vintage_year_validation_tests {
         });
     }
 
-    fn setup_with_year(year: u32) -> (Env, CarbonCreditContractClient, Address, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
-        set_year(&env, year);
-        let admin    = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id     = env.register_contract(None, CarbonCreditContract);
-        let client = CarbonCreditContractClient::new(&env, &id);
-        client.initialize(&admin, &registry);
-        (env, client, admin, registry)
-    }
-
-    fn try_mint(
+    fn mint_with_vintage(
         env: &Env,
         client: &CarbonCreditContractClient,
         admin: &Address,
-        vintage_year: u32,
+        owner: &Address,
         batch_id: &str,
-    ) -> Result<(), soroban_sdk::Error> {
-        let owner = Address::generate(env);
-        client.try_mint_credits(
-            admin,
-            &s(env, "p1"),
-            &100_i128,
-            &vintage_year,
-            &s(env, batch_id),
-            &1_u64,
-            &100_u64,
-            &s(env, "cid"),
-            &owner,
-        ).map(|_| ())
-    }
-
-    fn mint_ok(
-        env: &Env,
-        client: &CarbonCreditContractClient,
-        admin: &Address,
         vintage_year: u32,
-        batch_id: &str,
+        serial_start: u64,
     ) {
-        let owner = Address::generate(env);
+        let serial_end = serial_start + 99;
         client.mint_credits(
             admin,
-            &s(env, "p1"),
+            &s(env, "proj-vintage"),
             &100_i128,
             &vintage_year,
             &s(env, batch_id),
-            &1_u64,
-            &100_u64,
-            &s(env, "cid"),
-            &owner,
-        );
-    }
-
-    // ── Below-minimum year tests ───────────────────────────────────────────────
-
-    #[test]
-    fn test_vintage_year_zero_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, 0, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_vintage_year_1_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, 1, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_vintage_year_1900_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, 1900, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_vintage_year_1985_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, 1985, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_vintage_year_1989_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, 1989, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    // ── Minimum boundary (1990) ────────────────────────────────────────────────
-
-    #[test]
-    fn test_vintage_year_1990_accepted_when_not_expired() {
-        // In year 2019, 1990 is 29 years old → not expired
-        let (env, client, admin, _) = setup_with_year(2019);
-        mint_ok(&env, &client, &admin, 1990, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_1990_rejected_when_expired() {
-        // In year 2025, 1990+30=2020 < 2025 → expired (batch-not-expired check)
-        let (env, client, admin, _) = setup_with_year(2025);
-        let res = try_mint(&env, &client, &admin, 1990, "b1");
-        // validate_vintage_year passes (1990 >= VINTAGE_YEAR_MIN), but
-        // validate_batch_not_expired fails at retirement/transfer, not at mint.
-        // At mint, only validate_vintage_year is called — so this succeeds.
-        // This asserts the correct behaviour: minting expired-vintage is allowed;
-        // retire/transfer is blocked.
-        assert!(res.is_ok());
-    }
-
-    // ── Present-era boundary ───────────────────────────────────────────────────
-
-    #[test]
-    fn test_vintage_year_current_accepted() {
-        // At year 2026, vintage 2026 is current year → accepted
-        let (env, client, admin, _) = setup_with_year(2026);
-        mint_ok(&env, &client, &admin, 2026, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_current_minus_1_accepted() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        mint_ok(&env, &client, &admin, 2025, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_current_plus_1_accepted() {
-        // current_year+1 is the maximum allowed future vintage
-        let (env, client, admin, _) = setup_with_year(2026);
-        mint_ok(&env, &client, &admin, 2027, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_current_plus_2_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, 2028, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_vintage_year_current_plus_10_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, 2036, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    // ── Century boundary ───────────────────────────────────────────────────────
-
-    #[test]
-    fn test_vintage_year_1999_accepted_in_2025() {
-        // 1999+30=2029 >= 2025 → not expired; 1999 >= 1990 → valid
-        let (env, client, admin, _) = setup_with_year(2025);
-        mint_ok(&env, &client, &admin, 1999, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_2000_accepted_in_2025() {
-        let (env, client, admin, _) = setup_with_year(2025);
-        mint_ok(&env, &client, &admin, 2000, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_2001_accepted_in_2025() {
-        let (env, client, admin, _) = setup_with_year(2025);
-        mint_ok(&env, &client, &admin, 2001, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_2099_accepted_in_2099() {
-        let (env, client, admin, _) = setup_with_year(2099);
-        mint_ok(&env, &client, &admin, 2099, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_2100_rejected_in_2099() {
-        // 2100 > 2099+1=2100 → actually 2100 is NOT > 2100, so it should be accepted
-        // This verifies no off-by-one at year 2100
-        let (env, client, admin, _) = setup_with_year(2099);
-        mint_ok(&env, &client, &admin, 2100, "b1");
-    }
-
-    #[test]
-    fn test_vintage_year_2101_rejected_in_2099() {
-        let (env, client, admin, _) = setup_with_year(2099);
-        let res = try_mint(&env, &client, &admin, 2101, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    // ── u32::MAX overflow guard ────────────────────────────────────────────────
-
-    #[test]
-    fn test_vintage_year_u32_max_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, u32::MAX, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_vintage_year_u32_max_minus_1_rejected() {
-        let (env, client, admin, _) = setup_with_year(2026);
-        let res = try_mint(&env, &client, &admin, u32::MAX - 1, "b1");
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    // ── Batch expiry boundary (retire / transfer blocked) ─────────────────────
-
-    /// Batch expiry check: `vintage_year + MAX_VINTAGE_AGE_YEARS < current_year`
-    /// At current_year=2025: expiry if vintage_year < 1995
-
-    #[test]
-    fn test_retire_expired_vintage_blocked() {
-        // vintage 1993: 1993+30=2023 < 2025 → expired
-        let (env, client, admin, _) = setup_with_year(2025);
-        let owner = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1993_u32,
-            &s(&env, "bexp"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-        let res = client.try_retire_credits(
-            &owner, &s(&env, "bexp"), &100_i128,
-            &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
-        );
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_retire_exactly_expired_boundary_blocked() {
-        // At year 2026: vintage 1995+30=2025 < 2026 → expired
-        let (env, client, admin, _) = setup_with_year(2026);
-        let owner = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1995_u32,
-            &s(&env, "bexp"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-        let res = client.try_retire_credits(
-            &owner, &s(&env, "bexp"), &100_i128,
-            &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
-        );
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_retire_at_expiry_boundary_just_valid() {
-        // At year 2026: vintage 1996+30=2026 = 2026, NOT < 2026 → valid (not expired)
-        let (env, client, admin, _) = setup_with_year(2026);
-        let owner = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1996_u32,
-            &s(&env, "bvalid"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-        client.retire_credits(
-            &owner, &s(&env, "bvalid"), &50_i128,
-            &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
+            &serial_start,
+            &serial_end,
+            &s(env, "QmCID"),
+            owner,
         );
     }
 
     #[test]
-    fn test_transfer_expired_vintage_blocked() {
-        // At year 2026: vintage 1994 is expired (1994+30=2024 < 2026)
-        let (env, client, admin, _) = setup_with_year(2026);
-        let owner = Address::generate(&env);
-        let to    = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1994_u32,
-            &s(&env, "bexp"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-        let res = client.try_transfer_credits(&owner, &to, &s(&env, "bexp"), &50_i128);
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_transfer_at_expiry_boundary_just_valid() {
-        // At year 2026: vintage 1996+30=2026 = 2026, NOT < 2026 → valid
-        let (env, client, admin, _) = setup_with_year(2026);
-        let owner = Address::generate(&env);
-        let to    = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1996_u32,
-            &s(&env, "bvalid"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-        client.transfer_credits(&owner, &to, &s(&env, "bvalid"), &50_i128);
-    }
-
-    #[test]
-    fn test_transfer_unexpired_vintage_allowed() {
-        // At year 2026: vintage 2020 → 2020+30=2050 >= 2026 → valid
-        let (env, client, admin, _) = setup_with_year(2026);
-        let owner = Address::generate(&env);
-        let to    = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2020_u32,
-            &s(&env, "bvalid"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-        client.transfer_credits(&owner, &to, &s(&env, "bvalid"), &50_i128);
-    }
-
-    // ── Ledger time sensitivity ────────────────────────────────────────────────
-
-    #[test]
-    fn test_vintage_year_depends_on_ledger_time_early_epoch() {
-        // Very early ledger time: year ~1970, any vintage_year >= 1990 is future → invalid
+    fn test_transfer_expired_batch_fails() {
         let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        set_year(&env, 2024);
+        mint_with_vintage(&env, &client, &admin, &owner, "b-exp-31", 1993, 1);
+        let result = client.try_transfer_credits(&owner, &buyer, &s(&env, "b-exp-31"), &10_i128);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+    }
+
+    #[test]
+    fn test_retire_expired_batch_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        set_year(&env, 2024);
+        mint_with_vintage(&env, &client, &admin, &owner, "b-ret-exp", 1993, 101);
+        let result = client.try_retire_credits(
+            &owner, &s(&env, "b-ret-exp"), &10_i128,
+            &s(&env, "reason"), &s(&env, "Corp"),
+            &s(&env, "ret-exp-1"), &s(&env, "tx"), &s(&env, "QmCID"),
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+    }
+
+    #[test]
+    fn test_transfer_age_30_succeeds() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        set_year(&env, 2024);
+        mint_with_vintage(&env, &client, &admin, &owner, "b-age-30", 1994, 201);
+        // age = 2024 - 1994 = 30 → valid
+        client.transfer_credits(&owner, &buyer, &s(&env, "b-age-30"), &10_i128);
+        let batch = client.get_credit_batch(&s(&env, "b-age-30"));
+        assert_eq!(batch.owner, buyer);
+    }
+
+    #[test]
+    fn test_retire_age_30_succeeds() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        set_year(&env, 2024);
+        mint_with_vintage(&env, &client, &admin, &owner, "b-ret-30", 1994, 301);
+        let cert = client.retire_credits(
+            &owner, &s(&env, "b-ret-30"), &10_i128,
+            &s(&env, "reason"), &s(&env, "Corp"),
+            &s(&env, "ret-30"), &s(&env, "tx"), &s(&env, "QmCID"),
+        );
+        assert_eq!(cert.amount, 10);
+    }
+
+    #[test]
+    fn test_current_year_credits_valid() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        set_year(&env, 2024);
+        mint_with_vintage(&env, &client, &admin, &owner, "b-current", 2024, 401);
+        client.transfer_credits(&owner, &buyer, &s(&env, "b-current"), &5_i128);
+        client.transfer_credits(&buyer, &owner, &s(&env, "b-current"), &5_i128);
+        let cert = client.retire_credits(
+            &owner, &s(&env, "b-current"), &5_i128,
+            &s(&env, "reason"), &s(&env, "Corp"),
+            &s(&env, "ret-current"), &s(&env, "tx"), &s(&env, "QmCID"),
+        );
+        assert_eq!(cert.amount, 5);
+    }
+
+    #[test]
+    fn test_get_credit_batch_view_expired() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        set_year(&env, 2024);
+        mint_with_vintage(&env, &client, &admin, &owner, "b-view-exp", 1993, 501);
+        let view = client.get_credit_batch_view(&s(&env, "b-view-exp"));
+        assert!(view.is_expired);
+    }
+
+    #[test]
+    fn test_get_credit_batch_view_not_expired() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        set_year(&env, 2024);
+        mint_with_vintage(&env, &client, &admin, &owner, "b-view-ok", 1994, 601);
+        let view = client.get_credit_batch_view(&s(&env, "b-view-ok"));
+        assert!(!view.is_expired);
+    }
+
+
+// ── PR #655 — Property-based fuzz tests: 4 core invariants ────────────────────
+//
+//   P1 – Conservation:     sum(batch.amount) >= sum(retired amounts)
+//   P2 – Double-counting:  overlapping serial ranges are rejected
+//   P3 – Idempotency:      retiring more than active credits always fails
+//   P4 – Zero-rejection:   zero-amount mint/retire/transfer always fails
+//
+// Each property is tested with 10,000 proptest iterations.
+#[cfg(test)]
+mod proptest_invariant_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn setup(env: &Env) -> (CarbonCreditContractClient, Address) {
         env.mock_all_auths();
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
-            timestamp: 1_000, // ~1970
-            protocol_version: 20, sequence_number: 1,
-            network_id: [0; 32], base_reserve: 10,
-            min_temp_entry_ttl: 1, min_persistent_entry_ttl: 1, max_entry_ttl: 518_400,
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
         });
-        let admin    = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id     = env.register_contract(None, CarbonCreditContract);
-        let client = CarbonCreditContractClient::new(&env, &id);
-        client.initialize(&admin, &registry);
-
-        // At ~1970, current_year = 1970. vintage 1990 > 1970+1=1971 → invalid
-        let owner = Address::generate(&env);
-        let res = client.try_mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &1990_u32,
-            &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
-
-    #[test]
-    fn test_same_vintage_valid_in_one_year_invalid_after_expiry() {
-        // Vintage 2000 is valid in year 2025 (2000+30=2030 >= 2025)
-        // but invalid at retire time in year 2031 (2000+30=2030 < 2031)
-        let env = Env::default();
-        env.mock_all_auths();
-
-        // Mint in 2025
-        set_year(&env, 2025);
-        let admin    = Address::generate(&env);
-        let registry = Address::generate(&env);
+        let admin    = Address::generate(env);
+        let registry = Address::generate(env);
         let id       = env.register_contract(None, CarbonCreditContract);
-        let client   = CarbonCreditContractClient::new(&env, &id);
+        let client   = CarbonCreditContractClient::new(env, &id);
         client.initialize(&admin, &registry);
-        let owner = Address::generate(&env);
-        client.mint_credits(
-            &admin, &s(&env, "p1"), &100_i128, &2000_u32,
-            &s(&env, "btime"), &1_u64, &100_u64, &s(&env, "cid"), &owner,
-        );
-
-        // Advance ledger to 2031 — now vintage 2000 is expired
-        set_year(&env, 2031);
-        let res = client.try_retire_credits(
-            &owner, &s(&env, "btime"), &100_i128,
-            &s(&env, "reason"), &s(&env, "Corp"),
-            &s(&env, "ret-001"), &s(&env, "txhash"), &s(&env, "QmCID"),
-        );
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
+        (client, admin)
     }
 
-    // ── Expiry boundary precision across multiple vintages ────────────────────
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10_000))]
 
-    #[test]
-    fn test_expiry_boundary_sweep_at_year_2030() {
-        // At year 2030: expiry when vintage_year + 30 < 2030 → vintage < 2000
-        // vintage 1999: 1999+30=2029 < 2030 → expired
-        // vintage 2000: 2000+30=2030 = 2030, NOT < 2030 → valid
-        let env = Env::default();
+        /// P1 – Conservation: minting `amount` credits and retiring `r` (where
+        /// r <= amount) always satisfies total_issued >= total_retired.
+        #[test]
+        fn prop_mint_retire_conservation(
+            amount in 10i128..=1_000i128,
+            retire_frac in 0u32..=100u32,
+        ) {
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let retire_amount = amount * retire_frac as i128 / 100;
+            prop_assume!(retire_amount >= 1, "retire amount must be >= 1");
+            prop_assume!(retire_amount <= amount, "retire cannot exceed mint");
+
+            let serial_end = amount as u64;
+            let r = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &amount, &2023_u32,
+                &s(&env, "b1"), &1_u64, &serial_end,
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r.is_ok(), "mint must succeed");
+
+            let batch = client.get_credit_batch(&s(&env, "b1"));
+            let issued = batch.amount;
+
+            let retire_result = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &retire_amount,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCID"),
+            );
+            if retire_result.is_ok() {
+                // Conservation: issued >= retired
+                prop_assert!(issued >= retire_amount,
+                    "P1 violated: issued={issued} < retired={retire_amount}");
+            }
+        }
+
+        /// P2 – Double-counting: minting two batches with overlapping serial
+        /// ranges always fails for the second batch.
+        #[test]
+        fn prop_overlapping_serial_rejected(
+            start1 in 1u64..=500u64,
+            width1 in 1u64..=200u64,
+            overlap_offset in 0u64..=100u64,
+            width2 in 1u64..=100u64,
+        ) {
+            let end1 = start1 + width1;
+            let start2 = start1 + overlap_offset;
+            let end2 = start2 + width2;
+            prop_assume!(start2 <= end1, "must be genuine overlap");
+
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let r1 = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &(width1 as i128 + 1), &2023_u32,
+                &s(&env, "b1"), &start1, &end1,
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r1.is_ok());
+
+            let r2 = client.try_mint_credits(
+                &admin, &s(&env, "p2"), &(width2 as i128 + 1), &2023_u32,
+                &s(&env, "b2"), &start2, &end2,
+                &s(&env, "QmCID"), &Address::generate(&env),
+            );
+            prop_assert_eq!(
+                r2.unwrap_err().unwrap(),
+                CarbonError::DoubleCountingDetected,
+                "P2 violated: overlapping range [{start2},{end2}] over [{start1},{end1}] was not rejected"
+            );
+        }
+
+        /// P3 – Idempotency: after retiring `r` credits from a batch,
+        /// attempting to retire more than the remaining active credits fails.
+        #[test]
+        fn prop_retire_overretire_fails(
+            total in 100i128..=1_000i128,
+            first_retire_frac in 10u32..=90u32,
+        ) {
+            let first_retire = total * first_retire_frac as i128 / 100;
+            prop_assume!(first_retire >= 1 && first_retire < total);
+
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let r = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &total, &2023_u32,
+                &s(&env, "b1"), &1_u64, &(total as u64),
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r.is_ok());
+
+            let retire1 = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &first_retire,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-1"), &s(&env, "tx"), &s(&env, "QmCID"),
+            );
+            prop_assume!(retire1.is_ok());
+
+            let remaining = total - first_retire;
+            let overretire = remaining + 1;
+
+            let retire2 = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &overretire,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-2"), &s(&env, "tx2"), &s(&env, "QmCID2"),
+            );
+            prop_assert!(retire2.is_err(),
+                "P3 violated: retiring {overretire} from {remaining} remaining credits should fail");
+        }
+
+        /// P4 – Zero-rejection: zero-amount operations (mint, retire, transfer)
+        /// always produce errors regardless of input parameters.
+        #[test]
+        fn prop_zero_amount_always_rejected(
+            serial_start in 1u64..=1000u64,
+            width in 1u64..=100u64,
+        ) {
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            // Zero-amount mint must fail
+            let mint_result = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &0_i128, &2023_u32,
+                &s(&env, "b-zero"), &serial_start, &(serial_start + width),
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assert!(mint_result.is_err(),
+                "P4 violated: zero-amount mint must be rejected");
+
+            // Mint a valid batch, then zero-amount retire must fail
+            let r = client.try_mint_credits(
+                &admin, &s(&env, "p2"), &(width as i128 + 1), &2023_u32,
+                &s(&env, "b1"), &serial_start, &(serial_start + width),
+                &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r.is_ok());
+
+            let retire_result = client.try_retire_credits(
+                &owner, &s(&env, "b1"), &0_i128,
+                &s(&env, "reason"), &s(&env, "Corp"),
+                &s(&env, "ret-zero"), &s(&env, "tx"), &s(&env, "QmCID"),
+            );
+            prop_assert!(retire_result.is_err(),
+                "P4 violated: zero-amount retire must be rejected");
+
+            // Zero-amount transfer must fail
+            let to = Address::generate(&env);
+            let transfer_result = client.try_transfer_credits(
+                &owner, &to, &s(&env, "b1"), &0_i128,
+            );
+            prop_assert!(transfer_result.is_err(),
+                "P4 violated: zero-amount transfer must be rejected");
+        }
+    }
+}
+
+// ── PR #650 — Serial registry O(log n) Map: property-based fuzz tests ────────
+#[cfg(test)]
+mod serial_registry_proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
+
+    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+
+    fn setup(env: &Env) -> (CarbonCreditContractClient, Address) {
         env.mock_all_auths();
-        set_year(&env, 2030);
-        let admin    = Address::generate(&env);
-        let registry = Address::generate(&env);
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let admin    = Address::generate(env);
+        let registry = Address::generate(env);
         let id       = env.register_contract(None, CarbonCreditContract);
-        let client   = CarbonCreditContractClient::new(&env, &id);
+        let client   = CarbonCreditContractClient::new(env, &id);
         client.initialize(&admin, &registry);
-
-        let owner = Address::generate(&env);
-
-        // vintage 1999 — expired at retirement
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &1999_u32, &s(&env, "b1999"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        let res = client.try_retire_credits(&owner, &s(&env, "b1999"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret1"), &s(&env, "tx"), &s(&env, "cid2"));
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-
-        // vintage 2000 — valid at retirement
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2000_u32, &s(&env, "b2000"), &101_u64, &200_u64, &s(&env, "cid"), &owner);
-        client.retire_credits(&owner, &s(&env, "b2000"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret2"), &s(&env, "tx"), &s(&env, "cid2"));
+        (client, admin)
     }
 
-    // ── MAX_VINTAGE_AGE_YEARS constant correctness ────────────────────────────
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(5_000))]
 
-    #[test]
-    fn test_max_vintage_age_constant_is_30() {
-        assert_eq!(MAX_VINTAGE_AGE_YEARS, 30);
-    }
+        /// SR1 – Non-overlapping ranges are accepted.
+        #[test]
+        fn sr1_non_overlapping_ranges_accepted(
+            start1 in 1u64..=500_000u64,
+            width1 in 1u64..=10_000u64,
+            gap    in 1u64..=10_000u64,
+            width2 in 1u64..=10_000u64,
+        ) {
+            let end1   = start1.saturating_add(width1);
+            let start2 = end1.saturating_add(gap);
+            let end2   = start2.saturating_add(width2);
+            prop_assume!(end2 > start2 && start2 > end1);
 
-    #[test]
-    fn test_vintage_year_min_constant_is_1990() {
-        assert_eq!(VINTAGE_YEAR_MIN, 1990);
-    }
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
 
-    // ── Leap-year adjacent timestamps ─────────────────────────────────────────
+            let r1 = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &(width1 as i128 + 1), &2023_u32,
+                &s(&env, "b1"), &start1, &end1, &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r1.is_ok());
 
-    #[test]
-    fn test_vintage_year_at_leap_year_2000_boundary() {
-        // 2000 was a leap year; test that validation works correctly around it
-        // At year 2000: vintage 1990 is 10 years old → valid; vintage 1999 → valid
-        let (env, client, admin, _) = setup_with_year(2000);
-        mint_ok(&env, &client, &admin, 1990, "b1990");
-        mint_ok(&env, &client, &admin, 1999, "b1999");
-    }
+            prop_assert!(client.verify_serial_range(&start2, &end2),
+                "SR1: non-overlapping range must be accepted");
 
-    #[test]
-    fn test_vintage_year_at_leap_year_2004_boundary() {
-        let (env, client, admin, _) = setup_with_year(2004);
-        mint_ok(&env, &client, &admin, 2003, "b2003");
-        mint_ok(&env, &client, &admin, 2004, "b2004");
-        mint_ok(&env, &client, &admin, 2005, "b2005"); // current+1
-    }
+            let r2 = client.try_mint_credits(
+                &admin, &s(&env, "p2"), &(width2 as i128 + 1), &2023_u32,
+                &s(&env, "b2"), &start2, &end2, &s(&env, "QmCID"), &Address::generate(&env),
+            );
+            prop_assert!(r2.is_ok(), "SR1: minting non-overlapping range must succeed");
+        }
 
-    // ── Multiple batch independence ────────────────────────────────────────────
+        /// SR2 – Overlapping ranges are rejected.
+        #[test]
+        fn sr2_overlapping_ranges_rejected(
+            start1 in 1u64..=500_000u64,
+            width1 in 10u64..=10_000u64,
+            overlap_offset in 0u64..=9u64,
+            width2 in 1u64..=1_000u64,
+        ) {
+            let end1   = start1.saturating_add(width1);
+            let start2 = start1.saturating_add(overlap_offset);
+            let end2   = start2.saturating_add(width2);
+            prop_assume!(start2 <= end1 && start2 >= 1 && end2 > start2);
 
-    #[test]
-    fn test_multiple_batches_different_vintages_independent_expiry() {
-        // At year 2026:
-        //   batch-fresh: vintage 2020 → valid for retire
-        //   batch-exp:   vintage 1992 → expired (1992+30=2022 < 2026)
-        let (env, client, admin, _) = setup_with_year(2026);
-        let owner = Address::generate(&env);
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
 
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2020_u32, &s(&env, "b-fresh"), &1_u64, &100_u64, &s(&env, "cid"), &owner);
-        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &1992_u32, &s(&env, "b-exp"),   &101_u64, &200_u64, &s(&env, "cid"), &owner);
+            let r1 = client.try_mint_credits(
+                &admin, &s(&env, "p1"), &(width1 as i128 + 1), &2023_u32,
+                &s(&env, "b1"), &start1, &end1, &s(&env, "QmCID"), &owner,
+            );
+            prop_assume!(r1.is_ok());
 
-        // Fresh vintage can be retired
-        client.retire_credits(&owner, &s(&env, "b-fresh"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret1"), &s(&env, "tx"), &s(&env, "cid2"));
+            prop_assert!(!client.verify_serial_range(&start2, &end2),
+                "SR2: overlapping range must be rejected");
 
-        // Expired vintage cannot be retired
-        let res = client.try_retire_credits(&owner, &s(&env, "b-exp"), &10_i128, &s(&env, "r"), &s(&env, "c"), &s(&env, "ret2"), &s(&env, "tx"), &s(&env, "cid3"));
-        assert_eq!(res.unwrap_err(), soroban_sdk::Error::from_contract_error(9));
-    }
+            let r2 = client.try_mint_credits(
+                &admin, &s(&env, "p2"), &(width2 as i128 + 1), &2023_u32,
+                &s(&env, "b2"), &start2, &end2, &s(&env, "QmCID"), &Address::generate(&env),
+            );
+            prop_assert_eq!(r2.unwrap_err().unwrap(), CarbonError::DoubleCountingDetected,
+                "SR2: overlapping mint must return DoubleCountingDetected");
+        }
 
-    // ── Error code verification ────────────────────────────────────────────────
+        /// SR3 – Multiple valid ranges build up correctly.
+        #[test]
+        fn sr3_random_valid_ranges_build_up(
+            a_start in 1u64..=100_000u64,
+            a_width in 1u64..=5_000u64,
+            gap_ab  in 1u64..=1_000u64,
+            b_width in 1u64..=5_000u64,
+            gap_bc  in 1u64..=1_000u64,
+            c_width in 1u64..=5_000u64,
+        ) {
+            let a_end   = a_start.saturating_add(a_width);
+            let b_start = a_end.saturating_add(gap_ab);
+            let b_end   = b_start.saturating_add(b_width);
+            let c_start = b_end.saturating_add(gap_bc);
+            let c_end   = c_start.saturating_add(c_width);
+            prop_assume!(b_start > a_end && c_start > b_end);
 
-    #[test]
-    fn test_invalid_vintage_year_error_code_is_9() {
-        // CarbonError::InvalidVintageYear must be discriminant 9
-        assert_eq!(CarbonError::InvalidVintageYear as u32, 9);
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let ra = client.try_mint_credits(&admin, &s(&env,"p1"), &(a_width as i128+1), &2023_u32,
+                &s(&env,"bA"), &a_start, &a_end, &s(&env,"Q"), &owner);
+            prop_assume!(ra.is_ok());
+            let rb = client.try_mint_credits(&admin, &s(&env,"p2"), &(b_width as i128+1), &2023_u32,
+                &s(&env,"bB"), &b_start, &b_end, &s(&env,"Q"), &owner);
+            prop_assume!(rb.is_ok());
+            let rc = client.try_mint_credits(&admin, &s(&env,"p3"), &(c_width as i128+1), &2023_u32,
+                &s(&env,"bC"), &c_start, &c_end, &s(&env,"Q"), &owner);
+            prop_assert!(rc.is_ok(), "SR3: third non-overlapping batch must succeed");
+
+            prop_assert!(!client.verify_serial_range(&b_start, &b_end),
+                "SR3: range identical to B must be rejected");
+            prop_assert!(!client.verify_serial_range(&a_start, &c_end),
+                "SR3: range spanning all batches must be rejected");
+
+            let after = c_end.saturating_add(1);
+            prop_assume!(after > c_end);
+            prop_assert!(client.verify_serial_range(&after, &(after + 100)),
+                "SR3: range after all batches must be accepted");
+        }
+
+        /// SR4 – Boundary conditions (adjacent ranges, exact same range).
+        #[test]
+        fn sr4_boundary_conditions(
+            base in 2u64..=500_000u64,
+            width in 1u64..=1_000u64,
+        ) {
+            let range_end = base.saturating_add(width);
+            prop_assume!(range_end > base);
+
+            let env = Env::default();
+            let (client, admin) = setup(&env);
+            let owner = Address::generate(&env);
+
+            let r = client.try_mint_credits(&admin, &s(&env,"p1"), &(width as i128+1), &2023_u32,
+                &s(&env,"b1"), &base, &range_end, &s(&env,"Q"), &owner);
+            prop_assume!(r.is_ok());
+
+            // Adjacent range immediately after must be accepted
+            if range_end < u64::MAX - 1 {
+                prop_assert!(client.verify_serial_range(&(range_end+1), &(range_end+2)),
+                    "SR4: adjacent range after must be accepted");
+            }
+
+            // Range entirely before must be accepted
+            if base > 2 {
+                prop_assert!(client.verify_serial_range(&1, &(base-1)),
+                    "SR4: range before must be accepted");
+            }
+
+            // Exact same range must be rejected
+            prop_assert!(!client.verify_serial_range(&base, &range_end),
+                "SR4: exact same range must be rejected");
+        }
     }
 }
