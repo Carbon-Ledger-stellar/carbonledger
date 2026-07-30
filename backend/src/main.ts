@@ -6,6 +6,7 @@ import { CorrelationIdContext } from './logger/correlation-id.context';
 import { validateEnv } from './env.validation';
 import * as express from 'express';
 import { StellarNetworkService } from './common/stellar-network.service';
+import { ValidationExceptionFilter } from './common/validation-exception.filter';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -56,8 +57,28 @@ async function bootstrap() {
     header: 'Accept-Version',
   });
 
-  // Fix mass assignment (API3): strip unknown fields globally
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  // Fix mass assignment (API3): strip unknown fields globally.
+  // exceptionFactory passes structured errors so ValidationExceptionFilter
+  // can map them to the CarbonLedger error catalog format.
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      exceptionFactory: (errors) => {
+        const { BadRequestException } = require('@nestjs/common');
+        return new BadRequestException({
+          message: errors
+            .map((e) => Object.values(e.constraints ?? {}).join(', '))
+            .filter(Boolean),
+          errors,
+        });
+      },
+    }),
+  );
+
+  // Maps class-validator errors to CarbonLedger validation error catalog format (400 + error codes).
+  app.useGlobalFilters(new ValidationExceptionFilter());
 
   // Fix API6: limit request body to 1 MB to prevent resource exhaustion
   app.use(require('express').json({ limit: '1mb' }));
