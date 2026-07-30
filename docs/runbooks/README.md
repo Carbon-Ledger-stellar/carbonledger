@@ -12,6 +12,7 @@ Runbooks for CarbonLedger production incidents. Each runbook follows the same st
 | 4 | Database corruption | High | [database-corruption.md](database-corruption.md) |
 | 5 | Key compromise | Critical | [key-compromise.md](key-compromise.md) |
 | 6 | Contract upgrade | High | [contract-upgrade.md](contract-upgrade.md) |
+| 7 | Synthetic monitoring (canary) failure | P1/P3 | [synthetic-monitoring.md](synthetic-monitoring.md) |
 
 ## Supporting Docs
 
