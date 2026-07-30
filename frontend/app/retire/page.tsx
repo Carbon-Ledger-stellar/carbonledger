@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { retireCredits } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
@@ -8,9 +8,12 @@ import { connectFreighter } from "../../lib/freighter";
 import { getWalletErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionPreview from "../../components/TransactionPreview";
+import { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
+import { simulateRetirementPreview } from "../../lib/soroban";
 
-export default function RetirePage() {
+function RetirePageContent() {
   const searchParams = useSearchParams();
   const batchId      = searchParams.get("batch") ?? "";
 
@@ -21,7 +24,27 @@ export default function RetirePage() {
   const [txStatus, setTxStatus]     = useState<TxStatus | null>(null);
   const [txHash, setTxHash]         = useState<string | null>(null);
   const [retirementId, setRetirementId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PreviewState>({ loading: false, ready: false, effects: [] });
   const { toasts, addToast, dismiss } = useToast();
+
+  useEffect(() => {
+    if (!walletKey || !batchId) return;
+    let active = true;
+    setPreview({ loading: true, ready: false, effects: [] });
+    simulateRetirementPreview({
+      contractId: process.env.NEXT_PUBLIC_CREDIT_CONTRACT || "",
+      sourcePublicKey: walletKey,
+      batchId,
+      amount,
+      beneficiary,
+      reason,
+    }).then((next) => {
+      if (active) setPreview(next);
+    }).catch(() => {
+      if (active) setPreview({ loading: false, ready: false, effects: [], error: "Unable to preview this retirement right now." });
+    });
+    return () => { active = false; };
+  }, [walletKey, batchId, amount, beneficiary, reason]);
 
   async function handleConnect() {
     try {
@@ -125,6 +148,14 @@ export default function RetirePage() {
           </p>
         </div>
 
+        <TransactionPreview
+          title="Retirement preview"
+          description="The preview explains what would happen before you sign the retirement transaction."
+          preview={preview}
+          disabled={!preview.ready}
+          ctaLabel="Retire"
+        />
+
         {txStatus && <TransactionStatus status={txStatus} txHash={txHash ?? undefined} />}
 
         {retirementId && txStatus === "confirmed" && (
@@ -153,7 +184,7 @@ export default function RetirePage() {
         ) : (
           <button
             onClick={handleRetire}
-            disabled={!beneficiary || !reason || txStatus === "submitted" || txStatus === "confirmed"}
+            disabled={!beneficiary || !reason || txStatus === "submitted" || txStatus === "confirmed" || !preview.ready}
             style={{
               background: !beneficiary || !reason ? colors.neutral[300] : "#dc2626",
               color: "#fff", border: "none", borderRadius: "0.5rem",
@@ -171,5 +202,13 @@ export default function RetirePage() {
 
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
+  );
+}
+
+export default function RetirePage() {
+  return (
+    <Suspense fallback={<div style={{ padding: "2rem" }}>Loading retirement flow…</div>}>
+      <RetirePageContent />
+    </Suspense>
   );
 }

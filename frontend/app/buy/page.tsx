@@ -1,16 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useListing, purchaseCredits } from "../../lib/api";
 import { formatStroops, formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
-import { connectFreighter, getPublicKey } from "../../lib/freighter";
+import { connectFreighter } from "../../lib/freighter";
 import { getWalletErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionPreview from "../../components/TransactionPreview";
+import { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
+import { simulatePurchasePreview } from "../../lib/soroban";
 
-export default function BuyPage() {
+function BuyPageContent() {
   const searchParams = useSearchParams();
   const listingId    = searchParams.get("listing") ?? "";
 
@@ -20,11 +23,30 @@ export default function BuyPage() {
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash]     = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
+  const [preview, setPreview] = useState<PreviewState>({ loading: false, ready: false, effects: [] });
   const { toasts, addToast, dismiss } = useToast();
 
   const totalCost = listing
     ? calculateCreditCost(amount, BigInt(listing.pricePerCredit))
     : 0n;
+
+  useEffect(() => {
+    if (!walletKey || !listing) return;
+    let active = true;
+    setPreview({ loading: true, ready: false, effects: [] });
+    simulatePurchasePreview({
+      contractId: process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT || "",
+      sourcePublicKey: walletKey,
+      listingId: listing.listingId,
+      amount,
+      pricePerCredit: listing.pricePerCredit,
+    }).then((next) => {
+      if (active) setPreview(next);
+    }).catch(() => {
+      if (active) setPreview({ loading: false, ready: false, effects: [], error: "Unable to preview this transaction right now." });
+    });
+    return () => { active = false; };
+  }, [walletKey, listing, amount]);
 
   async function handleConnect() {
     try {
@@ -133,6 +155,14 @@ export default function BuyPage() {
             </span>
           </label>
 
+          <TransactionPreview
+            title="Transaction preview"
+            description="This preview runs before you sign with your wallet so you can confirm the effects first."
+            preview={preview}
+            disabled={!preview.ready}
+            ctaLabel="Purchase"
+          />
+
           {/* Transaction status */}
           {txStatus && (
             <TransactionStatus status={txStatus} txHash={txHash ?? undefined} />
@@ -153,7 +183,7 @@ export default function BuyPage() {
           ) : (
             <button
               onClick={handlePurchase}
-              disabled={txStatus === "submitted" || txStatus === "pending"}
+              disabled={txStatus === "submitted" || txStatus === "pending" || !preview.ready}
               style={{
                 background: txStatus === "confirmed" ? colors.neutral[300] : colors.primary[600],
                 color: "#fff", border: "none", borderRadius: "0.5rem",
@@ -172,5 +202,13 @@ export default function BuyPage() {
 
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
+  );
+}
+
+export default function BuyPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: "2rem" }}>Loading purchase flow…</div>}>
+      <BuyPageContent />
+    </Suspense>
   );
 }

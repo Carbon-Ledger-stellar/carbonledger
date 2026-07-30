@@ -1,3 +1,5 @@
+"use client";
+
 import { useRetirement } from "../../../lib/api";
 import RetirementCertificate from "../../../components/RetirementCertificate";
 import { colors } from "../../../styles/design-system";
@@ -7,8 +9,6 @@ export default function RetirementCertificatePage({ params }: { params: { id: st
   return <RetirementCertificateClient id={params.id} />;
 }
 
-// Client component for interactivity
-"use client";
 function RetirementCertificateClient({ id }: { id: string }) {
   const { data: retirement, isLoading } = useRetirement(id);
 

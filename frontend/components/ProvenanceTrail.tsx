@@ -9,6 +9,7 @@ interface ProvenanceEvent {
   actor?: string;
   txHash?: string;
   detail?: string;
+  icon?: string;
 }
 
 interface Props {
