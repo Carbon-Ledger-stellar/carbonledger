@@ -31,6 +31,19 @@ export class MarketplaceService {
       throw new BadRequestException("minPrice must be less than or equal to maxPrice");
     }
 
+    // Decode opaque cursor — base64-encoded JSON { id: string }
+    let decodedCursorId: string | undefined;
+    if (cursor) {
+      try {
+        const raw = Buffer.from(cursor, 'base64').toString('utf8');
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.id !== 'string') throw new Error('missing id');
+        decodedCursorId = parsed.id;
+      } catch {
+        throw new BadRequestException('Invalid cursor');
+      }
+    }
+
     const where: any = {
       status: { in: ["Active", "PartiallyFilled"] },
       ...(methodology && { methodology }),
@@ -51,7 +64,7 @@ export class MarketplaceService {
 
     const orderBy = [{ vintageYear: "desc" as const }, { createdAt: "desc" as const }];
 
-    // Support both page-based and cursor-based pagination
+    // Page-based pagination (legacy)
     if (page !== undefined) {
       const skip = (page - 1) * limit;
       const [listings, total_count] = await Promise.all([
@@ -68,22 +81,33 @@ export class MarketplaceService {
       return result;
     }
 
+    // Cursor-based pagination (issue #598)
     const [listings, total_count] = await Promise.all([
       this.prisma.marketListing.findMany({
         where,
         orderBy,
         take: limit + 1,
-        cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
+        cursor: decodedCursorId ? { id: decodedCursorId } : undefined,
+        skip:   decodedCursorId ? 1 : 0,
       }),
       this.prisma.marketListing.count({ where }),
     ]);
 
     const hasMore = listings.length > limit;
-    const next_cursor = hasMore ? listings[listings.length - 2].id : undefined;
     if (hasMore) listings.pop();
 
-    const result: PaginatedListingsResponse = { listings, next_cursor, total_count };
+    // Encode next_cursor as opaque base64 JSON — stable under concurrent inserts
+    const next_cursor = hasMore
+      ? Buffer.from(JSON.stringify({ id: listings[listings.length - 1].id })).toString('base64')
+      : undefined;
+
+    // Encode prev_cursor pointing to the first item on this page
+    const prev_cursor =
+      decodedCursorId && listings.length > 0
+        ? Buffer.from(JSON.stringify({ id: listings[0].id })).toString('base64')
+        : undefined;
+
+    const result: PaginatedListingsResponse = { listings, next_cursor, prev_cursor, total_count };
     await this.cache.set(cacheKey, result);
     return result;
   }
