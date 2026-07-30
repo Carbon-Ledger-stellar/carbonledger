@@ -16,8 +16,9 @@ export class AuditController {
     @Query('offset') offset?: number,
     @Query('userId') userId?: string,
     @Query('action') action?: string,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.auditService.findAll({ limit, offset, userId, action });
+    return this.auditService.findAll({ limit, offset, userId, action, cursor });
   }
 
   /**

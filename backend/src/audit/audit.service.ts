@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma.service';
+import { buildCursorWhere, createOpaqueCursor, decodeCursor, normalizePaginationLimit } from '../common/cursor-pagination';
 
 @Injectable()
 export class AuditService {
@@ -100,16 +101,35 @@ export class AuditService {
     offset?: number;
     userId?: string;
     action?: string;
+    cursor?: string;
   }) {
-    return this.prisma.auditLog.findMany({
-      where: {
-        ...(query.userId && { userId: query.userId }),
-        ...(query.action && { action: query.action }),
-      },
-      take:    Number(query.limit)  || 50,
-      skip:    Number(query.offset) || 0,
-      orderBy: { timestamp: 'desc' },
-    });
+    const limit = normalizePaginationLimit(Number(query.limit ?? 50), 100);
+    const decodedCursor = decodeCursor(query.cursor);
+    const where: any = {
+      ...(query.userId && { userId: query.userId }),
+      ...(query.action && { action: query.action }),
+    };
+    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
+    const [entries, total_count] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where: cursorWhere ? { ...where, ...cursorWhere } : where,
+        take: limit + 1,
+        orderBy: { timestamp: 'desc', id: 'desc' },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    const hasMore = entries.length > limit;
+    const next_cursor = hasMore ? createOpaqueCursor(entries[limit - 1].id, entries[limit - 1].timestamp) : undefined;
+    const prev_cursor = decodedCursor && entries.length > 0 ? createOpaqueCursor(entries[0].id, entries[0].timestamp) : undefined;
+    if (hasMore) entries.pop();
+
+    return {
+      entries,
+      next_cursor,
+      prev_cursor,
+      total_count,
+    };
   }
 
   /**

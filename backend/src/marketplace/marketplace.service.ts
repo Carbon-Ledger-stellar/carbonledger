@@ -8,6 +8,7 @@ import { WebhookService } from "../webhook/webhook.service";
 
 import { EventSourcingService } from "../events/event-sourcing.service";
 import { CreditEventType } from "../events/credit-event.types";
+import { buildCursorWhere, createOpaqueCursor, decodeCursor, normalizePaginationLimit } from "../common/cursor-pagination";
 
 @Injectable()
 export class MarketplaceService {
@@ -57,6 +58,8 @@ export class MarketplaceService {
     if (cached) return cached;
 
     const { methodology, vintage, country, minPrice, maxPrice, search, cursor, page, limit = 20, sortBy, sortOrder = "asc" } = query;
+    const normalizedLimit = normalizePaginationLimit(limit, 100);
+    const decodedCursor = decodeCursor(cursor);
 
     // Validate price range values
     if (minPrice !== undefined && isNaN(parseFloat(minPrice))) {
@@ -102,14 +105,14 @@ export class MarketplaceService {
         });
 
       const effectivePage = page ?? 1;
-      const start = (effectivePage - 1) * limit;
-      const listings = sorted.slice(start, start + limit);
+      const start = (effectivePage - 1) * normalizedLimit;
+      const listings = sorted.slice(start, start + normalizedLimit);
 
       const result: PaginatedListingsResponse = {
         listings,
         total_count,
         page: effectivePage,
-        total_pages: Math.ceil(total_count / limit),
+        total_pages: Math.ceil(total_count / normalizedLimit),
       };
       await this.cache.set(cacheKey, result);
       return result;
@@ -119,40 +122,41 @@ export class MarketplaceService {
 
     // Support both page-based and cursor-based pagination
     if (page !== undefined) {
-      const skip = (page - 1) * limit;
+      const skip = (page - 1) * normalizedLimit;
       const [listings, total_count] = await Promise.all([
-        this.prisma.marketListing.findMany({ where, include, orderBy, take: limit, skip }),
+        this.prisma.marketListing.findMany({ where, include, orderBy, take: normalizedLimit, skip }),
         this.prisma.marketListing.count({ where }),
       ]);
       const result: PaginatedListingsResponse = {
         listings: listings.map(MarketplaceService.withProjectName),
         total_count,
         page,
-        total_pages: Math.ceil(total_count / limit),
+        total_pages: Math.ceil(total_count / normalizedLimit),
       };
       await this.cache.set(cacheKey, result);
       return result;
     }
 
+    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
     const [listings, total_count] = await Promise.all([
       this.prisma.marketListing.findMany({
-        where,
+        where: cursorWhere ? { ...where, ...cursorWhere } : where,
         include,
         orderBy,
-        take: limit + 1,
-        cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
+        take: normalizedLimit + 1,
       }),
       this.prisma.marketListing.count({ where }),
     ]);
 
-    const hasMore = listings.length > limit;
-    const next_cursor = hasMore ? listings[listings.length - 2].id : undefined;
+    const hasMore = listings.length > normalizedLimit;
+    const next_cursor = hasMore ? createOpaqueCursor(listings[normalizedLimit - 1].id, listings[normalizedLimit - 1].createdAt) : undefined;
+    const prev_cursor = decodedCursor && listings.length > 0 ? createOpaqueCursor(listings[0].id, listings[0].createdAt) : undefined;
     if (hasMore) listings.pop();
 
     const result: PaginatedListingsResponse = {
       listings: listings.map(MarketplaceService.withProjectName),
       next_cursor,
+      prev_cursor,
       total_count,
     };
     await this.cache.set(cacheKey, result);

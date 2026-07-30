@@ -21,6 +21,8 @@ import { sanitizeRetirementPayload, sanitizeRetirementForResponse } from "../com
 import { Optional } from "@nestjs/common";
 import { EventSourcingService } from "../events/event-sourcing.service";
 import { CreditEventType } from "../events/credit-event.types";
+import { WebhookService } from "../webhook/webhook.service";
+import { buildCursorWhere, createOpaqueCursor, decodeCursor, normalizePaginationLimit } from "../common/cursor-pagination";
 
 export interface BulkRetirementResult {
   batchId: string;
@@ -54,6 +56,7 @@ interface NormalizedBulkItem {
 export interface PaginatedRetirementsResponse {
   retirements: any[];
   next_cursor?: string;
+  prev_cursor?: string;
   total_count: number;
 }
 
@@ -67,6 +70,7 @@ export class RetirementsService {
     private readonly certificateService: CertificateService,
     private readonly queueService: QueueService,
     @Optional() private readonly eventSourcing?: EventSourcingService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
@@ -195,6 +199,83 @@ export class RetirementsService {
     return this.executeBulkRetirements(sanitizedDto, normalized);
   }
 
+  async bulkRetireCreditsFromCsv(dto: { csv: string; retiredBy: string }) {
+    const rows = this.parseCsvRows(dto.csv);
+    if (rows.length === 0) {
+      throw new BadRequestException('CSV contains no retirements');
+    }
+
+    const normalized = await this.validateBulkCsvRows(rows, dto.retiredBy);
+    const accepted = normalized.validItems;
+    const rejected = normalized.invalidItems;
+
+    const largeBatch = accepted.length > 100;
+    if (largeBatch) {
+      const jobId = `bulk-csv-${createHash('sha256').update(`${dto.retiredBy}:${dto.csv}`).digest('hex')}`;
+      await this.queueService.enqueue(JobType.BULK_RETIREMENT, {
+        items: accepted.map((item) => ({
+          batchId: item.batchId,
+          amount: item.amount,
+          beneficiary: item.beneficiary,
+          reason: item.reason,
+        })),
+        beneficiary: dto.retiredBy,
+        retirementReason: 'Bulk CSV retirement',
+        retiredBy: dto.retiredBy,
+        requestId: jobId,
+      }, { jobId });
+
+      return {
+        status: 'queued',
+        jobId,
+        acceptedCount: accepted.length,
+        rejectedCount: rejected.length,
+        rejected,
+      };
+    }
+
+    const executed = await this.executeBulkRetirements({
+      items: accepted.map((item) => ({
+        batchId: item.batchId,
+        amount: item.amount,
+        beneficiary: item.beneficiary,
+        reason: item.reason,
+      })),
+      beneficiary: dto.retiredBy,
+      retirementReason: 'Bulk CSV retirement',
+      retiredBy: dto.retiredBy,
+    }, accepted as unknown as NormalizedBulkItem[]);
+
+    return {
+      status: 'completed',
+      accepted: executed,
+      rejected,
+    };
+  }
+
+  async getBulkCsvStatus(jobId: string) {
+    const job = await this.queueService.getJobStatus(jobId);
+    return job ?? { jobId, state: 'missing' };
+  }
+
+  async getCertificateStatus(retirementId: string, retiredBy?: string) {
+    const retirement = await this.prisma.retirementRecord.findFirst({
+      where: { retirementId, ...(retiredBy ? { retiredBy } : {}) },
+      select: {
+        retirementId: true,
+        certificateStatus: true,
+        certificateRetries: true,
+        certificateCid: true,
+        certificateUrl: true,
+        certificateGeneratedAt: true,
+        certificateFailedAt: true,
+      },
+    });
+
+    if (!retirement) throw new NotFoundException('Retirement not found');
+    return retirement;
+  }
+
   async executeBulkRetirements(
     dto: BulkRetirementRequest,
     normalized?: NormalizedBulkItem[],
@@ -251,25 +332,26 @@ export class RetirementsService {
   }
 
   async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
-    const take = Math.min(Math.max(limit, 1), 100);
+    const take = normalizePaginationLimit(limit, 100);
     const where = retiredBy ? { retiredBy } : {};
+    const decodedCursor = decodeCursor(cursor);
+    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
 
     const [retirements, total_count] = await Promise.all([
       this.prisma.retirementRecord.findMany({
-        where,
-        orderBy: { retiredAt: "desc" },
+        where: cursorWhere ? { ...where, ...cursorWhere } : where,
+        orderBy: [{ retiredAt: "desc" }, { id: "desc" }],
         take: take + 1,
-        cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
       }),
       this.prisma.retirementRecord.count({ where }),
     ]);
 
     const hasMore = retirements.length > take;
-    const next_cursor = hasMore ? retirements[retirements.length - 2].id : undefined;
+    const next_cursor = hasMore ? createOpaqueCursor(retirements[take - 1].id, retirements[take - 1].retiredAt) : undefined;
+    const prev_cursor = decodedCursor && retirements.length > 0 ? createOpaqueCursor(retirements[0].id, retirements[0].retiredAt) : undefined;
     if (hasMore) retirements.pop();
 
-    return { retirements: retirements.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, total_count };
+    return { retirements: retirements.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, prev_cursor, total_count };
   }
 
   /**
@@ -285,12 +367,14 @@ export class RetirementsService {
     limit?: number;
   }): Promise<PaginatedRetirementsResponse> {
     const { search, projectId, retiredBy, vintageYear, cursor, limit = 20 } = query;
-    const take = Math.min(Math.max(limit, 1), 100);
+    const take = normalizePaginationLimit(limit, 100);
 
     if (!search) {
       return this.findAll(cursor, take, retiredBy);
     }
 
+    const decodedCursor = decodeCursor(cursor);
+    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
     const where: any = {
       OR: [
         { beneficiary: { contains: search, mode: 'insensitive' } },
@@ -301,22 +385,22 @@ export class RetirementsService {
     if (projectId) { where.projectId = projectId; }
     if (retiredBy) { where.retiredBy = retiredBy; }
     if (vintageYear) { where.vintageYear = vintageYear; }
-    if (cursor) { where.id = { lt: cursor }; }
 
     const [rows, total_count] = await Promise.all([
       this.prisma.retirementRecord.findMany({
-        where,
+        where: cursorWhere ? { ...where, ...cursorWhere } : where,
         take: take + 1,
-        orderBy: { retiredAt: 'desc' },
+        orderBy: [{ retiredAt: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.retirementRecord.count({ where }),
     ]);
 
     const hasMore = rows.length > take;
-    const next_cursor = hasMore ? rows[rows.length - 2].id : undefined;
+    const next_cursor = hasMore ? createOpaqueCursor(rows[take - 1].id, rows[take - 1].retiredAt) : undefined;
+    const prev_cursor = decodedCursor && rows.length > 0 ? createOpaqueCursor(rows[0].id, rows[0].retiredAt) : undefined;
     if (hasMore) rows.pop();
 
-    return { retirements: rows.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, total_count };
+    return { retirements: rows.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, prev_cursor, total_count };
   }
 
   async findOne(retirementId: string) {
@@ -422,6 +506,77 @@ export class RetirementsService {
     const csvBuffer = await this.exportCsv(filters);
     // Minimal PDF wrapper — production would use pdfkit
     return Buffer.from(`%PDF-1.4\n% ESG Retirement Report\n${csvBuffer.toString()}`);
+  }
+
+  private parseCsvRows(csv: string): Array<{ batchId: string; amount: string; beneficiary: string; reason: string }> {
+    const lines = csv.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (lines.length === 0) return [];
+    const header = lines[0].split(',').map((cell) => cell.trim().toLowerCase());
+    const rows = lines.slice(1).map((line) => {
+      const values = line.split(',').map((cell) => cell.trim());
+      const row: Record<string, string> = {};
+      header.forEach((key, index) => {
+        row[key] = values[index] ?? '';
+      });
+      return {
+        batchId: row.batchid ?? '',
+        amount: row.amount ?? '',
+        beneficiary: row.beneficiary ?? '',
+        reason: row.reason ?? '',
+      };
+    });
+
+    return rows;
+  }
+
+  private async validateBulkCsvRows(rows: Array<{ batchId: string; amount: string; beneficiary: string; reason: string }>, retiredBy: string) {
+    const invalidItems: Array<{ row: number; error: string }> = [];
+    const validItems: NormalizedBulkItem[] = [];
+
+    const batchIds = rows.map((row) => row.batchId).filter(Boolean);
+    const uniqueBatchIds = new Set(batchIds);
+    if (uniqueBatchIds.size !== batchIds.length) {
+      invalidItems.push({ row: 0, error: 'Each batchId must be unique in a CSV upload' });
+    }
+
+    const batches = await this.prisma.creditBatch.findMany({ where: { batchId: { in: [...uniqueBatchIds] } } });
+    const batchMap = new Map(batches.map((batch) => [batch.batchId, batch]));
+    const retiredBatchIds = new Set((await this.prisma.retirementRecord.findMany({ where: { retiredBy, batchId: { in: [...uniqueBatchIds] } }, select: { batchId: true } })).map((row) => row.batchId));
+
+    rows.forEach((row, index) => {
+      const amount = Number(row.amount);
+      if (!row.batchId || !row.beneficiary || !row.reason || !Number.isFinite(amount) || amount <= 0) {
+        invalidItems.push({ row: index + 2, error: 'Each row must include batchId, amount, beneficiary, and reason' });
+        return;
+      }
+
+      const batch = batchMap.get(row.batchId);
+      if (!batch) {
+        invalidItems.push({ row: index + 2, error: `Credit batch ${row.batchId} not found` });
+        return;
+      }
+
+      if (retiredBatchIds.has(row.batchId)) {
+        invalidItems.push({ row: index + 2, error: `Credits already retired for batch ${row.batchId}` });
+        return;
+      }
+
+      const batchAmount = this.batchAmountToNumber(batch.amount);
+      if (amount > batchAmount) {
+        invalidItems.push({ row: index + 2, error: `Cannot retire ${amount} from batch ${row.batchId} — only ${batchAmount} available` });
+        return;
+      }
+
+      validItems.push({
+        batchId: row.batchId,
+        amount,
+        beneficiary: row.beneficiary,
+        reason: row.reason,
+        batch,
+      });
+    });
+
+    return { validItems, invalidItems };
   }
 
   private async validateBulkRetirementRequest(dto: BulkRetirementRequest): Promise<NormalizedBulkItem[]> {

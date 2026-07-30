@@ -82,6 +82,12 @@ export class BulkRetirementsDto {
   retirementReason: string;
 }
 
+export class CsvBulkRetirementsDto {
+  @IsString()
+  @IsNotEmpty()
+  csv: string;
+}
+
 export class ExportRetirementsDto {
   @IsOptional()
   @IsString()
