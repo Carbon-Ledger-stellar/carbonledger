@@ -48,7 +48,27 @@ pub enum DataKey {
     SuspendedProject(String),
     ContractVersion,
     UpgradeHistory,
+    /// Governance-controlled fee configuration.
+    /// Falls back to compile-time constants (1/100 = 1%) when absent.
+    FeeConfig,
 }
+
+/// Governance-controlled fee configuration stored on-chain.
+/// `numerator / denom` = fee rate. e.g. 1/100 = 1%.
+/// Invariant enforced by `set_fee_rate`: numerator <= denom / 10 (max 10%).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfig {
+    pub numerator:  i128,
+    pub denom:      i128,
+    pub updated_at: u64,
+    pub updated_by: Address,
+}
+
+/// Compile-time default fee constants (1%).
+/// Used as fallback when FeeConfig has not been set via governance.
+pub const DEFAULT_FEE_NUMERATOR: i128 = 1;
+pub const DEFAULT_FEE_DENOM:     i128 = 100;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -195,6 +215,78 @@ impl CarbonMarketplaceContract {
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
         env.storage().persistent().get(&DataKey::UpgradeHistory)
     }
+
+    // ── Governance: configurable fee rate ────────────────────────────────────
+
+    /// Admin-only: set the protocol fee rate.
+    ///
+    /// Guardrails:
+    /// - `denom` must be > 0
+    /// - `numerator` must be >= 0
+    /// - `numerator <= denom / 10`  (caps fee at 10%)
+    ///
+    /// Emits a `FeeRateChanged` event on success.
+    pub fn set_fee_rate(
+        env: Env,
+        admin: Address,
+        numerator: i128,
+        denom: i128,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        if denom <= 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+        if numerator < 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+        // Max fee = 10%: numerator <= denom / 10
+        if numerator > denom / 10 {
+            return Err(CarbonError::InvalidSerialRange); // reuse error as "fee too high"
+        }
+
+        let fee_config = FeeConfig {
+            numerator,
+            denom,
+            updated_at: env.ledger().timestamp(),
+            updated_by: admin.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeConfig, &fee_config);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("fee_set")),
+            (numerator, denom, admin),
+        );
+        Ok(())
+    }
+
+    /// Return the current fee configuration.
+    /// If never set, returns the compile-time defaults.
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        Self::read_fee(&env)
+    }
+
+    /// Internal helper: read fee config from storage, falling back to defaults.
+    fn read_fee(env: &Env) -> FeeConfig {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeConfig)
+            .unwrap_or(FeeConfig {
+                numerator:  DEFAULT_FEE_NUMERATOR,
+                denom:      DEFAULT_FEE_DENOM,
+                updated_at: 0,
+                updated_by: env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::Admin)
+                    .unwrap_or(env.current_contract_address()),
+            })
+    }
+
+    // ── Treasury management ───────────────────────────────────────────────────
 
     pub fn update_treasury(
         env: Env,
@@ -363,7 +455,12 @@ impl CarbonMarketplaceContract {
             .price_per_credit
             .checked_mul(amount)
             .ok_or(CarbonError::Arithmetic)?;
-        let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+        let fee = Self::read_fee(&env);
+        let protocol_fee = total_cost
+            .checked_mul(fee.numerator)
+            .ok_or(CarbonError::Arithmetic)?
+            .checked_div(fee.denom)
+            .ok_or(CarbonError::Arithmetic)?;
         let seller_proceeds = total_cost
             .checked_sub(protocol_fee)
             .ok_or(CarbonError::Arithmetic)?;
@@ -497,7 +594,12 @@ impl CarbonMarketplaceContract {
                 .price_per_credit
                 .checked_mul(amount)
                 .ok_or(CarbonError::Arithmetic)?;
-            let protocol_fee = total_cost.checked_div(100).ok_or(CarbonError::Arithmetic)?;
+            let fee = Self::read_fee(&env);
+            let protocol_fee = total_cost
+                .checked_mul(fee.numerator)
+                .ok_or(CarbonError::Arithmetic)?
+                .checked_div(fee.denom)
+                .ok_or(CarbonError::Arithmetic)?;
             let seller_proceeds = total_cost
                 .checked_sub(protocol_fee)
                 .ok_or(CarbonError::Arithmetic)?;
@@ -1318,6 +1420,74 @@ mod edge_case_tests {
             result.unwrap_err().unwrap(),
             CarbonError::AlreadyInitialized
         );
+    }
+
+    // ── Fee governance tests (issue #651) ─────────────────────────────────────
+
+    #[test]
+    fn test_default_fee_config_is_one_percent() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, DEFAULT_FEE_NUMERATOR);
+        assert_eq!(fee.denom, DEFAULT_FEE_DENOM);
+    }
+
+    #[test]
+    fn test_admin_can_set_fee_rate() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // Set fee to 2%
+        client.set_fee_rate(&admin, &2_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 2);
+        assert_eq!(fee.denom, 100);
+    }
+
+    #[test]
+    fn test_non_admin_cannot_set_fee_rate() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let rogue = Address::generate(&env);
+        let result = client.try_set_fee_rate(&rogue, &2_i128, &100_i128);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
+    }
+
+    #[test]
+    fn test_fee_above_ten_percent_rejected() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // 11% must be rejected
+        let result = client.try_set_fee_rate(&admin, &11_i128, &100_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_denom_fee_rejected() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        let result = client.try_set_fee_rate(&admin, &1_i128, &0_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_fee_rate_accepted() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // 0% fee is valid
+        client.set_fee_rate(&admin, &0_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 0);
+    }
+
+    #[test]
+    fn test_max_ten_percent_fee_accepted() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // Exactly 10% = 10/100 is valid (numerator == denom/10)
+        client.set_fee_rate(&admin, &10_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 10);
     }
 
     // ── InvalidSerialRange (bulk_purchase length mismatch) ────────────────────
