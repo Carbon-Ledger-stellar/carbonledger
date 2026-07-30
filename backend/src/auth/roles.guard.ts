@@ -49,7 +49,7 @@ export class RolesGuard implements CanActivate {
     }
 
     // 3. Fetch role from DB — JWT payload alone is not trusted for role
-    const user = await this.prisma.user.findUnique({ where: { publicKey: payload.sub } });
+    const user = await this.prisma.user.findFirst({ where: { publicKey: payload.sub, deletedAt: null } });
     if (!user) throw new UnauthorizedException('User not found');
 
     // Attach DB-sourced user to request for downstream use

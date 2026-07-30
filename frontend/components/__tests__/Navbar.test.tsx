@@ -1,6 +1,11 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import { setTestLocaleMessages } from 'next-intl';
+import { ThemeProvider } from '@/lib/theme-context';
+import enMessages from '../../public/locales/en/common.json';
+
+jest.mock('next-intl');
 
 // ─── Mock next/navigation ────────────────────────────────────────────────────
 const mockUsePathname = jest.fn<string, []>();
@@ -27,8 +32,33 @@ jest.mock('@/lib/wallet/WalletContext', () => ({
   }),
 }));
 
+jest.mock('@/components/LocaleProvider', () => ({
+  useAppLocale: () => ({ locale: 'en', setLocale: jest.fn() }),
+}));
+
+beforeAll(() => {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: jest.fn().mockImplementation(() => ({
+      matches: false,
+      media: '',
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+    })),
+  });
+});
+
 // ─── Import the component and the exported helper ────────────────────────────
 import Navbar, { isActive } from '../Navbar';
+
+function renderNavbar() {
+  setTestLocaleMessages(enMessages);
+  return render(
+    <ThemeProvider>
+      <Navbar />
+    </ThemeProvider>
+  );
+}
 
 // ─── Pure unit tests for isActive() ──────────────────────────────────────────
 describe('isActive()', () => {
@@ -66,7 +96,7 @@ describe('isActive()', () => {
 describe('Navbar active link rendering', () => {
   it('sets aria-current="page" on the active link only', () => {
     mockUsePathname.mockReturnValue('/marketplace');
-    render(<Navbar />);
+    renderNavbar();
 
     const activeLink = screen.getByRole('link', { name: 'Marketplace' });
     expect(activeLink).toHaveAttribute('aria-current', 'page');
@@ -80,7 +110,7 @@ describe('Navbar active link rendering', () => {
 
   it('applies nav-link--active class to the active link', () => {
     mockUsePathname.mockReturnValue('/projects');
-    render(<Navbar />);
+    renderNavbar();
 
     const activeLink = screen.getByRole('link', { name: 'Projects' });
     expect(activeLink).toHaveClass('nav-link--active');
@@ -89,14 +119,14 @@ describe('Navbar active link rendering', () => {
 
   it('does not apply nav-link--active to inactive links', () => {
     mockUsePathname.mockReturnValue('/projects');
-    render(<Navbar />);
+    renderNavbar();
 
     expect(screen.getByRole('link', { name: 'Marketplace' })).not.toHaveClass('nav-link--active');
   });
 
   it('highlights parent link for a nested route', () => {
     mockUsePathname.mockReturnValue('/marketplace/abc123');
-    render(<Navbar />);
+    renderNavbar();
 
     const marketplaceLink = screen.getByRole('link', { name: 'Marketplace' });
     expect(marketplaceLink).toHaveAttribute('aria-current', 'page');
@@ -105,7 +135,7 @@ describe('Navbar active link rendering', () => {
 
   it('renders no active link when on an unrelated path', () => {
     mockUsePathname.mockReturnValue('/unknown-page');
-    render(<Navbar />);
+    renderNavbar();
 
     const navLinks = screen.getAllByRole('link').filter((el) =>
       el.classList.contains('nav-link')

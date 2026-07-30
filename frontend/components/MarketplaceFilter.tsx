@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { colors } from "../styles/design-system";
 
 export interface FilterState {
@@ -12,11 +13,13 @@ export interface FilterState {
   maxPrice:     string;
   projectType:  string;
   search:       string;
+  /** "true" when the "Available now" checkbox is checked, "" otherwise (kept as a string like the other fields for URL-param round-tripping). */
+  availableOnly: string;
 }
 
 export const EMPTY_FILTERS: FilterState = {
   methodology: "", vintageYear: "", country: "",
-  minPrice: "", maxPrice: "", projectType: "", search: "",
+  minPrice: "", maxPrice: "", projectType: "", search: "", availableOnly: "",
 };
 
 export function filtersFromParams(params: URLSearchParams): FilterState {
@@ -28,6 +31,7 @@ export function filtersFromParams(params: URLSearchParams): FilterState {
     maxPrice:    params.get("maxPrice")     ?? "",
     projectType: params.get("projectType")  ?? "",
     search:      params.get("search")       ?? "",
+    availableOnly: params.get("availableOnly") ?? "",
   };
 }
 
@@ -53,39 +57,53 @@ const controlStyle: React.CSSProperties = {
 };
 
 function FilterFields({ filters, onChange }: { filters: FilterState; onChange: (k: keyof FilterState, v: string) => void }) {
+  const t = useTranslations("marketplaceFilter");
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "1rem" }}>
       <div>
-        <label htmlFor="filter-methodology" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>Methodology</label>
-        <select id="filter-methodology" style={controlStyle} value={filters.methodology} onChange={e => onChange("methodology", e.target.value)} aria-label="Filter by methodology">
-          {METHODOLOGIES.map(m => <option key={m} value={m}>{m || "All"}</option>)}
+        <label htmlFor="filter-methodology" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>{t("methodology")}</label>
+        <select id="filter-methodology" style={controlStyle} value={filters.methodology} onChange={e => onChange("methodology", e.target.value)} aria-label={t("filterByMethodology")}>
+          {METHODOLOGIES.map(m => <option key={m} value={m}>{m || t("all")}</option>)}
         </select>
       </div>
       <div>
-        <label htmlFor="filter-vintage" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>Vintage Year</label>
-        <select id="filter-vintage" style={controlStyle} value={filters.vintageYear} onChange={e => onChange("vintageYear", e.target.value)} aria-label="Filter by vintage year">
-          {VINTAGES.map(v => <option key={v} value={v}>{v || "All"}</option>)}
+        <label htmlFor="filter-vintage" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>{t("vintageYear")}</label>
+        <select id="filter-vintage" style={controlStyle} value={filters.vintageYear} onChange={e => onChange("vintageYear", e.target.value)} aria-label={t("filterByVintage")}>
+          {VINTAGES.map(v => <option key={v} value={v}>{v || t("all")}</option>)}
         </select>
       </div>
       <div>
-        <label htmlFor="filter-country" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>Country</label>
-        <select id="filter-country" style={controlStyle} value={filters.country} onChange={e => onChange("country", e.target.value)} aria-label="Filter by country">
-          {COUNTRIES.map(c => <option key={c} value={c}>{c || "All"}</option>)}
+        <label htmlFor="filter-country" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>{t("country")}</label>
+        <select id="filter-country" style={controlStyle} value={filters.country} onChange={e => onChange("country", e.target.value)} aria-label={t("filterByCountry")}>
+          {COUNTRIES.map(c => <option key={c} value={c}>{c || t("all")}</option>)}
         </select>
       </div>
       <div>
-        <label htmlFor="filter-min-price" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>Min Price (USDC)</label>
-        <input id="filter-min-price" type="number" style={controlStyle} placeholder="0" value={filters.minPrice} onChange={e => onChange("minPrice", e.target.value)} min="0" aria-label="Minimum price in USDC" />
+        <label htmlFor="filter-min-price" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>{t("minPrice")}</label>
+        <input id="filter-min-price" type="number" style={controlStyle} placeholder={t("minPricePlaceholder")} value={filters.minPrice} onChange={e => onChange("minPrice", e.target.value)} min="0" aria-label={t("minPriceAria")} />
       </div>
       <div>
-        <label htmlFor="filter-max-price" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>Max Price (USDC)</label>
-        <input id="filter-max-price" type="number" style={controlStyle} placeholder="Any" value={filters.maxPrice} onChange={e => onChange("maxPrice", e.target.value)} min="0" aria-label="Maximum price in USDC" />
+        <label htmlFor="filter-max-price" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>{t("maxPrice")}</label>
+        <input id="filter-max-price" type="number" style={controlStyle} placeholder={t("maxPricePlaceholder")} value={filters.maxPrice} onChange={e => onChange("maxPrice", e.target.value)} min="0" aria-label={t("maxPriceAria")} />
+      </div>
+      <div style={{ display: "flex", alignItems: "flex-end" }}>
+        <label htmlFor="filter-available-only" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", color: colors.neutral[700], cursor: "pointer" }}>
+          <input
+            id="filter-available-only"
+            type="checkbox"
+            checked={filters.availableOnly === "true"}
+            onChange={e => onChange("availableOnly", e.target.checked ? "true" : "")}
+            aria-label={t("availableOnlyAria")}
+          />
+          {t("availableNow")}
+        </label>
       </div>
     </div>
   );
 }
 
 export default function MarketplaceFilter({ filters, onChange, resultCount }: Props) {
+  const t = useTranslations("marketplaceFilter");
   const router = useRouter();
   const searchParams = useSearchParams();
   const [localSearch, setLocalSearch] = useState(filters.search);
@@ -175,14 +193,14 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
     <>
       {/* Search — always visible */}
       <div style={{ position: "relative", marginBottom: "1rem" }}>
-        <label htmlFor="filter-search" className="sr-only">Search by project name, methodology, or country</label>
+        <label htmlFor="filter-search" className="sr-only">{t("searchLabel")}</label>
         <input
           id="filter-search"
           type="search"
-          placeholder="Search by project name, methodology, or country…"
+          placeholder={t("searchPlaceholder")}
           value={localSearch}
           onChange={e => setLocalSearch(e.target.value)}
-          aria-label="Search credits"
+          aria-label={t("searchAria")}
           style={{
             ...controlStyle,
             padding: "0.75rem 1rem 0.75rem 2.5rem",
@@ -198,7 +216,7 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
       <div className="mobile-filter-bar" style={{ display: "none", gap: "0.75rem", marginBottom: "1rem", alignItems: "center" }}>
         <button
           onClick={() => setMobileOpen(true)}
-          aria-label={`Open filters${activeCount > 0 ? `, ${activeCount} active` : ""}`}
+          aria-label={activeCount > 0 ? t("openFiltersActive", { count: activeCount }) : t("openFilters")}
           style={{
             display: "inline-flex", alignItems: "center", gap: "0.5rem",
             border: `1px solid ${activeCount > 0 ? colors.primary[400] : colors.neutral[300]}`,
@@ -211,7 +229,7 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
             cursor: "pointer",
           }}
         >
-          ⚙ Filters
+          ⚙ {t("filtersTitle")}
           {activeCount > 0 && (
             <span style={{
               background: colors.primary[600], color: "#fff",
@@ -224,7 +242,7 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
         </button>
         {activeCount > 0 && (
           <button onClick={handleClear} style={{ fontSize: "0.8rem", color: colors.neutral[500], background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-            Clear
+            {t("clear")}
           </button>
         )}
       </div>
@@ -238,16 +256,16 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
         margin: "0 0 1rem",
       }}>
         <legend style={{ fontSize: "0.75rem", fontWeight: 700, color: colors.neutral[600], padding: "0 0.25rem", float: "left", width: "100%", marginBottom: "0.5rem" }}>
-          Filter Credits
+          {t("filterCredits")}
         </legend>
         <FilterFields filters={filters} onChange={handleFilterChange} />
         <div style={{ marginTop: "1rem", textAlign: "right" }}>
-          <button type="button" onClick={handleClear} aria-label="Clear all filters" style={{
+          <button type="button" onClick={handleClear} aria-label={t("clearAllFilters")} style={{
             background: "transparent", color: colors.neutral[500],
             border: `1px solid ${colors.neutral[300]}`, borderRadius: "0.375rem",
             padding: "0.5rem 1rem", fontSize: "0.8rem", cursor: "pointer",
           }}>
-            Clear Filters
+            {t("clearFilters")}
           </button>
         </div>
       </fieldset>
@@ -257,7 +275,7 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Filters"
+          aria-label={t("filtersDialog")}
           style={{
             position: "fixed", inset: 0, zIndex: 100,
             background: "rgba(0,0,0,0.5)",
@@ -277,10 +295,10 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
-              <h2 style={{ margin: 0, fontSize: "1.125rem", fontWeight: 700, color: colors.neutral[900] }}>Filters</h2>
+              <h2 style={{ margin: 0, fontSize: "1.125rem", fontWeight: 700, color: colors.neutral[900] }}>{t("filtersTitle")}</h2>
               <button
                 onClick={() => setMobileOpen(false)}
-                aria-label="Close filters"
+                aria-label={t("closeFilters")}
                 style={{ background: "none", border: "none", fontSize: "1.25rem", cursor: "pointer", color: colors.neutral[600] }}
               >
                 ✕
@@ -295,14 +313,14 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
                 borderRadius: "0.5rem", background: "transparent", color: colors.neutral[700],
                 fontSize: "0.875rem", fontWeight: 600, cursor: "pointer",
               }}>
-                Clear All
+                {t("clearAll")}
               </button>
               <button onClick={() => setMobileOpen(false)} style={{
                 flex: 1, padding: "0.75rem", border: "none",
                 borderRadius: "0.5rem", background: colors.primary[600], color: "#fff",
                 fontSize: "0.875rem", fontWeight: 600, cursor: "pointer",
               }}>
-                Apply Filters{activeCount > 0 ? ` (${activeCount})` : ""}
+                {activeCount > 0 ? t("applyFiltersActive", { count: activeCount }) : t("applyFilters")}
               </button>
             </div>
           </div>

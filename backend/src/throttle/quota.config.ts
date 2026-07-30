@@ -54,6 +54,28 @@ export const ROLE_QUOTAS: Record<string, RoleQuotas> = {
       limit: 1000,
       windowMs: 24 * 60 * 60 * 1000, // 24 hours
     },
+    bulkRetire: {
+      name: 'bulkRetire',
+      limit: 5,
+      windowMs: 60 * 60 * 1000, // 1 hour
+    },
+    default: {
+      name: 'default',
+      limit: 500,
+      windowMs: 60 * 60 * 1000, // 1 hour
+    },
+  },
+  admin: {
+    purchase: {
+      name: 'purchase',
+      limit: 1000,
+      windowMs: 24 * 60 * 60 * 1000, // 24 hours
+    },
+    bulkRetire: {
+      name: 'bulkRetire',
+      limit: 5,
+      windowMs: 60 * 60 * 1000, // 1 hour
+    },
     default: {
       name: 'default',
       limit: 500,
@@ -61,6 +83,11 @@ export const ROLE_QUOTAS: Record<string, RoleQuotas> = {
     },
   },
   public: {
+    serialLookup: {
+      name: 'serialLookup',
+      limit: 100,
+      windowMs: 60 * 60 * 1000, // 1 hour
+    },
     read: {
       name: 'read',
       limit: 100,
@@ -90,4 +117,7 @@ export const PATH_BUCKET_OVERRIDES: Array<{ prefix: string; bucket: string }> = 
   { prefix: '/api/v1/marketplace/purchase',  bucket: 'purchase' },
   { prefix: '/api/v1/marketplace/bulk-purchase', bucket: 'purchase' },
   { prefix: '/api/v1/credits/retire',        bucket: 'purchase' },
+  { prefix: '/retirements/bulk',            bucket: 'bulkRetire' },
+  { prefix: '/api/v1/retirements/bulk',      bucket: 'bulkRetire' },
+  { prefix: '/api/v1/public/serial',         bucket: 'serialLookup' },
 ];

@@ -1,0 +1,16 @@
+{
+  "name": "retirement-private-cert-circuit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Circom Groth16 (BLS12-381) circuit for Carbon Ledger private retirement certificates",
+  "scripts": {
+    "compile": "bash ../../scripts/zk/compile-circuit.sh",
+    "setup": "bash ../../scripts/zk/trusted-setup.sh",
+    "prove-fixture": "bash ../../scripts/zk/prove-fixture.sh",
+    "verify-fixture": "npx snarkjs groth16 verify artifacts/verification_key.json artifacts/public.json artifacts/proof.json"
+  },
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "snarkjs": "^0.7.5"
+  }
+}

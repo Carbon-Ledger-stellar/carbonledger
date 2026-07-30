@@ -6,6 +6,7 @@ import { CorrelationIdContext } from './logger/correlation-id.context';
 import { validateEnv } from './env.validation';
 import * as express from 'express';
 import { StellarNetworkService } from './common/stellar-network.service';
+import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -146,6 +147,17 @@ async function bootstrap() {
       checks,
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // Prometheus-compatible metrics endpoint.
+  // Scraped by Grafana Agent / Prometheus at /metrics.
+  // No authentication — metrics contain no sensitive data, only counters.
+  httpAdapter.get('/metrics', (_req: any, res: any) => {
+    res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    res.send(
+      contractCallsRegistry.toPrometheusText() +
+      poolMetricsRegistry.toPrometheusText(),
+    );
   });
 
   await app.listen(process.env.PORT ?? 3001);

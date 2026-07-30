@@ -1,18 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, forwardRef, Inject, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { CertificateService } from './certificate.service';
 import { PinataService } from './pinata.service';
 import { NotificationService } from './notification.service';
+import { WebhookService } from '../webhook/webhook.service';
 
 @Injectable()
 export class CertificateProcessor {
-  private readonly logger = new Logger(CertificateProcessor.name);
-
-  constructor(
+  private readonly logger = new Logger(CertificateProcessor.name);    constructor(
     private readonly prisma: PrismaService,
     private readonly certificateService: CertificateService,
     private readonly pinataService: PinataService,
-    private readonly notificationService: NotificationService
+    private readonly notificationService: NotificationService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   async processCertificateGeneration(retirementId: string): Promise<void> {
@@ -43,12 +43,15 @@ export class CertificateProcessor {
       const pdfBuffer = await this.certificateService.generatePdf({
         retirementId: retirement.retirementId,
         beneficiary: retirement.beneficiary,
-        amount: retirement.amount,
+        amount: Number(retirement.amount),
         projectName: retirement.project.name,
         retirementReason: retirement.retirementReason,
         retiredAt: retirement.retiredAt,
         serialNumbers: retirement.serialNumbers,
+        serialStart: retirement.serialStart,
+        serialEnd: retirement.serialEnd,
         vintageYear: retirement.vintageYear,
+        txHash: retirement.txHash,
       });
 
       // Upload to IPFS
@@ -64,13 +67,27 @@ export class CertificateProcessor {
       );
 
       // Update retirement record with certificate details
-      const updated = await this.prisma.retirementRecord.update({
+      await this.prisma.retirementRecord.update({
         where: { retirementId },
         data: {
           certificateStatus: 'completed',
           certificateCid: cid,
           certificateUrl: url,
           certificateGeneratedAt: new Date(),
+        },
+      });
+
+      // Create RetirementCertificate record with IPFS CID
+      await this.prisma.retirementCertificate.create({
+        data: {
+          retirementId: retirement.id,
+          beneficiary: retirement.beneficiary,
+          amount: retirement.amount,
+          projectName: retirement.project.name,
+          vintageYear: retirement.vintageYear,
+          txHash: retirement.txHash,
+          ipfsCid: cid,
+          publicUrl: url,
         },
       });
 
@@ -84,14 +101,34 @@ export class CertificateProcessor {
           retirement.retiredBy,
           retirementId,
           url,
-          retirement.amount
+          Number(retirement.amount)
         );
       } catch (emailError) {
         this.logger.warn(
-          `Failed to send notification email: ${emailError}`,
-          emailError
+          `Failed to send notification email: ${emailError instanceof Error ? emailError.message : String(emailError)}`,
         );
         // Don't fail the job if email fails
+      }
+
+      // Dispatch webhook: certificate.ready
+      try {
+        if (this.webhookService) {
+          await this.webhookService.dispatch('certificate.ready', {
+            retirementId: retirement.retirementId,
+            beneficiary: retirement.beneficiary,
+            amount: Number(retirement.amount),
+            projectName: retirement.project.name,
+            vintageYear: retirement.vintageYear,
+            txHash: retirement.txHash,
+            certificateUrl: url,
+            certificateCid: cid,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (webhookError) {
+        this.logger.warn(
+          `Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`,
+        );
       }
     } catch (error) {
       this.logger.error(
@@ -128,7 +165,7 @@ export class CertificateProcessor {
             await this.notificationService.sendCertificateFailed(
               retirement.retiredBy,
               retirementId,
-              error.message
+              error instanceof Error ? error.message : String(error)
             );
           } catch (emailError) {
             this.logger.warn(
