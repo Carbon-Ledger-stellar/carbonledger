@@ -55,7 +55,7 @@ export default function ProjectsPage() {
       {/* Grid */}
       {isLoading ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
-          {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="CreditCard" />)}
+          {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="ProjectCard" />)}
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
@@ -89,7 +89,13 @@ export default function ProjectsPage() {
                   <p style={{ fontSize: "0.8rem", color: colors.neutral[500], margin: "0 0 1rem" }}>
                     {p.methodology} · {p.projectType}
                   </p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
+                    <div>
+                      <p style={{ fontSize: "0.7rem", color: colors.neutral[400], margin: "0 0 0.1rem" }}>Score</p>
+                      <p style={{ fontSize: "0.875rem", fontWeight: 700, color: p.methodologyScore >= 85 ? colors.primary[600] : colors.neutral[700], margin: 0 }}>
+                        {p.methodologyScore}
+                      </p>
+                    </div>
                     <div>
                       <p style={{ fontSize: "0.7rem", color: colors.neutral[400], margin: "0 0 0.1rem" }}>Issued</p>
                       <p style={{ fontSize: "0.875rem", fontWeight: 700, color: colors.primary[700], margin: 0 }}>

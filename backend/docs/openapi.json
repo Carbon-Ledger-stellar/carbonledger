@@ -1,0 +1,1638 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "operationId": "HealthController_check",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "AuthController_login",
+        "summary": "Authenticate with a Stellar public key and receive a JWT",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "JWT token issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "example": {
+                    "access_token": "eyJ..."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid public key or role"
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "operationId": "ProjectsController_findAll",
+        "summary": "List all projects",
+        "description": "Public endpoint. Filter by methodology, country, or vintage year.",
+        "parameters": [
+          {
+            "name": "methodology",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "VCS",
+              "type": "string"
+            }
+          },
+          {
+            "name": "country",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "Brazil",
+              "type": "string"
+            }
+          },
+          {
+            "name": "vintage",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": 2023,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of projects"
+          }
+        },
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/search": {
+      "get": {
+        "operationId": "ProjectsController_searchProjects",
+        "summary": "Advanced project search with cursor pagination",
+        "parameters": [
+          {
+            "name": "search",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "Amazon",
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": [
+                "VCS",
+                "Gold Standard"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "country",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": [
+                "Brazil",
+                "Kenya"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "Pending",
+                  "Verified",
+                  "Rejected",
+                  "Suspended",
+                  "Completed",
+                  "Certified"
+                ]
+              }
+            }
+          },
+          {
+            "name": "vintageYear",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": [
+                2022,
+                2023
+              ],
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          },
+          {
+            "name": "oracleFreshness",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "fresh",
+                "stale",
+                "unknown"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "description": "Cursor for pagination (project ID)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "example": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "sortBy",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "createdAt",
+                "vintageYear",
+                "totalCreditsIssued",
+                "name"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "sortOrder",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated project results"
+          }
+        },
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{id}": {
+      "get": {
+        "operationId": "ProjectsController_findOne",
+        "summary": "Get a project by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "proj-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Project details"
+          },
+          "404": {
+            "description": "Project not found (CarbonError 1: ProjectNotFound)"
+          }
+        },
+        "tags": [
+          "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/register": {
+      "post": {
+        "operationId": "ProjectsController_register",
+        "summary": "Register a new carbon project",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterProjectDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Project registered"
+          },
+          "400": {
+            "description": "Project already exists (CarbonError 17: ProjectAlreadyExists)"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          }
+        },
+        "tags": [
+          "Projects"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/projects/{id}/status": {
+      "patch": {
+        "operationId": "ProjectsController_updateStatus",
+        "summary": "Update project status",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "proj-001",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectStatusDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status updated"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          },
+          "404": {
+            "description": "Project not found (CarbonError 1: ProjectNotFound)"
+          }
+        },
+        "tags": [
+          "Projects"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/projects/{id}/verify": {
+      "post": {
+        "operationId": "ProjectsController_verify",
+        "summary": "Verify a project (accredited verifiers only)",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "proj-001",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Project verified"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required (CarbonError 7: UnauthorizedVerifier)"
+          },
+          "404": {
+            "description": "Project not found (CarbonError 1: ProjectNotFound)"
+          }
+        },
+        "tags": [
+          "Projects"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/projects/{id}/reject": {
+      "post": {
+        "operationId": "ProjectsController_reject",
+        "summary": "Reject a project",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "proj-001",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Project rejected"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required (CarbonError 7: UnauthorizedVerifier)"
+          },
+          "404": {
+            "description": "Project not found (CarbonError 1: ProjectNotFound)"
+          }
+        },
+        "tags": [
+          "Projects"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/credits/mint": {
+      "post": {
+        "operationId": "CreditsController_mint",
+        "summary": "Mint credits for a verified project",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MintCreditsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credits minted with serial numbers assigned"
+          },
+          "400": {
+            "description": "Serial number conflict (CarbonError 6: SerialNumberConflict) or double counting detected (CarbonError 14: DoubleCountingDetected)"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          }
+        },
+        "tags": [
+          "Credits"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/credits/batch/{id}": {
+      "get": {
+        "operationId": "CreditsController_getBatch",
+        "summary": "Get a credit batch by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "batch-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Credit batch details"
+          },
+          "404": {
+            "description": "Batch not found"
+          }
+        },
+        "tags": [
+          "Credits"
+        ]
+      }
+    },
+    "/api/v1/credits/retire": {
+      "post": {
+        "operationId": "CreditsController_retire",
+        "summary": "Permanently retire credits on-chain (irreversible)",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetireCreditsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credits retired — retirement certificate issued"
+          },
+          "400": {
+            "description": "Already retired (CarbonError 5: AlreadyRetired), insufficient credits (CarbonError 4: InsufficientCredits), or zero amount (CarbonError 16: ZeroAmountNotAllowed)"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          }
+        },
+        "tags": [
+          "Credits"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/credits/retirement/{id}": {
+      "get": {
+        "operationId": "CreditsController_getRetirement",
+        "summary": "Get a retirement record by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "ret-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retirement details with certificate"
+          },
+          "404": {
+            "description": "Retirement not found"
+          }
+        },
+        "tags": [
+          "Credits"
+        ]
+      }
+    },
+    "/api/v1/credits/lookup/{serial}": {
+      "get": {
+        "operationId": "CreditsController_lookup",
+        "summary": "Look up a credit by serial number — full provenance trail",
+        "parameters": [
+          {
+            "name": "serial",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "VCS-2023-001-0042",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Serial number history from issuance to retirement"
+          },
+          "404": {
+            "description": "Serial number not found (CarbonError 18: InvalidSerialRange)"
+          }
+        },
+        "tags": [
+          "Credits"
+        ]
+      }
+    },
+    "/api/v1/retirements": {
+      "get": {
+        "operationId": "RetirementsController_findAll",
+        "summary": "List recent retirements (public audit trail)",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": 20,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of retirement records"
+          }
+        },
+        "tags": [
+          "Retirements"
+        ]
+      }
+    },
+    "/api/v1/retirements/{id}": {
+      "get": {
+        "operationId": "RetirementsController_findOne",
+        "summary": "Get a retirement record by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "ret-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retirement details"
+          },
+          "404": {
+            "description": "Retirement not found"
+          }
+        },
+        "tags": [
+          "Retirements"
+        ]
+      }
+    },
+    "/api/v1/retirements/certificate/{id}": {
+      "get": {
+        "operationId": "RetirementsController_getCertificate",
+        "summary": "Get a permanent retirement certificate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "ret-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retirement certificate with on-chain proof"
+          },
+          "404": {
+            "description": "Certificate not found (CarbonError 5: AlreadyRetired implies certificate exists)"
+          }
+        },
+        "tags": [
+          "Retirements"
+        ]
+      }
+    },
+    "/api/v1/retirements/generate-pdf": {
+      "post": {
+        "operationId": "RetirementsController_generatePdf",
+        "summary": "Generate a PDF retirement certificate for ESG reporting",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GeneratePdfDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "PDF certificate generated"
+          },
+          "404": {
+            "description": "Retirement not found"
+          }
+        },
+        "tags": [
+          "Retirements"
+        ]
+      }
+    },
+    "/api/v1/marketplace/listings": {
+      "get": {
+        "operationId": "MarketplaceController_findAll",
+        "summary": "List active credit listings",
+        "description": "Returns all Active and PartiallyFilled listings. No auth required.",
+        "parameters": [
+          {
+            "name": "methodology",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "VCS",
+              "type": "string"
+            }
+          },
+          {
+            "name": "vintage",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": 2023,
+              "type": "string"
+            }
+          },
+          {
+            "name": "country",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "Brazil",
+              "type": "string"
+            }
+          },
+          {
+            "name": "minPrice",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "10.00",
+              "type": "string"
+            }
+          },
+          {
+            "name": "maxPrice",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "20.00",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of active listings"
+          }
+        },
+        "tags": [
+          "Marketplace"
+        ]
+      }
+    },
+    "/api/v1/marketplace/listings/{id}": {
+      "get": {
+        "operationId": "MarketplaceController_findOne",
+        "summary": "Get a single listing by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "listing-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Listing details"
+          },
+          "404": {
+            "description": "Listing not found (CarbonError 10: ListingNotFound)"
+          }
+        },
+        "tags": [
+          "Marketplace"
+        ]
+      }
+    },
+    "/api/v1/marketplace/list": {
+      "post": {
+        "operationId": "MarketplaceController_createListing",
+        "summary": "Create a new credit listing",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateListingDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Listing created"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          }
+        },
+        "tags": [
+          "Marketplace"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/marketplace/{id}": {
+      "delete": {
+        "operationId": "MarketplaceController_delist",
+        "summary": "Delist a credit listing",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "listing-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Listing delisted"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          },
+          "404": {
+            "description": "Listing not found (CarbonError 10: ListingNotFound)"
+          }
+        },
+        "tags": [
+          "Marketplace"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/marketplace/purchase": {
+      "post": {
+        "operationId": "MarketplaceController_purchase",
+        "summary": "Purchase credits from a listing",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurchaseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Purchase successful — returns txHash, batchId, amount"
+          },
+          "400": {
+            "description": "Listing unavailable (CarbonError 10) or insufficient credits (CarbonError 4: InsufficientCredits)"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          }
+        },
+        "tags": [
+          "Marketplace"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/marketplace/bulk-purchase": {
+      "post": {
+        "operationId": "MarketplaceController_bulkPurchase",
+        "summary": "Bulk purchase credits from multiple listings",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkPurchaseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "All purchases successful — returns array of results"
+          },
+          "400": {
+            "description": "One or more listings unavailable or insufficient credits (CarbonError 4, 10, 11: InsufficientCredits, ListingNotFound, InsufficientLiquidity)"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          }
+        },
+        "tags": [
+          "Marketplace"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/oracle/monitoring": {
+      "post": {
+        "operationId": "OracleController_submitMonitoring",
+        "summary": "Submit satellite monitoring data for a project",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitMonitoringDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Monitoring data recorded"
+          },
+          "400": {
+            "description": "Stale or invalid data (CarbonError 13: MonitoringDataStale)"
+          },
+          "401": {
+            "description": "Unauthorized — oracle JWT required (CarbonError 8: UnauthorizedOracle)"
+          }
+        },
+        "tags": [
+          "Oracle"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/oracle/price": {
+      "post": {
+        "operationId": "OracleController_updatePrice",
+        "summary": "Update benchmark price for a methodology and vintage year",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePriceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Price updated"
+          },
+          "400": {
+            "description": "Price deviation > 15% threshold (CarbonError 12: PriceNotSet)"
+          },
+          "401": {
+            "description": "Unauthorized — oracle JWT required (CarbonError 8: UnauthorizedOracle)"
+          }
+        },
+        "tags": [
+          "Oracle"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/oracle/status/{projectId}": {
+      "get": {
+        "operationId": "OracleController_getStatus",
+        "summary": "Get oracle monitoring status for a project",
+        "parameters": [
+          {
+            "name": "projectId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "proj-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Monitoring status — isCurrent false if no data in last 365 days"
+          }
+        },
+        "tags": [
+          "Oracle"
+        ]
+      }
+    },
+    "/api/v1/oracle/flag": {
+      "post": {
+        "operationId": "OracleController_flagProject",
+        "summary": "Flag a project for investigation — suspends new issuance",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlagProjectDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Project flagged and suspended"
+          },
+          "401": {
+            "description": "Unauthorized — oracle JWT required (CarbonError 8: UnauthorizedOracle)"
+          },
+          "404": {
+            "description": "Project not found (CarbonError 1: ProjectNotFound)"
+          }
+        },
+        "tags": [
+          "Oracle"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "operationId": "StatsController_getStats",
+        "summary": "Get platform-wide statistics",
+        "description": "Public endpoint. Returns total projects, credits issued, retired, and active listings.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Platform statistics"
+          }
+        },
+        "tags": [
+          "Stats"
+        ]
+      }
+    },
+    "/api/v1/queue/jobs": {
+      "post": {
+        "operationId": "QueueController_enqueue",
+        "summary": "Enqueue a background job (admin only)",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnqueueJobDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Job enqueued — returns job ID"
+          },
+          "401": {
+            "description": "Unauthorized — admin JWT required"
+          }
+        },
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/queue/jobs/{id}": {
+      "get": {
+        "operationId": "QueueController_getJob",
+        "summary": "Get job status by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "job-001",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status and result"
+          },
+          "401": {
+            "description": "Unauthorized — JWT required"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        },
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/queue/stats": {
+      "get": {
+        "operationId": "QueueController_getStats",
+        "summary": "Get queue statistics (admin only)",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Queue depth, active, completed, and failed counts"
+          },
+          "401": {
+            "description": "Unauthorized — admin JWT required"
+          }
+        },
+        "tags": [
+          "Queue"
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "CarbonLedger API",
+    "description": "Verified carbon credits. Permanent retirement. Full provenance.\n\n## CarbonError codes\n| Code | Name |\n|------|------|\n| 1  | ProjectNotFound |\n| 2  | ProjectNotVerified |\n| 3  | ProjectSuspended |\n| 4  | InsufficientCredits |\n| 5  | AlreadyRetired |\n| 6  | SerialNumberConflict |\n| 7  | UnauthorizedVerifier |\n| 8  | UnauthorizedOracle |\n| 9  | InvalidVintageYear |\n| 10 | ListingNotFound |\n| 11 | InsufficientLiquidity |\n| 12 | PriceNotSet |\n| 13 | MonitoringDataStale |\n| 14 | DoubleCountingDetected |\n| 15 | RetirementIrreversible |\n| 16 | ZeroAmountNotAllowed |\n| 17 | ProjectAlreadyExists |\n| 18 | InvalidSerialRange |",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "LoginDto": {
+        "type": "object",
+        "properties": {
+          "publicKey": {
+            "type": "string",
+            "example": "GBXXX...publickey",
+            "description": "Stellar public key"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "project_developer",
+              "corporation",
+              "verifier",
+              "admin"
+            ]
+          }
+        },
+        "required": [
+          "publicKey",
+          "role"
+        ]
+      },
+      "RegisterProjectDto": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "example": "proj-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Amazon Reforestation Initiative"
+          },
+          "description": {
+            "type": "string",
+            "example": "Reforestation of 5,000 hectares in the Amazon basin"
+          },
+          "methodology": {
+            "type": "string",
+            "example": "VCS"
+          },
+          "country": {
+            "type": "string",
+            "example": "Brazil"
+          },
+          "projectType": {
+            "type": "string",
+            "example": "Reforestation"
+          },
+          "metadataCid": {
+            "type": "string",
+            "example": "QmXxx...ipfs-cid"
+          },
+          "verifierAddress": {
+            "type": "string",
+            "example": "GBXXX...verifier"
+          },
+          "ownerAddress": {
+            "type": "string",
+            "example": "GBXXX...owner"
+          },
+          "vintageYear": {
+            "type": "number",
+            "example": 2023,
+            "minimum": 2000,
+            "maximum": 2100
+          }
+        },
+        "required": [
+          "projectId",
+          "name",
+          "methodology",
+          "country",
+          "projectType",
+          "metadataCid",
+          "verifierAddress",
+          "ownerAddress",
+          "vintageYear"
+        ]
+      },
+      "UpdateProjectStatusDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "Verified",
+            "enum": [
+              "Pending",
+              "Verified",
+              "Rejected",
+              "Suspended",
+              "Completed",
+              "Certified"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "example": "Insufficient monitoring data"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "VerifyDto": {
+        "type": "object",
+        "properties": {
+          "verifierPublicKey": {
+            "type": "string",
+            "example": "GBXXX...verifier"
+          }
+        },
+        "required": [
+          "verifierPublicKey"
+        ]
+      },
+      "RejectDto": {
+        "type": "object",
+        "properties": {
+          "verifierPublicKey": {
+            "type": "string",
+            "example": "GBXXX...verifier"
+          },
+          "reason": {
+            "type": "string",
+            "example": "Insufficient monitoring data"
+          }
+        },
+        "required": [
+          "verifierPublicKey",
+          "reason"
+        ]
+      },
+      "MintCreditsDto": {
+        "type": "object",
+        "properties": {
+          "batchId": {
+            "type": "string",
+            "example": "batch-001"
+          },
+          "projectId": {
+            "type": "string",
+            "example": "proj-001"
+          },
+          "vintageYear": {
+            "type": "number",
+            "example": 2023
+          },
+          "amount": {
+            "type": "number",
+            "example": 1000
+          },
+          "serialStart": {
+            "type": "string",
+            "example": "VCS-2023-001-0001"
+          },
+          "serialEnd": {
+            "type": "string",
+            "example": "VCS-2023-001-1000"
+          },
+          "metadataCid": {
+            "type": "string",
+            "example": "QmXxx...ipfs-cid"
+          }
+        },
+        "required": [
+          "batchId",
+          "projectId",
+          "vintageYear",
+          "amount",
+          "serialStart",
+          "serialEnd",
+          "metadataCid"
+        ]
+      },
+      "RetireCreditsDto": {
+        "type": "object",
+        "properties": {
+          "batchId": {
+            "type": "string",
+            "example": "batch-001"
+          },
+          "amount": {
+            "type": "number",
+            "example": 50
+          },
+          "beneficiary": {
+            "type": "string",
+            "example": "Acme Corp — 2024 ESG Report"
+          },
+          "retirementReason": {
+            "type": "string",
+            "example": "Annual carbon neutrality commitment"
+          },
+          "holderPublicKey": {
+            "type": "string",
+            "example": "GBXXX...holder"
+          }
+        },
+        "required": [
+          "batchId",
+          "amount",
+          "beneficiary",
+          "retirementReason",
+          "holderPublicKey"
+        ]
+      },
+      "GeneratePdfDto": {
+        "type": "object",
+        "properties": {
+          "retirementId": {
+            "type": "string",
+            "example": "ret-001"
+          }
+        },
+        "required": [
+          "retirementId"
+        ]
+      },
+      "CreateListingDto": {
+        "type": "object",
+        "properties": {
+          "listingId": {
+            "type": "string",
+            "example": "listing-001"
+          },
+          "projectId": {
+            "type": "string",
+            "example": "proj-001"
+          },
+          "batchId": {
+            "type": "string",
+            "example": "batch-001"
+          },
+          "seller": {
+            "type": "string",
+            "example": "GBXXX...seller"
+          },
+          "amountAvailable": {
+            "type": "number",
+            "example": 1000
+          },
+          "pricePerCredit": {
+            "type": "string",
+            "example": "12.50",
+            "description": "Price per credit in USDC"
+          },
+          "vintageYear": {
+            "type": "number",
+            "example": 2023
+          },
+          "methodology": {
+            "type": "string",
+            "example": "VCS"
+          },
+          "country": {
+            "type": "string",
+            "example": "Brazil"
+          }
+        },
+        "required": [
+          "listingId",
+          "projectId",
+          "batchId",
+          "seller",
+          "amountAvailable",
+          "pricePerCredit",
+          "vintageYear",
+          "methodology",
+          "country"
+        ]
+      },
+      "PurchaseDto": {
+        "type": "object",
+        "properties": {
+          "listingId": {
+            "type": "string",
+            "example": "listing-001"
+          },
+          "amount": {
+            "type": "number",
+            "example": 50
+          },
+          "buyerPublicKey": {
+            "type": "string",
+            "example": "GBXXX...buyer"
+          }
+        },
+        "required": [
+          "listingId",
+          "amount",
+          "buyerPublicKey"
+        ]
+      },
+      "BulkPurchaseDto": {
+        "type": "object",
+        "properties": {
+          "listingIds": {
+            "example": [
+              "listing-001",
+              "listing-002"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "amounts": {
+            "example": [
+              50,
+              100
+            ],
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "buyerPublicKey": {
+            "type": "string",
+            "example": "GBXXX...buyer"
+          }
+        },
+        "required": [
+          "listingIds",
+          "amounts",
+          "buyerPublicKey"
+        ]
+      },
+      "SubmitMonitoringDto": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "example": "proj-001"
+          },
+          "period": {
+            "type": "string",
+            "example": "2023-Q4"
+          },
+          "tonnesVerified": {
+            "type": "number",
+            "example": 5000
+          },
+          "methodologyScore": {
+            "type": "number",
+            "example": 85,
+            "description": "Methodology score 0–100. Minimum 70 required."
+          },
+          "satelliteCid": {
+            "type": "string",
+            "example": "QmXxx...satellite-cid"
+          },
+          "submittedBy": {
+            "type": "string",
+            "example": "GBXXX...oracle"
+          }
+        },
+        "required": [
+          "projectId",
+          "period",
+          "tonnesVerified",
+          "methodologyScore",
+          "satelliteCid",
+          "submittedBy"
+        ]
+      },
+      "UpdatePriceDto": {
+        "type": "object",
+        "properties": {
+          "methodology": {
+            "type": "string",
+            "example": "VCS"
+          },
+          "vintageYear": {
+            "type": "number",
+            "example": 2023
+          },
+          "priceUsdc": {
+            "type": "string",
+            "example": "14.75",
+            "description": "Benchmark price per tonne in USDC"
+          }
+        },
+        "required": [
+          "methodology",
+          "vintageYear",
+          "priceUsdc"
+        ]
+      },
+      "FlagProjectDto": {
+        "type": "object",
+        "properties": {
+          "projectId": {
+            "type": "string",
+            "example": "proj-001"
+          },
+          "reason": {
+            "type": "string",
+            "example": "Satellite data shows no sequestration activity"
+          }
+        },
+        "required": [
+          "projectId",
+          "reason"
+        ]
+      },
+      "EnqueueJobDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "certificate_generation",
+              "ipfs_pinning",
+              "oracle_submission",
+              "email_notification"
+            ],
+            "example": "certificate_generation"
+          },
+          "payload": {
+            "type": "object",
+            "example": {
+              "projectId": "proj-001",
+              "amount": 1000
+            }
+          }
+        },
+        "required": [
+          "type",
+          "payload"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,124 @@
+/* CSS Custom Properties for Theme Support */
+
+:root {
+  /* Primary Colors */
+  --color-primary-50: #f0fdf4;
+  --color-primary-100: #dcfce7;
+  --color-primary-200: #bbf7d0;
+  --color-primary-300: #86efac;
+  --color-primary-400: #4ade80;
+  --color-primary-500: #22c55e;
+  --color-primary-600: #16a34a;
+  --color-primary-700: #15803d;
+  --color-primary-800: #166534;
+  --color-primary-900: #14532d;
+  --color-primary-950: #052e16;
+
+  /* Neutral Colors */
+  --color-neutral-50: #f9fafb;
+  --color-neutral-100: #f3f4f6;
+  --color-neutral-200: #e5e7eb;
+  --color-neutral-300: #d1d5db;
+  --color-neutral-400: #9ca3af;
+  --color-neutral-500: #6b7280;
+  --color-neutral-600: #4b5563;
+  --color-neutral-700: #374151;
+  --color-neutral-800: #1f2937;
+  --color-neutral-900: #111827;
+  --color-neutral-950: #030712;
+
+  /* Semantic Colors */
+  --color-verified-bg: #dcfce7;
+  --color-verified-text: #15803d;
+  --color-verified-border: #86efac;
+
+  --color-pending-bg: #fef9c3;
+  --color-pending-text: #854d0e;
+  --color-pending-border: #fde047;
+
+  --color-suspended-bg: #fee2e2;
+  --color-suspended-text: #991b1b;
+  --color-suspended-border: #fca5a5;
+
+  --color-rejected-bg: #fce7f3;
+  --color-rejected-text: #9d174d;
+  --color-rejected-border: #f9a8d4;
+
+  --color-completed-bg: #ede9fe;
+  --color-completed-text: #5b21b6;
+  --color-completed-border: #c4b5fd;
+
+  /* Special Colors */
+  --color-usdc: #2775CA;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f9fafb;
+
+  /* Background and text */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-tertiary: #9ca3af;
+}
+
+/* Dark mode */
+[data-theme="dark"] {
+  /* Primary Colors */
+  --color-primary-50: #052e16;
+  --color-primary-100: #14532d;
+  --color-primary-200: #166534;
+  --color-primary-300: #15803d;
+  --color-primary-400: #16a34a;
+  --color-primary-500: #22c55e;
+  --color-primary-600: #4ade80;
+  --color-primary-700: #86efac;
+  --color-primary-800: #bbf7d0;
+  --color-primary-900: #dcfce7;
+  --color-primary-950: #f0fdf4;
+
+  /* Neutral Colors */
+  --color-neutral-50: #030712;
+  --color-neutral-100: #111827;
+  --color-neutral-200: #1f2937;
+  --color-neutral-300: #374151;
+  --color-neutral-400: #4b5563;
+  --color-neutral-500: #6b7280;
+  --color-neutral-600: #9ca3af;
+  --color-neutral-700: #d1d5db;
+  --color-neutral-800: #e5e7eb;
+  --color-neutral-900: #f3f4f6;
+  --color-neutral-950: #f9fafb;
+
+  /* Semantic Colors */
+  --color-verified-bg: #14532d;
+  --color-verified-text: #86efac;
+  --color-verified-border: #15803d;
+
+  --color-pending-bg: #451a03;
+  --color-pending-text: #fde047;
+  --color-pending-border: #854d0e;
+
+  --color-suspended-bg: #450a0a;
+  --color-suspended-text: #fca5a5;
+  --color-suspended-border: #991b1b;
+
+  --color-rejected-bg: #500724;
+  --color-rejected-text: #f9a8d4;
+  --color-rejected-border: #9d174d;
+
+  --color-completed-bg: #2e1065;
+  --color-completed-text: #c4b5fd;
+  --color-completed-border: #5b21b6;
+
+  /* Special Colors */
+  --color-usdc: #2775CA;
+  --color-surface: #111827;
+  --color-surface-alt: #1f2937;
+
+  /* Background and text */
+  --bg-primary: #111827;
+  --bg-secondary: #1f2937;
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --text-tertiary: #9ca3af;
+}
