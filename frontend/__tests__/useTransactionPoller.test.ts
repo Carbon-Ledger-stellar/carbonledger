@@ -73,7 +73,9 @@ describe("pollHorizonTransactionUntilTerminal", () => {
 
     expect(result.state).toBe("FAILED");
     expect(result.errorMessage).toBe("CarbonError(6)");
-    expect(getCarbonErrorMessage(result.errorMessage)).toBe("Insufficient credits.");
+    expect(getCarbonErrorMessage(result.errorMessage)).toBe(
+      "Serial number conflict detected. Please contact support.",
+    );
     expect(mockInvalidate).not.toHaveBeenCalled();
   });
 
@@ -148,7 +150,7 @@ describe("useTransactionPoller", () => {
     await waitFor(() => expect(result.current.state).toBe("FAILED"));
     expect(result.current.errorMessage).toBe("CarbonError(6)");
     expect(getCarbonErrorMessage(result.current.errorMessage)).toBe(
-      "Insufficient credits.",
+      "Serial number conflict detected. Please contact support.",
     );
   });
 

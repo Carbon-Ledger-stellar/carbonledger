@@ -1,6 +1,17 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import Redis from "ioredis";
 
+const ALLOWED_REDIS_KEY_PREFIXES = ["project-detail:", "auth:family:", "abuse:blocked:", "abuse:serials:", "abuse:log", "cache:"];
+
+function normalizeRedisKey(key: string): string {
+  const trimmed = key.trim();
+  const isAllowed = ALLOWED_REDIS_KEY_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+  if (!isAllowed) {
+    throw new Error(`Unsafe Redis key: ${trimmed}`);
+  }
+  return trimmed;
+}
+
 /**
  * Thin wrapper around ioredis that degrades gracefully when Redis is
  * unavailable.  All public methods return `null` / `false` on error so
@@ -56,7 +67,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async get<T>(key: string): Promise<T | null> {
     if (!this.connected || !this.client) return null;
     try {
-      const raw = await this.client.get(key);
+      const safeKey = normalizeRedisKey(key);
+      const raw = await this.client.get(safeKey);
       return raw ? (JSON.parse(raw) as T) : null;
     } catch (err) {
       this.logger.warn(`Redis GET failed for key "${key}": ${(err as Error).message}`);
@@ -68,7 +80,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async set(key: string, value: unknown, ttlSeconds: number): Promise<boolean> {
     if (!this.connected || !this.client) return false;
     try {
-      await this.client.set(key, JSON.stringify(value), "EX", ttlSeconds);
+      const safeKey = normalizeRedisKey(key);
+      await this.client.set(safeKey, JSON.stringify(value), "EX", ttlSeconds);
       return true;
     } catch (err) {
       this.logger.warn(`Redis SET failed for key "${key}": ${(err as Error).message}`);
@@ -80,7 +93,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async del(...keys: string[]): Promise<boolean> {
     if (!this.connected || !this.client || keys.length === 0) return false;
     try {
-      await this.client.del(...keys);
+      const safeKeys = keys.map(normalizeRedisKey);
+      await this.client.del(...safeKeys);
       return true;
     } catch (err) {
       this.logger.warn(`Redis DEL failed for keys [${keys.join(", ")}]: ${(err as Error).message}`);
@@ -92,10 +106,11 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   async delByPattern(pattern: string): Promise<boolean> {
     if (!this.connected || !this.client) return false;
     try {
+      const safePattern = normalizeRedisKey(pattern);
       // SCAN is non-blocking and safe for production use
       let cursor = "0";
       do {
-        const [nextCursor, keys] = await this.client.scan(cursor, "MATCH", pattern, "COUNT", 100);
+        const [nextCursor, keys] = await this.client.scan(cursor, "MATCH", safePattern, "COUNT", 100);
         cursor = nextCursor;
         if (keys.length > 0) {
           await this.client.del(...keys);

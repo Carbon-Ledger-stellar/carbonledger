@@ -1,4 +1,16 @@
-import { IsOptional, IsString, IsNumber, IsDate, IsInt, Min, Max, IsNotEmpty, IsPositive } from "class-validator";
+import {
+  IsOptional,
+  IsString,
+  IsNumber,
+  IsInt,
+  Min,
+  Max,
+  IsNotEmpty,
+  IsPositive,
+  ArrayMinSize,
+  ArrayMaxSize,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 import { IsISO8601 } from "class-validator";
 
@@ -31,6 +43,43 @@ export class RetireCreditsDto {
   @IsString()
   @IsNotEmpty()
   txHash: string;
+}
+
+export class BulkRetirementItemDto {
+  @IsString()
+  @IsNotEmpty()
+  batchId: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  @Type(() => Number)
+  amount: number;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  beneficiary?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  reason?: string;
+}
+
+export class BulkRetirementsDto {
+  @ValidateNested({ each: true })
+  @Type(() => BulkRetirementItemDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  items: BulkRetirementItemDto[];
+
+  @IsString()
+  @IsNotEmpty()
+  beneficiary: string;
+
+  @IsString()
+  @IsNotEmpty()
+  retirementReason: string;
 }
 
 export class ExportRetirementsDto {

@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   ServiceUnavailableException,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
@@ -10,6 +11,7 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { TokenFamilyService } from './token-family.service';
+import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
 
@@ -24,7 +26,8 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly tokenFamily: TokenFamilyService,
-  ) {}
+    private readonly secretsRefresh: SecretsRefreshService,
+  ) { }
 
   /** Issue a one-time challenge nonce for the given Stellar public key. */
   generateChallenge(publicKey: string): { nonce: string; expiresAt: number } {
@@ -71,6 +74,11 @@ export class AuthService {
 
     // 3. Upsert user — role only applied on first creation
     try {
+      const existingUser = await this.prisma.user.findUnique({ where: { publicKey } });
+      if (existingUser?.deletedAt) {
+        throw new UnauthorizedException('Account has been deleted');
+      }
+
       const user = await this.prisma.user.upsert({
         where: { publicKey },
         update: {},
@@ -104,7 +112,7 @@ export class AuthService {
     try {
       const { newRawToken, userId } = await this.tokenFamily.rotateToken(refreshToken);
 
-      const user = await this.prisma.user.findUnique({ where: { publicKey: userId } });
+      const user = await this.prisma.user.findFirst({ where: { publicKey: userId, deletedAt: null } });
       if (!user) throw new UnauthorizedException('User not found');
 
       const access_token = this.signAccessToken(user.publicKey, user.role as UserRole);
@@ -128,8 +136,27 @@ export class AuthService {
   }
 
   async validateUser(publicKey: string): Promise<{ publicKey: string; role: string } | null> {
-    const user = await this.prisma.user.findUnique({ where: { publicKey } });
+    const user = await this.prisma.user.findFirst({ where: { publicKey, deletedAt: null } });
     return user ? { publicKey: user.publicKey, role: user.role } : null;
+  }
+
+  async softDeleteUser(publicKey: string, reason: string) {
+    const user = await this.prisma.user.findUnique({ where: { publicKey } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const retentionDays = this.getRetentionDays();
+    const retentionUntil = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+
+    return this.prisma.user.update({
+      where: { publicKey },
+      data: {
+        deletedAt: new Date(),
+        deletionReason: reason,
+        retentionUntil,
+        email: null,
+        isSubscribed: false,
+      },
+    });
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
@@ -137,6 +164,11 @@ export class AuthService {
   /**
    * Sign a short-lived JWT access token.
    * Refresh tokens are now opaque strings managed by TokenFamilyService.
+   *
+   * Previously signed with the static process.env.JWT_SECRET, which meant
+   * a rotated secret only took effect after a restart. Now signs with
+   * whatever SecretsRefreshService currently holds as `current` — kept up
+   * to date by the rotate-jwt-secret Lambda via SIGHUP, no restart needed.
    */
   private signAccessToken(publicKey: string, role: UserRole): string {
     const issuer = process.env.JWT_ISSUER || 'carbonledger';
@@ -144,9 +176,14 @@ export class AuthService {
 
     return jwt.sign(
       { sub: publicKey, role, type: 'access' },
-      process.env.JWT_SECRET || 'dev-secret-change-in-production',
+      this.secretsRefresh.getJwtSigningSecret(),
       { expiresIn, issuer },
     );
+  }
+
+  private getRetentionDays(): number {
+    const raw = Number(process.env.DATA_RETENTION_DAYS ?? process.env.RETENTION_DAYS ?? '90');
+    return Number.isFinite(raw) && raw > 0 ? raw : 90;
   }
 
   private validatePublicKey(publicKey: string): void {
