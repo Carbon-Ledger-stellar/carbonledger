@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN, Env,
-    Map, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes,
+    BytesN, Env, Map, String, Symbol, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -309,14 +309,13 @@ impl CarbonCreditContract {
             .unwrap_or_else(|| vec![&env]);
         history.push_back(record);
 
-        let max_entries: u32 = env.storage()
+        let max: u32 = env.storage()
             .persistent()
             .get(&DataKey::MaxHistoryEntries)
             .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
-        let max = max_entries as usize;
 
         if history.len() > max {
-            let excess = (history.len() - max) as u32;
+            let excess = history.len() - max;
             while history.len() > max {
                 history.remove(0);
             }
@@ -324,16 +323,13 @@ impl CarbonCreditContract {
                 (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
                 HistoryPrunedEvent {
                     entries_pruned: excess,
-                    remaining:      history.len() as u32,
+                    remaining:      history.len(),
                     pruned_at:      env.ledger().timestamp(),
                 },
             );
         }
 
         env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
-        env.storage()
-            .persistent()
-            .set(&DataKey::UpgradeHistory, &record);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("upgraded")),
@@ -414,10 +410,10 @@ impl CarbonCreditContract {
             .persistent()
             .get(&DataKey::UpgradeHistory)
             .unwrap_or_else(|| vec![&env]);
-        let max = clamped as usize;
+        let max = clamped;
 
         if history.len() > max {
-            let excess = (history.len() - max) as u32;
+            let excess = history.len() - max;
             while history.len() > max {
                 history.remove(0);
             }
@@ -426,7 +422,7 @@ impl CarbonCreditContract {
                 (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
                 HistoryPrunedEvent {
                     entries_pruned: excess,
-                    remaining:      history.len() as u32,
+                    remaining:      history.len(),
                     pruned_at:      env.ledger().timestamp(),
                 },
             );
@@ -529,7 +525,7 @@ impl CarbonCreditContract {
             .get(&DataKey::VintageYearMax)
             .unwrap_or(DEFAULT_MAX_VINTAGE_YEAR);
         if configured == 0 {
-            Self::current_year(env)
+            Self::current_year(env) + 1
         } else {
             configured
         }
@@ -558,7 +554,7 @@ impl CarbonCreditContract {
     }
 
     // ============================================
-    # Mint Credits
+    // Mint Credits
     // ============================================
 
     pub fn mint_credits(
@@ -671,7 +667,7 @@ impl CarbonCreditContract {
     }
 
     // ============================================
-    # Get Project from Registry
+    // Get Project from Registry
     // ============================================
 
     fn get_project_from_registry(
@@ -698,7 +694,7 @@ impl CarbonCreditContract {
     }
 
     // ============================================
-    # Retirement and Transfer Functions
+    // Retirement and Transfer Functions
     // ============================================
 
     pub fn retire_credits(
@@ -719,7 +715,15 @@ impl CarbonCreditContract {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let mut batch = Self::load_batch(env, batch_id)?;
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Retirement(retire_id.clone()))
+        {
+            return Err(CarbonError::SerialNumberConflict);
+        }
+
+        let mut batch = Self::load_batch(&env, &batch_id)?;
 
         if batch.status == CreditStatus::FullyRetired {
             return Err(CarbonError::AlreadyRetired);
@@ -727,8 +731,6 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
-        require_batch_not_expired!(env, batch.vintage_year);
-
         // Enforce vintage expiry: credits older than MAX_VINTAGE_AGE_YEARS cannot be retired.
         if Self::is_batch_expired(&env, &batch) {
             return Err(CarbonError::InvalidVintageYear);
@@ -756,7 +758,7 @@ impl CarbonCreditContract {
             .checked_add(amount_u64 - 1)
             .ok_or(CarbonError::Arithmetic)?;
 
-        let mut serial_numbers: Vec<u64> = vec![env];
+        let mut serial_numbers: Vec<u64> = vec![&env];
         let mut s = retire_serial_start;
         while s <= retire_serial_end {
             serial_numbers.push_back(s);
@@ -832,7 +834,7 @@ impl CarbonCreditContract {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let mut batch = Self::load_batch(env, batch_id)?;
+        let mut batch = Self::load_batch(&env, &batch_id)?;
 
         if batch.owner != from {
             return Err(CarbonError::UnauthorizedVerifier);
@@ -850,7 +852,7 @@ impl CarbonCreditContract {
             return Err(CarbonError::InvalidVintageYear);
         }
 
-        let active = Self::active_amount(env, &batch);
+        let active = Self::active_amount(&env, &batch);
         if amount > active {
             return Err(CarbonError::InsufficientCredits);
         }
@@ -941,7 +943,7 @@ impl CarbonCreditContract {
     }
 
     // ============================================
-    # Helper Functions
+    // Helper Functions
     // ============================================
 
     fn extend_batch_ttl(env: &Env, batch_id: &String) {
@@ -1091,6 +1093,8 @@ mod tests {
         testutils::{Address as _, Ledger as _},
         Env, String,
     };
+    extern crate std;
+    use std::format;
 
     fn s(env: &Env, v: &str) -> String {
         String::from_str(env, v)
@@ -1299,6 +1303,10 @@ mod tests {
         let env = Env::default();
         let (client, admin, _) = setup(&env);
         let owner = Address::generate(&env);
+        // Minting MAX_BATCHES_PER_PROJECT (10,000) batches in one Env would
+        // exceed the default metered CPU budget long before reaching the cap
+        // this test is actually exercising; disable metering for this test.
+        env.budget().reset_unlimited();
 
         for index in 0..MAX_BATCHES_PER_PROJECT {
             let batch_id = format!("batch-{index}");
@@ -2034,7 +2042,6 @@ mod tests {
         // [201, 300] is strictly adjacent with no shared serial — not an overlap.
         assert!(client.verify_serial_range(&201_u64, &300_u64));
     }
-}
 
     // ── Vintage Expiry Tests (#649) ───────────────────────────────────────────
     // seconds_per_year = 31_557_600
@@ -2173,7 +2180,7 @@ mod tests {
         let view = client.get_credit_batch_view(&s(&env, "b-view-ok"));
         assert!(!view.is_expired);
     }
-
+}
 
 // ── PR #655 — Property-based fuzz tests: 4 core invariants ────────────────────
 //
@@ -2285,7 +2292,8 @@ mod proptest_invariant_tests {
             prop_assert_eq!(
                 r2.unwrap_err().unwrap(),
                 CarbonError::DoubleCountingDetected,
-                "P2 violated: overlapping range [{start2},{end2}] over [{start1},{end1}] was not rejected"
+                "P2 violated: overlapping range [{},{}] over [{},{}] was not rejected",
+                start2, end2, start1, end1
             );
         }
 
@@ -2549,6 +2557,92 @@ mod serial_registry_proptest_tests {
             // Exact same range must be rejected
             prop_assert!(!client.verify_serial_range(&base, &range_end),
                 "SR4: exact same range must be rejected");
+        }
+    }
+}
+
+// ── Issue #650 — CPU instruction benchmark ─────────────────────────────────────
+//
+// Measures the Soroban CPU-instruction cost of `mint_credits` (which performs
+// the serial-range overlap check on every call) as the registry grows, using
+// the SDK's test budget meter. Run with:
+//
+//   cargo test -p carbon_credit --lib bench_serial_registry_growth -- --nocapture
+//
+// The old O(n) linear-scan implementation this replaced would show
+// instruction cost growing linearly with the number of comparisons run on
+// every mint; the O(log n) binary-search implementation in
+// `verify_serial_range_internal` above keeps the comparison work itself flat,
+// so growth here comes only from the unavoidable I/O of reading/writing the
+// growing `Map<u64, u64>` registry.
+#[cfg(test)]
+mod serial_benchmark {
+    use super::*;
+    extern crate std;
+    use std::{format, println};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+
+    fn setup(env: &Env) -> (CarbonCreditContractClient, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let admin = Address::generate(env);
+        let registry = Address::generate(env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(env, &id);
+        client.initialize(&admin, &registry);
+        (client, admin)
+    }
+
+    #[test]
+    fn bench_serial_registry_growth() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+
+        let checkpoints: [u64; 4] = [10, 50, 100, 250];
+        let mut cursor: u64 = 1;
+        let mut checkpoint_idx = 0usize;
+
+        for i in 0..*checkpoints.last().unwrap() {
+            let start = cursor;
+            let end = start + 5;
+            cursor = end + 2;
+
+            let is_checkpoint =
+                checkpoint_idx < checkpoints.len() && i + 1 == checkpoints[checkpoint_idx];
+            // Reset before every mint so each call is measured in isolation —
+            // the budget otherwise accumulates cost across the whole Env and
+            // would eventually hit the default CPU limit.
+            env.budget().reset_default();
+
+            client.mint_credits(
+                &admin,
+                &String::from_str(&env, "p"),
+                &6_i128,
+                &2023_u32,
+                &String::from_str(&env, &format!("b{i}")),
+                &start,
+                &end,
+                &String::from_str(&env, "QmCID"),
+                &Address::generate(&env),
+            );
+
+            if is_checkpoint {
+                println!(
+                    "[bench] mint_credits at registry size {:>4}: {} CPU instructions",
+                    i + 1,
+                    env.budget().cpu_instruction_cost()
+                );
+                checkpoint_idx += 1;
+            }
         }
     }
 }
