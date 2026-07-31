@@ -9,6 +9,7 @@ import time
 from typing import Optional
 import redis
 from utils.distributed_lock import DistributedLock, StaleLockWatchdog
+from schema_registry import validate_submission, get_schema_version_for_submission, init_schema_registry
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +26,17 @@ redis_client = redis.Redis(
 
 class VerificationListener:
     """
-    Verification Listener with distributed lock protection
+    Verification Listener with distributed lock protection and
+    methodology schema version validation.
     """
     
     def __init__(self):
         self.lock = DistributedLock(redis_client, LOCK_KEY, LOCK_TTL)
         self.watchdog = StaleLockWatchdog(redis_client, LOCK_KEY, WATCHDOG_TIMEOUT_MINUTES / 60)
         self.alert_webhook = os.environ.get('ADMIN_ALERT_WEBHOOK')
+        self.schema_validation_enabled = os.environ.get('SCHEMA_VALIDATION_ENABLED', 'true').lower() == 'true'
+        if self.schema_validation_enabled:
+            init_schema_registry()
         
     def process_verification_cycle(self) -> bool:
         """
@@ -55,6 +60,16 @@ class VerificationListener:
                 return True
             
             for verification in pending:
+                if self.schema_validation_enabled:
+                    valid, result = self._validate_with_schema(verification)
+                    if not valid:
+                        logger.error(
+                            "Schema validation failed for verification %s: %s",
+                            verification.get('id'),
+                            result.get('errors', ['unknown']),
+                        )
+                        continue
+                
                 success = self.process_verification(verification)
                 if success:
                     logger.info(f"Verification processed: {verification.get('id')}")
@@ -70,6 +85,20 @@ class VerificationListener:
             
         finally:
             self.lock.release()
+
+    def _validate_with_schema(self, verification: dict) -> tuple[bool, dict]:
+        """
+        Validate a verification record against its methodology schema.
+
+        Returns:
+            A tuple of (is_valid, validation_result).
+        """
+        methodology = verification.get('methodology', '')
+        schema_version = get_schema_version_for_submission(
+            methodology,
+            verification,
+        )
+        return validate_submission(verification, methodology, schema_version)
     
     def fetch_pending_verifications(self) -> list:
         """Fetch pending verifications from queue"""

@@ -566,6 +566,14 @@ jobs:
       - name: Run Hypothesis fuzz tests (#641)
         run: pytest tests/fuzz/oracle/test_hypothesis_*.py -v
 
+      - name: Run reconciliation integration tests
+        working-directory: oracle
+        run: pytest test_reconciliation.py -v
+
+      - name: Run failover tests
+        working-directory: oracle
+        run: pytest test_failover.py -v
+
   fuzz:
     name: Property-Based Fuzz Tests
     runs-on: ubuntu-latest
@@ -632,6 +640,12 @@ jobs:
           --skip fuzz_purchase_from_sold_listing_fails
           --skip fuzz_purchase_valid_reduces_available
           --skip fuzz_purchase_full_amount_marks_sold
+
+      - name: Run proptest invariants (carbon_oracle)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_oracle 'proptest_price_tests::' -- --nocapture"
 
 
   rust-contracts-ci:
