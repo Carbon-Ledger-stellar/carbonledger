@@ -48,13 +48,15 @@ async function bootstrap() {
   app.use(express.json({ limit: bodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
 
-  app.setGlobalPrefix('api/v1');
-
-  // Header-based versioning: Accept-Version: 1
-  // All existing routes are VERSION_NEUTRAL (no @Version decorator needed).
+  // URI-based versioning: /api/v1/... and /api/v2/...
+  // - v1 controllers use @Controller('resource') with VERSION_NEUTRAL (global prefix api/v1)
+  // - v2 controllers use @Controller({ path: 'resource', version: '2' })
+  // The global prefix is set to 'api' and versioning adds /v{n}/ automatically.
+  app.setGlobalPrefix('api');
   app.enableVersioning({
-    type: VersioningType.HEADER,
-    header: 'Accept-Version',
+    type: VersioningType.URI,
+    defaultVersion: '1',   // Controllers without @Version() default to v1
+    prefix: 'v',
   });
 
   // Fix mass assignment (API3): strip unknown fields globally

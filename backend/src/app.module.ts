@@ -213,6 +213,10 @@ export class AppModule implements NestModule {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
     consumer.apply(RateLimitMiddleware).forRoutes('*');
 
+    // Adds RFC 8594 Deprecation + Sunset headers to all v1 responses.
+    // v2 routes only receive X-API-Version: 2 (no deprecation headers).
+    consumer.apply(DeprecationMiddleware).forRoutes('*');
+
     // Apply idempotency enforcement to the three critical mutating endpoints.
     // The Idempotency-Key header is optional; omitting it simply bypasses the check.
     consumer
