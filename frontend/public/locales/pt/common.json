@@ -131,6 +131,7 @@
     "processing": "Processando…",
     "purchaseFor": "Comprar {tonnes} por ${amount} USDC",
     "openCartAria": "Abrir carrinho com {count} itens",
+    "closeCart": "Fechar carrinho",
     "walletConnectedTitle": "Carteira conectada",
     "walletErrorTitle": "Erro na carteira",
     "purchaseConfirmedTitle": "Compra confirmada!",
