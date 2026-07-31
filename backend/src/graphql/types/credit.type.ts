@@ -98,6 +98,24 @@ export class RetirementSummaryType {
 }
 
 @ObjectType()
+export class CreditProjectHistoryType {
+  @Field()
+  projectId: string;
+
+  @Field()
+  name: string;
+
+  @Field()
+  methodology: string;
+
+  @Field()
+  country: string;
+
+  @Field(() => Int)
+  vintageYear: number;
+}
+
+@ObjectType()
 export class SerialProvenanceType {
   @Field()
   serialNumber: string;
@@ -121,5 +139,23 @@ export class SerialProvenanceType {
   provenance: ProvenanceEventType[];
 
   @Field(() => RetirementSummaryType, { nullable: true })
+  retirement?: RetirementSummaryType;
+}
+
+@ObjectType()
+export class CreditBatchProvenanceType {
+  @Field()
+  batchId: string;
+
+  @Field(() => CreditProjectHistoryType)
+  project: CreditProjectHistoryType;
+
+  @Field(() => [TransferEventType])
+  transfers: TransferEventType[];
+
+  @Field(() => [ProvenanceEventType])
+  provenance: ProvenanceEventType[];
+
+  @Field({ nullable: true })
   retirement?: RetirementSummaryType;
 }

@@ -8,6 +8,7 @@ import { RetirementsModule } from '../retirements/retirements.module';
 import { ProjectsResolver } from './resolvers/projects.resolver';
 import { CreditsResolver } from './resolvers/credits.resolver';
 import { RetirementsResolver } from './resolvers/retirements.resolver';
+import { ProvenanceResolver } from './resolvers/provenance.resolver';
 
 @Module({
   imports: [
@@ -26,6 +27,6 @@ import { RetirementsResolver } from './resolvers/retirements.resolver';
     CreditsModule,
     RetirementsModule,
   ],
-  providers: [ProjectsResolver, CreditsResolver, RetirementsResolver],
+  providers: [ProjectsResolver, CreditsResolver, RetirementsResolver, ProvenanceResolver],
 })
 export class GraphqlModule {}
