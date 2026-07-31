@@ -20,6 +20,7 @@ import {
   ExportRetirementsDto,
   RetireCreditsDto,
   BulkRetirementsDto,
+  CsvBulkRetirementsDto,
 } from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
 import { QuotaBucket } from '../throttle';
@@ -111,6 +112,38 @@ export class RetirementsController {
     }
 
     return result;
+  }
+
+  @Post('bulk/csv')
+  @Roles('corporation', 'admin')
+  @QuotaBucket('bulkRetire')
+  async bulkRetireCreditsFromCsv(
+    @Body() dto: CsvBulkRetirementsDto,
+    @Request() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.retirementsService.bulkRetireCreditsFromCsv({
+      csv: dto.csv,
+      retiredBy: req.user.publicKey,
+    });
+
+    if ('jobId' in result || 'status' in result && result.status === 'queued') {
+      res.status(HttpStatus.ACCEPTED);
+    }
+
+    return result;
+  }
+
+  @Get('bulk/csv/:jobId/status')
+  @Roles('corporation', 'admin')
+  async getBulkCsvStatus(@Param('jobId') jobId: string) {
+    return this.retirementsService.getBulkCsvStatus(jobId);
+  }
+
+  @Get(':id/certificate-status')
+  @Roles('corporation', 'admin')
+  async getCertificateStatus(@Param('id') id: string, @Request() req: any) {
+    return this.retirementsService.getCertificateStatus(id, req.user.publicKey);
   }
 
   // Fix IDOR: require auth; only the owner or admin may read a specific retirement
