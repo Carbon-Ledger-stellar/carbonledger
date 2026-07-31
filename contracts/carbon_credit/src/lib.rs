@@ -66,6 +66,9 @@ pub enum DataKey {
     ProjectBatches(String),
     ProjectBatchCount(String),
     SerialRegistry,
+    /// O(log n) registry: Map<serial_start, serial_end> sorted by key.
+    /// Binary-search on the sorted keys to detect overlap in O(log n).
+    SerialMap,
     Admin,
     RegistryContract,
     ContractVersion,
@@ -180,6 +183,8 @@ pub struct RetirementCertificate {
     pub certificate_cid: String,
 }
 
+/// Legacy flat-list type kept only for migration during the first call after upgrade.
+/// New code uses `SerialMap` (a `Map<u64, u64>` stored under `DataKey::SerialMap`).
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SerialRange {
@@ -1008,6 +1013,24 @@ impl CarbonCreditContract {
     // Production Groth16 verification lives in `contracts/carbon_zk_verifier`
     // (Circom BLS12-381 / CAP-0059). See docs/zk-proof-spec.md.
 
+    /// Check whether [start, end] overlaps any previously registered range.
+    ///
+    /// ## Algorithm  O(log n)
+    /// The registry is a `Map<u64, u64>` where each key is a `serial_start`
+    /// and the value is the corresponding `serial_end`. Soroban `Map` keeps
+    /// keys in sorted order, so we can use two targeted lookups:
+    ///
+    /// 1. **Left neighbour**: the entry with the largest key ≤ `start`.
+    ///    If it exists, its range `[lk, lv]` overlaps iff `lv >= start`.
+    /// 2. **Right neighbour**: the entry with the smallest key > `start`.
+    ///    If it exists, its range `[rk, rv]` overlaps iff `rk <= end`.
+    ///
+    /// These two comparisons replace the full O(n) linear scan.
+    ///
+    /// ## Migration from legacy Vec registry
+    /// Contracts upgraded from v1 may still have a `SerialRegistry` (Vec)
+    /// entry. On the first invocation we migrate all existing ranges into
+    /// the Map and remove the legacy key.
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
         let registry: Map<u64, u64> = env
             .storage()
