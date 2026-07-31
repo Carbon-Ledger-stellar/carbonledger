@@ -11,6 +11,7 @@
 import React, { createContext, useContext } from 'react';
 import { useWalletConnection, WalletConnectionState } from '../../hooks/useWalletConnection';
 import { ConnectionStatus } from '../wallet-state-machine';
+import { isSigningCancellation } from '../wallet-errors';
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -80,6 +81,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const { signTransaction: freighterSign } = await import('../freighter');
       return await freighterSign(xdr, state.network === 'TESTNET' ? 'TESTNET' : 'PUBLIC');
     } catch (err) {
+      // The user closing/declining the signing prompt is an expected action,
+      // not a failure — return to the previous state without logging or
+      // surfacing an error (see ErrorBoundary.getDerivedStateFromError).
+      if (isSigningCancellation(err)) return null;
       console.error('[WalletContext] signTransaction error', err);
       return null;
     }

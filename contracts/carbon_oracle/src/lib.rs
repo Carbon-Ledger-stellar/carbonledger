@@ -88,6 +88,8 @@ pub enum DataKey {
     LivenessSlaSeconds,
     /// Address of the carbon_registry contract for cross-contract suspend calls.
     RegistryAddress,
+    /// Configurable benchmark price staleness window in seconds. Default: 24h (86_400 s).
+    PriceStalenessSeconds,
 }
 
 // -- Types --------------------------------------------------------------------
@@ -122,24 +124,18 @@ pub struct CarbonOracleContract;
 #[contractimpl]
 impl CarbonOracleContract {
 
-    pub fn initialize(env: Env, admin: Address, oracle_address: Address, oracle_pub_key: BytesN<32>, registry_address: Address) -> Result<(), CarbonError> {
     pub fn initialize(
         env: Env,
         admin: Address,
         oracle_address: Address,
         oracle_pub_key: BytesN<32>,
+        registry_address: Address,
     ) -> Result<(), CarbonError> {
         if env.storage().persistent().has(&DataKey::Admin) {
             return Err(CarbonError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::OracleAddress, &oracle_address);
-        env.storage().persistent().set(&DataKey::OraclePublicKey, &oracle_pub_key);
-        env.storage().persistent().set(&DataKey::OracleNonce, &0_u64);
-        env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
-        env.storage().persistent().set(&DataKey::RegistryAddress, &registry_address);
-        env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &MONITORING_FRESHNESS_SECS);
         env.storage()
             .persistent()
             .set(&DataKey::OracleAddress, &oracle_address);
@@ -152,6 +148,12 @@ impl CarbonOracleContract {
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage()
+            .persistent()
+            .set(&DataKey::RegistryAddress, &registry_address);
+        env.storage()
+            .persistent()
+            .set(&DataKey::LivenessSlaSeconds, &MONITORING_FRESHNESS_SECS);
         Ok(())
     }
 
@@ -492,13 +494,34 @@ impl CarbonOracleContract {
         Ok(())
     }
 
+    /// Admin-only: adjust the benchmark price staleness window in seconds (default 24h).
+    pub fn set_price_staleness_window(env: Env, admin: Address, seconds: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::PriceStalenessSeconds, &seconds);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("p_sla_upd")),
+            (admin, seconds),
+        );
+        Ok(())
+    }
+
     /// Returns true if the benchmark price for (methodology, vintage_year) was
-    /// updated within the last 24 hours.  Returns false if the price was never
-    /// set or was last updated more than PRICE_STALENESS_SECS (24 h) ago.
+    /// updated within the staleness window (default 24 hours). Returns false if
+    /// the price was never set or was last updated more than the staleness threshold ago.
     ///
-    /// This is the primary gate used by the marketplace circuit breaker:
-    /// purchase_credits() calls this before allowing any trade to proceed.
+    /// # Interaction with `is_monitoring_current`:
+    /// - `is_monitoring_current(env, project_id)` checks project-level liveness SLA for satellite/MRV monitoring data (default 365 days).
+    ///   Stale monitoring data flags projects and triggers cross-contract suspension via registry.
+    /// - `is_price_current(env, methodology, vintage_year)` checks financial benchmark price freshness for credit trading (default 24 hours).
+    ///   Stale benchmark prices block credit purchases in `purchase_credits()` with a `MonitoringDataStale` error until updated by the oracle.
     pub fn is_price_current(env: Env, methodology: String, vintage_year: u32) -> bool {
+        let staleness_window: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceStalenessSeconds)
+            .unwrap_or(PRICE_STALENESS_SECS);
         let ts: Option<u64> = env
             .storage()
             .persistent()
@@ -508,7 +531,7 @@ impl CarbonOracleContract {
             None => false,
             Some(updated_at) => {
                 let now = env.ledger().timestamp();
-                now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS
+                now.saturating_sub(updated_at) <= staleness_window
             }
         }
     }
@@ -679,14 +702,10 @@ mod tests {
         let admin = Address::generate(env);
         let oracle = Address::generate(env);
         let registry = Address::generate(env);
-        let id     = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(env, &id);
-        
-        client.initialize(&admin, &oracle, &pub_key, &registry);
         let id = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
 
-        client.initialize(&admin, &oracle, &pub_key);
+        client.initialize(&admin, &oracle, &pub_key, &registry);
         (client, admin, oracle, signing_key)
     }
 
@@ -865,9 +884,6 @@ mod staleness_tests {
         let oracle   = Address::generate(env);
         let registry = Address::generate(env);
         let id     = env.register_contract(None, CarbonOracleContract);
-        let admin = Address::generate(env);
-        let oracle = Address::generate(env);
-        let id = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
         client.initialize(&admin, &oracle, &pub_key, &registry);
         (client, admin, oracle, signing_key)
@@ -1058,6 +1074,198 @@ mod staleness_tests {
             "VCS 2023 stale after 26 h"
         );
     }
+
+    // ── Mutation-testing survivor kills (issue #632) ──────────────────────────
+    //
+    // `is_price_current` uses `now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS`.
+    // A mutation to `<` would incorrectly mark the exact-24h boundary as stale.
+
+    #[test]
+    fn test_is_price_current_true_at_exact_24_hour_boundary() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+        let sig = sign_price(&env, &key, &method, 2023, price);
+        client.update_credit_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Advance exactly 24 hours — must still be current (<=, not <).
+        advance_time(&env, 24 * 60 * 60);
+
+        assert!(
+            client.is_price_current(&method, &2023_u32),
+            "price must still be current at exactly the 24h boundary"
+        );
+    }
+
+    /// `is_monitoring_current` uses `now.saturating_sub(ts) <= MONITORING_FRESHNESS_SECS`
+    /// (365 days). A mutation to `<` would incorrectly mark the exact boundary as stale.
+    #[test]
+    fn test_is_monitoring_current_true_at_exact_365_day_boundary() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+
+        let project_id = s(&env, "proj-boundary");
+        let period = s(&env, "2025-Q1");
+        let payload = (
+            project_id.clone(),
+            period.clone(),
+            5000_i128,
+            85_u32,
+            s(&env, "QmCID"),
+        )
+            .to_xdr(&env);
+        let sig = key.sign(payload.to_alloc_vec().as_slice());
+        let signature = BytesN::from_array(&env, &sig.to_bytes());
+
+        client.submit_monitoring_data(
+            &oracle,
+            &project_id,
+            &period,
+            &5000_i128,
+            &85_u32,
+            &s(&env, "QmCID"),
+            &signature,
+            &0_u64,
+        );
+
+        // Advance exactly 365 days — must still be current (<=, not <).
+        advance_time(&env, 365 * 24 * 60 * 60);
+        assert!(
+            client.is_monitoring_current(&project_id),
+            "monitoring must still be current at exactly the 365-day boundary"
+        );
+    }
+}
+
+// ── get_total_verified_tonnes tests (issue #632) ─────────────────────────────
+//
+// `get_total_verified_tonnes` had no dedicated test coverage prior to this
+// mutation-testing pass, despite being the function `carbon_credit::mint_credits`
+// relies on (per its doc comment) to enforce the cross-contract issuance cap.
+// A mutation of `total = total.saturating_add(data.tonnes_verified)` to
+// `total = data.tonnes_verified` (overwrite instead of accumulate) would have
+// survived indefinitely without a multi-period test.
+#[cfg(test)]
+mod total_verified_tonnes_tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use soroban_sdk::xdr::ToXdr;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger, LedgerInfo},
+        vec, BytesN, Env, String,
+    };
+
+    const TEST_SIGNING_KEY: [u8; 32] = [42u8; 32];
+
+    fn test_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&TEST_SIGNING_KEY)
+    }
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    fn setup(env: &Env) -> (CarbonOracleContractClient<'_>, Address, SigningKey) {
+        env.mock_all_auths();
+        env.ledger().set(LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let signing_key = test_signing_key();
+        let pub_bytes = signing_key.verifying_key().to_bytes();
+        let pub_key = BytesN::from_array(env, &pub_bytes);
+        let admin = Address::generate(env);
+        let oracle = Address::generate(env);
+        let registry = Address::generate(env);
+        let id = env.register_contract(None, CarbonOracleContract);
+        let client = CarbonOracleContractClient::new(env, &id);
+        client.initialize(&admin, &oracle, &pub_key, &registry);
+        (client, oracle, signing_key)
+    }
+
+    fn submit(
+        env: &Env,
+        client: &CarbonOracleContractClient,
+        oracle: &Address,
+        key: &SigningKey,
+        project_id: &String,
+        period: &str,
+        tonnes: i128,
+        nonce: u64,
+    ) {
+        let period_str = s(env, period);
+        let cid = s(env, "QmCID");
+        let payload = (
+            project_id.clone(),
+            period_str.clone(),
+            tonnes,
+            85_u32,
+            cid.clone(),
+        )
+            .to_xdr(env);
+        let sig = key.sign(payload.to_alloc_vec().as_slice());
+        let signature = BytesN::from_array(env, &sig.to_bytes());
+        client.submit_monitoring_data(
+            oracle,
+            project_id,
+            &period_str,
+            &tonnes,
+            &85_u32,
+            &cid,
+            &signature,
+            &nonce,
+        );
+    }
+
+    #[test]
+    fn test_get_total_verified_tonnes_sums_multiple_periods() {
+        let env = Env::default();
+        let (client, oracle, key) = setup(&env);
+        let project_id = s(&env, "proj-multi");
+
+        submit(&env, &client, &oracle, &key, &project_id, "2023-Q1", 1000, 0);
+        submit(&env, &client, &oracle, &key, &project_id, "2023-Q2", 1500, 1);
+        submit(&env, &client, &oracle, &key, &project_id, "2023-Q3", 2500, 2);
+
+        let periods = vec![
+            &env,
+            s(&env, "2023-Q1"),
+            s(&env, "2023-Q2"),
+            s(&env, "2023-Q3"),
+        ];
+        let total = client.get_total_verified_tonnes(&project_id, &periods);
+        assert_eq!(total, 5000, "total must be the SUM of all periods, not the last one");
+    }
+
+    #[test]
+    fn test_get_total_verified_tonnes_ignores_unrecorded_periods() {
+        let env = Env::default();
+        let (client, oracle, key) = setup(&env);
+        let project_id = s(&env, "proj-partial");
+
+        submit(&env, &client, &oracle, &key, &project_id, "2023-Q1", 1000, 0);
+
+        // Request a period that was never submitted alongside a real one.
+        let periods = vec![&env, s(&env, "2023-Q1"), s(&env, "2023-Q2")];
+        let total = client.get_total_verified_tonnes(&project_id, &periods);
+        assert_eq!(total, 1000, "unrecorded periods must contribute zero, not error");
+    }
+
+    #[test]
+    fn test_get_total_verified_tonnes_empty_periods_is_zero() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        let project_id = s(&env, "proj-empty");
+        let periods: soroban_sdk::Vec<String> = vec![&env];
+        assert_eq!(client.get_total_verified_tonnes(&project_id, &periods), 0);
+    }
 }
 
 // ── Vintage Year Validation Tests (Oracle) ────────────────────────────────────
@@ -1112,13 +1320,6 @@ mod vintage_year_validation_tests {
         let id     = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(&env, &id);
         client.initialize(&admin, &oracle, &pub_key, &registry);
-        (env, client, admin, oracle, signing_key)
-        let admin = Address::generate(&env);
-        let oracle = Address::generate(&env);
-        let id = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(&env, &id);
-        client.initialize(&admin, &oracle, &pub_key);
-        let _ = client;
         (env, id, admin, oracle, signing_key)
     }
 
@@ -1661,5 +1862,80 @@ mod liveness_tests {
 
         let p = registry_client.get_project(&project_id);
         assert_ne!(p.status, ProjectStatus::Suspended);
+    }
+
+    // ── 7. Exact SLA boundary — mutation-testing survivor kill (issue #632) ──
+    //
+    // `check_liveness` uses `saturating_sub(ts) > sla` to decide staleness.
+    // A mutation to `>=` would incorrectly flag data submitted exactly at the
+    // SLA boundary as stale.
+
+    #[test]
+    fn test_check_liveness_not_stale_at_exact_sla_boundary() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-exact-sla");
+        register_project(&env, &registry_client, &admin, "proj-exact-sla");
+
+        let period = s(&env, "2025-Q1");
+        let cid = s(&env, "QmCID");
+        let sig = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        // Set a 1-hour SLA and advance exactly 1 hour (the boundary, not past it).
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+        advance_time(&env, one_hour);
+
+        oracle_client.check_liveness(&project_id);
+
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert!(flagged.is_none(), "must not be flagged exactly at the SLA boundary");
+
+        let p = registry_client.get_project(&project_id);
+        assert_ne!(p.status, ProjectStatus::Suspended);
+    }
+
+    #[test]
+    fn test_price_staleness_window_config_and_enforcement() {
+        let env = Env::default();
+        let (client, admin, oracle, signing_key) = setup(&env);
+
+        let meth = s(&env, "VCS-001");
+        let vintage = 2024_u32;
+        let price = 5000_i128;
+        let nonce = 0_u64;
+
+        let payload = (meth.clone(), vintage, price).to_xdr(&env);
+        let sig = signing_key.sign(payload.to_alloc_vec().as_slice());
+        let signature = BytesN::from_array(&env, &sig.to_bytes());
+
+        client.update_credit_price(&oracle, &meth, &vintage, &price, &signature, &nonce);
+        assert!(client.is_price_current(&meth, &vintage));
+
+        // Advance 25 hours -> stale under default 24h window
+        env.ledger().set(LedgerInfo {
+            timestamp: 1735689600 + (25 * 3600),
+            protocol_version: 20,
+            sequence_number: 2,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        assert!(!client.is_price_current(&meth, &vintage));
+
+        // Adjust staleness window to 48 hours -> fresh again
+        client.set_price_staleness_window(&admin, &(48 * 3600));
+        assert!(client.is_price_current(&meth, &vintage));
     }
 }

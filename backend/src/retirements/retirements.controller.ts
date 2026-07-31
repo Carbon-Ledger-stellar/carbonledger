@@ -10,13 +10,28 @@ import {
   ForbiddenException,
   HttpCode,
   Header,
+  UseGuards,
+  HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { IsString } from 'class-validator';
 import { RetirementsService } from './retirements.service';
-import { ExportRetirementsDto, RetireCreditsDto } from './retirements.dto';
+import {
+  ExportRetirementsDto,
+  RetireCreditsDto,
+  BulkRetirementsDto,
+} from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
+import { QuotaBucket } from '../throttle';
 import { ZkProofService } from './zk-proof.service';
+import {
+  CheckPolicies,
+  PoliciesGuard,
+  RetirementSubject,
+  ZkProofSubject,
+} from '../policies';
+import { subject } from '@casl/ability';
+import { AbilityFactory } from '../policies/ability.factory';
 
 class VerifyCertificateDto {
   @IsString() retirementId: string;
@@ -28,6 +43,7 @@ export class RetirementsController {
   constructor(
     private readonly retirementsService: RetirementsService,
     private readonly zkProofService: ZkProofService,
+    private readonly abilityFactory: AbilityFactory,
   ) {}
 
   // Fix IDOR: require auth; scope list to the caller's own retirements
@@ -62,17 +78,47 @@ export class RetirementsController {
       limit: limit ? Number(limit) : 20,
     });
   }
+
   @Post()
   @Roles('corporation', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('retire', RetirementSubject))
   retireCredits(@Body() dto: RetireCreditsDto) {
     return this.retirementsService.retireCredits(dto);
+  }
+
+  /**
+   * GET /retirements/:id
+   *
+   * Only the owner or admin may read a specific retirement record.
+   * ABAC condition: RetirementSubject.retiredBy must match req.user.publicKey.
+   */
+  @Post('bulk')
+  @Roles('corporation', 'admin')
+  @QuotaBucket('bulkRetire')
+  async bulkRetireCredits(
+    @Body() dto: BulkRetirementsDto,
+    @Request() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.retirementsService.bulkRetireCredits({
+      ...dto,
+      retiredBy: req.user.publicKey,
+    });
+
+    if ('jobId' in result) {
+      res.status(HttpStatus.ACCEPTED);
+    }
+
+    return result;
   }
 
   // Fix IDOR: require auth; only the owner or admin may read a specific retirement
   @Get(':id')
   async findOne(@Param('id') id: string, @Request() req: any) {
     const retirement = await this.retirementsService.findOne(id);
-    if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
+    const ability = this.abilityFactory.createForUser(req.user);
+    if (ability.cannot('read', subject(RetirementSubject, { retiredBy: retirement.retiredBy }))) {
       throw new ForbiddenException('Access denied');
     }
     return retirement;
@@ -108,6 +154,8 @@ export class RetirementsController {
 
   @Post('generate-pdf')
   @Roles('corporation', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('export', RetirementSubject))
   generatePdf(@Body('retirementId') retirementId: string) {
     return this.retirementsService.generatePdf(retirementId);
   }
@@ -115,6 +163,8 @@ export class RetirementsController {
   // Fix IDOR: scope export to the caller's own retirements
   @Get('export/csv')
   @Roles('corporation', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('export', RetirementSubject))
   async exportCsv(
     @Query() filters: ExportRetirementsDto,
     @Request() req: any,
@@ -132,6 +182,8 @@ export class RetirementsController {
 
   @Get('export/pdf')
   @Roles('corporation', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('export', RetirementSubject))
   async exportPdf(
     @Query() filters: ExportRetirementsDto,
     @Request() req: any,
@@ -154,21 +206,33 @@ export class RetirementsController {
     return this.retirementsService.verifyCertificateIntegrity(dto.retirementId, dto.content);
   }
 
+  /**
+   * POST /retirements/:id/zk-proof
+   *
+   * ABAC condition: only the retirement owner or admin may generate a ZK proof.
+   */
   @Post(':id/zk-proof')
   @Roles('corporation', 'admin')
   async createZkProof(@Param('id') id: string, @Request() req: any) {
     const retirement = await this.retirementsService.findOne(id);
-    if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
+    const ability = this.abilityFactory.createForUser(req.user);
+    if (ability.cannot('generateProof', subject(ZkProofSubject, { retiredBy: retirement.retiredBy }))) {
       throw new ForbiddenException('Access denied');
     }
     return this.zkProofService.generateProof(id);
   }
 
+  /**
+   * GET /retirements/:id/zk-proof
+   *
+   * ABAC condition: only the retirement owner or admin may read a ZK proof.
+   */
   @Get(':id/zk-proof')
   @Roles('corporation', 'admin')
   async getZkProof(@Param('id') id: string, @Request() req: any) {
     const retirement = await this.retirementsService.findOne(id);
-    if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
+    const ability = this.abilityFactory.createForUser(req.user);
+    if (ability.cannot('read', subject(ZkProofSubject, { retiredBy: retirement.retiredBy }))) {
       throw new ForbiddenException('Access denied');
     }
     return this.zkProofService.getProof(id);
