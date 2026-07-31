@@ -1,14 +1,16 @@
 import {
   Controller,
   Get,
+  Post,
   Param,
   Query,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { EventSourcingService } from './event-sourcing.service';
 
 /**
- * AuditController exposes the credit event log for external consumers.
+ * AuditController exposes the credit event log & projections for external consumers.
  *
  * All routes are read-only and unauthenticated — the audit trail is
  * intentionally public so regulators and investors can verify credit history
@@ -24,6 +26,12 @@ import { EventSourcingService } from './event-sourcing.service';
  *     Reconstruct the state of a credit batch at a given point in time.
  *     Required query param: asOf (ISO timestamp)
  *
+ *   GET /api/v1/audit/credits/:batchId/projection
+ *     Serve the current state from event-sourced projection read model.
+ *
+ *   POST /api/v1/audit/credits/projections/rebuild
+ *     Rebuild all projection read models by replaying event store log.
+ *
  *   GET /api/v1/audit/credits/:batchId/integrity
  *     Verify HMAC signatures of all events — returns any tampered events.
  */
@@ -33,9 +41,6 @@ export class AuditController {
 
   /**
    * GET /api/v1/audit/credits/:batchId/events
-   *
-   * Returns the chronological event log for the given batch.
-   * Use `from` and `to` (ISO 8601) to narrow the window.
    */
   @Get(':batchId/events')
   async getEvents(
@@ -66,9 +71,6 @@ export class AuditController {
 
   /**
    * GET /api/v1/audit/credits/:batchId/state?asOf=<ISO>
-   *
-   * Reconstructs the state of the credit batch at the given timestamp by
-   * replaying all events up to that point.
    */
   @Get(':batchId/state')
   async getStateAt(
@@ -92,10 +94,38 @@ export class AuditController {
   }
 
   /**
-   * GET /api/v1/audit/credits/:batchId/integrity
+   * GET /api/v1/audit/credits/:batchId/projection
    *
-   * Verifies HMAC signatures on all events for this batch and returns a list
-   * of tampered event IDs (empty list = clean).
+   * Serves credit read state directly from projection derived from event log.
+   */
+  @Get(':batchId/projection')
+  async getProjection(@Param('batchId') batchId: string) {
+    const projection = await this.events.getProjection(batchId);
+    if (!projection) {
+      throw new NotFoundException(`No projection found for credit batch ${batchId}`);
+    }
+    return {
+      batchId,
+      projection,
+    };
+  }
+
+  /**
+   * POST /api/v1/audit/credits/projections/rebuild
+   *
+   * Triggers a complete projection rebuild by replaying all historical event logs.
+   */
+  @Post('projections/rebuild')
+  async rebuildProjections() {
+    const result = await this.events.rebuildProjections();
+    return {
+      message: 'Projections successfully rebuilt from event log',
+      ...result,
+    };
+  }
+
+  /**
+   * GET /api/v1/audit/credits/:batchId/integrity
    */
   @Get(':batchId/integrity')
   async checkIntegrity(@Param('batchId') batchId: string) {

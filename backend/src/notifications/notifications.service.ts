@@ -23,7 +23,7 @@ export class NotificationsService {
   }
 
   async updatePreferences(publicKey: string, dto: UpdateNotificationPreferencesDto) {
-    const user = await this.prisma.user.findUnique({ where: { publicKey } });
+    const user = await this.prisma.user.findFirst({ where: { publicKey, deletedAt: null } });
     if (!user) throw new NotFoundException('User not found');
 
     return this.prisma.notificationPreference.upsert({

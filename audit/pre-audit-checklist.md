@@ -22,6 +22,7 @@ unexpected state if the callee re-enters the caller before state is finalised.
 | R3 | No function reads state after an external call and uses that state to make a security decision | all | ✅ | No post-call state reads found |
 | R4 | `retire_credits` updates batch status before emitting the event | `carbon_credit` | ✅ | Status written before `env.events().publish()` |
 | R5 | No function calls back into a CarbonLedger contract from within a CarbonLedger function | all | ✅ | Only outbound call is to USDC token |
+| R6 | `purchase_credits` and `bulk_purchase` are protected by a re-entrancy guard (`DataKey::ReentrancyGuard`) | `carbon_marketplace` | ✅ | `acquire_lock` at entry; `release_lock` on all exit paths |
 
 ---
 

@@ -66,6 +66,7 @@ export default function Navbar() {
     en: t('localeEn'),
     es: t('localeEs'),
     pt: t('localePt'),
+    zh: t('localeZh'),
   };
 
   const languageSwitcher = (

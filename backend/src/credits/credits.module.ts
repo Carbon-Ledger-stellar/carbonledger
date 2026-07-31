@@ -5,9 +5,10 @@ import { PrismaService } from "../prisma.service";
 import { AuthModule } from "../auth/auth.module";
 import { MailModule } from "../mail/mail.module";
 import { IpfsService } from "../common/ipfs.service";
+import { PoliciesModule } from "../policies/policies.module";
 
 @Module({
-  imports: [AuthModule, MailModule],
+  imports: [AuthModule, MailModule, PoliciesModule],
   controllers: [CreditsController],
   providers: [CreditsService, PrismaService, IpfsService],
   exports: [CreditsService],

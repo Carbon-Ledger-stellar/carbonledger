@@ -46,8 +46,11 @@ export class LoggerService implements NestLoggerService {
       );
     }
 
+    const configuredLevel = (process.env.LOG_LEVEL ?? "info").toLowerCase();
+    const moduleLevel = process.env.LOG_LEVEL_FINANCIAL ?? configuredLevel;
+
     this.logger = winston.createLogger({
-      level: process.env.LOG_LEVEL ?? "info",
+      level: configuredLevel,
       format: winston.format.combine(
         winston.format.timestamp(),
         winston.format.errors({ stack: true }),
@@ -58,42 +61,32 @@ export class LoggerService implements NestLoggerService {
     });
   }
 
-  /**
-   * Enrich a log context with the current correlation ID and any
-   * actor/role/endpoint fields supplied by the caller.
-   */
-  private enrich(context?: LogContext | string): LogContext {
-    const base = typeof context === "string" ? { context } : (context ?? {});
-    const ctx  = CorrelationIdContext.getContext();
+  private getContextWithCorrelationId(context?: LogContext | string): LogContext {
+    const baseContext = typeof context === "string" ? { context } : (context ?? {});
+    const correlationId = CorrelationIdContext.getCorrelationId();
+    const sanitizedContext = this.sanitizeContext(baseContext);
 
     return {
-      ...base,
-      correlationId: base.correlationId || ctx?.correlationId || "",
-      endpoint:      base.endpoint      || ctx?.path,
+      ...sanitizedContext,
+      correlationId: sanitizedContext.correlationId || correlationId,
     };
   }
 
-  /**
-   * Deterministic sampling based on the current correlationId.
-   * Returns true if the log should be emitted.
-   * Errors/warnings always pass through.
-   */
-  private shouldSample(level: string): boolean {
-    if (level === "error" || level === "warn") return true;   // 100%
-    if (SAMPLE_RATE >= 1.0) return true;
-    if (SAMPLE_RATE <= 0.0) return false;
+  private sanitizeContext(context: LogContext): LogContext {
+    const sanitized: LogContext = { ...context };
+    const secretKeys = ["password", "secret", "token", "key", "api_key", "private_key", "authorization"];
 
-    // Use the last 4 hex chars of the correlationId as a stable uint16
-    const id = CorrelationIdContext.getCorrelationId();
-    if (!id) return Math.random() < SAMPLE_RATE;
-    const tail = id.replace(/-/g, "").slice(-4);
-    const n = parseInt(tail, 16) / 0xffff;
-    return n < SAMPLE_RATE;
+    for (const key of Object.keys(sanitized)) {
+      if (secretKeys.some((secretKey) => key.toLowerCase().includes(secretKey))) {
+        sanitized[key] = "[REDACTED]";
+      }
+    }
+
+    return sanitized;
   }
 
-  private write(level: string, message: string, context?: LogContext | string): void {
-    if (!this.shouldSample(level)) return;
-    const meta = this.enrich(context);
+  private write(level: string, message: string, context?: LogContext | string) {
+    const meta = this.getContextWithCorrelationId(context);
     this.logger.log(level, message, meta);
   }
 

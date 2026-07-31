@@ -9,18 +9,18 @@ import { LoggerService } from "../logger/logger.service";
 import { CorrelationIdContext } from "./correlation-id.context";
 
 /**
- * Structured request/response logging interceptor (issue #767).
+ * Requests exceeding this duration (ms) are logged at WARN level with a
+ * SLOW_QUERY tag so they can be filtered in Grafana / CloudWatch.
  *
- * Captures per-request:
- *   - correlationId  (from CorrelationIdContext, set by CorrelationIdMiddleware)
- *   - actor          (publicKey from JWT)
- *   - role           (user role from JWT)
- *   - endpoint       (HTTP method + path)
- *   - statusCode / duration on completion
- *   - error details on failure
- *
- * Sampling is handled inside LoggerService (100% errors, 10% normals).
+ * Configurable via the SLOW_QUERY_THRESHOLD_MS environment variable.
+ * Default: 500 ms.  Set to 0 to warn on every request; omit / set very high
+ * to effectively disable slow-request detection.
  */
+const SLOW_QUERY_THRESHOLD_MS = parseInt(
+  process.env.SLOW_QUERY_THRESHOLD_MS ?? "500",
+  10,
+);
+
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   constructor(private readonly logger: LoggerService) {}
@@ -64,7 +64,22 @@ export class LoggingInterceptor implements NestInterceptor {
             duration,
           });
 
-          this.logger.log(`← ${method} ${path} ${statusCode}`, {
+          // Emit a structured warning for slow requests so they can be
+          // filtered independently from normal traffic in log aggregation.
+          if (duration >= SLOW_QUERY_THRESHOLD_MS) {
+            this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold`, {
+              correlationId,
+              user_id,
+              contract_id,
+              statusCode,
+              duration,
+              threshold_ms: SLOW_QUERY_THRESHOLD_MS,
+              event: "SLOW_QUERY",
+            });
+          }
+
+          // Log successful response with structured fields
+          this.logger.log(`${method} ${path} completed`, {
             correlationId,
             actor,
             role,
@@ -86,8 +101,23 @@ export class LoggingInterceptor implements NestInterceptor {
             duration,
           });
 
-          // Errors always captured (100% sampling)
-          this.logger.error(`✗ ${method} ${path} ${statusCode}`, err.stack, {
+          // Emit slow-request warning even on error paths — a timeout that
+          // eventually errors is still a slow request worth alerting on.
+          if (duration >= SLOW_QUERY_THRESHOLD_MS) {
+            this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold (error)`, {
+              correlationId,
+              user_id,
+              contract_id,
+              statusCode,
+              duration,
+              threshold_ms: SLOW_QUERY_THRESHOLD_MS,
+              event: "SLOW_QUERY",
+              error: err.message,
+            });
+          }
+
+          // Log error with structured fields
+          this.logger.error(`${method} ${path} failed`, err.stack, {
             correlationId,
             actor,
             role,

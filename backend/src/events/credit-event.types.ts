@@ -1,13 +1,21 @@
 /**
  * All event types that can mutate a CreditBatch's state.
- * Used as the `eventType` discriminant in the event log.
+ * Covers all 6 lifecycle transitions:
+ *  1. MINT     ('mint' / 'minted')
+ *  2. VERIFY   ('verify' / 'verified')
+ *  3. LIST     ('list' / 'listed')
+ *  4. DELIST   ('delist' / 'delisted')
+ *  5. PURCHASE ('purchase' / 'transfer')
+ *  6. RETIRE   ('retire' / 'retired')
  */
 export const CreditEventType = {
   MINT:     'mint',
-  TRANSFER: 'transfer',
-  RETIRE:   'retire',
+  VERIFY:   'verify',
   LIST:     'list',
   DELIST:   'delist',
+  PURCHASE: 'purchase',
+  TRANSFER: 'transfer',
+  RETIRE:   'retire',
 } as const;
 
 export type CreditEventType = (typeof CreditEventType)[keyof typeof CreditEventType];
@@ -37,4 +45,23 @@ export interface RecordEventInput {
   oldState?:     Record<string, unknown> | null;
   newState?:     Record<string, unknown> | null;
   txHash:        string;
+}
+
+/**
+ * Derived read-model projection shape for a CreditBatch.
+ */
+export interface CreditProjectionRecord {
+  id:              string;
+  creditBatchId:   string;
+  projectId:       string;
+  ownerPublicKey:  string;
+  status:          string;
+  amountAvailable: number;
+  amountRetired:   number;
+  pricePerCredit:  string | null;
+  txHash:          string | null;
+  lastEventType:   string;
+  version:         number;
+  updatedAt:       Date;
+  createdAt:       Date;
 }
