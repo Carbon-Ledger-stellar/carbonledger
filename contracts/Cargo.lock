@@ -18,6 +18,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 
 [[package]]
+name = "adversarial_tests"
+version = "0.1.0"
+dependencies = [
+ "carbon_credit",
+ "carbon_marketplace",
+ "carbon_oracle",
+ "carbon_registry",
+ "ed25519-dalek",
+ "soroban-sdk 21.7.7",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -37,6 +49,12 @@ checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "arbitrary"
@@ -279,6 +297,7 @@ dependencies = [
 name = "carbon_credit"
 version = "0.1.0"
 dependencies = [
+ "kani-verifier",
  "proptest",
  "soroban-sdk 21.7.7",
 ]
@@ -296,6 +315,7 @@ dependencies = [
 name = "carbon_oracle"
 version = "0.1.0"
 dependencies = [
+ "carbon_registry",
  "ed25519-dalek",
  "rand 0.9.4",
  "soroban-sdk 21.7.7",
@@ -869,6 +889,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "home"
+version = "0.5.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc627f471c528ff0c4a49e1d5e60450c8f6461dd6d10ba9dcd3a61d3dff7728d"
+dependencies = [
+ "windows-sys",
+]
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -979,6 +1008,16 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "sha2",
+]
+
+[[package]]
+name = "kani-verifier"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e51ddbe057f3e7ddc87861e9a26819f4b7dd4235c9a1833d59458ff973e411f"
+dependencies = [
+ "anyhow",
+ "home",
 ]
 
 [[package]]
@@ -2182,6 +2221,15 @@ name = "windows-strings"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
+dependencies = [
+ "windows-link",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.61.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
