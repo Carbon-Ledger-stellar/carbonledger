@@ -39,6 +39,7 @@ import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
 import { RedisModule } from "./redis.module";
 import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
+import { PortfolioModule } from "./portfolio/portfolio.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -161,6 +162,7 @@ class HealthController {
     IdempotencyModule,
     RetentionModule,
     ReconciliationModule,
+    PortfolioModule,
   ],
   controllers: [HealthController],
   providers: [
