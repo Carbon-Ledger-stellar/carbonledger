@@ -16,32 +16,39 @@ import { IsISO8601 } from "class-validator";
 
 export class RetireCreditsDto {
   @IsString()
-  @IsNotEmpty()
+  @Length(1, 64)
   batchId: string;
 
   @IsString()
-  @IsNotEmpty()
+  @Length(1, 64)
   projectId: string;
 
-  @IsNumber()
-  @IsPositive()
+  /**
+   * Credit amount in tCO₂e to retire.
+   * Must be ≥ 0.01 and ≤ 1,000,000,000 with at most 2 decimal places.
+   */
+  @IsCreditAmount()
   @Type(() => Number)
   amount: number;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100)
   beneficiary: string;
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(500)
   retirementReason: string;
 
-  @IsString()
-  @IsNotEmpty()
+  /** Stellar public key of the account retiring the credits. */
+  @IsStellarAddress()
   retiredBy: string;
 
+  /** Stellar transaction hash of the on-chain retirement. */
   @IsString()
   @IsNotEmpty()
+  @MaxLength(128)
   txHash: string;
 }
 
@@ -91,43 +98,54 @@ export class CsvBulkRetirementsDto {
 export class ExportRetirementsDto {
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   methodology?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   country?: string;
 
   @IsOptional()
   @IsInt()
+  @Min(1990)
+  @Type(() => Number)
   vintageYear?: number;
 
+  /** ISO 8601 date string for start of retirement date range. */
   @IsOptional()
   @IsISO8601()
   startDate?: string;
 
+  /** ISO 8601 date string for end of retirement date range. */
   @IsOptional()
   @IsISO8601()
   endDate?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   beneficiary?: string;
 
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Type(() => Number)
   minAmount?: number;
 
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Type(() => Number)
   maxAmount?: number;
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   projectId?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(64)
   batchId?: string;
 }

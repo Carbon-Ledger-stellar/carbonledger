@@ -72,6 +72,19 @@ export class MarketplaceService {
       throw new BadRequestException("minPrice must be less than or equal to maxPrice");
     }
 
+    // Decode opaque cursor — base64-encoded JSON { id: string }
+    let decodedCursorId: string | undefined;
+    if (cursor) {
+      try {
+        const raw = Buffer.from(cursor, 'base64').toString('utf8');
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.id !== 'string') throw new Error('missing id');
+        decodedCursorId = parsed.id;
+      } catch {
+        throw new BadRequestException('Invalid cursor');
+      }
+    }
+
     const where: any = {
       status: { in: ["Active", "PartiallyFilled"] },
       ...(methodology && { methodology }),
@@ -120,7 +133,7 @@ export class MarketplaceService {
 
     const orderBy = this.buildOrderBy(sortBy, sortOrder);
 
-    // Support both page-based and cursor-based pagination
+    // Page-based pagination (legacy)
     if (page !== undefined) {
       const skip = (page - 1) * normalizedLimit;
       const [listings, total_count] = await Promise.all([
@@ -137,20 +150,20 @@ export class MarketplaceService {
       return result;
     }
 
-    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
+    // Cursor-based pagination (issue #598)
     const [listings, total_count] = await Promise.all([
       this.prisma.marketListing.findMany({
         where: cursorWhere ? { ...where, ...cursorWhere } : where,
         include,
         orderBy,
-        take: normalizedLimit + 1,
+        take: limit + 1,
+        cursor: decodedCursorId ? { id: decodedCursorId } : undefined,
+        skip:   decodedCursorId ? 1 : 0,
       }),
       this.prisma.marketListing.count({ where }),
     ]);
 
-    const hasMore = listings.length > normalizedLimit;
-    const next_cursor = hasMore ? createOpaqueCursor(listings[normalizedLimit - 1].id, listings[normalizedLimit - 1].createdAt) : undefined;
-    const prev_cursor = decodedCursor && listings.length > 0 ? createOpaqueCursor(listings[0].id, listings[0].createdAt) : undefined;
+    const hasMore = listings.length > limit;
     if (hasMore) listings.pop();
 
     const result: PaginatedListingsResponse = {

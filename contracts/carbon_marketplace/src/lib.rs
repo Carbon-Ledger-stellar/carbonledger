@@ -127,6 +127,23 @@ pub struct CircuitBreakerEvent {
     pub tripped_at: u64,
 }
 
+/// Governance-controlled fee configuration stored on-chain.
+/// `numerator / denom` = fee rate. e.g. 1/100 = 1%.
+/// Invariant enforced by `set_fee_rate`: numerator <= denom / 10 (max 10%).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeConfig {
+    pub numerator:  i128,
+    pub denom:      i128,
+    pub updated_at: u64,
+    pub updated_by: Address,
+}
+
+/// Compile-time default fee constants (1%).
+/// Used as fallback when FeeConfig has not been set via governance.
+pub const DEFAULT_FEE_NUMERATOR: i128 = 1;
+pub const DEFAULT_FEE_DENOM:     i128 = 100;
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ListingCreatedEvent {
@@ -2056,6 +2073,74 @@ mod edge_case_tests {
             result.unwrap_err().unwrap(),
             CarbonError::AlreadyInitialized
         );
+    }
+
+    // ── Fee governance tests (issue #651) ─────────────────────────────────────
+
+    #[test]
+    fn test_default_fee_config_is_one_percent() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, DEFAULT_FEE_NUMERATOR);
+        assert_eq!(fee.denom, DEFAULT_FEE_DENOM);
+    }
+
+    #[test]
+    fn test_admin_can_set_fee_rate() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // Set fee to 2%
+        client.set_fee_rate(&admin, &2_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 2);
+        assert_eq!(fee.denom, 100);
+    }
+
+    #[test]
+    fn test_non_admin_cannot_set_fee_rate() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let rogue = Address::generate(&env);
+        let result = client.try_set_fee_rate(&rogue, &2_i128, &100_i128);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
+    }
+
+    #[test]
+    fn test_fee_above_ten_percent_rejected() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // 11% must be rejected
+        let result = client.try_set_fee_rate(&admin, &11_i128, &100_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_denom_fee_rejected() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        let result = client.try_set_fee_rate(&admin, &1_i128, &0_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_fee_rate_accepted() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // 0% fee is valid
+        client.set_fee_rate(&admin, &0_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 0);
+    }
+
+    #[test]
+    fn test_max_ten_percent_fee_accepted() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // Exactly 10% = 10/100 is valid (numerator == denom/10)
+        client.set_fee_rate(&admin, &10_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 10);
     }
 
     // ── InvalidSerialRange (bulk_purchase length mismatch) ────────────────────

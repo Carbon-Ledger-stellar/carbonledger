@@ -24,8 +24,8 @@ export class QueueService {
   async getJobStatus(jobId: string) {
     const job = await this.queue.getJob(jobId);
     if (!job) return null;
-    const state = await job.getState();
-    return { id: job.id, type: job.name, state, data: job.data, failedReason: job.failedReason };
+    const [state, progress] = await Promise.all([job.getState(), job.progress]);
+    return { id: job.id, type: job.name, state, progress, data: job.data, failedReason: job.failedReason };
   }
 
   async getQueueStats() {

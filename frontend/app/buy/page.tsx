@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useListing, purchaseCredits } from "../../lib/api";
@@ -12,6 +12,8 @@ import { connectFreighter, getPublicKey } from "../../lib/freighter";
 import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionPreview from "../../components/TransactionPreview";
+import { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
@@ -27,6 +29,7 @@ export default function BuyPage() {
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash]     = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
+  const [preview, setPreview] = useState<PreviewState>({ loading: false, ready: false, effects: [] });
   const { toasts, addToast, dismiss } = useToast();
   const { state: buyState, errorMsg: buyError, run: runBuy } = useBuyButton();
   const { status: walletStatus, address: walletKey, refresh: refreshWallet } = useWalletStatus();
@@ -144,6 +147,14 @@ export default function BuyPage() {
             </span>
           </label>
 
+          <TransactionPreview
+            title="Transaction preview"
+            description="This preview runs before you sign with your wallet so you can confirm the effects first."
+            preview={preview}
+            disabled={!preview.ready}
+            ctaLabel="Purchase"
+          />
+
           {/* Transaction status */}
           {txStatus && (
             <TransactionStatus
@@ -197,5 +208,13 @@ export default function BuyPage() {
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
     </ErrorBoundary>
+  );
+}
+
+export default function BuyPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: "2rem" }}>Loading purchase flow…</div>}>
+      <BuyPageContent />
+    </Suspense>
   );
 }

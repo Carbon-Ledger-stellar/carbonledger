@@ -9,6 +9,8 @@ import { connectFreighter } from "../../lib/freighter";
 import { getWalletErrorMessage, getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionPreview from "../../components/TransactionPreview";
+import { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
@@ -462,5 +464,13 @@ export default function RetirePage() {
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
     </ErrorBoundary>
+  );
+}
+
+export default function RetirePage() {
+  return (
+    <Suspense fallback={<div style={{ padding: "2rem" }}>Loading retirement flow…</div>}>
+      <RetirePageContent />
+    </Suspense>
   );
 }

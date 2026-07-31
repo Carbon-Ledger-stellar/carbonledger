@@ -1,3 +1,6 @@
+// Required for class-validator / class-transformer decorators
+import 'reflect-metadata';
+
 // Set required environment variables before any module is loaded
 process.env.DATABASE_URL = "postgresql://carbonledger:testpass@localhost:5433/carbonledger_test";
 process.env.JWT_SECRET = "dev-secret-change-in-production";

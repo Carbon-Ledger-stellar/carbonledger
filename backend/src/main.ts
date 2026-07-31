@@ -7,6 +7,7 @@ import { validateEnv } from './env.validation';
 import * as express from 'express';
 import { StellarNetworkService } from './common/stellar-network.service';
 import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
+import { ValidationExceptionFilter } from './common/validation-exception.filter';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -48,17 +49,39 @@ async function bootstrap() {
   app.use(express.json({ limit: bodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
 
-  app.setGlobalPrefix('api/v1');
-
-  // Header-based versioning: Accept-Version: 1
-  // All existing routes are VERSION_NEUTRAL (no @Version decorator needed).
+  // URI-based versioning: /api/v1/... and /api/v2/...
+  // - v1 controllers use @Controller('resource') with VERSION_NEUTRAL (global prefix api/v1)
+  // - v2 controllers use @Controller({ path: 'resource', version: '2' })
+  // The global prefix is set to 'api' and versioning adds /v{n}/ automatically.
+  app.setGlobalPrefix('api');
   app.enableVersioning({
-    type: VersioningType.HEADER,
-    header: 'Accept-Version',
+    type: VersioningType.URI,
+    defaultVersion: '1',   // Controllers without @Version() default to v1
+    prefix: 'v',
   });
 
-  // Fix mass assignment (API3): strip unknown fields globally
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  // Fix mass assignment (API3): strip unknown fields globally.
+  // exceptionFactory passes structured errors so ValidationExceptionFilter
+  // can map them to the CarbonLedger error catalog format.
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      exceptionFactory: (errors) => {
+        const { BadRequestException } = require('@nestjs/common');
+        return new BadRequestException({
+          message: errors
+            .map((e) => Object.values(e.constraints ?? {}).join(', '))
+            .filter(Boolean),
+          errors,
+        });
+      },
+    }),
+  );
+
+  // Maps class-validator errors to CarbonLedger validation error catalog format (400 + error codes).
+  app.useGlobalFilters(new ValidationExceptionFilter());
 
   // Fix API6: limit request body to 1 MB to prevent resource exhaustion
   app.use(require('express').json({ limit: '1mb' }));
