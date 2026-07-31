@@ -40,7 +40,6 @@ import { RedisModule } from "./redis.module";
 import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
 import { PortfolioModule } from "./portfolio/portfolio.module";
-import { PortfolioModule } from "./portfolio/portfolio.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";

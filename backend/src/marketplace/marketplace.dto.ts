@@ -59,6 +59,7 @@ export class ListingsQueryDto {
 export class PaginatedListingsResponse {
   listings: any[];
   next_cursor?: string;
+  prev_cursor?: string;
   total_count: number;
   page?: number;
   total_pages?: number;
