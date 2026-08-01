@@ -12,6 +12,8 @@ export const WEBHOOK_EVENTS = [
   'retirement.confirmed',
   'certificate.ready',
   'credit.purchased',
+  'monitoring.data_submitted',
+  'oracle.price_updated',
 ] as const;
 
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
@@ -57,6 +59,13 @@ export class WebhookDeliveryLogResponse {
 
 export class PaginatedDeliveryLogsResponse {
   logs: WebhookDeliveryLogResponse[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export class PaginatedAdminDeliveryLogsResponse {
+  logs: (WebhookDeliveryLogResponse & { subscriptionOwner: string | null })[];
   total: number;
   page: number;
   pageSize: number;
