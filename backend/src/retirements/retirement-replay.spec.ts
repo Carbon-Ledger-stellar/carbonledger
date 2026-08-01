@@ -25,6 +25,7 @@ import {
 } from "@nestjs/common";
 import { RetirementsService } from "./retirements.service";
 import { CertificateService } from "./certificate.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
 import { PrismaService } from "../prisma.service";
 import { IpfsService } from "../common/ipfs.service";
 import { IpfsUploadService } from "../uploads/ipfs-upload.service";
@@ -243,6 +244,7 @@ describe("CertificateService — on-chain verification before issuance (#568)", 
         CertificateService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: IpfsUploadService, useValue: ipfsUploadMock },
+        CertificateSigningService,
       ],
     }).compile();
 
@@ -310,6 +312,7 @@ describe("CertificateService — on-chain verification before issuance (#568)", 
           CertificateService,
           { provide: PrismaService, useValue: prismaMock },
           { provide: IpfsUploadService, useValue: ipfsUploadMock },
+          CertificateSigningService,
         ],
       }).compile();
 

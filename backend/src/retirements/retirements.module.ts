@@ -10,6 +10,7 @@ import { UploadsModule } from "../uploads/uploads.module";
 import { QueueModule } from "../queue/queue.module";
 import { WebhookModule } from "../webhook/webhook.module";
 import { CertificateService } from "./certificate.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
 import { ZkProofService } from "./zk-proof.service";
 import { PoliciesModule } from "../policies/policies.module";
 import { AbilityFactory } from "../policies/ability.factory";
@@ -30,6 +31,7 @@ import { AbilityFactory } from "../policies/ability.factory";
     IpfsService,
     RetirementIndexerService,
     CertificateService,
+    CertificateSigningService,
     ZkProofService,
     AbilityFactory,
   ],

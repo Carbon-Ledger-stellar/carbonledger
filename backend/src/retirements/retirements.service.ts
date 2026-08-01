@@ -12,6 +12,7 @@ import {
   RetireCreditsDto,
 } from "./retirements.dto";
 import { CertificateService } from "./certificate.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
 import { v4 as uuidv4 } from "uuid";
 import { createHash } from "crypto";
 import { QueueService } from "../queue/queue.service";
@@ -69,6 +70,7 @@ export class RetirementsService {
     private readonly ipfsService: IpfsService,
     private readonly certificateService: CertificateService,
     private readonly queueService: QueueService,
+    private readonly certificateSigning: CertificateSigningService,
     @Optional() private readonly eventSourcing?: EventSourcingService,
     @Optional() private readonly webhookService?: WebhookService,
   ) {}
@@ -477,6 +479,46 @@ export class RetirementsService {
         `Failed to verify certificate integrity: ${error.message}`
       );
     }
+  }
+
+  /**
+   * Verifies a certificate's Ed25519 `issuer_signature` (#594). Self-
+   * contained: needs only the certificate JSON and the published signing
+   * public key — no database lookup — mirroring how the standalone CLI
+   * tool (scripts/verify-certificate.js) verifies.
+   *
+   * Also flags a mismatch between the certificate's embedded
+   * `issuer_public_key` and the currently-published `CERTIFICATE_SIGNING_KEY`
+   * as `keyIsCurrent: false` (rather than failing verification outright) so
+   * certificates signed under a rotated-out key remain verifiable during
+   * the rotation transition window — see CERTIFICATE_SIGNING.md.
+   */
+  verifyCertificateSignature(certificate: Record<string, unknown>) {
+    const { issuer_signature, issuer_public_key, ...signedContent } = certificate ?? {};
+
+    if (typeof issuer_signature !== "string" || typeof issuer_public_key !== "string") {
+      return {
+        valid: false,
+        message: "Certificate is missing issuer_signature or issuer_public_key",
+      };
+    }
+
+    const valid = CertificateSigningService.verify(signedContent, issuer_signature, issuer_public_key);
+
+    const publishedKey = process.env.CERTIFICATE_SIGNING_KEY;
+    const previousPublishedKey = process.env.CERTIFICATE_SIGNING_KEY_PREVIOUS;
+    const keyIsCurrent = publishedKey ? issuer_public_key === publishedKey : undefined;
+    const keyIsKnownPrevious = previousPublishedKey ? issuer_public_key === previousPublishedKey : false;
+
+    return {
+      valid,
+      issuerPublicKey: issuer_public_key,
+      keyIsCurrent,
+      keyIsKnownPrevious,
+      message: valid
+        ? "Certificate signature is valid"
+        : "Certificate signature is invalid — content may have been tampered with",
+    };
   }
 
   async generatePdf(retirementId: string): Promise<Buffer> {

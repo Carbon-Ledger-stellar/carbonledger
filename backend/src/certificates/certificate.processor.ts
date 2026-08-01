@@ -5,6 +5,7 @@ import { CertificateService } from './certificate.service';
 import { PinataService } from './pinata.service';
 import { NotificationService } from './notification.service';
 import { WebhookService } from '../webhook/webhook.service';
+import { CertificateSigningService } from '../common/certificate-signing.service';
 
 @Injectable()
 export class CertificateProcessor {
@@ -13,6 +14,7 @@ export class CertificateProcessor {
     private readonly certificateService: CertificateService,
     private readonly pinataService: PinataService,
     private readonly notificationService: NotificationService,
+    private readonly certificateSigning: CertificateSigningService,
     @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
@@ -115,7 +117,7 @@ export class CertificateProcessor {
         },
       });
 
-      // Create RetirementCertificate record with IPFS CID
+      // Create RetirementCertificate record with IPFS CID and signature
       await this.prisma.retirementCertificate.create({
         data: {
           retirementId: retirement.id,
@@ -126,6 +128,9 @@ export class CertificateProcessor {
           txHash: retirement.txHash,
           ipfsCid: cid,
           publicUrl: url,
+          contentHash,
+          issuerSignature: signature,
+          issuerPublicKey: publicKey,
         },
       });
 
