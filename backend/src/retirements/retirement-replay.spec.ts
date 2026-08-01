@@ -120,7 +120,6 @@ describe("RetirementsService — replay attack protection (#568)", () => {
         { provide: IpfsService, useValue: buildIpfsMock() },
         { provide: CertificateService, useValue: certificateServiceMock },
         { provide: QueueService, useValue: buildQueueMock() },
-        CertificateSigningService,
       ],
     }).compile();
 

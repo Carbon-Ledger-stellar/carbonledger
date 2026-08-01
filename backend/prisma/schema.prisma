@@ -87,6 +87,14 @@ model RetirementRecord {
   txHash           String
   certificateCid           String?
   certificateUrl           String?
+  /// CID of the pinned JSON certificate *content* (distinct from
+  /// certificateCid, which is the pinned PDF's CID) — the retirement PDF
+  /// embeds this CID as a self-referential link (#600).
+  certificateContentCid    String?
+  /// Hex-encoded SHA-256 of the pinned certificate content, computed at
+  /// generation time. Used by GET /certificates/:cid/verify to detect
+  /// tampering: content re-fetched from IPFS must hash to this value.
+  certificateContentHash   String?
   certificateStatus        String    @default("pending_certificate")
   certificateRetries       Int       @default(0)
   certificateFailedAt      DateTime?
@@ -106,6 +114,8 @@ model RetirementRecord {
   // Supports scoped list queries: WHERE retiredBy = $1 ORDER BY retiredAt DESC
   @@index([retiredBy, retiredAt])
   @@index([legacyStatus])
+  // Supports GET /certificates/:cid/verify lookups (#600)
+  @@index([certificateContentCid])
 }
 
 model ZkRetirementProof {

@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { QUEUE_NAME, JobType } from './queue.constants';
 import { PrismaService } from '../prisma.service';
 import { CertificateService } from '../retirements/certificate.service';
+import { CertificateProcessor } from '../certificates/certificate.processor';
 import { RetirementsService } from '../retirements/retirements.service';
 
 @Processor(QUEUE_NAME)
@@ -13,6 +14,7 @@ export class QueueProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly certificateService: CertificateService,
+    private readonly certificateProcessor: CertificateProcessor,
     @Inject(forwardRef(() => RetirementsService))
     private readonly retirementsService: RetirementsService,
   ) {

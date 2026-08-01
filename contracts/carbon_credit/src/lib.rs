@@ -115,6 +115,10 @@ pub struct CreditRetiredEvent {
     pub retired_by: Address,
     pub beneficiary: String,
     pub timestamp: u64,
+    /// IPFS CID of the pinned retirement certificate (#600). Lets indexers
+    /// and off-chain verifiers resolve the certificate directly from the
+    /// on-chain event without a separate backend lookup.
+    pub certificate_cid: String,
 }
 
 #[contracttype]
@@ -820,6 +824,7 @@ impl CarbonCreditContract {
                 retired_by: holder.clone(),
                 beneficiary: beneficiary.clone(),
                 timestamp: now,
+                certificate_cid: cert_cid.clone(),
             },
         );
         Ok(cert)
