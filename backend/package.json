@@ -21,11 +21,13 @@
     "test:db:reset": "dotenv -e .env.test -- prisma migrate reset --force",
     "test:throttle": "jest src/throttle --passWithNoTests",
     "pretest:e2e": "npm run test:db:up && npm run test:db:migrate",
-    "export:openapi": "npx ts-node --transpile-only src/export-openapi.ts"
+    "export:openapi": "npx ts-node --transpile-only src/export-openapi.ts",
+    "verify:certificate": "node scripts/verify-certificate.js"
   },
   "dependencies": {
-    "@casl/ability": "^6.7.3",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1101.0",
     "@aws-sdk/client-secrets-manager": "^3.1096.0",
+    "@casl/ability": "^6.7.3",
     "@nest-lab/throttler-storage-redis": "1.2.0",
     "@nestjs/apollo": "^12.2.2",
     "@nestjs/bullmq": "^11.0.4",

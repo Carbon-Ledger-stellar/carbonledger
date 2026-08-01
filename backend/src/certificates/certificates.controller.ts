@@ -44,6 +44,34 @@ export class CertificatesController {
       ? `https://stellar.expert/explorer/${stellarNetwork}/tx/${retirement.txHash}`
       : null;
 
+    // Most recent signed certificate record for this retirement (#594).
+    const signedCert = await this.prisma.retirementCertificate.findFirst({
+      where: { retirementId: retirement.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Reconstructs exactly the object CertificateSigningService signed
+    // (certificates/certificate.processor.ts) — save this as JSON and run
+    // `node backend/scripts/verify-certificate.js <file> Stellar.toml` to
+    // verify the signature offline, trusting only Stellar.toml.
+    const signedCertificate =
+      signedCert?.issuerSignature && signedCert.issuerPublicKey
+        ? {
+            retirement_id: retirement.retirementId,
+            project_id: retirement.projectId,
+            beneficiary: retirement.beneficiary,
+            amount: retirement.amount.toString(),
+            retirement_reason: retirement.retirementReason,
+            retired_at: Math.floor(retirement.retiredAt.getTime() / 1000),
+            serial_start: retirement.serialStart,
+            serial_end: retirement.serialEnd,
+            vintage_year: retirement.vintageYear,
+            tx_hash: retirement.txHash,
+            issuer_signature: signedCert.issuerSignature,
+            issuer_public_key: signedCert.issuerPublicKey,
+          }
+        : null;
+
     return {
       retirementId: retirement.retirementId,
       amount: retirement.amount.toString(),
@@ -68,6 +96,10 @@ export class CertificatesController {
       ipfsUrl: retirement.certificateCid
         ? this.pinataService.getPublicUrl(retirement.certificateCid)
         : null,
+      contentHash: signedCert?.contentHash ?? null,
+      issuerSignature: signedCert?.issuerSignature ?? null,
+      issuerPublicKey: signedCert?.issuerPublicKey ?? null,
+      signedCertificate,
       project: {
         name: retirement.project.name,
         country: retirement.project.country,

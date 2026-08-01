@@ -39,6 +39,15 @@ class VerifyCertificateDto {
   @IsString() content: string;
 }
 
+class VerifyCertificateSignatureDto {
+  /**
+   * The full certificate JSON as issued (including `issuer_signature` and
+   * `issuer_public_key`). Verification is self-contained — no database
+   * lookup is required, matching how the standalone CLI tool verifies.
+   */
+  certificate: Record<string, unknown>;
+}
+
 @Controller('retirements')
 export class RetirementsController {
   constructor(
@@ -237,6 +246,20 @@ export class RetirementsController {
   @HttpCode(200)
   verifyCertificateIntegrity(@Body() dto: VerifyCertificateDto) {
     return this.retirementsService.verifyCertificateIntegrity(dto.retirementId, dto.content);
+  }
+
+  /**
+   * POST /retirements/verify-signature
+   *
+   * Verifies a certificate's Ed25519 issuer signature using only the
+   * signing public key from Stellar.toml (#594). Public — third parties
+   * (regulators, ESG auditors) must be able to verify without auth.
+   */
+  @Post('verify-signature')
+  @Public()
+  @HttpCode(200)
+  verifyCertificateSignature(@Body() dto: VerifyCertificateSignatureDto) {
+    return this.retirementsService.verifyCertificateSignature(dto.certificate);
   }
 
   /**

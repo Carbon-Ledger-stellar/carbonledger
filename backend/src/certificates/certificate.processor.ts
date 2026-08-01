@@ -4,6 +4,7 @@ import { CertificateService } from './certificate.service';
 import { PinataService } from './pinata.service';
 import { NotificationService } from './notification.service';
 import { WebhookService } from '../webhook/webhook.service';
+import { CertificateSigningService } from '../common/certificate-signing.service';
 
 @Injectable()
 export class CertificateProcessor {
@@ -12,6 +13,7 @@ export class CertificateProcessor {
     private readonly certificateService: CertificateService,
     private readonly pinataService: PinataService,
     private readonly notificationService: NotificationService,
+    private readonly certificateSigning: CertificateSigningService,
     @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
@@ -38,6 +40,24 @@ export class CertificateProcessor {
         data: { certificateStatus: 'generating' },
       });
 
+      // Ed25519-sign the certificate's substantive fields (#594) so a
+      // regulator or ESG auditor can verify authenticity using only the
+      // public key published in Stellar.toml. Field set mirrors the
+      // JSON-LD certificate (retirements/certificate.service.ts) so both
+      // documents describe (and sign) the same content.
+      const { signature, publicKey, contentHash } = this.certificateSigning.sign({
+        retirement_id: retirement.retirementId,
+        project_id: retirement.projectId,
+        beneficiary: retirement.beneficiary,
+        amount: retirement.amount.toString(),
+        retirement_reason: retirement.retirementReason,
+        retired_at: Math.floor(retirement.retiredAt.getTime() / 1000),
+        serial_start: retirement.serialStart,
+        serial_end: retirement.serialEnd,
+        vintage_year: retirement.vintageYear,
+        tx_hash: retirement.txHash,
+      });
+
       // Generate PDF
       this.logger.log(`Generating PDF for ${retirementId}...`);
       const pdfBuffer = await this.certificateService.generatePdf({
@@ -52,6 +72,9 @@ export class CertificateProcessor {
         serialEnd: retirement.serialEnd,
         vintageYear: retirement.vintageYear,
         txHash: retirement.txHash,
+        issuerSignature: signature,
+        issuerPublicKey: publicKey,
+        contentHash,
       });
 
       // Upload to IPFS
@@ -77,7 +100,7 @@ export class CertificateProcessor {
         },
       });
 
-      // Create RetirementCertificate record with IPFS CID
+      // Create RetirementCertificate record with IPFS CID and signature
       await this.prisma.retirementCertificate.create({
         data: {
           retirementId: retirement.id,
@@ -88,6 +111,9 @@ export class CertificateProcessor {
           txHash: retirement.txHash,
           ipfsCid: cid,
           publicUrl: url,
+          contentHash,
+          issuerSignature: signature,
+          issuerPublicKey: publicKey,
         },
       });
 

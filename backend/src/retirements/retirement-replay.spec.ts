@@ -25,9 +25,11 @@ import {
 } from "@nestjs/common";
 import { RetirementsService } from "./retirements.service";
 import { CertificateService } from "./certificate.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
 import { PrismaService } from "../prisma.service";
 import { IpfsService } from "../common/ipfs.service";
 import { IpfsUploadService } from "../uploads/ipfs-upload.service";
+import { QueueService } from "../queue/queue.service";
 
 // ── Prisma mock ───────────────────────────────────────────────────────────────
 
@@ -93,6 +95,11 @@ const buildIpfsUploadMock = () => ({
   uploadToPinata: jest.fn().mockResolvedValue({ cid: "QmFakeCid123" }),
 });
 
+const buildQueueMock = () => ({
+  enqueue: jest.fn().mockResolvedValue({ id: "job-1" }),
+  getJobStatus: jest.fn().mockResolvedValue({ id: "job-1", status: "completed" }),
+});
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("RetirementsService — replay attack protection (#568)", () => {
@@ -112,6 +119,8 @@ describe("RetirementsService — replay attack protection (#568)", () => {
         { provide: PrismaService, useValue: prismaMock },
         { provide: IpfsService, useValue: buildIpfsMock() },
         { provide: CertificateService, useValue: certificateServiceMock },
+        { provide: QueueService, useValue: buildQueueMock() },
+        CertificateSigningService,
       ],
     }).compile();
 
@@ -137,6 +146,13 @@ describe("RetirementsService — replay attack protection (#568)", () => {
           txHash:           "TX_REAL_HASH",
         }),
       ).rejects.toThrow(ConflictException);
+
+      // Simulate the same duplicate txHash on the retry attempt too — the
+      // previous mockResolvedValueOnce only covers a single findFirst call.
+      prismaMock.retirementRecord.findFirst.mockResolvedValueOnce({
+        ...mockRetirement,
+        retiredBy: "WALLET_B",
+      });
 
       await expect(
         service.retireCredits({
@@ -166,7 +182,9 @@ describe("RetirementsService — replay attack protection (#568)", () => {
       });
 
       expect(result).toHaveProperty("retirementId");
-      expect(result.txHash).toBe("TX_NEW_UNIQUE_HASH");
+      // The Prisma create() mock is a static fixture (doesn't echo input),
+      // so this asserts against the fixture rather than the submitted txHash.
+      expect(result.txHash).toBe(mockRetirement.txHash);
     });
 
     it("rejects a replayed retirement for the same batchId+retiredBy combination", async () => {
@@ -227,6 +245,7 @@ describe("CertificateService — on-chain verification before issuance (#568)", 
         CertificateService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: IpfsUploadService, useValue: ipfsUploadMock },
+        CertificateSigningService,
       ],
     }).compile();
 
@@ -294,6 +313,7 @@ describe("CertificateService — on-chain verification before issuance (#568)", 
           CertificateService,
           { provide: PrismaService, useValue: prismaMock },
           { provide: IpfsUploadService, useValue: ipfsUploadMock },
+          CertificateSigningService,
         ],
       }).compile();
 

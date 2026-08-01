@@ -138,6 +138,14 @@ model RetirementCertificate {
   publicUrl   String?
   createdAt   DateTime @default(now())
 
+  /// Hex-encoded SHA-256 of the canonicalized, signed certificate content (#594).
+  contentHash     String?
+  /// Hex-encoded Ed25519 signature over contentHash.
+  issuerSignature String?
+  /// Stellar (G...) public key the signature verifies against — must match
+  /// Stellar.toml's CERTIFICATE_SIGNING_KEY (or _PREVIOUS during rotation).
+  issuerPublicKey String?
+
   retirement RetirementRecord @relation(fields: [retirementId], references: [id], onDelete: Cascade)
 
   @@index([retirementId])

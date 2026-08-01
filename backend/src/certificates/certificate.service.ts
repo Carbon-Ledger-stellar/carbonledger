@@ -15,6 +15,10 @@ interface CertificateData {
   serialEnd: string;
   vintageYear: number;
   txHash: string;
+  /** Ed25519 issuer signature over this certificate's content hash (#594). */
+  issuerSignature?: string;
+  issuerPublicKey?: string;
+  contentHash?: string;
 }
 
 @Injectable()
@@ -258,6 +262,41 @@ export class CertificateService {
         290,
         { width: 120, align: 'center' }
       );
+
+    // Digital signature block (#594) — lets a regulator or ESG auditor
+    // verify this certificate offline against Stellar.toml's
+    // CERTIFICATE_SIGNING_KEY, without trusting CarbonLedger's backend.
+    if (data.issuerSignature && data.issuerPublicKey) {
+      doc
+        .fontSize(11)
+        .font('Helvetica-Bold')
+        .fillColor('#000000')
+        .text('Issuer Signature (Ed25519):', 60, 640);
+      doc
+        .fontSize(7)
+        .font('Courier')
+        .fillColor('#333333')
+        .text(data.issuerSignature, 60, 658, { width: pageWidth - 120 });
+      doc
+        .fontSize(8)
+        .font('Helvetica-Bold')
+        .fillColor('#000000')
+        .text('Signed by:', 60, 684, { continued: true })
+        .font('Courier')
+        .fillColor('#333333')
+        .text(` ${data.issuerPublicKey}`);
+      doc
+        .fontSize(8)
+        .font('Helvetica')
+        .fillColor('#666666')
+        .text(
+          `Verify offline: GET /certificates/${data.retirementId} for the signedCertificate JSON, then ` +
+            'node backend/scripts/verify-certificate.js <file> Stellar.toml',
+          60,
+          700,
+          { width: pageWidth - 120 },
+        );
+    }
 
     // Footer
     doc
