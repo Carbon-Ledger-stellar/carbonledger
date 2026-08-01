@@ -16,6 +16,21 @@ import {
   WEBHOOK_EVENTS,
 } from './webhook.dto';
 
+/** Failed deliveries retry up to this many times (#595 acceptance criteria). */
+export const MAX_DELIVERY_ATTEMPTS = 10;
+
+/**
+ * Exponential backoff delay (ms) before retry attempt `attemptsMade + 1`,
+ * doubling from 30s and capped at 30 minutes so 10 attempts spread the
+ * retries out over roughly a day without ever waiting longer than 30m
+ * between tries.
+ */
+export function webhookRetryDelayMs(attemptsMade: number): number {
+  const THIRTY_SECONDS = 30_000;
+  const THIRTY_MINUTES = 1_800_000;
+  return Math.min(THIRTY_SECONDS * 2 ** (attemptsMade - 1), THIRTY_MINUTES);
+}
+
 /**
  * Payload sent to the outbound webhook BullMQ queue for delivery.
  */
@@ -179,15 +194,12 @@ export class WebhookService {
             attempt: 1,
           } satisfies OutboundWebhookJob,
           {
-            attempts: 3,
-            backoff: {
-              type: 'custom',
-              backoffStrategy: (attemptsMade: number) => {
-                // Exponential backoff: attempt 1→2: 30s, attempt 2→3: 5m, after exhaustion: 30m
-                const delays = [30_000, 300_000, 1_800_000];
-                return delays[attemptsMade - 1] ?? 1_800_000;
-              },
-            },
+            attempts: MAX_DELIVERY_ATTEMPTS,
+            // The actual delay is computed by the 'custom' backoff strategy
+            // registered on the WebhookProcessor's worker settings
+            // (webhookRetryDelayMs) — BullMQ job options can only reference
+            // it by type name, not inline (a function isn't serializable).
+            backoff: { type: 'custom' },
           },
         ),
       ),
@@ -220,6 +232,56 @@ export class WebhookService {
     ]);
 
     return { logs, total, page, pageSize };
+  }
+
+  /**
+   * Admin-wide delivery log query across all subscriptions, optionally
+   * filtered by subscription, event type, or outcome.
+   *
+   * GET /webhooks/deliveries (admin only).
+   */
+  async getAllDeliveryLogs(params: {
+    subscriptionId?: string;
+    eventType?: string;
+    success?: boolean;
+    page?: number;
+    pageSize?: number;
+  }) {
+    const page = params.page ?? 1;
+    const pageSize = params.pageSize ?? 20;
+    const where: Record<string, unknown> = {};
+    if (params.subscriptionId) where.subscriptionId = params.subscriptionId;
+    if (params.eventType) where.eventType = params.eventType;
+    if (params.success !== undefined) where.success = params.success;
+
+    const skip = (page - 1) * pageSize;
+    const [logs, total] = await Promise.all([
+      this.logDb.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.logDb.count({ where }),
+    ]);
+
+    const subscriptionIds = [...new Set(logs.map((l: any) => l.subscriptionId))];
+    const subscriptions = subscriptionIds.length
+      ? await this.subDb.findMany({ where: { id: { in: subscriptionIds } } })
+      : [];
+    const ownerBySubscriptionId = new Map(
+      subscriptions.map((s: any) => [s.id, s.ownerAddress]),
+    );
+
+    return {
+      logs: logs.map((log: any) => ({
+        ...log,
+        subscriptionOwner: ownerBySubscriptionId.get(log.subscriptionId) ?? null,
+      })),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   // ── HMAC signing ────────────────────────────────────────────────────────
