@@ -29,6 +29,7 @@ export default function ThemeToggle() {
 
   return (
     <button
+      aria-label={getLabel()}
       onClick={toggleTheme}
       title={getLabel()}
       style={{
