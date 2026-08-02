@@ -68,6 +68,7 @@ from log import get_logger  # noqa: E402 — must come after load_dotenv
 log = get_logger("satellite_monitor")
 from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenError  # noqa: E402
 from utils.safe_parse import safe_float, safe_int  # noqa: E402
+from consensus_engine import ConsensusEngine, Observation, _detect_conflicts  # noqa: E402
 
 app = Flask(__name__)
 
@@ -105,6 +106,9 @@ IPFS_RETRY_BASE_DELAY = float(os.environ.get("IPFS_RETRY_BASE_DELAY", "1.0"))  #
 
 # Circuit breaker for Soroban RPC calls (Feature #586)
 _rpc_circuit = get_circuit_breaker("satellite_monitor_rpc")
+
+# Consensus engine: N-of-M quorum for satellite providers
+_consensus = ConsensusEngine()
 
 # How long provider HMAC keys stay cached in-process before re-fetching from DB.
 _CACHE_TTL_SECONDS = 60
@@ -713,6 +717,29 @@ def satellite_webhook():
             log.error("Failed to flag project %s: %s", project_id, e)
 
         return jsonify({"status": "flagged", "reason": "satellite_contradiction"}), 200
+
+    # ── Consensus check before on-chain submission ──────────────────────────
+    _consensus.register_observation(Observation(
+        provider=provider_id_header or "unknown",
+        project_id=project_id,
+        period=period,
+        tonnes_verified=float(tonnes),
+        methodology_score=score,
+        satellite_cid=satellite_cid,
+        coordinates=coordinates,
+        available=True,
+    ))
+    consensus_result = _consensus.evaluate(project_id, period)
+    if not consensus_result.quorum_met:
+        log.warning(
+            "Consensus check failed for %s/%s: %s",
+            project_id, period, consensus_result.detail,
+        )
+        return jsonify({
+            "status": "quorum_not_met",
+            "detail": consensus_result.detail,
+            "conflicting_providers": consensus_result.conflicting_providers,
+        }), 422
 
     # Submit valid monitoring evidence to the oracle contract.
     keypair = Keypair.from_secret(ORACLE_SECRET_KEY)
