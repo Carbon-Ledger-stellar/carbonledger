@@ -1,23 +1,30 @@
-name: E2E Oracle Tests (Nightly)
+name: E2E Oracle Tests & Load Tests (Nightly)
 
 on:
   schedule:
     # Run nightly at 2 AM UTC (10 PM EST)
     - cron: "0 2 * * *"
-  # Allow manual trigger for debugging
   workflow_dispatch:
     inputs:
       debug_enabled:
         description: "Enable debug logging"
         required: false
         default: "false"
+      skip_load_tests:
+        description: "Skip k6 load tests (run oracle tests only)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: e2e-nightly
+  cancel-in-progress: false
 
 jobs:
+  # ── E2E Oracle → Soroban Integration Tests ────────────────────────────────────
   e2e-oracle-soroban:
     name: E2E Oracle → Soroban Integration Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     environment:
       name: soroban-testnet
 
@@ -41,60 +48,141 @@ jobs:
           echo "E2E Oracle → Soroban Integration Test"
           echo "======================================="
           echo "Network: Stellar Testnet"
-          echo "Test Project ID: e2e-test-proj-\${{ github.run_id }}"
+          echo "Test Project ID: e2e-test-proj-${{ github.run_id }}"
           echo "Timestamp: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
 
       - name: Run E2E tests against Testnet
         working-directory: oracle
         env:
-          # Soroban RPC and network configuration
           STELLAR_RPC_URL: https://soroban-testnet.stellar.org
           NETWORK_PASSPHRASE: Test SDF Network ; September 2015
-
-          # Contract addresses (must be deployed on Testnet)
           ORACLE_CONTRACT_ID: ${{ secrets.ORACLE_CONTRACT_ID }}
           REGISTRY_CONTRACT_ID: ${{ secrets.REGISTRY_CONTRACT_ID }}
-
-          # Oracle and test accounts (Testnet keypairs)
           ORACLE_SECRET_KEY: ${{ secrets.TESTNET_ORACLE_SECRET_KEY }}
           ADMIN_SECRET_KEY: ${{ secrets.TESTNET_ADMIN_SECRET_KEY }}
           VERIFIER_SECRET_KEY: ${{ secrets.TESTNET_VERIFIER_SECRET_KEY }}
-
-          # Debug flag
           DEBUG: ${{ github.event.inputs.debug_enabled }}
-        run: |
-          python3 test_oracle_e2e.py
-        continue-on-error: false
-
-      - name: Test passed notification
-        if: success()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const payload = {
-              text: `✅ E2E Oracle Tests PASSED\n\nRun: ${context.runId}\nBranch: ${context.ref}`,
-              mrkdwn: true
-            };
-            console.log('Test passed');
-
-      - name: Test failed notification
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const payload = {
-              text: `❌ E2E Oracle Tests FAILED\n\nRun: ${context.runId}\nBranch: ${context.ref}\n\nCheck logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
-            };
-            console.log('Test failed');
+        run: python3 test_oracle_e2e.py
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-logs
-          path: oracle/test_oracle_e2e.py
+          name: e2e-oracle-logs-${{ github.run_id }}
+          path: oracle/
           retention-days: 7
 
-concurrency:
-  group: e2e-oracle-tests
-  cancel-in-progress: false
+  # ── k6 Load Tests Against Staging ─────────────────────────────────────────────
+  # Three scenarios:
+  #   marketplace_browse     — 500 VUs × 5 min, paginated listing browse
+  #   purchase_stress        — 50 VUs × 5 min, full purchase flow
+  #   bulk_retirement_spike  — 10 VUs × 5 iters × 10-item bulk retirements
+  #
+  # Thresholds: p99 < 2000ms, error_rate < 1% for all scenarios.
+  # Pre-requisite: scripts/seed-loadtest.sh populates 1000 active listings.
+  k6-load-tests:
+    name: k6 Load Tests — marketplace (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event.inputs.skip_load_tests != 'true'
+    environment:
+      name: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update -qq
+          sudo apt-get install -y k6 jq curl
+
+      - name: Verify k6 installation
+        run: k6 version
+
+      - name: Seed load test data (1000 listings)
+        env:
+          BASE_URL:       ${{ vars.STAGING_API_URL || 'https://staging.carbonledger.io' }}
+          ADMIN_EMAIL:    ${{ secrets.STAGING_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+          LISTING_COUNT:  "1000"
+          CLEAN_FIRST:    "true"
+        run: |
+          chmod +x scripts/seed-loadtest.sh
+          ./scripts/seed-loadtest.sh
+        # Non-fatal: k6 falls back to generated listing IDs if seed fails
+        continue-on-error: true
+
+      - name: Obtain staging JWT
+        id: get_jwt
+        env:
+          BASE_URL:       ${{ vars.STAGING_API_URL || 'https://staging.carbonledger.io' }}
+          ADMIN_EMAIL:    ${{ secrets.STAGING_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+        run: |
+          JWT=$(curl -sf -X POST "${BASE_URL}/api/v1/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}" \
+            | jq -r '.access_token // .token // empty' 2>/dev/null) || JWT=""
+          echo "jwt=${JWT}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Run k6 — all three scenarios
+        env:
+          BASE_URL: ${{ vars.STAGING_API_URL || 'https://staging.carbonledger.io' }}
+          K6_JWT:   ${{ steps.get_jwt.outputs.jwt }}
+        run: |
+          mkdir -p load-tests/results
+          k6 run \
+            -e BASE_URL="${BASE_URL}" \
+            -e JWT="${K6_JWT}" \
+            --out json=load-tests/results/nightly-$(date +%Y%m%d-%H%M%S).json \
+            load-tests/marketplace.k6.js \
+            2>&1 | tee /tmp/k6-output.txt
+
+      - name: Print threshold summary
+        if: always()
+        run: |
+          if [ -f /tmp/k6-output.txt ]; then
+            echo "=== k6 Threshold Summary ==="
+            grep -E "(✓|✗|p\(99\)|error)" /tmp/k6-output.txt | head -20 || true
+          fi
+
+      - name: Upload k6 results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results-${{ github.run_id }}
+          path: |
+            load-tests/results/
+            /tmp/k6-output.txt
+          retention-days: 30
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "### k6 Load Test Results — $(date -u +%Y-%m-%d)"
+            echo ""
+            echo "| Scenario | Threshold |"
+            echo "|----------|-----------|"
+            echo "| \`marketplace_browse\` (500 VUs) | p99 browse_duration < 2000ms, error_rate < 1% |"
+            echo "| \`purchase_stress\` (50 VUs) | p99 purchase_duration < 2000ms, error_rate < 1% |"
+            echo "| \`bulk_retirement_spike\` (10 VUs) | p99 retirement_duration < 2000ms, error_rate < 1% |"
+            echo ""
+            echo "Full results: [k6-results-${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail loudly on threshold breach
+        if: failure()
+        run: |
+          echo "::error::k6 thresholds breached — p99 > 2000ms or error_rate > 1%"
+          echo "::error::See artifact k6-results-${{ github.run_id }} for the full JSON output"
+          exit 1

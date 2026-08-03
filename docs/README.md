@@ -32,6 +32,7 @@ Understanding the system:
 |----------|-------------|----------|
 | **[Architecture Decision Records](adr/)** | Why we made key technical decisions | Developers |
 | **[Deployment Guide](deployment.md)** | Production deployment instructions | DevOps |
+| **[Full Stack Deployment Guide](FULL_STACK_DEPLOYMENT.md)** | Phase 4 Testnet & Mainnet VPS/Systemd deployment | DevOps |
 | **[TTL Cost Analysis](ttl-cost.md)** | Soroban storage cost analysis | Developers |
 | **[Verifier Onboarding](verifier-onboarding.md)** | Guide for carbon verifiers | Verifiers |
 
@@ -47,7 +48,7 @@ Technical references:
 
 | Document | Description | Audience |
 |----------|-------------|----------|
-| **[Projects API](../backend/docs/PROJECTS_API.md)** | Backend API endpoints | Frontend devs |
+| **[Backend API Reference](../backend/docs/API_REFERENCE.md)** | Backend API endpoints and auth flow | Frontend devs, integrators |
 | **[Error Code Reference](error-codes.md)** | All 23 contract error codes with causes, resolutions, and frontend mapping | Frontend devs, integrators |
 
 ---

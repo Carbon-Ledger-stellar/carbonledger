@@ -1,0 +1,34 @@
+{
+  "name": "carbonledger-indexer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Express indexer API for CarbonLedger with tiered rate limiting and SSE",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "migrate:check": "ts-node src/migrations/migration-safety.ts",
+    "migrate:rollback": "ts-node src/migrations/rollback.ts"
+  },
+  "dependencies": {
+    "express": "4.18.2",
+    "express-rate-limit": "7.1.5",
+    "rate-limit-redis": "4.2.0",
+    "ioredis": "5.3.2",
+    "prom-client": "15.1.0",
+    "uuid": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "4.17.21",
+    "@types/node": "20.11.5",
+    "@types/uuid": "9.0.7",
+    "@vitest/coverage-v8": "1.2.1",
+    "ts-node": "10.9.2",
+    "typescript": "5.3.3",
+    "vitest": "1.2.1"
+  }
+}

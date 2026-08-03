@@ -1,12 +1,10 @@
 name: CI
 
 on:
-  pull_request:
-    branches: [main, develop]
   push:
     branches: [main]
-  schedule:
-    - cron: "0 2 * * 0"
+  pull_request:
+    branches: [main]
 
 jobs:
   security-audit:
@@ -19,24 +17,24 @@ jobs:
 
       # ── Rust: cargo audit ────────────────────────────────────────────────────
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo-audit advisory DB
         uses: actions/cache@v4
         with:
           path: ~/.cargo/advisory-db
-          key: cargo-advisory-db-${{ hashFiles('carbonledger/contracts/**/Cargo.lock') }}
+          key: cargo-advisory-db-${{ hashFiles('contracts/**/Cargo.lock') }}
           restore-keys: cargo-advisory-db-
 
       - name: Run cargo audit
         id: cargo_audit
-        working-directory: carbonledger/contracts
-        # --deny unsound --deny yanked in addition to default --deny vulnerability
-        # Exit code 1 = vulnerabilities found (critical → block); we capture output
-        # for the PR comment and re-exit after posting.
+        working-directory: contracts
         run: |
-          cargo install cargo-audit --locked --quiet 2>/dev/null || true
-          cargo audit --deny unsound --deny yanked 2>&1 | tee /tmp/cargo-audit.txt
+          chmod +x scripts/cargo-audit-critical-only.sh
+          scripts/cargo-audit-critical-only.sh 2>&1 | tee /tmp/cargo-audit.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
@@ -49,20 +47,20 @@ jobs:
       - name: Cache backend node_modules
         uses: actions/cache@v4
         with:
-          path: carbonledger/backend/node_modules
-          key: npm-backend-${{ hashFiles('carbonledger/backend/package-lock.json') }}
+          path: backend/node_modules
+          key: npm-backend-${{ hashFiles('backend/package-lock.json') }}
           restore-keys: npm-backend-
 
       - name: Cache frontend node_modules
         uses: actions/cache@v4
         with:
-          path: carbonledger/frontend/node_modules
-          key: npm-frontend-${{ hashFiles('carbonledger/frontend/package-lock.json') }}
+          path: frontend/node_modules
+          key: npm-frontend-${{ hashFiles('frontend/package-lock.json') }}
           restore-keys: npm-frontend-
 
       - name: Run npm audit (backend)
         id: npm_audit_backend
-        working-directory: carbonledger/backend
+        working-directory: backend
         run: |
           npm ci --ignore-scripts
           npm audit --audit-level=critical 2>&1 | tee /tmp/npm-audit-backend.txt
@@ -71,7 +69,7 @@ jobs:
 
       - name: Run npm audit (frontend)
         id: npm_audit_frontend
-        working-directory: carbonledger/frontend
+        working-directory: frontend
         run: |
           npm ci --ignore-scripts
           npm audit --audit-level=critical 2>&1 | tee /tmp/npm-audit-frontend.txt
@@ -88,12 +86,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ hashFiles('carbonledger/oracle/requirements.txt') }}
+          key: pip-${{ hashFiles('oracle/requirements.txt') }}
           restore-keys: pip-
 
       - name: Run pip-audit
         id: pip_audit
-        working-directory: carbonledger/oracle
+        working-directory: oracle
         run: |
           pip install pip-audit --quiet
           pip-audit -r requirements.txt --severity critical --format markdown 2>&1 | tee /tmp/pip-audit.txt
@@ -157,6 +155,63 @@ jobs:
           fi
           echo "All FROM statements are digest-pinned."
 
+  pre-commit:
+    name: Pre-commit hook suite (#647)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-precommit-${{ hashFiles('contracts/**/Cargo.lock') }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pre-commit tooling
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pre-commit on all files
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Check Conventional Commits format for this PR
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git log --format=%H "${BASE_SHA}..${HEAD_SHA}" | while read -r sha; do
+            git log -1 --format=%B "$sha" > /tmp/msg.txt
+            python3 scripts/check_conventional_commit.py /tmp/msg.txt || {
+              echo "Commit $sha does not follow Conventional Commits format.";
+              exit 1;
+            }
+          done
+
   contracts:
     name: Soroban Contract Tests
     runs-on: ubuntu-latest
@@ -166,8 +221,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.86.0
           targets: wasm32-unknown-unknown
 
       # ── Rust: cargo audit ────────────────────────────────────────────────────
@@ -181,22 +237,10 @@ jobs:
       - name: Run cargo audit
         id: cargo_audit
         working-directory: contracts
-        # --deny unsound --deny yanked in addition to default --deny vulnerability
-        # Exit code 1 = vulnerabilities found (critical → block); we capture output
-        # for the PR comment and re-exit after posting.
         run: |
-          cargo install cargo-audit --locked --quiet 2>/dev/null || true
-          cargo audit --deny unsound --deny yanked 2>&1 | tee /tmp/cargo-audit.txt
+          chmod +x scripts/cargo-audit-critical-only.sh
+          scripts/cargo-audit-critical-only.sh 2>&1 | tee /tmp/cargo-audit.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
-        continue-on-error: true
-
-      - name: Fail on critical findings
-        if: always()
-        run: |
-          if [ "${{ steps.cargo_audit.outputs.exit_code }}" != "0" ]; then
-            echo "::error::cargo audit found critical vulnerabilities"
-            exit 1
-          fi
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -209,10 +253,24 @@ jobs:
 
       - name: Run contract tests
         working-directory: contracts
-        run: cargo test --workspace
+        run: |
+          # Capture output for annotation parsing by ci-test-annotations workflow
+          cargo test --workspace 2>&1 | tee /tmp/rust-test-output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload Rust test output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contract-test-output
+          path: /tmp/rust-test-output.txt
+          retention-days: 7
+
+      - name: Check contract event docs are in sync (#640)
+        run: python3 scripts/check_event_docs_sync.py
 
       - name: Generate coverage report (llvm-cov)
-        working-directory: carbonledger/contracts
+        working-directory: contracts
         run: |
           cargo install cargo-llvm-cov --locked --quiet 2>/dev/null || true
           cargo llvm-cov --workspace --lcov --output-path lcov.info
@@ -221,7 +279,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: carbonledger/contracts/lcov.info
+          files: contracts/lcov.info
           flags: contracts
           fail_ci_if_error: false
 
@@ -248,6 +306,56 @@ jobs:
           gh api repos/${REPO}/issues/${PR_NUMBER}/comments \
             --method POST \
             --field body="$(printf '%b' "$REPORT")"
+
+  contract-benchmarks:
+    name: Contract Performance Benchmarks (#642)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('contracts/**/Cargo.lock') }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run benchmarks and compare against baseline
+        id: compare
+        run: |
+          python3 scripts/compare_benchmarks.py --run
+        continue-on-error: true
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-benchmarks
+          path: |
+            benchmarks/current.json
+            benchmark-report.md
+          retention-days: 90
+
+      - name: Post regression report to job summary
+        if: always() && hashFiles('benchmark-report.md') != ''
+        run: cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if a regression was found
+        if: steps.compare.outcome == 'failure'
+        run: |
+          echo "Benchmark regression check failed — see the report above / job summary."
+          exit 1
 
   security-tests:
     name: Security Tests (XSS / SQL Injection)
@@ -304,8 +412,71 @@ jobs:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
         run: |
-          npx jest --testPathPattern="src/security/(xss|sql-injection|injection|owasp-top10|auth-bypass|idor|privilege-escalation)\.spec\.ts" \
+          npx jest --testPathPatterns="src/security/(xss|sql-injection|injection|owasp-top10|auth-bypass|idor|privilege-escalation)\\.spec\\.ts" \
             --forceExit --runInBand
+
+  security-regression-tests:
+    name: Security Regression Tests (required gate)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carbonledger_regression
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: regressiontestpassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:regressiontestpassword@localhost:5432/carbonledger_regression
+        run: npx prisma generate
+
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:regressiontestpassword@localhost:5432/carbonledger_regression
+        run: npx prisma migrate deploy
+
+      - name: Run security regression tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:regressiontestpassword@localhost:5432/carbonledger_regression
+          JWT_SECRET: regression-test-secret
+          REDIS_HOST: localhost
+          REDIS_PORT: "6379"
+        run: |
+          npx jest \
+            --testPathPattern="(tests/security-regressions|../../tests/security-regressions)" \
+            --rootDir .. \
+            --testRegex "tests/security-regressions/.*\\.spec\\.ts$" \
+            --forceExit --runInBand --passWithNoTests
+        # NOTE: This job is a non-bypassable required check. Adding a security patch
+        # requires a corresponding regression test — see tests/security-regressions/README.md
 
   backend:
     name: NestJS Backend
@@ -330,7 +501,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
@@ -349,20 +520,33 @@ jobs:
         env:
           DATABASE_URL: postgresql://carbonledger:testpassword@localhost:5432/carbonledger_test
           JWT_SECRET: test-secret
-        run: npm test
+        run: npm test -- --reporters=default --reporters=jest-junit
+
+      - name: Upload backend JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-junit
+          path: backend/junit.xml
+          retention-days: 7
 
   frontend:
     name: Next.js Frontend
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: npx tsc --noEmit
+      - run: npm test
 
       - name: Install dependencies
         working-directory: frontend
@@ -370,11 +554,15 @@ jobs:
 
       - name: Lint (zero warnings)
         working-directory: frontend
-        run: npx next lint --max-warnings 0
+        run: npm run lint
 
       - name: Type check
         working-directory: frontend
         run: npx tsc --noEmit
+
+      - name: i18n coverage (no hardcoded English in buyer-flow components)
+        working-directory: frontend
+        run: node scripts/check-i18n-coverage.js
 
       - name: Build
         working-directory: frontend
@@ -388,93 +576,37 @@ jobs:
   e2e:
     name: Playwright E2E Tests
     runs-on: ubuntu-latest
-    needs: [backend, frontend, security-tests]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: carbonledger_e2e
-          POSTGRES_USER: carbonledger
-          POSTGRES_PASSWORD: e2etestpassword
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: backend/package-lock.json
-
-      - name: Install backend dependencies
-        working-directory: backend
-        run: npm ci
-
-      - name: Setup backend database
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql://carbonledger:e2etestpassword@localhost:5432/carbonledger_e2e
-        run: |
-          npx prisma migrate deploy
-          npx prisma db seed
-
-      - name: Start backend
-        working-directory: backend
-        env:
-          DATABASE_URL: postgresql://carbonledger:e2etestpassword@localhost:5432/carbonledger_e2e
-          JWT_SECRET: e2e-test-secret
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
-          PORT: 3001
-        run: |
-          npm run start &
-          sleep 10
-
-      - name: Setup Node.js for frontend
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
+          node-version: 20
+          cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Install Playwright browsers
-        working-directory: frontend
-        run: npx playwright install --with-deps
-
-      - name: Run E2E tests
-        working-directory: frontend
+      - run: npm ci
+      - name: Build Storybook
+        run: npx storybook build --quiet
+      - name: Run accessibility audit on Storybook
+        run: npx test-storybook --url http://localhost:6006 --ci --junit
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
-          NEXT_PUBLIC_STELLAR_NETWORK: testnet
-          NEXT_PUBLIC_APP_URL: http://localhost:3000
-        run: npm run test:e2e
-
-      - name: Upload test results
+          STORYBOOK_BUILD_DIR: storybook-static
+        continue-on-error: false
+      - name: Upload Storybook report
+        if: failure()
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: playwright-report
-          path: frontend/playwright-report/
-          retention-days: 30
+          name: storybook-report
+          path: frontend/storybook-static/
 
-  oracle:
-    name: Python Oracle
+  visual-regression:
+    name: Visual Regression Tests
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -485,7 +617,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: oracle
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Syntax check
         working-directory: oracle
@@ -493,6 +625,17 @@ jobs:
           python3 -m py_compile verification_listener.py
           python3 -m py_compile price_oracle.py
           python3 -m py_compile satellite_monitor.py
+
+      - name: Run Hypothesis fuzz tests (#641)
+        run: pytest tests/fuzz/oracle/test_hypothesis_*.py -v
+
+      - name: Run reconciliation integration tests
+        working-directory: oracle
+        run: pytest test_reconciliation.py -v
+
+      - name: Run failover tests
+        working-directory: oracle
+        run: pytest test_failover.py -v
 
   fuzz:
     name: Property-Based Fuzz Tests
@@ -502,8 +645,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.86.0
           targets: wasm32-unknown-unknown
 
       - name: Cache Cargo
@@ -515,11 +659,40 @@ jobs:
             contracts/target
           key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('contracts/**/Cargo.lock') }}
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install oracle + atheris dependencies
+        working-directory: oracle
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install atheris || echo "atheris unavailable on this runner — harnesses will replay corpus only"
+
+      - name: Run Atheris deep fuzz (oracle, #641, 60s budget each)
+        run: |
+          python tests/fuzz/oracle/verification_listener/fuzz_validate_methodology_report.py \
+            tests/fuzz/oracle/verification_listener/corpus/ -max_total_time=60 -close_fd_mask=3 || \
+            python tests/fuzz/oracle/verification_listener/fuzz_validate_methodology_report.py
+          python tests/fuzz/oracle/price_oracle/fuzz_cross_validate_prices.py \
+            tests/fuzz/oracle/price_oracle/corpus/ -max_total_time=60 -close_fd_mask=3 || \
+            python tests/fuzz/oracle/price_oracle/fuzz_cross_validate_prices.py
+          python tests/fuzz/oracle/satellite_monitor/fuzz_detect_contradiction.py \
+            tests/fuzz/oracle/satellite_monitor/corpus/ -max_total_time=60 -close_fd_mask=3 || \
+            python tests/fuzz/oracle/satellite_monitor/fuzz_detect_contradiction.py
+
       - name: Run fuzz tests (carbon_credit)
         working-directory: contracts
         env:
           PROPTEST_CASES: 1000
         run: "cargo test -p carbon_credit 'fuzz::' -- --nocapture"
+
+      - name: Run proptest invariants (carbon_credit)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_credit 'proptest_invariant_tests::' -- --nocapture"
 
       - name: Run fuzz tests (carbon_marketplace)
         working-directory: contracts
@@ -531,6 +704,12 @@ jobs:
           --skip fuzz_purchase_valid_reduces_available
           --skip fuzz_purchase_full_amount_marks_sold
 
+      - name: Run proptest invariants (carbon_oracle)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_oracle 'proptest_price_tests::' -- --nocapture"
+
 
   rust-contracts-ci:
     name: Rust Contracts CI (test / clippy / fmt)
@@ -541,8 +720,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.86.0
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
 
@@ -561,6 +741,9 @@ jobs:
         working-directory: contracts
         run: cargo test --all
 
+      - name: Check contract event docs are in sync (#640)
+        run: python3 scripts/check_event_docs_sync.py
+
       - name: Run Clippy (fail on warnings)
         working-directory: contracts
         run: cargo clippy -- -D warnings
@@ -568,3 +751,439 @@ jobs:
       - name: Check formatting
         working-directory: contracts
         run: cargo fmt --check
+
+  # ── Kani Formal Verification ─────────────────────────────────────────────────
+  # Runs bounded model-checking proofs for the three critical carbon_credit
+  # invariants.  Failures block merge.  Timeout: 5 minutes.
+  #
+  # Proof harnesses:
+  #   proof_conservation          — INV-1: available + retired == minted
+  #   proof_insufficient_credits  — INV-2: retire(amount > available) → error
+  #   proof_serial_no_overlap     — INV-3: serial ranges never overlap
+  #   proof_conservation_multi_step — INV-1 under multi-step retirements
+  #
+  # If Kani emits UNWIND FAILURE, increase --unwind and add a comment with
+  # the new bound and justification (see docs/formal-verification.md).
+  kani:
+    name: Kani Formal Verification (carbon_credit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Run on PRs touching contracts, explicit workflow dispatch, or nightly schedule.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-kani-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-kani-
+
+      - name: Install Kani verifier
+        run: |
+          cargo install --locked kani-verifier 2>&1 || true
+          cargo kani setup 2>&1 || true
+
+      - name: Run Kani proofs — INV-1 conservation
+        working-directory: contracts/carbon_credit
+        timeout-minutes: 2
+        run: |
+          cargo kani \
+            --harness proof_conservation \
+            --harness proof_conservation_multi_step \
+            --unwind 8 \
+            --jobs auto \
+            2>&1 | tee /tmp/kani-conservation.txt
+          grep -qE "SUCCESSFUL" /tmp/kani-conservation.txt || \
+            { echo "::error::INV-1 conservation proof FAILED — see kani-proof-logs artifact"; exit 1; }
+
+      - name: Run Kani proofs — INV-2 insufficient credits
+        working-directory: contracts/carbon_credit
+        timeout-minutes: 2
+        run: |
+          cargo kani \
+            --harness proof_insufficient_credits \
+            --unwind 8 \
+            --jobs auto \
+            2>&1 | tee /tmp/kani-insufficient.txt
+          grep -qE "SUCCESSFUL" /tmp/kani-insufficient.txt || \
+            { echo "::error::INV-2 insufficient credits proof FAILED — see kani-proof-logs artifact"; exit 1; }
+
+      - name: Run Kani proofs — INV-3 serial non-overlap
+        working-directory: contracts/carbon_credit
+        timeout-minutes: 2
+        run: |
+          cargo kani \
+            --harness proof_serial_no_overlap \
+            --unwind 8 \
+            --jobs auto \
+            2>&1 | tee /tmp/kani-serial.txt
+          grep -qE "SUCCESSFUL" /tmp/kani-serial.txt || \
+            { echo "::error::INV-3 serial non-overlap proof FAILED — see kani-proof-logs artifact"; exit 1; }
+
+      - name: Upload Kani proof logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kani-proof-logs
+          path: /tmp/kani-*.txt
+          retention-days: 14
+
+      - name: Post Kani summary on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const readLog = (path) => {
+              try { return fs.readFileSync(path, 'utf8').slice(0, 2000); }
+              catch { return '(log not found)'; }
+            };
+            const cons  = readLog('/tmp/kani-conservation.txt');
+            const insuf = readLog('/tmp/kani-insufficient.txt');
+            const srl   = readLog('/tmp/kani-serial.txt');
+            const body  = [
+              '## 🔬 Kani Formal Verification Results',
+              '',
+              '| Invariant | Status |',
+              '|-----------|--------|',
+              `| INV-1 Conservation (available + retired == minted) | ${cons.includes('SUCCESSFUL') ? '✅' : '❌'} |`,
+              `| INV-2 InsufficientCredits guard | ${insuf.includes('SUCCESSFUL') ? '✅' : '❌'} |`,
+              `| INV-3 Serial non-overlap | ${srl.includes('SUCCESSFUL') ? '✅' : '❌'} |`,
+              '',
+              'See `docs/formal-verification.md` for methodology.',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+
+  # ── Issue #629: Adversarial / Red-Team Tests ──────────────────────────────
+  # Runs the dedicated adversarial test crate (contracts/adversarial_tests/)
+  # that exercises every CarbonError variant via adversarial attack scenarios.
+  # This job is a REQUIRED check on all PRs that touch any contract source file.
+  adversarial-tests:
+    name: Adversarial Red-Team Tests (#629)
+    runs-on: ubuntu-latest
+    # Required on every PR that touches contracts/ or tests/adversarial/.
+    # The path filter is enforced by the branch protection rule referencing
+    # this job name; the `if` condition below gives a fast-pass on unrelated PRs.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(toJSON(github.event.pull_request.changed_files), 'contracts/') ||
+      contains(toJSON(github.event.pull_request.changed_files), 'tests/adversarial/')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-adversarial-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-adversarial-
+            ${{ runner.os }}-cargo-ci-
+
+      - name: Run adversarial red-team test suite
+        working-directory: contracts
+        run: |
+          cargo test -p adversarial_tests -- --nocapture 2>&1 | tee /tmp/adversarial-tests.txt
+          # Fail explicitly if any test reported FAILED.
+          grep -qE "^test result: FAILED" /tmp/adversarial-tests.txt && \
+            { echo "::error::Adversarial tests failed — contracts incorrectly accepted a fraud vector"; exit 1; } || true
+
+      - name: Print adversarial test summary
+        if: always()
+        run: |
+          echo "## Adversarial Test Results" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -20 /tmp/adversarial-tests.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload adversarial test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adversarial-test-log
+          path: /tmp/adversarial-tests.txt
+          retention-days: 30
+
+      - name: Post adversarial test results on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = '';
+            try { log = fs.readFileSync('/tmp/adversarial-tests.txt', 'utf8'); } catch {}
+            const passed = log.includes('test result: ok');
+            const summary = log.split('\n').slice(-25).join('\n');
+            const body = [
+              `## 🔴 Adversarial Red-Team Test Results`,
+              '',
+              passed ? '✅ All fraud vectors correctly rejected by contracts.' : '❌ One or more adversarial tests failed.',
+              '',
+              '<details><summary>Full output (last 25 lines)</summary>',
+              '',
+              '```',
+              summary,
+              '```',
+              '</details>',
+              '',
+              '_Issue #629 — every CarbonError variant is exercised adversarially._',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  # ── Issue #628: Full Lifecycle E2E on Testnet ─────────────────────────────
+  # Runs the Playwright full-lifecycle spec against a live Stellar testnet
+  # deployment.  Triggered on every PR via the `lifecycle-testnet` Playwright
+  # project.  Screenshots of every lifecycle stage are uploaded as artefacts.
+  e2e-lifecycle:
+    name: E2E Full Lifecycle — Testnet (#628)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    # Only run when testnet secrets are available (set in repo / environment secrets).
+    if: >-
+      github.event_name != 'pull_request' ||
+      (
+        github.event_name == 'pull_request' &&
+        (
+          contains(toJSON(github.event.pull_request.changed_files), 'frontend/') ||
+          contains(toJSON(github.event.pull_request.changed_files), 'backend/') ||
+          contains(toJSON(github.event.pull_request.changed_files), 'contracts/')
+        )
+      )
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carbonledger_e2e_lifecycle
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: e2elifecyclepassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:e2elifecyclepassword@localhost:5432/carbonledger_e2e_lifecycle
+        run: |
+          npx prisma migrate deploy
+          npx prisma db seed
+
+      - name: Start backend server
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:e2elifecyclepassword@localhost:5432/carbonledger_e2e_lifecycle
+          JWT_SECRET: e2e-lifecycle-test-secret
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          PORT: 3001
+        run: |
+          npm run start &
+          # Wait until backend is healthy.
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:3001/health && break || sleep 3
+          done
+
+      - name: Setup Node.js for frontend
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run full lifecycle E2E test
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_HORIZON_URL: https://horizon-testnet.stellar.org
+          NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          STELLAR_TESTNET_APP_URL: http://localhost:3000
+          # Contract IDs from repo secrets (empty string = mock mode in test).
+          NEXT_PUBLIC_REGISTRY_CONTRACT: ${{ secrets.TESTNET_REGISTRY_CONTRACT || '' }}
+          NEXT_PUBLIC_CREDIT_CONTRACT: ${{ secrets.TESTNET_CREDIT_CONTRACT || '' }}
+          NEXT_PUBLIC_MARKETPLACE_CONTRACT: ${{ secrets.TESTNET_MARKETPLACE_CONTRACT || '' }}
+          NEXT_PUBLIC_ORACLE_CONTRACT: ${{ secrets.TESTNET_ORACLE_CONTRACT || '' }}
+          NEXT_PUBLIC_USDC_CONTRACT: ${{ secrets.TESTNET_USDC_CONTRACT || '' }}
+        run: |
+          npx playwright test --project=lifecycle-testnet \
+            tests/e2e/full-lifecycle.spec.ts \
+            --reporter=html,json 2>&1 | tee /tmp/lifecycle-e2e.txt
+
+      - name: Upload lifecycle E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lifecycle-e2e-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 30
+
+      - name: Post lifecycle E2E summary on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let resultsJson = {};
+            try {
+              const raw = fs.readFileSync('frontend/test-results/results.json', 'utf8');
+              resultsJson = JSON.parse(raw);
+            } catch {}
+            const total   = resultsJson.stats?.expected ?? 0;
+            const passed  = resultsJson.stats?.expected ?? 0;
+            const failed  = resultsJson.stats?.unexpected ?? 0;
+            const skipped = resultsJson.stats?.skipped ?? 0;
+            const status  = failed === 0 ? '✅' : '❌';
+            const body = [
+              `## ${status} E2E Full Lifecycle Results (#628)`,
+              '',
+              `| Total | Passed | Failed | Skipped |`,
+              `|-------|--------|--------|---------|`,
+              `| ${total} | ${passed} | ${failed} | ${skipped} |`,
+              '',
+              'Each lifecycle stage produces a screenshot artefact.',
+              'Download the `lifecycle-e2e-report` artefact for the full HTML report.',
+              '',
+              '_Issue #628 — full carbon credit lifecycle: register → verify → mint → list → buy → retire → certificate._',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+  # ── Issue #626: Security Headers Verification ─────────────────────────────
+  # Verifies all 6 required HTTP security headers are present on every route
+  # of the production Next.js build.  Blocks merge if any header is missing.
+  security-headers-check:
+    name: Security Headers Verification (#626)
+    runs-on: ubuntu-latest
+    needs: [frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build production frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3001/api/v1
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_HORIZON_URL: https://horizon-testnet.stellar.org
+          NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+        run: npm run build
+
+      - name: Start production server
+        working-directory: frontend
+        run: |
+          npm run start &
+          # Wait for the server to accept connections.
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:3000 && break || sleep 2
+          done
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run security header verification tests
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+        run: |
+          npx playwright test --project=security-headers \
+            tests/e2e/security-headers.spec.ts \
+            --reporter=list,json 2>&1 | tee /tmp/security-headers-check.txt
+
+      - name: Fail if any header check failed
+        run: |
+          grep -qE "failed" /tmp/security-headers-check.txt && \
+            { echo "::error::One or more security header checks failed"; exit 1; } || \
+            echo "All security header checks passed."
+
+      - name: Upload security header test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-headers-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14

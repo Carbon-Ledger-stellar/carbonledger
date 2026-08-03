@@ -1,11 +1,21 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import { ThemeProvider } from '../lib/theme-context';
+import Navbar from '../components/Navbar';
+import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
+import AppProviders from '../components/AppProviders';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
   title: 'Carbon Ledger',
   description: 'Carbon credit marketplace and tracking platform',
   viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes',
+  openGraph: {
+    siteName: 'Carbon Ledger',
+    type: 'website',
+  },
 };
 
 export default function RootLayout({
@@ -18,11 +28,18 @@ export default function RootLayout({
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes" />
       </head>
-      <body>
-        <ThemeProvider>
-          {children}
-        </ThemeProvider>
-      </body>
+       <body>
+         <a href="#main-content" className="skip-link">Skip to main content</a>
+         <ServiceWorkerRegistration />
+         <ThemeProvider>
+           <AppProviders>
+             <Navbar />
+             <main id="main-content">
+               {children}
+             </main>
+           </AppProviders>
+         </ThemeProvider>
+       </body>
     </html>
   );
 } 
