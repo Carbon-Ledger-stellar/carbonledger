@@ -688,3 +688,11 @@ export default function RetirePage() {
     </Suspense>
   );
 }
+
+export default function RetirePage() {
+  return (
+    <Suspense fallback={<div style={{ padding: "2rem" }}>Loading retirement flow…</div>}>
+      <RetirePageContent />
+    </Suspense>
+  );
+}
