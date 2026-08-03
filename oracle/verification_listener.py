@@ -3,6 +3,7 @@ Verification Listener with Distributed Lock
 Prevents duplicate verification processing across multiple replicas
 """
 
+import hashlib
 import os
 import logging
 import time
