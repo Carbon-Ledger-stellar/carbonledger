@@ -1,37 +1,51 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { connectFreighter } from "../../lib/freighter";
 import { getWalletErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import Toast, { useToast } from "../../components/Toast";
+import { useWalletStatus } from "../../hooks/useWalletStatus";
+import WalletPrompt from "../../components/WalletPrompt";
+import {
+  useTransactionPoller,
+  TRANSACTION_MAX_POLLS,
+} from "../../hooks/useTransactionPoller";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
 export default function VerifyPage() {
-  const [walletKey, setWalletKey] = useState<string | null>(null);
   const [projectId, setProjectId] = useState("");
   const [action, setAction]       = useState<"approve" | "reject">("approve");
   const [reason, setReason]       = useState("");
   const [txStatus, setTxStatus]   = useState<TxStatus | null>(null);
   const [txHash, setTxHash]       = useState<string | null>(null);
+  const [pollHash, setPollHash]   = useState<string | null>(null);
+  const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
+    txHash: pollHash,
+  });
   const { toasts, addToast, dismiss } = useToast();
+  const { status: walletStatus, address: walletKey, refresh: refreshWallet } = useWalletStatus();
 
-  async function handleConnect() {
-    try {
-      const key = await connectFreighter();
-      setWalletKey(key);
-    } catch (e) {
-      addToast({ type: "error", title: "Wallet error", message: getWalletErrorMessage(e) });
-    }
+  async function handleConnect(key: string) {
+    addToast({ type: "success", title: "Wallet connected", message: key.slice(0, 8) + "…" });
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!walletKey || !projectId) return;
-    setTxStatus("pending");
+    
+    setTxStatus("building");
     try {
+      // Simulate building phase
+      await new Promise(r => setTimeout(r, 800));
+      
+      setTxStatus("signing");
+      // In a real app, we would sign with Freighter here
+      await new Promise(r => setTimeout(r, 1200));
+
+      setTxStatus("submitting");
       const endpoint = action === "approve" ? "verify" : "reject";
       const res = await fetch(`${API_URL}/projects/${projectId}/${endpoint}`, {
         method: "POST",
@@ -40,14 +54,41 @@ export default function VerifyPage() {
       });
       if (!res.ok) throw new Error((await res.json()).message);
       const data = await res.json();
+      
+      setTxStatus("polling");
       setTxHash(data.txHash);
-      setTxStatus("confirmed");
-      addToast({ type: "success", title: `Project ${action === "approve" ? "verified" : "rejected"}`, txHash: data.txHash });
+      setPollHash(data.txHash);
     } catch (e: any) {
       setTxStatus("failed");
+      setPollHash(null);
       addToast({ type: "error", title: "Submission failed", message: e.message });
     }
   }
+
+  useEffect(() => {
+    if (!pollHash || pollState === "idle" || pollState === "polling") return;
+
+    if (pollState === "SUCCESS") {
+      setTxStatus("confirmed");
+      addToast({
+        type: "success",
+        title: `Project ${action === "approve" ? "verified" : "rejected"}`,
+        txHash: pollHash,
+      });
+      setPollHash(null);
+    } else if (pollState === "FAILED") {
+      setTxStatus("failed");
+      addToast({
+        type: "error",
+        title: "Submission failed",
+        message: pollError ?? "Transaction failed on-chain",
+      });
+      setPollHash(null);
+    } else if (pollState === "TIMED_OUT") {
+      setTxStatus("timed_out");
+      setPollHash(null);
+    }
+  }, [pollState, pollHash, pollError, action, addToast]);
 
   const inputStyle: React.CSSProperties = {
     width: "100%", border: `1px solid ${colors.neutral[300]}`,
@@ -110,16 +151,21 @@ export default function VerifyPage() {
           </div>
         )}
 
-        {txStatus && <TransactionStatus status={txStatus} txHash={txHash ?? undefined} />}
+        {txStatus && (
+          <TransactionStatus
+            status={txStatus}
+            txHash={txHash ?? undefined}
+            pollProgress={
+              txStatus === "polling"
+                ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                : undefined
+            }
+            message={txStatus === "failed" ? pollError ?? undefined : undefined}
+          />
+        )}
 
-        {!walletKey ? (
-          <button type="button" onClick={handleConnect} style={{
-            background: colors.primary[600], color: "#fff",
-            border: "none", borderRadius: "0.5rem",
-            padding: "0.875rem", fontSize: "1rem", fontWeight: 700, cursor: "pointer",
-          }}>
-            Connect Verifier Wallet
-          </button>
+        {walletStatus !== "ready" ? (
+          <WalletPrompt status={walletStatus} onConnect={handleConnect} refresh={refreshWallet} />
         ) : (
           <button type="submit" style={{
             background: action === "approve" ? colors.primary[600] : "#dc2626",
