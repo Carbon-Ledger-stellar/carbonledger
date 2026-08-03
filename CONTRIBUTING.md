@@ -8,6 +8,7 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [Quick Start](#quick-start)
 - [Detailed Setup](#detailed-setup)
 - [Running Tests](#running-tests)
+- [Security](#security)
 - [Common Issues](#common-issues)
 - [Testnet Setup](#testnet-setup)
 - [Development Workflow](#development-workflow)
@@ -341,6 +342,26 @@ npm test projects.performance.spec.ts
 
 ---
 
+## Security
+
+### Reporting Vulnerabilities
+
+If you discover a security vulnerability in CarbonLedger, **do not open a public GitHub issue**.
+
+Please report privately to: **security@carbonledger.io**
+
+Include:
+- Affected component(s) (contract, backend, frontend, oracle)
+- Description of the vulnerability and its impact
+- Proof-of-concept or reproduction steps if available
+- Your suggested severity (Critical / High / Medium / Low)
+
+We will acknowledge receipt within **48 hours** and aim to provide a full response within **7 days**. Critical findings will be triaged within **24 hours**.
+
+For complete details, see [SECURITY.md](SECURITY.md).
+
+---
+
 ## Common Issues
 
 ### Issue: `cargo build` fails with "linker not found"
@@ -659,7 +680,7 @@ def submit_monitoring_data(
 
 - **Documentation**: Check [docs/](docs/) folder
 - **Architecture Decisions**: See [docs/adr/](docs/adr/)
-- **API Reference**: See [backend/docs/PROJECTS_API.md](backend/docs/PROJECTS_API.md)
+- **API Reference**: See [backend/docs/API_REFERENCE.md](backend/docs/API_REFERENCE.md)
 - **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/carbonledger/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/carbonledger/discussions)
 

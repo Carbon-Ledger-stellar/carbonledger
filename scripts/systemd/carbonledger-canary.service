@@ -1,0 +1,33 @@
+[Unit]
+Description=CarbonLedger Synthetic Monitoring Canary Runner
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=carbonledger
+WorkingDirectory=/opt/carbonledger
+ExecStart=/usr/bin/npx ts-node scripts/synthetic-monitoring/canary-runner.ts
+Restart=always
+RestartSec=30s
+
+# Environment — override with /etc/carbonledger/canary.env
+EnvironmentFile=-/etc/carbonledger/canary.env
+Environment=ENVIRONMENT=production
+Environment=CANARY_INTERVAL_MS=300000
+Environment=CHECK_TIMEOUT_MS=10000
+Environment=CANARY_RESULTS_FILE=/var/log/carbonledger/canary-results.jsonl
+
+# Logging — Promtail will pick up stdout as service=carbonledger-canary
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=carbonledger-canary
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/carbonledger
+
+[Install]
+WantedBy=multi-user.target

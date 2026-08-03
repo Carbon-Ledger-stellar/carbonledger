@@ -16,6 +16,7 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
       res
         .status(HttpStatus.TOO_MANY_REQUESTS)
         .set("Connection", "keep-alive")
+        .set("Retry-After", "60")
         .json({
           statusCode: HttpStatus.TOO_MANY_REQUESTS,
           message: "Too Many Requests",

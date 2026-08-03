@@ -1,16 +1,34 @@
 module.exports = {
+  displayName: 'backend',
   moduleFileExtensions: ['js', 'json', 'ts'],
-  rootDir: '.',
+  rootDir: 'src',
   testRegex: '.*\\.spec\\.ts$',
+  setupFiles: ['<rootDir>/jest.setup.ts'],   // ← ADD THIS LINE
   transform: {
-    '^.+\\.(t|j)s$': 'ts-jest',
+    '^.+\\.(t|j)s$': ['ts-jest', {
+      diagnostics: false,
+    }],
   },
-  collectCoverageFrom: [
-    'src/**/*.(t|j)s',
-  ],
-  coverageDirectory: './coverage',
-  testEnvironment: 'node',
   moduleNameMapper: {
-    '^src/(.*)$': '<rootDir>/src/$1',
+    '^uuid$': '<rootDir>/../node_modules/uuid/dist-node/index.js',
+  },
+  setupFiles: ['<rootDir>/jest.setup.ts'],
+  collectCoverageFrom: [
+    '**/*.(t|j)s',
+    '!**/*.spec.ts',
+    '!**/node_modules/**',
+  ],
+  coverageDirectory: '../coverage',
+  coverageReporters: ['text', 'lcov', 'json', 'html'],
+  testEnvironment: 'node',
+
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
+    },
   },
 };
+
