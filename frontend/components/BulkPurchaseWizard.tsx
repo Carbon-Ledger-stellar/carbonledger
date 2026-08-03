@@ -8,11 +8,14 @@ import { getWalletErrorMessage } from "../lib/wallet-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import TransactionStatus, { TxStatus } from "./TransactionStatus";
+import TransactionPreview from "./TransactionPreview";
+import { PreviewState } from "../lib/transaction-preview-types";
 import Toast, { useToast } from "./Toast";
 import {
   useTransactionPoller,
   TRANSACTION_MAX_POLLS,
 } from "../hooks/useTransactionPoller";
+import { simulateBulkPurchasePreview } from "../lib/soroban";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -163,6 +166,14 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   const { toasts, addToast, dismiss } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Simulation state ───────────────────────────────────────────────────────
+  const [preview, setPreview] = useState<PreviewState>({
+    loading: false,
+    ready: false,
+    effects: [],
+  });
+  const [confirming, setConfirming] = useState(false);
+
   const listingMap = useMemo(() => {
     const map = new Map<string, MarketListing>();
     availableListings.forEach((l) => map.set(l.listingId, l));
@@ -215,6 +226,31 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
     }
   }
 
+  // ── Simulation ─────────────────────────────────────────────────────────────
+
+  const runSimulation = useCallback(async () => {
+    if (!walletKey || items.length === 0) return;
+
+    const contractId = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT_ID;
+    if (!contractId) {
+      // No contract configured; skip simulation, allow purchase directly
+      setPreview({ loading: false, ready: true, effects: [] });
+      return;
+    }
+
+    setPreview({ loading: true, ready: false, effects: [] });
+    const result = await simulateBulkPurchasePreview({
+      contractId,
+      sourcePublicKey: walletKey,
+      items: items.map((i) => ({
+        listingId: i.listing.listingId,
+        amount: i.amount,
+        pricePerCredit: i.listing.pricePerCredit.toString(),
+      })),
+    });
+    setPreview(result);
+  }, [walletKey, items]);
+
   async function handleCSVUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -254,6 +290,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   async function handlePurchase() {
     if (!walletKey || items.length === 0) return;
 
+    setConfirming(true);
     setTxStatus("building");
     try {
       await new Promise((r) => setTimeout(r, 600));
@@ -277,8 +314,18 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
       setPollHash(null);
       const message = e instanceof Error ? e.message : String(e);
       addToast({ type: "error", title: t("purchaseFailed"), message });
+    } finally {
+      setConfirming(false);
     }
   }
+
+  // Run simulation when the preview step becomes visible
+  useEffect(() => {
+    if (step === "preview") {
+      runSimulation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // Poll state effect
   useEffect(() => {
@@ -608,39 +655,37 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
           </div>
         </div>
 
-        {/* Navigation */}
-        <div style={{ display: "flex", gap: "1rem", justifyContent: "space-between" }}>
-          <button
-            onClick={() => setStep("selection")}
-            style={{
-              background: "transparent",
-              color: colors.neutral[600],
-              border: `1px solid ${colors.neutral[300]}`,
-              borderRadius: "0.5rem",
-              padding: "0.75rem 1.5rem",
-              fontSize: "0.9rem",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            ← {t("back")}
-          </button>
-          <button
-            onClick={() => setStep("confirm")}
-            style={{
-              background: colors.primary[600],
-              color: "#fff",
-              border: "none",
-              borderRadius: "0.5rem",
-              padding: "0.75rem 1.5rem",
-              fontSize: "0.9rem",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            {t("confirm")} →
-          </button>
-        </div>
+        {/* Soroban simulation preview card */}
+        <TransactionPreview
+          title="Bulk purchase preview"
+          description="Soroban simulation of the bulk_purchase transaction. Review the effects before signing."
+          preview={preview}
+          onConfirm={walletKey ? () => setStep("confirm") : undefined}
+          onCancel={() => setStep("selection")}
+          confirmLabel={t("confirm") + " →"}
+          confirming={confirming}
+        />
+
+        {/* Back button (kept for wallets not yet connected) */}
+        {!walletKey && (
+          <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-start", marginTop: "0.5rem" }}>
+            <button
+              onClick={() => setStep("selection")}
+              style={{
+                background: "transparent",
+                color: colors.neutral[600],
+                border: `1px solid ${colors.neutral[300]}`,
+                borderRadius: "0.5rem",
+                padding: "0.75rem 1.5rem",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              ← {t("back")}
+            </button>
+          </div>
+        )}
 
         <Toast toasts={toasts} onDismiss={dismiss} />
       </div>
