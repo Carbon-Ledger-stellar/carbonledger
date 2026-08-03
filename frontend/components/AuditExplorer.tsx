@@ -87,7 +87,7 @@ export default function AuditExplorer() {
                 borderRadius: "0.5rem",
                 padding: "1rem",
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr auto",
+                gridTemplateColumns: "1fr 1fr 1fr auto auto",
                 gap: "1rem",
                 alignItems: "center",
               }}>
@@ -104,6 +104,36 @@ export default function AuditExplorer() {
                   <p style={{ fontSize: "0.875rem", fontWeight: 700, color: colors.primary[700], margin: 0 }}>
                     {formatTonnes(r.amount)}
                   </p>
+                </div>
+                {/* Content Integrity badge — verifies that the IPFS-pinned metadata
+                    has not been substituted after registration. isValid=false means
+                    the stored SHA-256 hash no longer matches the on-chain record. */}
+                <div
+                  role="status"
+                  aria-label={
+                    (r as any).isValid === false
+                      ? "Content integrity unverified — metadata may have been tampered with"
+                      : "Content integrity verified"
+                  }
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                    padding: "0.3rem 0.6rem",
+                    borderRadius: "999px",
+                    fontSize: "0.7rem",
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                    background: (r as any).isValid === false ? "#fef3c7" : "#d1fae5",
+                    color:      (r as any).isValid === false ? "#92400e" : "#065f46",
+                    border: `1px solid ${(r as any).isValid === false ? "#fcd34d" : "#6ee7b7"}`,
+                  }}
+                >
+                  {(r as any).isValid === false ? (
+                    <><span aria-hidden="true">⚠</span> Unverified</>
+                  ) : (
+                    <><span aria-hidden="true">✓</span> Content Integrity: Verified</>
+                  )}
                 </div>
                 <a
                   href={`/retire/${r.retirementId}`}

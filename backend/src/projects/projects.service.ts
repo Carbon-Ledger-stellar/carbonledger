@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ConflictException } from "@nestjs/common";
+import { createHash } from "crypto";
 import { PrismaService } from "../prisma.service";
 import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, PaginatedProjectsResponse, ProjectStatus, OracleFreshness } from "./projects.dto";
 import { MailService } from "../mail/mail.service";
@@ -160,7 +161,18 @@ export class ProjectsService {
     if (dto.methodologyScore < 70) {
       throw new ConflictException(`Project registration rejected: methodology score ${dto.methodologyScore} is below minimum 70/100`);
     }
-    return this.prisma.carbonProject.create({ data: dto });
+
+    // Compute SHA-256 of the metadata CID to bind the on-chain reference to a
+    // specific content snapshot. This hash is stored alongside metadataCid so
+    // any tampering of the pinned IPFS content is detectable via
+    // verify_metadata_integrity() on the carbon_registry contract.
+    const metadataHash = createHash("sha256")
+      .update(dto.metadataCid, "utf8")
+      .digest("hex");
+
+    return this.prisma.carbonProject.create({
+      data: { ...dto, metadataHash },
+    });
   }
 
   async updateStatus(projectId: string, dto: UpdateProjectStatusDto, actor = 'admin') {

@@ -70,6 +70,9 @@ pub struct CarbonProject {
     pub project_type:          String,
     pub verifier_address:      Address,
     pub metadata_cid:          String,
+    /// SHA-256 of the IPFS content at registration time.
+    /// Allows on-chain verification that pinned content has not been replaced.
+    pub metadata_hash:         BytesN<32>,
     pub total_credits_issued:  i128,
     pub total_credits_retired: i128,
     pub methodology_score:     u32,
@@ -179,6 +182,8 @@ impl CarbonRegistryContract {
         country: String,
         project_type: String,
         vintage_year: u32,
+        methodology_score: u32,
+        metadata_hash: BytesN<32>,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
@@ -223,6 +228,7 @@ impl CarbonRegistryContract {
             project_type:          project_type.clone(),
             verifier_address:      verifier_address.clone(),
             metadata_cid:          metadata_cid.clone(),
+            metadata_hash:         metadata_hash.clone(),
             total_credits_issued:  0,
             total_credits_retired: 0,
             methodology_score,
@@ -326,6 +332,21 @@ impl CarbonRegistryContract {
 
     pub fn get_project(env: Env, project_id: String) -> Result<CarbonProject, CarbonError> {
         Self::load_project(&env, &project_id)
+    }
+
+    /// View function: returns true if the provided SHA-256 hash matches the
+    /// `metadata_hash` stored when the project was registered. Returns false
+    /// for unknown projects (avoids leaking existence information via errors).
+    ///
+    /// Callers (backend, oracle, frontend) should:
+    ///   1. Fetch the raw IPFS content via the gateway.
+    ///   2. Compute SHA-256 locally.
+    ///   3. Call this function with the result.
+    pub fn verify_metadata_integrity(env: Env, project_id: String, hash: BytesN<32>) -> bool {
+        match Self::load_project(&env, &project_id) {
+            Ok(project) => project.metadata_hash == hash,
+            Err(_) => false,
+        }
     }
 
     pub fn increment_issued(
@@ -500,9 +521,9 @@ mod tests {
             &make_str(env, "VCS"),
             &make_str(env, "Brazil"),
             &make_str(env, "forestry"),
-            &75_u32,
             &2023_u32,
             &80_u32,
+            &BytesN::from_array(env, &[1u8; 32]),
         );
     }
 
@@ -536,8 +557,9 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &75_u32,
             &2023_u32,
+            &75_u32,
+            &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert!(result.is_err());
     }
@@ -637,8 +659,9 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &69_u32,
             &2023_u32,
+            &69_u32,
+            &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result, Err(Ok(CarbonError::MethodologyScoreLow)));
     }
@@ -659,8 +682,9 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &70_u32,
             &2023_u32,
+            &70_u32,
+            &BytesN::from_array(&env, &[1u8; 32]),
         ).unwrap();
 
         let p = client.get_project(&make_str(&env, "proj-min"));
@@ -790,6 +814,7 @@ mod edge_case_tests {
             &s(env, "forestry"),
             &2023_u32,
             &80_u32,
+            &BytesN::from_array(env, &[1u8; 32]),
         ).unwrap();
     }
 
@@ -838,7 +863,7 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "dup-proj"), &s(&env, "Dup"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &2023_u32, &80_u32,
+            &2023_u32, &80_u32, &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectAlreadyExists));
     }
@@ -852,7 +877,7 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "p1"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &1989_u32, &80_u32,
+            &1989_u32, &80_u32, &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidVintageYear));
     }
@@ -881,7 +906,7 @@ mod edge_case_tests {
         client.register_project(
             &admin, &s(&env, "p1990"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &1990_u32, &80_u32,
+            &1990_u32, &80_u32, &BytesN::from_array(&env, &[1u8; 32]),
         ).unwrap();
     }
 
@@ -894,7 +919,7 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "p1"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &2023_u32, &0_u32,
+            &2023_u32, &0_u32, &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result.unwrap_err(), Ok(CarbonError::MethodologyScoreLow));
     }
@@ -906,7 +931,7 @@ mod edge_case_tests {
         let result = client.try_register_project(
             &admin, &s(&env, "p1"), &s(&env, "N"), &s(&env, "cid"),
             &Address::generate(&env), &s(&env, "VCS"), &s(&env, "BR"), &s(&env, "forestry"),
-            &2023_u32, &69_u32,
+            &2023_u32, &69_u32, &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result.unwrap_err(), Ok(CarbonError::MethodologyScoreLow));
     }
@@ -1013,5 +1038,98 @@ mod edge_case_tests {
         let (client, _, _, _) = init(&env);
         let result = client.try_get_project(&s(&env, "nonexistent"));
         assert_eq!(result.unwrap_err(), Ok(CarbonError::ProjectNotFound));
+    }
+}
+
+// ── Metadata integrity tests (Issue #2) ──────────────────────────────────────
+
+#[cfg(test)]
+mod metadata_integrity_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, BytesN, Env, String};
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    fn setup_with_project(env: &Env, hash: BytesN<32>) -> CarbonRegistryContractClient {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        let admin    = Address::generate(env);
+        let oracle   = Address::generate(env);
+        let verifier = Address::generate(env);
+        let id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(env, &id);
+        client.initialize(&admin, &oracle, &vec![env, verifier.clone()]).unwrap();
+
+        client.register_project(
+            &admin,
+            &s(env, "proj-hash-test"),
+            &s(env, "Hash Test Project"),
+            &s(env, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"),
+            &Address::generate(env),
+            &s(env, "VCS"),
+            &s(env, "Brazil"),
+            &s(env, "forestry"),
+            &2024_u32,
+            &85_u32,
+            &hash,
+        ).unwrap();
+
+        client
+    }
+
+    /// verify_metadata_integrity returns true when the correct hash is supplied.
+    #[test]
+    fn test_verify_metadata_integrity_match() {
+        let env = Env::default();
+        let correct_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+        let client = setup_with_project(&env, correct_hash.clone());
+
+        let result = client.verify_metadata_integrity(
+            &s(&env, "proj-hash-test"),
+            &correct_hash,
+        );
+        assert!(result, "Expected integrity check to return true for matching hash");
+    }
+
+    /// verify_metadata_integrity returns false when the wrong hash is supplied.
+    #[test]
+    fn test_verify_metadata_integrity_mismatch() {
+        let env = Env::default();
+        let correct_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+        let wrong_hash   = BytesN::from_array(&env, &[0xcdu8; 32]);
+        let client = setup_with_project(&env, correct_hash);
+
+        let result = client.verify_metadata_integrity(
+            &s(&env, "proj-hash-test"),
+            &wrong_hash,
+        );
+        assert!(!result, "Expected integrity check to return false for mismatched hash");
+    }
+
+    /// verify_metadata_integrity returns false (not an error) for unknown projects.
+    /// This prevents leaking project existence information via error variants.
+    #[test]
+    fn test_verify_metadata_integrity_missing_project() {
+        let env = Env::default();
+        let any_hash = BytesN::from_array(&env, &[0x00u8; 32]);
+        let correct_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+        let client = setup_with_project(&env, correct_hash);
+
+        let result = client.verify_metadata_integrity(
+            &s(&env, "project-does-not-exist"),
+            &any_hash,
+        );
+        assert!(!result, "Expected integrity check to return false for non-existent project");
     }
 }

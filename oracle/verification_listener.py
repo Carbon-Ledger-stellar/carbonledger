@@ -5,6 +5,7 @@ against Gold Standard / Verra VCS methodology requirements, and submits
 verified data to the carbon_oracle Soroban contract.
 """
 
+import hashlib
 import os
 import time
 import logging
@@ -92,6 +93,31 @@ def build_and_submit(server: SorobanServer, keypair: Keypair, contract_id: str, 
             raise RuntimeError(f"Transaction FAILED: {result}")
 
     raise TimeoutError(f"Transaction {response.hash} not confirmed in time")
+
+# ── Metadata hash validation ──────────────────────────────────────────────────
+
+def validate_metadata_hash(metadata_cid: str, expected_hash: str) -> bool:
+    """
+    Verify that the SHA-256 of the given metadata CID matches the expected hash.
+
+    The carbon_registry contract stores metadata_hash = SHA-256(metadata_cid) at
+    registration time. Before accepting a verification report, the oracle confirms
+    that the CID in the report has not been silently replaced — an attacker with
+    Pinata credentials could swap pinned content while the on-chain CID stays the
+    same, but the hash would no longer match.
+
+    Args:
+        metadata_cid:   The IPFS CID string from the verifier report.
+        expected_hash:  Hex-encoded SHA-256 expected from the on-chain record.
+
+    Returns:
+        True if hashes match; False if there is a mismatch or inputs are empty.
+    """
+    if not metadata_cid or not expected_hash:
+        return False
+    computed = hashlib.sha256(metadata_cid.encode("utf-8")).hexdigest()
+    return computed.lower() == expected_hash.lower()
+
 
 # ── Methodology validation ────────────────────────────────────────────────────
 
@@ -181,6 +207,28 @@ def process_reports():
                 log.warning("Skipping invalid report for project %s period %s", project_id, period)
                 log_oracle_update(project_id, period, tonnes, score, "", "SKIPPED_INVALID")
                 continue
+
+            # ── Metadata hash integrity check ─────────────────────────────────
+            # If the report carries a metadata_cid + expected metadata_hash, verify
+            # that SHA-256(metadata_cid) matches before accepting the report.
+            # This guards against an attacker who replaced the Pinata-pinned content
+            # after the project was registered — the on-chain hash would no longer
+            # match the substituted CID.
+            report_metadata_cid  = report.get("metadata_cid", "")
+            report_metadata_hash = report.get("metadata_hash", "")
+            if report_metadata_cid and report_metadata_hash:
+                if not validate_metadata_hash(report_metadata_cid, report_metadata_hash):
+                    msg = (
+                        f"🔒 Metadata hash mismatch for project {project_id} — "
+                        f"expected hash does not match SHA-256({report_metadata_cid!r}). "
+                        "Possible content substitution attack. Skipping report."
+                    )
+                    log.warning(msg)
+                    alert_admin(msg)
+                    log_oracle_update(project_id, period, tonnes, score, "", "SKIPPED_HASH_MISMATCH")
+                    continue
+                log.info("Metadata hash verified for project %s", project_id)
+            # ─────────────────────────────────────────────────────────────────
 
             try:
                 tx_hash = build_and_submit(
