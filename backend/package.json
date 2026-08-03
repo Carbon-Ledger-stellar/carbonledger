@@ -18,6 +18,9 @@
     "test:db:reset": "dotenv -e .env.test -- prisma migrate reset --force",
     "pretest:e2e": "npm run test:db:up && npm run test:db:migrate"
   },
+  "prisma": {
+    "seed": "ts-node -P prisma/tsconfig.json prisma/seed.ts"
+  },
   "jest": {
     "moduleFileExtensions": [
       "js",

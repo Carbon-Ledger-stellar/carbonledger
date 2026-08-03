@@ -23,6 +23,7 @@ model CarbonProject {
   totalCreditsIssued  Decimal  @default(0) @db.Decimal(18, 2)
   totalCreditsRetired Decimal  @default(0) @db.Decimal(18, 2)
   metadataCid         String
+  metadataHash        String?
   verifierAddress     String
   ownerAddress        String
   coordinates         Json?
