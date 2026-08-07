@@ -527,35 +527,49 @@ model SatelliteWebhookProvider {
   @@index([isActive])
 }
 
-/// Satellite submissions held for manual review after failing statistical
-/// anomaly detection (#579).
+/// Idempotency ledger for oracle submissions (#578).  One row per logical
+/// submission, keyed by the content-addressed submission id, so a replay
+/// conflicts on insert and never reaches the blockchain.
 ///
-/// Quarantine is deliberately distinct from rejection: the full payload is
-/// retained so a reviewer can approve a genuine step change, rather than the
-/// data being discarded at the door.
-///
-/// Written by oracle/satellite_validation.py over raw SQL, hence the snake_case
+/// Written by oracle/retry_submitter.py over raw SQL, hence the snake_case
 /// mapping shared with the other oracle-owned tables.
-model SatelliteQuarantine {
-  id            BigInt    @id @default(autoincrement())
-  projectId     String    @map("project_id") @db.VarChar(200)
-  period        String    @db.VarChar(100)
-  providerId    String?   @map("provider_id") @db.VarChar(200)
-  /// The rejected submission, retained in full for review.
-  payload       Json
-  reason        String
-  /// Anomaly statistics behind the decision: mean, stdev, z-score, threshold.
-  stats         Json      @default("{}")
-  /// pending | approved | rejected
-  status        String    @default("pending") @db.VarChar(20)
-  reviewedBy    String?   @map("reviewed_by") @db.VarChar(200)
-  reviewNote    String?   @map("review_note")
-  reviewedAt    DateTime? @map("reviewed_at") @db.Timestamptz(6)
-  quarantinedAt DateTime  @default(now()) @map("quarantined_at") @db.Timestamptz(6)
+model OracleSubmissionNonce {
+  /// sha256(canonical_json(payload)) — identical payloads produce identical ids.
+  submissionId String   @id @map("submission_id") @db.Char(64)
+  service      String   @db.VarChar(50)
+  functionName String   @map("function_name") @db.VarChar(100)
+  payloadHash  String   @map("payload_hash") @db.Char(64)
+  /// Allocated once and reused across every retry: a replay of a submission
+  /// that already landed is rejected on chain with InvalidNonce.
+  nonce        BigInt   @unique
+  status       String   @default("pending") @db.VarChar(20)
+  txHash       String?  @map("tx_hash") @db.VarChar(200)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  @@unique([projectId, period])
   @@index([status])
-  @@index([quarantinedAt(sort: Desc)])
-  @@index([projectId])
-  @@map("satellite_quarantine")
+  @@map("oracle_submission_nonces")
+}
+
+/// Permanently failed oracle submissions with full failure context (#578).
+/// Alerting fires when the unresolved count exceeds DLQ_ALERT_THRESHOLD.
+model OracleDeadLetter {
+  submissionId   String    @id @map("submission_id") @db.Char(64)
+  service        String    @db.VarChar(50)
+  functionName   String    @map("function_name") @db.VarChar(100)
+  payload        Json
+  nonce          BigInt?
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
+  /// Every error seen across all attempts, oldest first.
+  errorHistory   Json      @default("[]") @map("error_history")
+  resolved       Boolean   @default(false)
+  resolutionNote String?   @map("resolution_note")
+  resolvedAt     DateTime? @map("resolved_at") @db.Timestamptz(6)
+  firstFailedAt  DateTime  @default(now()) @map("first_failed_at") @db.Timestamptz(6)
+  lastFailedAt   DateTime  @default(now()) @map("last_failed_at") @db.Timestamptz(6)
+
+  @@index([resolved])
+  @@index([lastFailedAt(sort: Desc)])
+  @@map("oracle_dead_letters")
 }

@@ -1,8 +1,8 @@
 """
-Database schema definitions for oracle failover and schema versioning.
+Database schema definitions for oracle failover, schema versioning and liveness.
 
-Provides SQL DDL for the tables required by the disaster recovery
-and methodology schema versioning features.
+Provides SQL DDL for the tables required by the disaster recovery, methodology
+schema versioning and liveness-monitoring features.
 """
 
 FAILOVER_SCHEMA_SQL = """
@@ -107,31 +107,43 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_metrics_run_at
 """
 
 
-QUARANTINE_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS satellite_quarantine (
-    id             BIGSERIAL    PRIMARY KEY,
-    project_id     VARCHAR(200) NOT NULL,
-    period         VARCHAR(100) NOT NULL,
-    provider_id    VARCHAR(200),
-    payload        JSONB        NOT NULL,
-    reason         TEXT         NOT NULL,
-    stats          JSONB        NOT NULL DEFAULT '{}'::jsonb,
+RETRY_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS oracle_submission_nonces (
+    submission_id  CHAR(64)     PRIMARY KEY,
+    service        VARCHAR(50)  NOT NULL,
+    function_name  VARCHAR(100) NOT NULL,
+    payload_hash   CHAR(64)     NOT NULL,
+    nonce          BIGINT       NOT NULL UNIQUE,
     status         VARCHAR(20)  NOT NULL DEFAULT 'pending',
-    reviewed_by    VARCHAR(200),
-    review_note    TEXT,
-    reviewed_at    TIMESTAMPTZ,
-    quarantined_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    UNIQUE (project_id, period)
+    tx_hash        VARCHAR(200),
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_satellite_quarantine_status
-    ON satellite_quarantine (status);
+CREATE INDEX IF NOT EXISTS idx_oracle_submission_nonces_status
+    ON oracle_submission_nonces (status);
 
-CREATE INDEX IF NOT EXISTS idx_satellite_quarantine_quarantined_at
-    ON satellite_quarantine (quarantined_at DESC);
+CREATE TABLE IF NOT EXISTS oracle_dead_letters (
+    submission_id   CHAR(64)     PRIMARY KEY,
+    service         VARCHAR(50)  NOT NULL,
+    function_name   VARCHAR(100) NOT NULL,
+    payload         JSONB        NOT NULL,
+    nonce           BIGINT,
+    attempts        INTEGER      NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    error_history   JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    resolved        BOOLEAN      NOT NULL DEFAULT false,
+    resolution_note TEXT,
+    resolved_at     TIMESTAMPTZ,
+    first_failed_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_failed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX IF NOT EXISTS idx_satellite_quarantine_project
-    ON satellite_quarantine (project_id);
+CREATE INDEX IF NOT EXISTS idx_oracle_dead_letters_resolved
+    ON oracle_dead_letters (resolved);
+
+CREATE INDEX IF NOT EXISTS idx_oracle_dead_letters_last_failed
+    ON oracle_dead_letters (last_failed_at DESC);
 """
 
 
@@ -145,11 +157,11 @@ def get_schema_registry_sql() -> str:
     return SCHEMA_REGISTRY_SQL
 
 
-def get_quarantine_schema_sql() -> str:
-    """Return the SQL DDL for the satellite quarantine queue."""
-    return QUARANTINE_SCHEMA_SQL
+def get_retry_schema_sql() -> str:
+    """Return the SQL DDL for the idempotency and dead-letter tables."""
+    return RETRY_SCHEMA_SQL
 
 
 def get_all_schema_sql() -> str:
     """Return all oracle-related DDL."""
-    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, QUARANTINE_SCHEMA_SQL])
+    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, RETRY_SCHEMA_SQL])

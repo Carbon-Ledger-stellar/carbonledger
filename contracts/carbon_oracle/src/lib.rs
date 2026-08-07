@@ -395,7 +395,19 @@ impl CarbonOracleContract {
         Ok(())
     }
 
+    /// Returns true if the project's monitoring data is within the configured
+    /// liveness SLA (default 365 days, adjustable via `set_liveness_sla`).
+    ///
+    /// This reads the same `LivenessSlaSeconds` key as `check_liveness`, so the
+    /// read-only freshness query and the permissionless dead-man's switch can
+    /// never disagree about whether a project is stale.
     pub fn is_monitoring_current(env: Env, project_id: String) -> bool {
+        let sla: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LivenessSlaSeconds)
+            .unwrap_or(MONITORING_FRESHNESS_SECS);
+
         let latest: Option<u64> = env
             .storage()
             .persistent()
@@ -405,7 +417,7 @@ impl CarbonOracleContract {
             None => false,
             Some(ts) => {
                 let now = env.ledger().timestamp();
-                now.saturating_sub(ts) <= MONITORING_FRESHNESS_SECS
+                now.saturating_sub(ts) <= sla
             }
         }
     }
@@ -1902,6 +1914,109 @@ mod liveness_tests {
 
         let p = registry_client.get_project(&project_id);
         assert_ne!(p.status, ProjectStatus::Suspended);
+    }
+
+    // ── 8. is_monitoring_current honours the configured liveness SLA (#576) ──
+    //
+    // Off-chain liveness monitoring alerts when a service stops submitting, and
+    // the dead-man's switch then calls `check_liveness`.  Operators read the
+    // resulting state back through `is_monitoring_current`, so the two must use
+    // the same threshold: a project that `check_liveness` considers stale must
+    // never be reported as current.
+
+    #[test]
+    fn test_is_monitoring_current_respects_custom_sla() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-mc-sla");
+        register_project(&env, &registry_client, &admin, "proj-mc-sla");
+
+        let period = s(&env, "2025-Q1");
+        let cid = s(&env, "QmCID");
+        let sig = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+        assert!(oracle_client.is_monitoring_current(&project_id));
+
+        // Tighten the SLA to 1 hour, then advance past it.
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+        advance_time(&env, one_hour + 1);
+
+        assert!(
+            !oracle_client.is_monitoring_current(&project_id),
+            "data older than the configured SLA must not be reported as current"
+        );
+    }
+
+    #[test]
+    fn test_is_monitoring_current_true_at_exact_custom_sla_boundary() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-mc-boundary");
+        register_project(&env, &registry_client, &admin, "proj-mc-boundary");
+
+        let period = s(&env, "2025-Q1");
+        let cid = s(&env, "QmCID");
+        let sig = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+        advance_time(&env, one_hour);
+
+        assert!(
+            oracle_client.is_monitoring_current(&project_id),
+            "must still be current exactly at the SLA boundary"
+        );
+    }
+
+    #[test]
+    fn test_is_monitoring_current_agrees_with_check_liveness() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-mc-agree");
+        register_project(&env, &registry_client, &admin, "proj-mc-agree");
+
+        let period = s(&env, "2025-Q1");
+        let cid = s(&env, "QmCID");
+        let sig = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+        advance_time(&env, 2 * one_hour);
+
+        // is_monitoring_current says stale …
+        assert!(!oracle_client.is_monitoring_current(&project_id));
+
+        // … and the dead-man's switch agrees, flagging and suspending.
+        oracle_client.check_liveness(&project_id);
+
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
+
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Suspended);
     }
 
     #[test]

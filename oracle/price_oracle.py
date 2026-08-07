@@ -12,6 +12,7 @@ from typing import Optional, Dict, List, Tuple
 import redis
 import requests
 from utils.distributed_lock import DistributedLock, StaleLockWatchdog
+from audit_chain import record_submission
 
 logger = logging.getLogger(__name__)
 
@@ -595,7 +596,14 @@ class PriceOracle:
             if not success:
                 logger.error("Failed to submit price to contract")
                 return False
-            
+
+            # Liveness heartbeat after a successful on-chain submission (#576).
+            emit_heartbeat(
+                'price_oracle',
+                detail={'prices_submitted': len(price_data)},
+                expected_interval=POLL_INTERVAL_HOURS * 3600,
+            )
+
             logger.info("Price update cycle completed successfully")
             return True
             
@@ -630,6 +638,19 @@ class PriceOracle:
         """Submit each aggregated (methodology, vintage_year) price to the Soroban contract"""
         for (methodology, vintage_year), price in price_data.items():
             logger.info(f"Submitting price: {methodology}/{vintage_year} = ${price:.4f}")
+            # Append to the tamper-evident audit chain (#577). One record per
+            # (methodology, vintage_year) so an auditor sees every price the
+            # oracle put on chain, not just the batch.
+            record_submission(
+                'price_oracle',
+                'update_credit_price',
+                {
+                    'methodology': methodology,
+                    'vintage_year': vintage_year,
+                    'price': price,
+                },
+                contract_id=os.environ.get('CARBON_ORACLE_CONTRACT_ID'),
+            )
         return True
     
     def run_scheduled_cycle(self):

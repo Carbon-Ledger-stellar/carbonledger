@@ -13,6 +13,7 @@ Runbooks for CarbonLedger production incidents. Each runbook follows the same st
 | 5 | Key compromise | Critical | [key-compromise.md](key-compromise.md) |
 | 6 | Contract upgrade | High | [contract-upgrade.md](contract-upgrade.md) |
 | 7 | Synthetic monitoring (canary) failure | P1/P3 | [synthetic-monitoring.md](synthetic-monitoring.md) |
+| 8 | Oracle liveness alert (missed heartbeat) | High | [oracle-liveness.md](oracle-liveness.md) |
 
 ## Supporting Docs
 
