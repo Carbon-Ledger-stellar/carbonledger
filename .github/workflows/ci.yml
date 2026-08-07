@@ -637,9 +637,9 @@ jobs:
         working-directory: oracle
         run: pytest test_failover.py -v
 
-      - name: Run liveness monitoring tests (#576)
+      - name: Run submission retry / DLQ tests (#578)
         working-directory: oracle
-        run: pytest test_liveness.py -v
+        run: pytest test_verification_retry.py -v
 
   fuzz:
     name: Property-Based Fuzz Tests

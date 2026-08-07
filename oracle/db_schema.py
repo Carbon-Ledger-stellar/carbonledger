@@ -107,34 +107,43 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_metrics_run_at
 """
 
 
-HEARTBEAT_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS oracle_heartbeats (
-    service_name       VARCHAR(50)  PRIMARY KEY,
-    instance_id        VARCHAR(200) NOT NULL,
-    last_seen_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    expected_interval  INTEGER      NOT NULL,
-    beat_count         BIGINT       NOT NULL DEFAULT 0,
-    last_detail        JSONB,
-    created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+RETRY_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS oracle_submission_nonces (
+    submission_id  CHAR(64)     PRIMARY KEY,
+    service        VARCHAR(50)  NOT NULL,
+    function_name  VARCHAR(100) NOT NULL,
+    payload_hash   CHAR(64)     NOT NULL,
+    nonce          BIGINT       NOT NULL UNIQUE,
+    status         VARCHAR(20)  NOT NULL DEFAULT 'pending',
+    tx_hash        VARCHAR(200),
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_oracle_heartbeats_last_seen
-    ON oracle_heartbeats (last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_oracle_submission_nonces_status
+    ON oracle_submission_nonces (status);
 
-CREATE TABLE IF NOT EXISTS oracle_liveness_alerts (
-    id            SERIAL PRIMARY KEY,
-    service_name  VARCHAR(50)  NOT NULL,
-    status        VARCHAR(20)  NOT NULL,
-    silent_for    INTEGER,
-    threshold     INTEGER      NOT NULL,
-    message       TEXT         NOT NULL,
-    delivered     BOOLEAN      NOT NULL DEFAULT false,
-    alerted_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS oracle_dead_letters (
+    submission_id   CHAR(64)     PRIMARY KEY,
+    service         VARCHAR(50)  NOT NULL,
+    function_name   VARCHAR(100) NOT NULL,
+    payload         JSONB        NOT NULL,
+    nonce           BIGINT,
+    attempts        INTEGER      NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    error_history   JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    resolved        BOOLEAN      NOT NULL DEFAULT false,
+    resolution_note TEXT,
+    resolved_at     TIMESTAMPTZ,
+    first_failed_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_failed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_oracle_liveness_alerts_service
-    ON oracle_liveness_alerts (service_name, alerted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_oracle_dead_letters_resolved
+    ON oracle_dead_letters (resolved);
+
+CREATE INDEX IF NOT EXISTS idx_oracle_dead_letters_last_failed
+    ON oracle_dead_letters (last_failed_at DESC);
 """
 
 
@@ -148,11 +157,11 @@ def get_schema_registry_sql() -> str:
     return SCHEMA_REGISTRY_SQL
 
 
-def get_heartbeat_schema_sql() -> str:
-    """Return the SQL DDL for the liveness heartbeat and alert tables."""
-    return HEARTBEAT_SCHEMA_SQL
+def get_retry_schema_sql() -> str:
+    """Return the SQL DDL for the idempotency and dead-letter tables."""
+    return RETRY_SCHEMA_SQL
 
 
 def get_all_schema_sql() -> str:
     """Return all oracle-related DDL."""
-    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, HEARTBEAT_SCHEMA_SQL])
+    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, RETRY_SCHEMA_SQL])

@@ -69,7 +69,7 @@ log = get_logger("satellite_monitor")
 from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenError  # noqa: E402
 from utils.safe_parse import safe_float, safe_int  # noqa: E402
 from consensus_engine import ConsensusEngine, Observation, _detect_conflicts  # noqa: E402
-from liveness import LivenessMonitor, emit_heartbeat  # noqa: E402
+from audit_chain import STATUS_FAILED, STATUS_SUBMITTED, record_submission  # noqa: E402
 
 app = Flask(__name__)
 
@@ -701,6 +701,11 @@ def satellite_webhook():
         alert_admin(msg)
 
         keypair = Keypair.from_secret(ORACLE_SECRET_KEY)
+        flag_payload = {
+            "oracle": keypair.public_key,
+            "project_id": project_id,
+            "reason": "satellite_contradiction_detected",
+        }
         try:
             tx_hash = _rpc_circuit.call(
                 build_and_submit,
@@ -712,10 +717,22 @@ def satellite_webhook():
                 ],
             )
             log.info("Flagged project %s on-chain → tx %s", project_id, tx_hash)
+            record_submission(
+                "satellite_monitor", "flag_project", flag_payload,
+                contract_id=ORACLE_CONTRACT_ID, tx_hash=tx_hash,
+            )
         except CircuitOpenError as e:
             log.warning("RPC circuit OPEN — cannot flag project %s: %s", project_id, e)
+            record_submission(
+                "satellite_monitor", "flag_project", flag_payload,
+                contract_id=ORACLE_CONTRACT_ID, status=STATUS_FAILED,
+            )
         except Exception as e:
             log.error("Failed to flag project %s: %s", project_id, e)
+            record_submission(
+                "satellite_monitor", "flag_project", flag_payload,
+                contract_id=ORACLE_CONTRACT_ID, status=STATUS_FAILED,
+            )
 
         return jsonify({"status": "flagged", "reason": "satellite_contradiction"}), 200
 
@@ -744,6 +761,15 @@ def satellite_webhook():
 
     # Submit valid monitoring evidence to the oracle contract.
     keypair = Keypair.from_secret(ORACLE_SECRET_KEY)
+    monitoring_payload = {
+        "oracle": keypair.public_key,
+        "project_id": project_id,
+        "period": period,
+        "tonnes_verified": tonnes,
+        "methodology_score": score,
+        "satellite_cid": satellite_cid,
+        "content_sha256": content_sha256,
+    }
     try:
         tx_hash = _rpc_circuit.call(
             build_and_submit,
@@ -761,18 +787,26 @@ def satellite_webhook():
             "Submitted satellite monitoring for %s/%s → tx %s",
             project_id, period, tx_hash,
         )
-        # Liveness heartbeat after a successful on-chain submission (#576).
-        emit_heartbeat(
-            "satellite_monitor",
-            detail={"project_id": project_id, "period": period, "tx_hash": tx_hash},
+        # Append to the tamper-evident audit chain (#577).
+        record_submission(
+            "satellite_monitor", "submit_monitoring_data", monitoring_payload,
+            contract_id=ORACLE_CONTRACT_ID, tx_hash=tx_hash, status=STATUS_SUBMITTED,
         )
         return jsonify({"status": "submitted", "tx_hash": tx_hash}), 200
 
     except CircuitOpenError as e:
         log.warning("RPC circuit OPEN — cannot submit satellite data for %s: %s", project_id, e)
+        record_submission(
+            "satellite_monitor", "submit_monitoring_data", monitoring_payload,
+            contract_id=ORACLE_CONTRACT_ID, status=STATUS_FAILED,
+        )
         return jsonify({"status": "error", "message": "RPC circuit open, try again later"}), 503
     except Exception as e:
         log.error("Failed to submit satellite data for %s: %s", project_id, e)
+        record_submission(
+            "satellite_monitor", "submit_monitoring_data", monitoring_payload,
+            contract_id=ORACLE_CONTRACT_ID, status=STATUS_FAILED,
+        )
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
