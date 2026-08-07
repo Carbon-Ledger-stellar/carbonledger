@@ -95,9 +95,14 @@ class VerificationListener:
                 )
                 if success:
                     logger.info(f"Verification processed: {verification.get('id')}")
+                    # Liveness heartbeat after every successful submission (#576).
+                    emit_heartbeat(
+                        'verification_listener',
+                        detail={'verification_id': verification.get('id')},
+                    )
                 else:
                     logger.error(f"Verification failed: {verification.get('id')}")
-            
+
             logger.info(f"Verification cycle completed, processed {len(pending)} items")
             return True
             

@@ -821,6 +821,19 @@ def health():
     return jsonify({"status": "ok", "auth": "hmac-sha256", "circuits": get_all_health()}), 200
 
 
+@app.route("/liveness", methods=["GET"])
+def liveness():
+    """
+    Liveness dashboard (#576).  Reports the last-seen time, silence duration
+    and staleness threshold for every oracle service, so operators can see at a
+    glance which service stopped submitting.  Returns 503 when any service is
+    stale so it can be wired straight into an uptime check.
+    """
+    statuses = [s.to_dict() for s in LivenessMonitor().statuses()]
+    stale = [s["service"] for s in statuses if s["status"] != "ok"]
+    return jsonify({"services": statuses, "stale": stale}), (503 if stale else 200)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 """
-Database schema definitions for oracle failover and schema versioning.
+Database schema definitions for oracle failover, schema versioning and liveness.
 
-Provides SQL DDL for the tables required by the disaster recovery
-and methodology schema versioning features.
+Provides SQL DDL for the tables required by the disaster recovery, methodology
+schema versioning and liveness-monitoring features.
 """
 
 FAILOVER_SCHEMA_SQL = """

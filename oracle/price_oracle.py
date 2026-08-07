@@ -596,7 +596,14 @@ class PriceOracle:
             if not success:
                 logger.error("Failed to submit price to contract")
                 return False
-            
+
+            # Liveness heartbeat after a successful on-chain submission (#576).
+            emit_heartbeat(
+                'price_oracle',
+                detail={'prices_submitted': len(price_data)},
+                expected_interval=POLL_INTERVAL_HOURS * 3600,
+            )
+
             logger.info("Price update cycle completed successfully")
             return True
             
