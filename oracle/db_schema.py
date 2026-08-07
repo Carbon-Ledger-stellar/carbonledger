@@ -107,33 +107,43 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_metrics_run_at
 """
 
 
-AUDIT_CHAIN_SQL = """
-CREATE TABLE IF NOT EXISTS oracle_audit_chain (
-    id             BIGSERIAL    PRIMARY KEY,
-    sequence       BIGINT       NOT NULL UNIQUE,
-    recorded_at    TIMESTAMPTZ  NOT NULL,
+RETRY_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS oracle_submission_nonces (
+    submission_id  CHAR(64)     PRIMARY KEY,
     service        VARCHAR(50)  NOT NULL,
-    contract_id    VARCHAR(100),
     function_name  VARCHAR(100) NOT NULL,
-    payload        JSONB        NOT NULL,
     payload_hash   CHAR(64)     NOT NULL,
+    nonce          BIGINT       NOT NULL UNIQUE,
+    status         VARCHAR(20)  NOT NULL DEFAULT 'pending',
     tx_hash        VARCHAR(200),
-    status         VARCHAR(20)  NOT NULL,
-    previous_hash  CHAR(64),
-    entry_hash     CHAR(64)     NOT NULL UNIQUE
+    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_sequence
-    ON oracle_audit_chain (sequence);
+CREATE INDEX IF NOT EXISTS idx_oracle_submission_nonces_status
+    ON oracle_submission_nonces (status);
 
-CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_recorded_at
-    ON oracle_audit_chain (recorded_at);
+CREATE TABLE IF NOT EXISTS oracle_dead_letters (
+    submission_id   CHAR(64)     PRIMARY KEY,
+    service         VARCHAR(50)  NOT NULL,
+    function_name   VARCHAR(100) NOT NULL,
+    payload         JSONB        NOT NULL,
+    nonce           BIGINT,
+    attempts        INTEGER      NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    error_history   JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    resolved        BOOLEAN      NOT NULL DEFAULT false,
+    resolution_note TEXT,
+    resolved_at     TIMESTAMPTZ,
+    first_failed_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_failed_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
 
-CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_function
-    ON oracle_audit_chain (function_name);
+CREATE INDEX IF NOT EXISTS idx_oracle_dead_letters_resolved
+    ON oracle_dead_letters (resolved);
 
-CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_previous_hash
-    ON oracle_audit_chain (previous_hash);
+CREATE INDEX IF NOT EXISTS idx_oracle_dead_letters_last_failed
+    ON oracle_dead_letters (last_failed_at DESC);
 """
 
 
@@ -147,11 +157,11 @@ def get_schema_registry_sql() -> str:
     return SCHEMA_REGISTRY_SQL
 
 
-def get_audit_chain_sql() -> str:
-    """Return the SQL DDL for the tamper-evident submission audit chain."""
-    return AUDIT_CHAIN_SQL
+def get_retry_schema_sql() -> str:
+    """Return the SQL DDL for the idempotency and dead-letter tables."""
+    return RETRY_SCHEMA_SQL
 
 
 def get_all_schema_sql() -> str:
     """Return all oracle-related DDL."""
-    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, AUDIT_CHAIN_SQL])
+    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, RETRY_SCHEMA_SQL])
