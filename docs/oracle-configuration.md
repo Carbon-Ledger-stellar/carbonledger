@@ -100,3 +100,74 @@ When `QUORUM_ALERT_WEBHOOK` is configured, the engine POSTs JSON alerts:
   "timestamp": 1722345678.123
 }
 ```
+
+---
+
+## Submission Retry and Dead-Letter Queue (Verification Listener)
+
+The verification listener submits monitoring data on chain through
+[`IdempotentRetrySubmitter`](../oracle/retry_submitter.py). Transient RPC
+failures are retried with exponential backoff; duplicates never reach the
+blockchain; anything undeliverable lands in a durable dead-letter table.
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `SUBMISSION_MAX_RETRIES` | `8` | Attempts before a payload is dead-lettered |
+| `SUBMISSION_BACKOFF_BASE` | `2` | Exponential base — delay for attempt *n* is `BASE_DELAY * BASE^n` |
+| `SUBMISSION_BASE_DELAY` | `1.0` | First-retry delay in seconds |
+| `SUBMISSION_MAX_DELAY` | `60` | Ceiling on any single sleep |
+| `SUBMISSION_JITTER_RATIO` | `0.5` | Delay is drawn from `[(1-ratio)·d, d]` |
+| `DLQ_ALERT_THRESHOLD` | `10` | Alert once this many unresolved dead letters accumulate |
+| `DLQ_ALERT_WEBHOOK` | `ADMIN_ALERT_WEBHOOK` | Where depth alerts are POSTed |
+
+With the defaults, the retry schedule is roughly 1s, 2s, 4s, 8s, 16s, 32s, 60s
+(capped) — about two minutes of RPC outage absorbed before dead-lettering, each
+delay jittered down by up to 50%.
+
+Jitter matters more than the exponent here: without it, N listener replicas that
+fail on the same RPC outage retry in lockstep and re-create the thundering herd
+that knocked the endpoint over.
+
+### Exactly-once guarantees
+
+Two independent layers, because either alone is insufficient:
+
+**Off-chain — duplicate rejection.** The submission id is content-addressed:
+`sha256(canonical_json(payload))`. Claiming it is an atomic
+`INSERT … ON CONFLICT DO NOTHING` against `oracle_submission_nonces`, so a
+replay after a crash conflicts on insert and is rejected *before* any RPC call.
+A submission already marked `submitted` returns its recorded transaction hash
+instead of resubmitting.
+
+**On-chain — nonce reuse.** Each submission id is allocated exactly one nonce,
+reused across every retry. If attempt 3 actually landed on chain but its
+response was lost, attempt 4 replays the *same* nonce and the contract rejects
+it with `InvalidNonce` rather than recording the data twice. This is what covers
+the ambiguous-failure case the off-chain check cannot see.
+
+### Transient vs permanent failures
+
+A submit function raises `PermanentSubmissionError` for failures retrying cannot
+fix — malformed payloads, contract-level rejections, authorisation errors. Those
+go straight to the dead-letter table instead of consuming the full retry budget.
+Every other exception is treated as transient and retried.
+
+### Dead-letter table
+
+`oracle_dead_letters` stores the payload, every error seen across all attempts,
+the attempt count, the allocated nonce and first/last failure timestamps. Unlike
+the Redis DLQ used by the price oracle, these survive a Redis flush — which is
+what an operator needs to decide whether a batch is safe to replay.
+
+```bash
+python3 oracle/dead_letter_cli.py list                    # what is stuck, and why
+python3 oracle/dead_letter_cli.py depth --alert           # exits 1 when over threshold
+python3 oracle/dead_letter_cli.py resolve <id> --note "…" # mark handled
+```
+
+Replay is deliberately not a CLI command: a dead letter still holds its
+allocated nonce, so a replay must go back through `IdempotentRetrySubmitter`
+inside the listener. Reissuing it from a CLI would bypass the idempotency claim
+that makes exactly-once work.

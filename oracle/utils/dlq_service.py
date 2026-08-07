@@ -4,6 +4,7 @@ Handles retry logic, DLQ storage, and reprocessing
 """
 
 import json
+import os
 import time
 import logging
 import random
