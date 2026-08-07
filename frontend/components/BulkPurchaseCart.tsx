@@ -1,132 +1,539 @@
 "use client";
 
-import { useState } from "react";
-import { MarketListing } from "../lib/api";
+import { useState, useRef, useEffect } from "react";
+import { useTranslations } from "next-intl";
+import { bulkPurchase } from "../lib/api";
+import { useCartStore } from "../lib/use-cart-store";
+import { connectFreighter } from "../lib/freighter";
+import { getWalletErrorMessage } from "../lib/wallet-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
+import TransactionStatus, { TxStatus } from "./TransactionStatus";
+import Toast, { useToast } from "./Toast";
+import { clearSdexEstimate, loadSdexEstimate, StoredOrderBookQuote, formatOrderBookPrice } from "../lib/sdex";
+import {
+  useTransactionPoller,
+  TRANSACTION_MAX_POLLS,
+} from "../hooks/useTransactionPoller";
 
-interface CartItem {
-  listing: MarketListing;
-  amount: number;
-}
+export default function BulkPurchaseCart() {
+  const t = useTranslations("bulkPurchaseCart");
+  const { items, removeItem, clearCart, subtotalStroops, protocolFeeStroops, totalStroops, totalTonnes } = useCartStore();
+  const [walletKey, setWalletKey] = useState<string | null>(null);
+  const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [pollHash, setPollHash] = useState<string | null>(null);
+  const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
+    txHash: pollHash,
+  });
+  const { toasts, addToast, dismiss } = useToast();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [sdexEstimate, setSdexEstimate] = useState<StoredOrderBookQuote | null>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const fabRef = useRef<HTMLButtonElement>(null);
 
-interface Props {
-  onCheckout: (items: CartItem[]) => void;
-}
+  async function handleConnect() {
+    try {
+      const key = await connectFreighter();
+      setWalletKey(key);
+      addToast({ type: "success", title: t("walletConnectedTitle"), message: key.slice(0, 8) + "…" });
+    } catch (e) {
+      addToast({ type: "error", title: t("walletErrorTitle"), message: getWalletErrorMessage(e) });
+    }
+  }
 
-export default function BulkPurchaseCart({ onCheckout }: Props) {
-  const [items, setItems] = useState<CartItem[]>([]);
+  async function handlePurchase() {
+    if (!walletKey || items.length === 0) return;
+    setTxStatus("building");
+    try {
+      await new Promise(r => setTimeout(r, 600));
+      setTxStatus("signing");
+      await new Promise(r => setTimeout(r, 1000));
+      setTxStatus("submitting");
+      const result = await bulkPurchase(
+        items.map(i => ({ listingId: i.listing.listingId, amount: i.amount })),
+        walletKey,
+      );
+      setTxStatus("polling");
+      setTxHash(result.txHash);
+      setPollHash(result.txHash);
+    } catch (e: unknown) {
+      setTxStatus("failed");
+      setPollHash(null);
+      const message = e instanceof Error ? e.message : String(e);
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message });
+    }
+  }
 
-  function addItem(listing: MarketListing, amount: number) {
-    setItems(prev => {
-      const existing = prev.findIndex(i => i.listing.listingId === listing.listingId);
-      if (existing >= 0) {
-        const updated = [...prev];
-        updated[existing] = { ...updated[existing], amount };
-        return updated;
+  useEffect(() => {
+    if (!pollHash || pollState === "idle" || pollState === "polling") return;
+
+    if (pollState === "SUCCESS") {
+      setTxStatus("confirmed");
+      clearCart();
+      addToast({
+        type: "success",
+        title: t("purchaseConfirmedTitle"),
+        message: t("purchaseConfirmedMessage", { tonnes: formatTonnes(totalTonnes) }),
+        txHash: pollHash,
+      });
+      setPollHash(null);
+    } else if (pollState === "FAILED") {
+      setTxStatus("failed");
+      addToast({
+        type: "error",
+        title: t("purchaseFailedTitle"),
+        message: pollError ?? t("purchaseFailedOnChain"),
+      });
+      setPollHash(null);
+    } else if (pollState === "TIMED_OUT") {
+      setTxStatus("timed_out");
+      setPollHash(null);
+    }
+  }, [pollState, pollHash, pollError, clearCart, addToast, totalTonnes]);
+
+  const busy = txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
+
+  // Handle touch events for swipe down to dismiss
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setTouchStart(e.touches[0].clientY);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStart === null) return;
+    const currentTouch = e.touches[0].clientY;
+    const diff = currentTouch - touchStart;
+    if (diff > 100) { // Swipe down more than 100px
+      setDrawerOpen(false);
+      setTouchStart(null);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setTouchStart(null);
+  };
+
+  // Close drawer when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
+        setDrawerOpen(false);
       }
-      return [...prev, { listing, amount }];
-    });
-  }
+    };
 
-  function removeItem(listingId: string) {
-    setItems(prev => prev.filter(i => i.listing.listingId !== listingId));
-  }
+    if (drawerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.body.style.overflow = 'hidden'; // Prevent background scroll
+    }
 
-  const totalStroops = items.reduce((sum, item) => {
-    return sum + BigInt(item.listing.pricePerCredit) * BigInt(item.amount);
-  }, 0n);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.body.style.overflow = 'unset';
+    };
+  }, [drawerOpen]);
 
-  const totalTonnes = items.reduce((sum, item) => sum + item.amount, 0);
+  useEffect(() => {
+    const syncEstimate = () => setSdexEstimate(loadSdexEstimate());
+    syncEstimate();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === "carbonledger:sdex:estimate") {
+        syncEstimate();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const renderEstimatePanel = () => sdexEstimate ? (
+    <div style={{ marginBottom: "1rem", padding: "1rem", background: colors.primary[50], borderRadius: "0.75rem", border: `1px solid ${colors.primary[200]}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "flex-start" }}>
+        <div>
+          <p style={{ margin: 0, fontSize: "0.75rem", fontWeight: 700, color: colors.primary[700], textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Live SDEX estimate
+          </p>
+          <p style={{ margin: "0.25rem 0 0", color: colors.neutral[800], fontSize: "0.875rem", fontWeight: 600 }}>
+            {formatTonnes(sdexEstimate.requestedQuantity)} targeted from the current order book.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            clearSdexEstimate();
+            setSdexEstimate(null);
+          }}
+          style={{ background: "transparent", border: "none", color: colors.neutral[500], cursor: "pointer", fontSize: "0.875rem" }}
+        >
+          Clear
+        </button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "0.75rem", marginTop: "0.75rem" }}>
+        <EstimateMetric label="Avg price" value={`${formatOrderBookPrice(sdexEstimate.averageExecutionPrice)} USDC / tCO₂e`} />
+        <EstimateMetric label="Total estimate" value={`${formatOrderBookPrice(sdexEstimate.estimatedTotalPrice)} USDC`} />
+        <EstimateMetric label="Filled volume" value={formatTonnes(sdexEstimate.filledQuantity)} />
+        <EstimateMetric label="Depth used" value={`${sdexEstimate.levelsUsed.length} levels`} />
+      </div>
+      <p style={{ margin: "0.75rem 0 0", color: colors.neutral[500], fontSize: "0.75rem" }}>
+        The cart still reflects your selected listings. This estimate helps you sanity-check the market depth before checkout.
+      </p>
+    </div>
+  ) : null;
 
   return (
-    <div style={{
-      background: colors.surface,
-      border: `1px solid ${colors.neutral[200]}`,
-      borderRadius: "0.75rem",
-      padding: "1.5rem",
-    }}>
+    <>
+      <style>{`
+        .bulk-cart-desktop {
+          display: block;
+        }
+        .bulk-cart-mobile-fab {
+          display: none;
+        }
+        .bulk-cart-mobile-drawer {
+          display: none;
+        }
+        @media (max-width: 767px) {
+          .bulk-cart-desktop {
+            display: none;
+          }
+          .bulk-cart-mobile-fab {
+            display: block;
+            position: fixed;
+            bottom: 1.5rem;
+            right: 1.5rem;
+            z-index: 1000;
+            background: ${colors.primary[600]};
+            color: #fff;
+            border: none;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
+            transition: transform 0.2s;
+          }
+          .bulk-cart-mobile-fab:hover {
+            transform: scale(1.1);
+          }
+          .bulk-cart-mobile-fab-badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: #dc2626;
+            color: #fff;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+          .bulk-cart-mobile-drawer {
+            display: block;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 999;
+            background: ${colors.surface};
+            border-radius: 1rem 1rem 0 0;
+            box-shadow: 0 -4px 20px rgb(0 0 0 / 0.2);
+            max-height: 80vh;
+            overflow-y: auto;
+            transform: translateY(100%);
+            transition: transform 0.3s ease-out;
+          }
+          .bulk-cart-mobile-drawer.open {
+            transform: translateY(0);
+          }
+          .bulk-cart-mobile-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 998;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+          }
+          .bulk-cart-mobile-backdrop.open {
+            opacity: 1;
+            pointer-events: auto;
+          }
+          .bulk-cart-mobile-header {
+            position: sticky;
+            top: 0;
+            background: ${colors.surface};
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid ${colors.neutral[200]};
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1;
+          }
+        }
+      `}</style>
+
+      {/* Desktop version (>=768px) */}
+      <div className="bulk-cart-desktop">
+        <div style={{ background: colors.surface, border: `1px solid ${colors.neutral[200]}`, borderRadius: "0.75rem", padding: "1.5rem" }}>
       <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 1rem" }}>
-        Purchase Cart ({items.length} project{items.length !== 1 ? "s" : ""})
+        {t("title", { count: items.length })}
       </h3>
+
+      {renderEstimatePanel()}
 
       {items.length === 0 ? (
         <p style={{ color: colors.neutral[400], fontSize: "0.875rem", textAlign: "center", padding: "2rem 0" }}>
-          Add credits from the marketplace to build your portfolio
+          {t("empty")}
         </p>
       ) : (
         <>
-          {items.map(({ listing, amount }) => (
-            <div key={listing.listingId} style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "0.75rem 0",
-              borderBottom: `1px solid ${colors.neutral[100]}`,
-            }}>
-              <div>
-                <p style={{ fontWeight: 600, fontSize: "0.875rem", color: colors.neutral[800], margin: 0 }}>
-                  {listing.projectName || listing.projectId}
-                </p>
-                <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
-                  {listing.methodology} · {listing.vintageYear} · {amount} tCO₂e
-                </p>
+          {/* Per-project breakdown */}
+          {items.map(({ listing, amount }) => {
+            const lineCost = BigInt(listing.pricePerCredit) * BigInt(amount);
+            return (
+              <div key={listing.listingId} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "0.75rem 0", borderBottom: `1px solid ${colors.neutral[100]}`,
+              }}>
+                <div>
+                  <p style={{ fontWeight: 600, fontSize: "0.875rem", color: colors.neutral[800], margin: 0 }}>
+                    {listing.projectName || listing.projectId}
+                  </p>
+                  <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
+                    {listing.methodology} · {listing.vintageYear} · {formatTonnes(amount)}
+                  </p>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <span style={{ fontWeight: 700, color: colors.primary[700], fontSize: "0.9rem" }}>
+                    ${formatStroops(lineCost)}
+                  </span>
+                  <button
+                    onClick={() => removeItem(listing.listingId)}
+                    disabled={!!busy}
+                    aria-label={t("remove")}
+                    style={{ background: "transparent", border: "none", color: colors.neutral[400], cursor: "pointer", fontSize: "1rem", padding: "0.2rem" }}
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                <span style={{ fontWeight: 700, color: colors.primary[700], fontSize: "0.9rem" }}>
-                  ${formatStroops(BigInt(listing.pricePerCredit) * BigInt(amount))}
-                </span>
-                <button
-                  onClick={() => removeItem(listing.listingId)}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: colors.neutral[400],
-                    cursor: "pointer",
-                    fontSize: "1rem",
-                    padding: "0.2rem",
-                  }}
-                  aria-label="Remove"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
-          {/* Totals */}
+          {/* Cost breakdown */}
           <div style={{ marginTop: "1rem", padding: "1rem", background: colors.primary[50], borderRadius: "0.5rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
-              <span style={{ fontSize: "0.875rem", color: colors.neutral[600] }}>Total CO₂e</span>
-              <span style={{ fontWeight: 700, color: colors.neutral[800] }}>{formatTonnes(totalTonnes)}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ fontSize: "0.875rem", color: colors.neutral[600] }}>Total Cost</span>
-              <span style={{ fontWeight: 700, color: colors.primary[700], fontSize: "1.1rem" }}>
-                ${formatStroops(totalStroops)} USDC
-              </span>
-            </div>
+            <Row label={t("subtotal")} value={`$${formatStroops(subtotalStroops)} USDC`} />
+            <Row label={t("protocolFee")} value={`$${formatStroops(protocolFeeStroops)} USDC`} muted />
+            <div style={{ borderTop: `1px solid ${colors.primary[200]}`, margin: "0.5rem 0" }} />
+            <Row label={t("totalLabel", { tonnes: formatTonnes(totalTonnes) })} value={`$${formatStroops(totalStroops)} USDC`} bold />
           </div>
 
-          <button
-            onClick={() => onCheckout(items)}
-            style={{
-              background: colors.primary[600],
-              color: "#fff",
-              border: "none",
-              borderRadius: "0.5rem",
-              padding: "0.75rem",
-              fontSize: "0.9rem",
-              fontWeight: 700,
-              cursor: "pointer",
-              width: "100%",
-              marginTop: "1rem",
-            }}
-          >
-            Purchase {formatTonnes(totalTonnes)} of Carbon Credits
-          </button>
+          {/* Tx status */}
+          {txStatus && (
+            <div style={{ marginTop: "1rem" }}>
+              <TransactionStatus
+                status={txStatus}
+                txHash={txHash ?? undefined}
+                pollProgress={
+                  txStatus === "polling"
+                    ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                    : undefined
+                }
+                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                onRetry={txStatus === "failed" ? handlePurchase : undefined}
+              />
+            </div>
+          )}
+
+          {/* CTA */}
+          <div style={{ marginTop: "1rem" }}>
+            {!walletKey ? (
+              <button onClick={handleConnect} style={btnStyle(colors.primary[600])}>
+                {t("connectToPurchase")}
+              </button>
+            ) : (
+              <button onClick={handlePurchase} disabled={!!busy || txStatus === "confirmed"} style={btnStyle(busy || txStatus === "confirmed" ? colors.neutral[300] : colors.primary[600], !!busy)}>
+                {txStatus === "confirmed" ? t("purchaseComplete") :
+                 busy ? t("processing") :
+                 t("purchaseFor", { tonnes: formatTonnes(totalTonnes), amount: formatStroops(totalStroops) })}
+              </button>
+            )}
+          </div>
         </>
       )}
+
+      <Toast toasts={toasts} onDismiss={dismiss} />
+    </div>
+      </div>
+
+      {/* Mobile FAB (<768px) */}
+      {items.length > 0 && (
+        <button
+          ref={fabRef}
+          className="bulk-cart-mobile-fab"
+          onClick={() => setDrawerOpen(true)}
+          aria-label={t("openCartAria", { count: items.length })}
+        >
+          🛒
+          <span className="bulk-cart-mobile-fab-badge">{items.length}</span>
+        </button>
+      )}
+
+      {/* Mobile Backdrop */}
+      <div
+        className={`bulk-cart-mobile-backdrop ${drawerOpen ? 'open' : ''}`}
+        onClick={() => setDrawerOpen(false)}
+      />
+
+      {/* Mobile Drawer (<768px) */}
+      <div
+        ref={drawerRef}
+        className={`bulk-cart-mobile-drawer ${drawerOpen ? 'open' : ''}`}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <div className="bulk-cart-mobile-header">
+          <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: 0 }}>
+            {t("title", { count: items.length })}
+          </h3>
+          <button
+            onClick={() => setDrawerOpen(false)}
+            aria-label={t("closeCart")}
+            style={{
+              background: "transparent",
+              border: "none",
+              fontSize: "1.5rem",
+              cursor: "pointer",
+              color: colors.neutral[500],
+              padding: "0.25rem",
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div style={{ padding: "1.5rem" }}>
+          {renderEstimatePanel()}
+
+          {items.length === 0 ? (
+            <p style={{ color: colors.neutral[400], fontSize: "0.875rem", textAlign: "center", padding: "2rem 0" }}>
+              {t("empty")}
+            </p>
+          ) : (
+            <>
+              {/* Per-project breakdown */}
+              {items.map(({ listing, amount }) => {
+                const lineCost = BigInt(listing.pricePerCredit) * BigInt(amount);
+                return (
+                  <div key={listing.listingId} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "0.75rem 0", borderBottom: `1px solid ${colors.neutral[100]}`,
+                  }}>
+                    <div>
+                      <p style={{ fontWeight: 600, fontSize: "0.875rem", color: colors.neutral[800], margin: 0 }}>
+                        {listing.projectName || listing.projectId}
+                      </p>
+                      <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
+                        {listing.methodology} · {listing.vintageYear} · {formatTonnes(amount)}
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                      <span style={{ fontWeight: 700, color: colors.primary[700], fontSize: "0.9rem" }}>
+                        ${formatStroops(lineCost)}
+                      </span>
+                      <button
+                        onClick={() => removeItem(listing.listingId)}
+                        disabled={!!busy}
+                        aria-label={t("remove")}
+                        style={{ background: "transparent", border: "none", color: colors.neutral[400], cursor: "pointer", fontSize: "1rem", padding: "0.2rem" }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Cost breakdown */}
+              <div style={{ marginTop: "1rem", padding: "1rem", background: colors.primary[50], borderRadius: "0.5rem" }}>
+                <Row label={t("subtotal")} value={`$${formatStroops(subtotalStroops)} USDC`} />
+                <Row label={t("protocolFee")} value={`$${formatStroops(protocolFeeStroops)} USDC`} muted />
+                <div style={{ borderTop: `1px solid ${colors.primary[200]}`, margin: "0.5rem 0" }} />
+                <Row label={t("totalLabel", { tonnes: formatTonnes(totalTonnes) })} value={`$${formatStroops(totalStroops)} USDC`} bold />
+              </div>
+
+              {/* Tx status */}
+              {txStatus && (
+                <div style={{ marginTop: "1rem" }}>
+                  <TransactionStatus
+                status={txStatus}
+                txHash={txHash ?? undefined}
+                pollProgress={
+                  txStatus === "polling"
+                    ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                    : undefined
+                }
+                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                onRetry={txStatus === "failed" ? handlePurchase : undefined}
+              />
+                </div>
+              )}
+
+              {/* CTA */}
+              <div style={{ marginTop: "1rem" }}>
+                {!walletKey ? (
+                  <button onClick={handleConnect} style={btnStyle(colors.primary[600])}>
+                    {t("connectToPurchase")}
+                  </button>
+                ) : (
+                  <button onClick={handlePurchase} disabled={!!busy || txStatus === "confirmed"} style={btnStyle(busy || txStatus === "confirmed" ? colors.neutral[300] : colors.primary[600], !!busy)}>
+                    {txStatus === "confirmed" ? t("purchaseComplete") :
+                     busy ? t("processing") :
+                     t("purchaseFor", { tonnes: formatTonnes(totalTonnes), amount: formatStroops(totalStroops) })}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+
+          <Toast toasts={toasts} onDismiss={dismiss} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Row({ label, value, muted, bold }: { label: string; value: string; muted?: boolean; bold?: boolean }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.4rem" }}>
+      <span style={{ fontSize: "0.875rem", color: muted ? colors.neutral[400] : colors.neutral[600] }}>{label}</span>
+      <span style={{ fontWeight: bold ? 700 : 500, color: bold ? colors.primary[700] : colors.neutral[700], fontSize: bold ? "1rem" : "0.875rem" }}>{value}</span>
     </div>
   );
+}
+
+function EstimateMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p style={{ margin: 0, fontSize: "0.7rem", color: colors.neutral[500] }}>{label}</p>
+      <p style={{ margin: "0.2rem 0 0", fontSize: "0.875rem", fontWeight: 700, color: colors.neutral[900] }}>{value}</p>
+    </div>
+  );
+}
+
+function btnStyle(bg: string, notAllowed = false): React.CSSProperties {
+  return {
+    background: bg, color: "#fff", border: "none", borderRadius: "0.5rem",
+    padding: "0.75rem", fontSize: "0.9rem", fontWeight: 700,
+    cursor: notAllowed ? "not-allowed" : "pointer", width: "100%",
+  };
 }

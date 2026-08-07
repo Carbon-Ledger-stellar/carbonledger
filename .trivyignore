@@ -1,0 +1,3 @@
+# Trivy vulnerability ignore file
+# Format: CVE-YYYY-XXXX
+# Add known false positives or accepted risks here
