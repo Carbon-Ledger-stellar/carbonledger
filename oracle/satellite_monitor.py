@@ -69,6 +69,7 @@ log = get_logger("satellite_monitor")
 from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenError  # noqa: E402
 from utils.safe_parse import safe_float, safe_int  # noqa: E402
 from consensus_engine import ConsensusEngine, Observation, _detect_conflicts  # noqa: E402
+from liveness import LivenessMonitor, emit_heartbeat  # noqa: E402
 
 app = Flask(__name__)
 
@@ -760,6 +761,11 @@ def satellite_webhook():
             "Submitted satellite monitoring for %s/%s → tx %s",
             project_id, period, tx_hash,
         )
+        # Liveness heartbeat after a successful on-chain submission (#576).
+        emit_heartbeat(
+            "satellite_monitor",
+            detail={"project_id": project_id, "period": period, "tx_hash": tx_hash},
+        )
         return jsonify({"status": "submitted", "tx_hash": tx_hash}), 200
 
     except CircuitOpenError as e:
@@ -779,6 +785,19 @@ def health():
     registered circuits in this process.
     """
     return jsonify({"status": "ok", "auth": "hmac-sha256", "circuits": get_all_health()}), 200
+
+
+@app.route("/liveness", methods=["GET"])
+def liveness():
+    """
+    Liveness dashboard (#576).  Reports the last-seen time, silence duration
+    and staleness threshold for every oracle service, so operators can see at a
+    glance which service stopped submitting.  Returns 503 when any service is
+    stale so it can be wired straight into an uptime check.
+    """
+    statuses = [s.to_dict() for s in LivenessMonitor().statuses()]
+    stale = [s["service"] for s in statuses if s["status"] != "ok"]
+    return jsonify({"services": statuses, "stale": stale}), (503 if stale else 200)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

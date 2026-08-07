@@ -11,6 +11,7 @@ from typing import Optional
 import redis
 from utils.distributed_lock import DistributedLock, StaleLockWatchdog
 from schema_registry import validate_submission, get_schema_version_for_submission, init_schema_registry
+from liveness import emit_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +75,14 @@ class VerificationListener:
                 success = self.process_verification(verification)
                 if success:
                     logger.info(f"Verification processed: {verification.get('id')}")
+                    # Liveness heartbeat after every successful submission (#576).
+                    emit_heartbeat(
+                        'verification_listener',
+                        detail={'verification_id': verification.get('id')},
+                    )
                 else:
                     logger.error(f"Verification failed: {verification.get('id')}")
-            
+
             logger.info(f"Verification cycle completed, processed {len(pending)} items")
             return True
             
