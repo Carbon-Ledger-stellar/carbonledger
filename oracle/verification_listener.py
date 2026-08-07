@@ -83,6 +83,16 @@ class VerificationListener:
                         continue
                 
                 success = self.process_verification(verification)
+                # Append to the tamper-evident audit chain (#577), successes and
+                # failures alike — an auditor needs to see attempted submissions,
+                # not just the ones that landed.
+                record_submission(
+                    'verification_listener',
+                    'submit_monitoring_data',
+                    verification,
+                    contract_id=os.environ.get('CARBON_ORACLE_CONTRACT_ID'),
+                    status=STATUS_SUBMITTED if success else STATUS_FAILED,
+                )
                 if success:
                     logger.info(f"Verification processed: {verification.get('id')}")
                 else:
