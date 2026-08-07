@@ -637,6 +637,10 @@ jobs:
         working-directory: oracle
         run: pytest test_failover.py -v
 
+      - name: Run submission retry / DLQ tests (#578)
+        working-directory: oracle
+        run: pytest test_verification_retry.py -v
+
   fuzz:
     name: Property-Based Fuzz Tests
     runs-on: ubuntu-latest

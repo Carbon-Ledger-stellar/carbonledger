@@ -1,6 +1,12 @@
 """
 Verification Listener with Distributed Lock
 Prevents duplicate verification processing across multiple replicas
+
+Submissions go through IdempotentRetrySubmitter (#578): transient RPC failures
+are retried with exponential backoff (base 2, up to 8 attempts) and jitter,
+duplicates are rejected before reaching the blockchain via a content-addressed
+submission id, and anything that cannot be delivered lands in the PostgreSQL
+dead-letter table with full context.
 """
 
 import hashlib
@@ -11,6 +17,9 @@ from typing import Optional
 import redis
 from utils.distributed_lock import DistributedLock, StaleLockWatchdog
 from schema_registry import validate_submission, get_schema_version_for_submission, init_schema_registry
+from retry_submitter import IdempotentRetrySubmitter, SubmissionResult
+# Re-exported so submit_to_contract implementations can signal "do not retry".
+from retry_submitter import PermanentSubmissionError  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +40,15 @@ class VerificationListener:
     methodology schema version validation.
     """
     
-    def __init__(self):
+    def __init__(self, submitter: Optional[IdempotentRetrySubmitter] = None):
         self.lock = DistributedLock(redis_client, LOCK_KEY, LOCK_TTL)
         self.watchdog = StaleLockWatchdog(redis_client, LOCK_KEY, WATCHDOG_TIMEOUT_MINUTES / 60)
         self.alert_webhook = os.environ.get('ADMIN_ALERT_WEBHOOK')
         self.schema_validation_enabled = os.environ.get('SCHEMA_VALIDATION_ENABLED', 'true').lower() == 'true'
         if self.schema_validation_enabled:
             init_schema_registry()
+        # Idempotent retry + dead-letter handling for on-chain submissions (#578).
+        self.submitter = submitter or IdempotentRetrySubmitter(service='verification_listener')
         
     def process_verification_cycle(self) -> bool:
         """
@@ -104,10 +115,56 @@ class VerificationListener:
     def fetch_pending_verifications(self) -> list:
         """Fetch pending verifications from queue"""
         return []
-    
+
     def process_verification(self, verification: dict) -> bool:
-        """Process a single verification"""
+        """
+        Submit a single verification on chain with idempotent retry (#578).
+
+        Returns True when the data is on chain — including the case where a
+        previous run already submitted it, since the outcome is the same.
+        """
         logger.info(f"Processing verification: {verification}")
+        result = self.submit_verification(verification)
+
+        if result.duplicate:
+            logger.info(
+                "Duplicate verification %s rejected before submission (status=%s)",
+                verification.get('id'),
+                'submitted' if result.success else 'pending/failed',
+            )
+        elif result.dead_lettered:
+            logger.error(
+                "Verification %s dead-lettered after %d attempts: %s",
+                verification.get('id'),
+                result.attempts,
+                result.errors[-1] if result.errors else 'unknown',
+            )
+
+        return result.success
+
+    def submit_verification(self, verification: dict) -> SubmissionResult:
+        """Run one verification through the retry submitter."""
+        return self.submitter.submit(
+            function_name='submit_monitoring_data',
+            payload=verification,
+            submit_func=self.submit_to_contract,
+        )
+
+    def submit_to_contract(self, payload: dict, nonce: int):
+        """
+        Submit monitoring data to the Soroban contract.
+
+        The nonce is supplied by the retry submitter and is stable across every
+        retry of the same payload, so a replay of a submission that already
+        landed is rejected on chain rather than recorded twice.
+
+        Raise PermanentSubmissionError for failures that retrying cannot fix;
+        raise anything else to have the attempt retried with backoff.
+        """
+        logger.info(
+            "Submitting verification %s with nonce %d",
+            payload.get('id'), nonce,
+        )
         return True
     
     def run_scheduled_cycle(self):
