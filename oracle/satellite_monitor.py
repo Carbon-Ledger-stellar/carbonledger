@@ -111,6 +111,10 @@ _rpc_circuit = get_circuit_breaker("satellite_monitor_rpc")
 # Consensus engine: N-of-M quorum for satellite providers
 _consensus = ConsensusEngine()
 
+# Validation + fraud-detection preprocessing (Feature #579)
+_quarantine = QuarantineQueue()
+_validator = SatelliteValidator(quarantine=_quarantine)
+
 # How long provider HMAC keys stay cached in-process before re-fetching from DB.
 _CACHE_TTL_SECONDS = 60
 
@@ -560,7 +564,14 @@ def get_project_coordinates(project_id: str) -> dict | None:
 
 
 def coordinates_match(registered: dict, satellite: dict, tolerance_km: float = 1.0) -> bool:
-    """Check if satellite observation coordinates match registered project area."""
+    """
+    Check if satellite observation coordinates match registered project area.
+
+    Superseded in the webhook path by satellite_validation.validate_coordinates
+    (#579), which handles bounding boxes and scales the longitude tolerance by
+    cos(latitude) instead of assuming the equatorial figure everywhere.  Kept
+    for the existing fuzz tests in tests/fuzz/oracle/.
+    """
     if not registered or not satellite:
         return False
     lat_diff = abs(safe_float(registered.get("lat", 0)) - safe_float(satellite.get("lat", 0)))
@@ -645,19 +656,35 @@ def satellite_webhook():
     score         = safe_int(data.get("methodology_score", 80))
     coordinates   = data.get("coordinates", {})
 
-    if not project_id or not period or not satellite_cid:
-        return jsonify({"error": "Missing required fields"}), 400
+    # ── Schema + coordinate validation (Issue #579) ──────────────────────────
+    # Runs before the IPFS round trip: a malformed or mislocated payload should
+    # not cost a gateway fetch.  Rejections carry per-field errors so a provider
+    # can fix their integration without guessing.
+    registered_coords = get_project_coordinates(project_id)
+    structure = _validator.validate_structure(data, registered_coords)
+    if structure.rejected:
+        log.warning(
+            "Satellite payload rejected for project %s: %s",
+            project_id or "<missing>",
+            [str(e) for e in structure.errors],
+        )
+        if structure.reason == COORDINATES_OUT_OF_BOUNDS:
+            alert_admin(
+                f"⚠️ Coordinate mismatch for project {project_id} "
+                "— satellite data may be for wrong location"
+            )
+        http_code = 422 if structure.reason == COORDINATES_OUT_OF_BOUNDS else 400
+        return jsonify({
+            "status": "rejected",
+            "reason": structure.reason,
+            "errors": [e.to_dict() for e in structure.errors],
+        }), http_code
 
     # ── IPFS data-integrity checks (Issue #536) ──────────────────────────────
     # Fetch content, verify SHA-256 hash, and confirm multi-node pinning before
-    # any on-chain submission.  The webhook must include ``content_sha256`` for
-    # tamper detection; if it is absent the submission is rejected.
+    # any on-chain submission.  ``content_sha256`` is guaranteed present and
+    # well-formed by the schema check above.
     content_sha256 = data.get("content_sha256", "").strip()
-    if not content_sha256:
-        log.warning(
-            "Missing content_sha256 in payload for project %s — rejecting", project_id
-        )
-        return jsonify({"error": "Missing content_sha256 field", "status": "rejected"}), 400
 
     ipfs_ok, ipfs_reason = verify_ipfs_cid(satellite_cid, content_sha256)
     if not ipfs_ok:
@@ -679,17 +706,6 @@ def satellite_webhook():
         "IPFS integrity verified for project %s CID %s (sha256 match, pinning ok)",
         project_id, satellite_cid,
     )
-
-    # Validate coordinates against registered project.
-    registered_coords = get_project_coordinates(project_id)
-    if registered_coords and not coordinates_match(registered_coords, coordinates):
-        msg = (
-            f"⚠️ Coordinate mismatch for project {project_id} "
-            "— satellite data may be for wrong location"
-        )
-        log.warning(msg)
-        alert_admin(msg)
-        return jsonify({"status": "rejected", "reason": "coordinate_mismatch"}), 422
 
     # Check for contradiction between satellite observation and reported sequestration.
     if detect_contradiction(data):
@@ -735,6 +751,28 @@ def satellite_webhook():
             )
 
         return jsonify({"status": "flagged", "reason": "satellite_contradiction"}), 200
+
+    # ── Statistical anomaly screen (Issue #579) ─────────────────────────────
+    # Runs before the consensus engine: an implausible claim should never enter
+    # the quorum pool, or a single fraudulent provider could drag the consensus
+    # value with it.  Suspicious data is quarantined for review, not discarded —
+    # a genuine step change looks identical to fraud from one sample.
+    screen = _validator.screen_anomaly(data, provider_id=provider_id_header or None)
+    if screen.quarantined:
+        detail = screen.errors[0].message if screen.errors else screen.reason
+        log.warning(
+            "Quarantined satellite submission for %s/%s: %s",
+            project_id, period, detail,
+        )
+        alert_admin(
+            f"🔍 Satellite submission quarantined for {project_id}/{period}: {detail}"
+        )
+        return jsonify({
+            "status": "quarantined",
+            "reason": screen.reason,
+            "detail": detail,
+            "stats": screen.stats,
+        }), 202
 
     # ── Consensus check before on-chain submission ──────────────────────────
     _consensus.register_observation(Observation(

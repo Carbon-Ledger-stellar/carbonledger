@@ -1,11 +1,16 @@
 import {
-  Controller, Get, Post, Delete, Body, Param, Query,
+  Controller, Get, Post, Delete, Body, Param, Query, Req,
   UseGuards, HttpCode, HttpStatus,
 } from '@nestjs/common';
 import { Roles } from '../auth/decorators';
 import { AdminService } from './admin.service';
-import { VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto, UpdateCanaryDto } from './admin.dto';
-import { CheckPolicies, PoliciesGuard, UserSubject, AuditLogSubject } from '../policies';
+import {
+  VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto, UpdateCanaryDto,
+  ReviewQuarantineDto,
+} from './admin.dto';
+import {
+  CheckPolicies, PoliciesGuard, UserSubject, AuditLogSubject, OracleDataSubject,
+} from '../policies';
 
 /**
  * AdminController — all routes require role=admin.
@@ -100,5 +105,53 @@ export class AdminController {
   @CheckPolicies((ability) => ability.can('read', AuditLogSubject))
   getAbuseLog() {
     return this.admin.getAbuseLog();
+  }
+
+  // ── Satellite quarantine queue (#579) ───────────────────────────────────────
+  //
+  // Satellite submissions whose sequestration claim is statistically
+  // implausible are held by the oracle for manual review rather than discarded.
+  // These routes are the review surface for that queue.
+
+  @Get('satellite/quarantine')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', OracleDataSubject))
+  listQuarantine(
+    @Query('status') status?: string,
+    @Query('limit')  limit?: number,
+    @Query('offset') offset?: number,
+  ) {
+    return this.admin.listQuarantine({ status, limit, offset });
+  }
+
+  @Get('satellite/quarantine/depth')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', OracleDataSubject))
+  quarantineDepth() {
+    return this.admin.getQuarantineDepth();
+  }
+
+  @Get('satellite/quarantine/:id')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', OracleDataSubject))
+  getQuarantineEntry(@Param('id') id: string) {
+    return this.admin.getQuarantineEntry(id);
+  }
+
+  @Post('satellite/quarantine/:id/review')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', OracleDataSubject))
+  reviewQuarantine(
+    @Param('id') id: string,
+    @Body() dto: ReviewQuarantineDto,
+    @Req() req: any,
+  ) {
+    return this.admin.reviewQuarantineEntry(
+      id,
+      dto.decision,
+      req.user?.publicKey,
+      dto.note,
+    );
   }
 }

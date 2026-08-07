@@ -37,6 +37,25 @@ export class AssignRoleDto {
   role: string;
 }
 
+/**
+ * DTO for reviewing a quarantined satellite submission (#579).
+ *
+ * Validation:
+ *  - decision: approved (data is legitimate, release for resubmission) or
+ *              rejected (data is bad, discard)
+ *  - note: free-text rationale recorded alongside the decision
+ */
+export class ReviewQuarantineDto {
+  @IsString()
+  @IsIn(['approved', 'rejected'])
+  decision: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 2000)
+  note?: string;
+}
+
 export class UpdateCanaryDto {
   /**
    * Canary contract address (Stellar contract ID, 56-char C... address).
