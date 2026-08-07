@@ -637,6 +637,10 @@ jobs:
         working-directory: oracle
         run: pytest test_failover.py -v
 
+      - name: Run audit chain integrity tests (#577)
+        working-directory: oracle
+        run: pytest test_audit_chain.py -v
+
   fuzz:
     name: Property-Based Fuzz Tests
     runs-on: ubuntu-latest

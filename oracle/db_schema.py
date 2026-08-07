@@ -107,6 +107,36 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_metrics_run_at
 """
 
 
+AUDIT_CHAIN_SQL = """
+CREATE TABLE IF NOT EXISTS oracle_audit_chain (
+    id             BIGSERIAL    PRIMARY KEY,
+    sequence       BIGINT       NOT NULL UNIQUE,
+    recorded_at    TIMESTAMPTZ  NOT NULL,
+    service        VARCHAR(50)  NOT NULL,
+    contract_id    VARCHAR(100),
+    function_name  VARCHAR(100) NOT NULL,
+    payload        JSONB        NOT NULL,
+    payload_hash   CHAR(64)     NOT NULL,
+    tx_hash        VARCHAR(200),
+    status         VARCHAR(20)  NOT NULL,
+    previous_hash  CHAR(64),
+    entry_hash     CHAR(64)     NOT NULL UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_sequence
+    ON oracle_audit_chain (sequence);
+
+CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_recorded_at
+    ON oracle_audit_chain (recorded_at);
+
+CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_function
+    ON oracle_audit_chain (function_name);
+
+CREATE INDEX IF NOT EXISTS idx_oracle_audit_chain_previous_hash
+    ON oracle_audit_chain (previous_hash);
+"""
+
+
 def get_failover_schema_sql() -> str:
     """Return the SQL DDL for the failover state table."""
     return FAILOVER_SCHEMA_SQL
@@ -117,6 +147,11 @@ def get_schema_registry_sql() -> str:
     return SCHEMA_REGISTRY_SQL
 
 
+def get_audit_chain_sql() -> str:
+    """Return the SQL DDL for the tamper-evident submission audit chain."""
+    return AUDIT_CHAIN_SQL
+
+
 def get_all_schema_sql() -> str:
     """Return all oracle-related DDL."""
-    return FAILOVER_SCHEMA_SQL + "\n" + SCHEMA_REGISTRY_SQL
+    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, AUDIT_CHAIN_SQL])

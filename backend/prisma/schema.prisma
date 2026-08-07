@@ -526,3 +526,33 @@ model SatelliteWebhookProvider {
   @@index([providerId])
   @@index([isActive])
 }
+
+/// Tamper-evident, hash-chained log of every oracle submission to a Soroban
+/// contract (#577).  Append-only — rows must never be updated or deleted;
+/// doing either is exactly what oracle/verify_audit_chain.py detects.
+///
+/// Written by oracle/audit_chain.py over raw SQL, hence the snake_case mapping
+/// shared with the other oracle-owned tables (oracle_submissions, …).
+model OracleAuditChain {
+  id           BigInt   @id @default(autoincrement())
+  /// Contiguous chain position starting at 1; a hole means a record was deleted.
+  sequence     BigInt   @unique
+  recordedAt   DateTime @map("recorded_at") @db.Timestamptz(6)
+  service      String   @db.VarChar(50)
+  contractId   String?  @map("contract_id") @db.VarChar(100)
+  functionName String   @map("function_name") @db.VarChar(100)
+  payload      Json
+  /// SHA-256 over the canonical JSON of the submitted payload.
+  payloadHash  String   @map("payload_hash") @db.Char(64)
+  txHash       String?  @map("tx_hash") @db.VarChar(200)
+  status       String   @db.VarChar(20)
+  /// entryHash of the preceding record; null only for the genesis record.
+  previousHash String?  @map("previous_hash") @db.Char(64)
+  /// SHA-256 over the canonical field ordering plus previousHash.
+  entryHash    String   @unique @map("entry_hash") @db.Char(64)
+
+  @@index([recordedAt])
+  @@index([functionName])
+  @@index([previousHash])
+  @@map("oracle_audit_chain")
+}

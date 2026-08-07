@@ -11,6 +11,7 @@ from typing import Optional
 import redis
 from utils.distributed_lock import DistributedLock, StaleLockWatchdog
 from schema_registry import validate_submission, get_schema_version_for_submission, init_schema_registry
+from audit_chain import STATUS_FAILED, STATUS_SUBMITTED, record_submission
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,16 @@ class VerificationListener:
                         continue
                 
                 success = self.process_verification(verification)
+                # Append to the tamper-evident audit chain (#577), successes and
+                # failures alike — an auditor needs to see attempted submissions,
+                # not just the ones that landed.
+                record_submission(
+                    'verification_listener',
+                    'submit_monitoring_data',
+                    verification,
+                    contract_id=os.environ.get('CARBON_ORACLE_CONTRACT_ID'),
+                    status=STATUS_SUBMITTED if success else STATUS_FAILED,
+                )
                 if success:
                     logger.info(f"Verification processed: {verification.get('id')}")
                 else:
