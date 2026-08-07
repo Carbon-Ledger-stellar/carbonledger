@@ -637,6 +637,10 @@ jobs:
         working-directory: oracle
         run: pytest test_failover.py -v
 
+      - name: Run satellite validation / fraud detection tests (#579)
+        working-directory: oracle
+        run: pytest test_satellite_validation.py -v
+
   fuzz:
     name: Property-Based Fuzz Tests
     runs-on: ubuntu-latest

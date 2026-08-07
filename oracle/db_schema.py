@@ -107,6 +107,34 @@ CREATE INDEX IF NOT EXISTS idx_reconciliation_metrics_run_at
 """
 
 
+QUARANTINE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS satellite_quarantine (
+    id             BIGSERIAL    PRIMARY KEY,
+    project_id     VARCHAR(200) NOT NULL,
+    period         VARCHAR(100) NOT NULL,
+    provider_id    VARCHAR(200),
+    payload        JSONB        NOT NULL,
+    reason         TEXT         NOT NULL,
+    stats          JSONB        NOT NULL DEFAULT '{}'::jsonb,
+    status         VARCHAR(20)  NOT NULL DEFAULT 'pending',
+    reviewed_by    VARCHAR(200),
+    review_note    TEXT,
+    reviewed_at    TIMESTAMPTZ,
+    quarantined_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (project_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_satellite_quarantine_status
+    ON satellite_quarantine (status);
+
+CREATE INDEX IF NOT EXISTS idx_satellite_quarantine_quarantined_at
+    ON satellite_quarantine (quarantined_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_satellite_quarantine_project
+    ON satellite_quarantine (project_id);
+"""
+
+
 def get_failover_schema_sql() -> str:
     """Return the SQL DDL for the failover state table."""
     return FAILOVER_SCHEMA_SQL
@@ -117,6 +145,11 @@ def get_schema_registry_sql() -> str:
     return SCHEMA_REGISTRY_SQL
 
 
+def get_quarantine_schema_sql() -> str:
+    """Return the SQL DDL for the satellite quarantine queue."""
+    return QUARANTINE_SCHEMA_SQL
+
+
 def get_all_schema_sql() -> str:
     """Return all oracle-related DDL."""
-    return FAILOVER_SCHEMA_SQL + "\n" + SCHEMA_REGISTRY_SQL
+    return "\n".join([FAILOVER_SCHEMA_SQL, SCHEMA_REGISTRY_SQL, QUARANTINE_SCHEMA_SQL])

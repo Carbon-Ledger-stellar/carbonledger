@@ -526,3 +526,36 @@ model SatelliteWebhookProvider {
   @@index([providerId])
   @@index([isActive])
 }
+
+/// Satellite submissions held for manual review after failing statistical
+/// anomaly detection (#579).
+///
+/// Quarantine is deliberately distinct from rejection: the full payload is
+/// retained so a reviewer can approve a genuine step change, rather than the
+/// data being discarded at the door.
+///
+/// Written by oracle/satellite_validation.py over raw SQL, hence the snake_case
+/// mapping shared with the other oracle-owned tables.
+model SatelliteQuarantine {
+  id            BigInt    @id @default(autoincrement())
+  projectId     String    @map("project_id") @db.VarChar(200)
+  period        String    @db.VarChar(100)
+  providerId    String?   @map("provider_id") @db.VarChar(200)
+  /// The rejected submission, retained in full for review.
+  payload       Json
+  reason        String
+  /// Anomaly statistics behind the decision: mean, stdev, z-score, threshold.
+  stats         Json      @default("{}")
+  /// pending | approved | rejected
+  status        String    @default("pending") @db.VarChar(20)
+  reviewedBy    String?   @map("reviewed_by") @db.VarChar(200)
+  reviewNote    String?   @map("review_note")
+  reviewedAt    DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  quarantinedAt DateTime  @default(now()) @map("quarantined_at") @db.Timestamptz(6)
+
+  @@unique([projectId, period])
+  @@index([status])
+  @@index([quarantinedAt(sort: Desc)])
+  @@index([projectId])
+  @@map("satellite_quarantine")
+}
