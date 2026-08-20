@@ -454,19 +454,3 @@ export default function BuyPage() {
     </Suspense>
   );
 }
-
-export default function BuyPage() {
-  return (
-    <Suspense fallback={<div style={{ padding: "2rem" }}>Loading purchase flow…</div>}>
-      <BuyPageContent />
-    </Suspense>
-  );
-}
-
-export default function BuyPage() {
-  return (
-    <Suspense fallback={<div style={{ padding: "2rem" }}>Loading purchase flow…</div>}>
-      <BuyPageContent />
-    </Suspense>
-  );
-}

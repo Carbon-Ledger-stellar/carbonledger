@@ -4,7 +4,7 @@
  * Every CarbonLedger contract (carbon_registry, carbon_credit,
  * carbon_marketplace, carbon_oracle) shares the same `CarbonError` variants
  * for codes 1–18; each contract then defines a handful of contract-specific
- * variants at different numeric codes (see contracts/*/src/lib.rs). Callers
+ * variants at different numeric codes (see each contract crate's src/lib.rs). Callers
  * that know which contract raised the error should pass `contract` so the
  * correct table is used; callers that don't can rely on the shared 1–18
  * table, which is identical everywhere.
