@@ -55,7 +55,19 @@
     "filtersTitle": "Filters",
     "clearAll": "Clear All",
     "applyFilters": "Apply Filters",
-    "applyFiltersActive": "Apply Filters ({count})"
+    "applyFiltersActive": "Apply Filters ({count})",
+    "projectType": "Project Type",
+    "filterByProjectType": "Filter by project type",
+    "projectTypeAll": "All",
+    "projectTypeReforestation": "Reforestation",
+    "projectTypeDirectAirCapture": "Direct Air Capture",
+    "projectTypeRenewableEnergy": "Renewable Energy",
+    "projectTypeMethaneCapture": "Methane Capture",
+    "projectTypeBlueCarbon": "Blue Carbon",
+    "projectTypeAgroforestry": "Agroforestry",
+    "projectTypeSoilCarbon": "Soil Carbon",
+    "projectTypeWasteToEnergy": "Waste to Energy",
+    "projectTypeForestConservation": "Forest Conservation"
   },
   "creditCard": {
     "vintageSuffix": "Vintage",

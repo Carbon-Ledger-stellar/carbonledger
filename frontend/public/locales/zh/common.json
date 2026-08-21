@@ -55,7 +55,19 @@
     "filtersTitle": "筛选",
     "clearAll": "全部清除",
     "applyFilters": "应用筛选",
-    "applyFiltersActive": "应用筛选（{count}）"
+    "applyFiltersActive": "应用筛选（{count}）",
+    "projectType": "项目类型",
+    "filterByProjectType": "按项目类型筛选",
+    "projectTypeAll": "全部",
+    "projectTypeReforestation": "造林/再造林",
+    "projectTypeDirectAirCapture": "直接空气捕获",
+    "projectTypeRenewableEnergy": "可再生能源",
+    "projectTypeMethaneCapture": "甲烷捕获",
+    "projectTypeBlueCarbon": "蓝碳",
+    "projectTypeAgroforestry": "农林复合",
+    "projectTypeSoilCarbon": "土壤碳",
+    "projectTypeWasteToEnergy": "垃圾发电",
+    "projectTypeForestConservation": "森林保护"
   },
   "creditCard": {
     "vintageSuffix": "年份",
