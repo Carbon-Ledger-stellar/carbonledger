@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, AuditLogSubject } from '../policies';

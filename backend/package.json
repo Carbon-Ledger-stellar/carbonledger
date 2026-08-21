@@ -45,7 +45,6 @@
     "@prisma/client": "6.19.2",
     "@stellar/stellar-sdk": "^15.1.0",
     "@types/nodemailer": "^8.0.1",
-    "apollo-server-express": "^3.13.0",
     "axios": "^1.16.0",
     "bullmq": "^5.78.0",
     "class-transformer": "^0.5.1",

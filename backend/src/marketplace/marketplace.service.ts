@@ -153,7 +153,7 @@ export class MarketplaceService {
     // Cursor-based pagination (issue #598)
     const [listings, total_count] = await Promise.all([
       this.prisma.marketListing.findMany({
-        where: cursorWhere ? { ...where, ...cursorWhere } : where,
+        where,
         include,
         orderBy,
         take: limit + 1,
@@ -165,6 +165,17 @@ export class MarketplaceService {
 
     const hasMore = listings.length > limit;
     if (hasMore) listings.pop();
+
+    // Encode next_cursor as opaque base64 JSON — matches the { id } shape
+    // this method already decodes above.
+    const next_cursor = hasMore
+      ? Buffer.from(JSON.stringify({ id: listings[listings.length - 1].id })).toString('base64')
+      : undefined;
+
+    // Encode prev_cursor pointing back to the first item of this page.
+    const prev_cursor = decodedCursorId && listings.length > 0
+      ? Buffer.from(JSON.stringify({ id: listings[0].id })).toString('base64')
+      : undefined;
 
     const result: PaginatedListingsResponse = {
       listings: listings.map(MarketplaceService.withProjectName),

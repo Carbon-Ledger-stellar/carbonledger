@@ -74,14 +74,18 @@ jest.mock("@nestjs/bullmq", () => {
   };
 });
 
-jest.mock("@nestjs/schedule", () => ({
-  ScheduleModule: {
-    forRoot: () => ({ module: class ScheduleRootModule {} }),
-  },
-  Interval: () => () => undefined,
-  Cron: () => () => undefined,
-  Timeout: () => () => undefined,
-}));
+jest.mock("@nestjs/schedule", () => {
+  const actual = jest.requireActual("@nestjs/schedule");
+  return {
+    ...actual,
+    ScheduleModule: {
+      forRoot: () => ({ module: class ScheduleRootModule {} }),
+    },
+    Interval: () => () => undefined,
+    Cron: () => () => undefined,
+    Timeout: () => () => undefined,
+  };
+});
 
 jest.mock("@stellar/stellar-sdk", () => {
   const actual = jest.requireActual("@stellar/stellar-sdk");

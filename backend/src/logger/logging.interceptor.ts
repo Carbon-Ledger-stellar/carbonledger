@@ -69,8 +69,8 @@ export class LoggingInterceptor implements NestInterceptor {
           if (duration >= SLOW_QUERY_THRESHOLD_MS) {
             this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold`, {
               correlationId,
-              user_id,
-              contract_id,
+              user_id: actor,
+              contract_id: contractId,
               statusCode,
               duration,
               threshold_ms: SLOW_QUERY_THRESHOLD_MS,
@@ -106,8 +106,8 @@ export class LoggingInterceptor implements NestInterceptor {
           if (duration >= SLOW_QUERY_THRESHOLD_MS) {
             this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold (error)`, {
               correlationId,
-              user_id,
-              contract_id,
+              user_id: actor,
+              contract_id: contractId,
               statusCode,
               duration,
               threshold_ms: SLOW_QUERY_THRESHOLD_MS,

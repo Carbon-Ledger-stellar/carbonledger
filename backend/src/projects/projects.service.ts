@@ -201,9 +201,7 @@ export class ProjectsService {
     }
     // Ownership scoping: project_developer sees only their own projects
     if (caller.role === 'project_developer') {
-      conditions.push(`"ownerAddress" = $${idx}`);
-      args.push(caller.publicKey);
-      idx++;
+      where.ownerAddress = caller.publicKey;
     }
     if (cursor) {
       where.id = { lt: cursor };
