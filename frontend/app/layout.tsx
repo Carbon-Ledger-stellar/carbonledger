@@ -4,6 +4,7 @@ import { ThemeProvider } from '../lib/theme-context';
 import Navbar from '../components/Navbar';
 import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
 import AppProviders from '../components/AppProviders';
+import RealtimeNotificationProvider from '../components/RealtimeNotificationProvider';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,13 +33,15 @@ export default function RootLayout({
          <a href="#main-content" className="skip-link">Skip to main content</a>
          <ServiceWorkerRegistration />
          <ThemeProvider>
-           <AppProviders>
-             <Navbar />
-             <main id="main-content">
-               {children}
-             </main>
-           </AppProviders>
-         </ThemeProvider>
+                   <AppProviders>
+                     <RealtimeNotificationProvider>
+                       <Navbar />
+                       <main id="main-content">
+                         {children}
+                       </main>
+                     </RealtimeNotificationProvider>
+                   </AppProviders>
+                 </ThemeProvider>
        </body>
     </html>
   );
