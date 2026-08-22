@@ -3,6 +3,7 @@ name = "carbonledger-integration-tests"
 version = "0.1.0"
 edition = "2021"
 publish = false
+build = "build.rs"
 
 # This crate has no library or binary target of its own — it exists purely to
 # host cross-contract integration tests that exercise all four CarbonLedger
@@ -13,6 +14,11 @@ autotests = false
 [[test]]
 name = "oracle_registry_credit_issuance_flow"
 path = "oracle_registry_credit_issuance_flow_test.rs"
+harness = true
+
+[[test]]
+name = "upgrade_path"
+path = "upgrade_path_test.rs"
 harness = true
 
 [dev-dependencies]
