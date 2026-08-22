@@ -10,9 +10,14 @@ import {
   ArrayMinSize,
   ArrayMaxSize,
   ValidateNested,
+  Length,
+  MaxLength,
 } from "class-validator";
 import { Type } from "class-transformer";
 import { IsISO8601 } from "class-validator";
+import { IsCreditAmount,
+         IsStellarAddress,
+} from '../common/validators';
 
 export class RetireCreditsDto {
   @IsString()

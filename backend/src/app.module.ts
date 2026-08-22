@@ -1,5 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { BlockchainModule } from './blockchain/blockchain.module';
 import { WebhookModule } from "./webhook/webhook.module";
 import { GraphqlModule } from "./graphql/graphql.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
@@ -146,6 +147,7 @@ class HealthController {
     AuthModule,
     ProjectsModule,
     CreditsModule,
+    BlockchainModule,
     RetirementsModule,
     MarketplaceModule,
     OracleModule,
