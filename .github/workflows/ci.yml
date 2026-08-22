@@ -94,7 +94,11 @@ jobs:
         working-directory: oracle
         run: |
           pip install pip-audit --quiet
-          pip-audit -r requirements.txt --severity critical --format markdown 2>&1 | tee /tmp/pip-audit.txt
+          # pip-audit has no --severity flag (the underlying advisory sources
+          # don't reliably carry severity ratings for it to filter on) —
+          # passing one made every invocation fail with an argparse error
+          # before pip-audit ever ran, regardless of actual findings.
+          pip-audit -r requirements.txt --format markdown 2>&1 | tee /tmp/pip-audit.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
