@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
 import { QUEUE_NAME, JobType } from './queue.constants';
+import { enqueueWithTrace } from '../telemetry/tracing';
 
 @Injectable()
 export class QueueService {
@@ -12,13 +13,13 @@ export class QueueService {
     payload: Record<string, unknown>,
     options?: { jobId?: string },
   ): Promise<Job> {
-    return this.queue.add(type, payload, {
-      jobId: options?.jobId,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 5000 },
-      removeOnComplete: false,
-      removeOnFail: false,
-    });
+    return enqueueWithTrace(QUEUE_NAME, type, payload, (data) => this.queue.add(type, data, {
+        jobId: options?.jobId,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: false,
+        removeOnFail: false,
+      }));
   }
 
   async getJobStatus(jobId: string) {
