@@ -3,7 +3,7 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    String, Vec,
+    IntoVal, String, Vec,
 };
 
 macro_rules! require_valid_vintage_year {
@@ -475,18 +475,19 @@ impl CarbonOracleContract {
             .get(&DataKey::RegistryAddress)
             .ok_or(CarbonError::ProjectNotFound)?;
 
-        env.invoke_contract(
+        env.invoke_contract::<()>(
             &registry_address,
-            &env.symbol("oracle_suspend_project"),
-            (
-                project_id.clone(),
-                reason.clone(),
-            ).into_val(&env),
+            &soroban_sdk::Symbol::new(&env, "oracle_suspend_project"),
+            soroban_sdk::vec![
+                &env,
+                project_id.clone().into_val(&env),
+                reason.clone().into_val(&env),
+            ],
         );
 
         // 3. Emit event.
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("liveness_flag")),
+            (symbol_short!("c_ledger"), symbol_short!("live_flag")),
             (project_id, reason),
         );
 

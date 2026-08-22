@@ -316,7 +316,6 @@ impl CarbonRegistryContract {
         }
 
         Ok(())
-        env.storage().persistent().get(&DataKey::UpgradeHistory)
     }
 
     // ── MultiSig Upgrade Functions (#648) ────────────────────────────────────
