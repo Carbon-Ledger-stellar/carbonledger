@@ -94,13 +94,14 @@ class TestReconciliationJob(unittest.TestCase):
         strategy = RESOLUTION_STRATEGIES[DivergenceType.STALE_SUBMISSION]
         assert strategy == "auto_mark_stale"
 
+    @patch("oracle.reconciliation.DATABASE_URL", "postgresql://test:test@localhost/test")
     @patch("oracle.reconciliation.ReconciliationJob._fetch_db_submissions")
     @patch("oracle.reconciliation.ReconciliationJob._detect_orphaned_on_chain_records")
-    @patch("oracle.reconciliation.ReconciliationJob.lock")
+    @patch("oracle.reconciliation.DistributedLock")
     def test_run_with_no_submissions(self, mock_lock, mock_orphaned, mock_fetch):
         """Reconciliation with no DB submissions completes without error."""
-        mock_lock.acquire.return_value = True
-        mock_lock.release.return_value = None
+        mock_lock.return_value.acquire.return_value = True
+        mock_lock.return_value.release.return_value = None
         mock_fetch.return_value = []
 
         job = ReconciliationJob()
@@ -111,16 +112,17 @@ class TestReconciliationJob(unittest.TestCase):
         assert result["auto_resolved"] == 0
         assert result["escalated"] == 0
 
+    @patch("oracle.reconciliation.DATABASE_URL", "postgresql://test:test@localhost/test")
     @patch("oracle.reconciliation.ReconciliationJob._fetch_db_submissions")
     @patch("oracle.reconciliation.ReconciliationJob._detect_orphaned_on_chain_records")
     @patch("oracle.reconciliation.ReconciliationJob._handle_divergence")
-    @patch("oracle.reconciliation.ReconciliationJob.lock")
+    @patch("oracle.reconciliation.DistributedLock")
     def test_run_detects_divergences(
         self, mock_lock, mock_handle, mock_orphaned, mock_fetch
     ):
         """Reconciliation detects divergences in DB submissions."""
-        mock_lock.acquire.return_value = True
-        mock_lock.release.return_value = None
+        mock_lock.return_value.acquire.return_value = True
+        mock_lock.return_value.release.return_value = None
         mock_fetch.return_value = [
             {
                 "id": 1,

@@ -70,6 +70,7 @@ from circuit_breaker import get_circuit_breaker, get_all_health, CircuitOpenErro
 from utils.safe_parse import safe_float, safe_int  # noqa: E402
 from consensus_engine import ConsensusEngine, Observation, _detect_conflicts  # noqa: E402
 from audit_chain import STATUS_FAILED, STATUS_SUBMITTED, record_submission  # noqa: E402
+from satellite_validation import QuarantineQueue, SatelliteValidator  # noqa: E402
 
 app = Flask(__name__)
 

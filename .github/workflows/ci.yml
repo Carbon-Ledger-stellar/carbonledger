@@ -608,9 +608,6 @@ jobs:
   visual-regression:
     name: Visual Regression Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
