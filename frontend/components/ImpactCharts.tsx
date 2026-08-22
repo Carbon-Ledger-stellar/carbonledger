@@ -15,7 +15,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useIsMobile } from "@/hooks/useMediaQuery";
-import { colors } from "../../styles/design-system";
+import { colors } from "../styles/design-system";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

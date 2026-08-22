@@ -205,6 +205,19 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
 
   return (
     <>
+      {/* Announces result-count updates to screen reader users (WCAG 2.1 AA) */}
+      {resultCount !== undefined && (
+        <div
+          aria-live="polite"
+          aria-atomic="true"
+          style={{ position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}
+        >
+          {resultCount === 1
+            ? t("resultsFoundSingular", { count: resultCount })
+            : t("resultsFoundPlural", { count: resultCount })}
+        </div>
+      )}
+
       {/* Search — always visible */}
       <div style={{ position: "relative", marginBottom: "1rem" }}>
         <label htmlFor="filter-search" className="sr-only">{t("searchLabel")}</label>
