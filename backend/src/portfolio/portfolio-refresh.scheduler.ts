@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { PortfolioService } from './portfolio.service';
+import { Cron } from '@nestjs/schedule';
+
+// Define the cron expression directly (every 5 minutes)
+const EVERY_5_MINUTES = '*/5 * * * *';
 
 /**
  * PortfolioRefreshScheduler
@@ -19,7 +22,7 @@ export class PortfolioRefreshScheduler {
   constructor(private readonly portfolioService: PortfolioService) {}
 
   /** Refresh materialized views every 5 minutes */
-  @Cron(CronExpression.EVERY_5_MINUTES)
+  @Cron(EVERY_5_MINUTES)
   async refreshViews(): Promise<void> {
     this.logger.log('Scheduled portfolio materialized view refresh started');
     try {
