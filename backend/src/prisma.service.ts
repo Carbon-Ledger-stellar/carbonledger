@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { poolMetricsRegistry } from "./common/metrics.registry";
+import { CorrelationIdContext } from "./logger/correlation-id.context";
 
 // Pool sizing: allow override via env, default to 10 for production safety.
 // Formula: (num_cores * 2) + effective_spindle_count — start conservative.
@@ -52,6 +53,41 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           this._activeQueries--;
           poolMetricsRegistry.update(this.getPoolMetrics());
         }
+      });
+
+      client.$use(async (params, next) => {
+        if (['CarbonProject', 'User', 'CreditBatch'].includes(params.model || '') && params.action === 'update') {
+          let oldState = null;
+          if ((params as any).args && (params as any).args.where) {
+            const modelDelegate = params.model!.charAt(0).toLowerCase() + params.model!.slice(1);
+            oldState = await (client as any)[modelDelegate].findUnique({ where: (params as any).args.where });
+          }
+          const newState = await next(params);
+
+          const context = CorrelationIdContext.getContext();
+          const actor = context?.actor || null;
+          const ipAddress = context?.ip || null;
+
+          const resourceId = (newState as any)?.id || (newState as any)?.projectId || (newState as any)?.batchId || null;
+
+          await client.auditLog.create({
+            data: {
+              userId: actor,
+              action: 'update',
+              resourceId: resourceId,
+              ipAddress: ipAddress,
+              result: 'Success',
+              metadata: {
+                model: params.model,
+                oldState,
+                newState,
+              }
+            }
+          });
+
+          return newState;
+        }
+        return next(params);
       });
     }
   }
