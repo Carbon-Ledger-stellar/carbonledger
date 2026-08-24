@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { MAIL_QUEUE, MailEvent } from './mail.constants';
 import { PrismaService } from '../prisma.service';
+import { enqueueWithTrace } from '../telemetry/tracing';
 
 @Injectable()
 export class MailService {
@@ -15,7 +16,9 @@ export class MailService {
     const log = await this.prisma.emailLog.create({
       data: { to, template: event, subject: this.getSubject(event), status: 'Pending' },
     });
-    await this.mailQueue.add(event, { logId: log.id, to, payload });
+    await enqueueWithTrace(MAIL_QUEUE, event, { logId: log.id, to, payload }, (data) =>
+      this.mailQueue.add(event, data),
+    );
     return log;
   }
 

@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { enqueueWithTrace } from '../telemetry/tracing';
 import { Queue } from 'bullmq';
 import { WEBHOOK_QUEUE_NAME } from '../queue/queue.constants';
 
@@ -127,12 +128,14 @@ export class HorizonListenerService implements OnApplicationBootstrap, OnApplica
 
     this.reconnectDelay = 1000; // reset back-off on successful event
 
-    await this.webhookQueue.add('horizon_event', event, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: false,
-      removeOnFail: false,   // dead-letter: failed jobs remain queryable
-    });
+    await enqueueWithTrace(WEBHOOK_QUEUE_NAME, 'horizon_event', event as Record<string, unknown>,
+      (data) => this.webhookQueue.add('horizon_event', data, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: false,
+        removeOnFail: false,
+      }),
+    );
 
     this.logger.log(`Queued ${event.type} from contract ${event.contractId} ledger ${event.ledger}`);
   }

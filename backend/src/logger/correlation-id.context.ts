@@ -7,6 +7,8 @@ export interface CorrelationContext {
   path?: string;
   statusCode?: number;
   duration?: number;
+  actor?: string;
+  ip?: string;
 }
 
 /**

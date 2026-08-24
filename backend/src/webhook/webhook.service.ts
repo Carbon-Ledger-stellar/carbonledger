@@ -6,6 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { enqueueWithTrace } from '../telemetry/tracing';
 import { Queue } from 'bullmq';
 import { createHmac, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma.service';
@@ -16,8 +17,8 @@ import {
   WEBHOOK_EVENTS,
 } from './webhook.dto';
 
-/** Failed deliveries retry up to this many times (#595 acceptance criteria). */
-export const MAX_DELIVERY_ATTEMPTS = 10;
+/** Failed deliveries retry up to this many times (acceptance criteria: 3 retries). */
+export const MAX_DELIVERY_ATTEMPTS = 3;
 
 /**
  * Exponential backoff delay (ms) before retry attempt `attemptsMade + 1`,
@@ -183,25 +184,21 @@ export class WebhookService {
     // Enqueue all deliveries in parallel
     await Promise.all(
       subscriptions.map((sub) =>
-        this.webhookQueue.add(
-          'deliver',
-          {
+        enqueueWithTrace(OUTBOUND_WEBHOOK_QUEUE, 'deliver', {
             subscriptionId: sub.id,
             url: sub.url,
             secret: sub.secret,
             eventType,
             payload,
             attempt: 1,
-          } satisfies OutboundWebhookJob,
-          {
+          } satisfies OutboundWebhookJob, (data) => this.webhookQueue.add('deliver', data, {
             attempts: MAX_DELIVERY_ATTEMPTS,
             // The actual delay is computed by the 'custom' backoff strategy
             // registered on the WebhookProcessor's worker settings
             // (webhookRetryDelayMs) — BullMQ job options can only reference
             // it by type name, not inline (a function isn't serializable).
             backoff: { type: 'custom' },
-          },
-        ),
+          })),
       ),
     );
   }

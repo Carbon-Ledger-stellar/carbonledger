@@ -1,3 +1,4 @@
+import './telemetry/register';
 import { NestFactory } from '@nestjs/core';
 import { ConsoleLogger, ForbiddenException, LogLevel, ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -5,6 +6,7 @@ import { PrismaService } from './prisma.service';
 import { CorrelationIdContext } from './logger/correlation-id.context';
 import { validateEnv } from './env.validation';
 import * as express from 'express';
+import * as cookieParser from 'cookie-parser';
 import { StellarNetworkService } from './common/stellar-network.service';
 import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
 import { ValidationExceptionFilter } from './common/validation-exception.filter';
@@ -48,6 +50,10 @@ async function bootstrap() {
   const bodyLimit = process.env.BODY_SIZE_LIMIT ?? '10kb';
   app.use(express.json({ limit: bodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
+
+  // Required so the HTTP-only refresh-token cookie set by AuthController
+  // can be read back from req.cookies on /auth/refresh and /auth/logout.
+  app.use(cookieParser());
 
   // URI-based versioning: /api/v1/... and /api/v2/...
   // - v1 controllers use @Controller('resource') with VERSION_NEUTRAL (global prefix api/v1)

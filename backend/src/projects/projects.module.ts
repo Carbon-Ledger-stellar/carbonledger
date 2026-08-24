@@ -10,9 +10,10 @@ import { MailModule } from "../mail/mail.module";
 import { RedisService } from "../redis.service";
 import { OracleContractClient } from "../oracle/oracle-contract.client";
 import { PoliciesModule } from "../policies/policies.module";
+import { WebhookModule } from "../webhook/webhook.module";
 
 @Module({
-  imports: [AuthModule, MailModule, PoliciesModule],
+  imports: [AuthModule, MailModule, PoliciesModule, WebhookModule],
   controllers: [ProjectsController, PublicProjectsController],
   providers: [ProjectsService, ProjectStateMachineService, PrismaService, RedisService, RegistryContractClient, OracleContractClient],
   exports: [ProjectsService],

@@ -38,6 +38,12 @@ export class LoggingInterceptor implements NestInterceptor {
     const role     = user?.role;
     const contractId = (req.headers["x-contract-id"] as string) ?? undefined;
 
+    const store = CorrelationIdContext.getContext();
+    if (store) {
+      store.actor = actor;
+      store.ip = req.ip;
+    }
+
     const start = Date.now();
 
     this.logger.log(`→ ${method} ${path}`, {
