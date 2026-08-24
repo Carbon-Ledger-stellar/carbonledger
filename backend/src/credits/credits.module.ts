@@ -6,9 +6,10 @@ import { AuthModule } from "../auth/auth.module";
 import { MailModule } from "../mail/mail.module";
 import { IpfsService } from "../common/ipfs.service";
 import { PoliciesModule } from "../policies/policies.module";
+import { WebhookModule } from "../webhook/webhook.module";
 
 @Module({
-  imports: [AuthModule, MailModule, PoliciesModule],
+  imports: [AuthModule, MailModule, PoliciesModule, WebhookModule],
   controllers: [CreditsController],
   providers: [CreditsService, PrismaService, IpfsService],
   exports: [CreditsService],

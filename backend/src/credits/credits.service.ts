@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { MintCreditsDto, RetireCreditsDto } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
@@ -7,6 +7,7 @@ import { IpfsService } from "../common/ipfs.service";
 import { randomBytes } from "crypto";
 import { EventSourcingService } from "../events/event-sourcing.service";
 import { CreditEventType } from "../events/credit-event.types";
+import { WebhookService } from "../webhook/webhook.service";
 
 /**
  * Serial numbers are stored as fixed-point integers scaled by 100.
@@ -23,11 +24,14 @@ function toSerialUnits(tonnes: number): bigint {
 
 @Injectable()
 export class CreditsService {
+  private readonly logger = new Logger(CreditsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly ipfsService: IpfsService,
     @Optional() private readonly eventSourcing?: EventSourcingService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   async mintCredits(dto: MintCreditsDto, actor?: string) {
@@ -82,6 +86,26 @@ export class CreditsService {
         amount: batch.amount,
         vintageYear: batch.vintageYear,
       });
+    }
+
+    // Dispatch webhook: credits.minted
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('credits.minted', {
+          batchId: batch.batchId,
+          projectId: batch.projectId,
+          amount: Number(batch.amount),
+          vintageYear: batch.vintageYear,
+          serialStart: batch.serialStart,
+          serialEnd: batch.serialEnd,
+          methodology: batch.methodology,
+          country: batch.country,
+          txHash: (batch as any).txHash ?? 'STUB_MINT_HASH',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
     }
 
     return batch;

@@ -16,8 +16,8 @@ import {
   WEBHOOK_EVENTS,
 } from './webhook.dto';
 
-/** Failed deliveries retry up to this many times (#595 acceptance criteria). */
-export const MAX_DELIVERY_ATTEMPTS = 10;
+/** Failed deliveries retry up to this many times (acceptance criteria: 3 retries). */
+export const MAX_DELIVERY_ATTEMPTS = 3;
 
 /**
  * Exponential backoff delay (ms) before retry attempt `attemptsMade + 1`,
