@@ -1,34 +1,53 @@
 import { EventIndexerService, SOROBAN_RPC_CLIENT } from './event-indexer.service';
 import { PrismaService } from '../prisma.service';
-import { RedisService } from '../redis.service';
 
 // Prevent @prisma/client from being loaded (generated types not available in CI)
 jest.mock('../prisma.service');
 
-/**
- * Builds an xdr-free fake event. scValToNative is bypassed by feeding the
- * service pre-native values through jest.spyOn on the SDK? — no: the real
- * scValToNative requires xdr.ScVal inputs, so instead we rely on the fact
- * that the service only calls it for topic/data entries; we pass plain JS
- * values wrapped minimally. To keep the unit test honest we mock the module.
- */
+// The service decodes topics/data via scValToNative; feeding it pre-native JS
+// values through an identity mock keeps the unit test honest without XDR.
 jest.mock('@stellar/stellar-sdk', () => ({
   scValToNative: jest.fn((v: unknown) => v),
 }));
 
-class RedisStub {
-  private store = new Map<string, unknown>();
-  async get<T>(key: string): Promise<T | null> {
-    return (this.store.get(key) as T) ?? null;
-  }
-  async set(key: string, value: unknown, _ttl: number): Promise<boolean> {
-    this.store.set(key, value);
-    return true;
-  }
-  async del(...keys: string[]): Promise<boolean> {
-    keys.forEach((k) => this.store.delete(k));
-    return true;
-  }
+/** In-memory SyncMetadata singleton backing the prisma syncMetadata mock. */
+let syncMeta: { id: string; lastIndexedLedger: number } | null = null;
+
+function makePrismaMock() {
+  syncMeta = null;
+  const mock: Record<string, any> = {};
+  mock.$transaction = jest.fn(async (fn: (tx: any) => Promise<unknown>) => fn(mock));
+  mock.syncMetadata = {
+    findUnique: jest.fn(async () => syncMeta),
+    upsert: jest.fn(
+      async (args: {
+        where: { id: string };
+        update: { lastIndexedLedger: number };
+        create: { id: string; lastIndexedLedger: number };
+      }) => {
+        syncMeta = {
+          id: args.where.id,
+          lastIndexedLedger: args.update.lastIndexedLedger ?? args.create.lastIndexedLedger,
+        };
+        return syncMeta;
+      },
+    ),
+  };
+  mock.creditBatch = {
+    upsert: jest.fn().mockResolvedValue({}),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    update: jest.fn().mockResolvedValue({}),
+  };
+  mock.carbonProject = {
+    update: jest.fn().mockResolvedValue({}),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+  };
+  mock.creditEvent = {
+    findFirst: jest.fn().mockResolvedValue(null),
+    create: jest.fn().mockResolvedValue({}),
+  };
+  mock.retirementRecord = { upsert: jest.fn() };
+  return mock;
 }
 
 function evt(
@@ -36,18 +55,18 @@ function evt(
   action: string | null,
   data: unknown[],
   txIndex = 0,
+  id?: string,
 ) {
   const topic =
     action === null
       ? ['not_c_ledger', 'whatever']
       : ['c_ledger', action];
-  return { ledger, txIndex, topic, data };
+  return { ledger, txIndex, topic, data, ...(id ? { id } : {}) };
 }
 
 describe('EventIndexerService (#893)', () => {
   let service: EventIndexerService;
-  let redisStub: RedisStub;
-  let prismaMock: any;
+  let prismaMock: ReturnType<typeof makePrismaMock>;
   let rpcMock: {
     getEvents: jest.Mock;
     getLatestLedger: jest.Mock;
@@ -55,21 +74,7 @@ describe('EventIndexerService (#893)', () => {
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
-    redisStub = new RedisStub();
-
-    prismaMock = {
-      $transaction: jest.fn(async (fn: (tx: any) => Promise<unknown>) => fn(prismaMock)),
-      creditBatch: {
-        upsert: jest.fn().mockResolvedValue({}),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        update: jest.fn().mockResolvedValue({}),
-      },
-      carbonProject: {
-        update: jest.fn().mockResolvedValue({}),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
-      retirementRecord: { upsert: jest.fn() },
-    };
+    prismaMock = makePrismaMock();
 
     rpcMock = {
       getEvents: jest.fn(),
@@ -78,8 +83,7 @@ describe('EventIndexerService (#893)', () => {
 
     service = new EventIndexerService(
       rpcMock as never,
-      prismaMock as PrismaService,
-      redisStub as unknown as RedisService,
+      prismaMock as unknown as PrismaService,
     );
   });
 
@@ -116,12 +120,17 @@ describe('EventIndexerService (#893)', () => {
       expect(rpcMock.getEvents).not.toHaveBeenCalled();
     });
 
-    it('advances the checkpoint to the end of a successful page', async () => {
-      rpcMock.getEvents.mockResolvedValue({
-        events: [evt(9_998, 'verified', ['proj-1'])],
-        latestLedger: 10_000,
-      });
+    it('persists the checkpoint in the SyncMetadata database config row (#893)', async () => {
+      rpcMock.getEvents.mockResolvedValue({ events: [], latestLedger: 10_000 });
+
       await service.poll();
+
+      expect(prismaMock.syncMetadata.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'singleton' },
+          update: { lastIndexedLedger: 10_000 },
+        }),
+      );
       expect(await service.getCheckpoint()).toBe(10_000);
     });
 
@@ -208,12 +217,47 @@ describe('EventIndexerService (#893)', () => {
       });
     });
 
+    it('records transfer events as append-only CreditEvent provenance rows', async () => {
+      push(
+        evt(9_992, 'transfer', ['batch-1', 'G-ALICE', 'G-BOB', 250n], 0, 'evt-transfer-1'),
+      );
+
+      await service.poll();
+
+      expect(prismaMock.creditEvent.findFirst).toHaveBeenCalledWith({
+        where: { txHash: 'evt-transfer-1', eventType: 'transfer' },
+      });
+      expect(prismaMock.creditEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            creditBatchId: 'batch-1',
+            eventType: 'transfer',
+            actor: 'G-ALICE',
+            newState: { from: 'G-ALICE', to: 'G-BOB', amount: '250' },
+            txHash: 'evt-transfer-1',
+            signature: expect.any(String),
+          }),
+        }),
+      );
+    });
+
+    it('skips transfer replays that were already recorded (idempotent)', async () => {
+      prismaMock.creditEvent.findFirst.mockResolvedValue({ id: 'existing' });
+      push(
+        evt(9_992, 'transfer', ['batch-1', 'G-ALICE', 'G-BOB', 250n], 0, 'evt-transfer-1'),
+      );
+
+      await service.poll();
+
+      expect(prismaMock.creditEvent.create).not.toHaveBeenCalled();
+    });
+
     it('maps registry lifecycle actions onto project statuses', async () => {
       push(
-        evt(9_992, 'reg_proj', ['proj-2']),
-        evt(9_993, 'verified', ['proj-2']),
-        evt(9_994, 'rejected', ['proj-3']),
-        evt(9_995, 'suspended', ['proj-4']),
+        evt(9_993, 'reg_proj', ['proj-2']),
+        evt(9_994, 'verified', ['proj-2']),
+        evt(9_995, 'rejected', ['proj-3']),
+        evt(9_996, 'suspended', ['proj-4']),
       );
 
       await service.poll();
@@ -228,11 +272,12 @@ describe('EventIndexerService (#893)', () => {
     });
 
     it('ignores events whose first topic is not c_ledger', async () => {
-      push(evt(9_996, null, []));
+      push(evt(9_997, null, []));
       await service.poll();
       expect(prismaMock.creditBatch.upsert).not.toHaveBeenCalled();
       expect(prismaMock.carbonProject.updateMany).not.toHaveBeenCalled();
       expect(prismaMock.carbonProject.update).not.toHaveBeenCalled();
+      expect(prismaMock.creditEvent.create).not.toHaveBeenCalled();
     });
   });
 
