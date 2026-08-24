@@ -6,7 +6,7 @@ import { PrismaService } from './prisma.service';
 import { CorrelationIdContext } from './logger/correlation-id.context';
 import { validateEnv } from './env.validation';
 import * as express from 'express';
-import * as cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser';
 import { StellarNetworkService } from './common/stellar-network.service';
 import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
 import { ValidationExceptionFilter } from './common/validation-exception.filter';
