@@ -1,22 +1,17 @@
 /**
- * CarbonLedger Service Worker
+ * CarbonLedger Audit Service Worker
  *
- * Strategy (PWA offline support, issue #894):
+ * Strategy:
  *   - Audit API routes → stale-while-revalidate (serve cache, update in background)
- *   - Other API GET routes → stale-while-revalidate (offline-friendly dashboard data)
- *   - Static assets        → cache-first
- *   - Navigation requests  → network-first with cached app-shell fallback.
- *     Any route can be opened offline: the cached "/" shell is returned,
- *     and client-side data comes from the SWR/IndexedDB caches.
- *   - Non-GET requests     → network-only (never cached; mutations must reach the server)
+ *   - Static assets    → cache-first
+ *   - Everything else  → network-first with cache fallback
  *
  * Storage quota: capped at 50 MB per the acceptance criteria.
  */
 
-const SW_VERSION = 'v2';
+const SW_VERSION = 'audit-v1';
 const AUDIT_CACHE = `carbonledger-audit-${SW_VERSION}`;
 const STATIC_CACHE = `carbonledger-static-${SW_VERSION}`;
-const SHELL_CACHE = `carbonledger-shell-${SW_VERSION}`;
 
 /** API path prefixes that belong to the audit data plane. */
 const AUDIT_API_PATTERNS = [
@@ -30,28 +25,15 @@ const AUDIT_API_PATTERNS = [
   '/marketplace/listings',
 ];
 
-/** Extra API path prefixes cached for offline dashboard/verifier browsing. */
-const GENERAL_API_PATTERNS = [
-  '/api/v1',
-  '/api/v2',
-];
-
-/** Static assets that never change without a hash — cache-first. */
-const STATIC_ASSET_PATTERN = /\.(js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|ico|webp)$/;
-
-/** Shell routes pre-cached at install so the app boots offline. */
-const SHELL_ROUTES = [
+/** App shell pages to precache so the UI is usable fully offline. */
+const PAGE_PRECACHE = [
   '/',
   '/audit',
-  '/verifier',
-  '/verifier/apply',
-  '/verifier/dashboard',
-  '/dashboard',
-  '/marketplace',
   '/projects',
-  '/manifest.json',
-  '/icons/icon-192.svg',
-  '/icons/icon-512.svg',
+  '/marketplace',
+  '/dashboard',
+  '/verifier/dashboard',
+  '/offline',
 ];
 
 /** Maximum cache size in bytes (50 MB). */
@@ -62,9 +44,9 @@ const MAX_CACHE_BYTES = 50 * 1024 * 1024;
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
-      .open(SHELL_CACHE)
+      .open(STATIC_CACHE)
       .then((cache) =>
-        cache.addAll(SHELL_ROUTES).catch(() => {
+        cache.addAll([...PAGE_PRECACHE, '/audit']).catch(() => {
           // Non-fatal: pages might not be pre-rendered yet in dev
         })
       )
@@ -81,12 +63,7 @@ self.addEventListener('activate', (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter(
-              (k) =>
-                k !== AUDIT_CACHE &&
-                k !== STATIC_CACHE &&
-                k !== SHELL_CACHE
-            )
+            .filter((k) => k !== AUDIT_CACHE && k !== STATIC_CACHE)
             .map((k) => caches.delete(k))
         )
       )
@@ -100,33 +77,21 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Only same-origin requests are handled by this SW
-  if (url.origin !== self.location.origin) return;
-
-  // Non-GET: network only — mutations must reach the server
+  // Only intercept GET requests
   if (request.method !== 'GET') return;
 
-  // Skip non-http(s) URLs (chrome-extension, blob, etc.)
+  // Skip chrome-extension or non-http(s) URLs
   if (!url.protocol.startsWith('http')) return;
 
-  const isNavigation = request.mode === 'navigate';
   const isAuditApi = AUDIT_API_PATTERNS.some(
     (p) => url.pathname.startsWith(p) || url.href.includes(p)
   );
-  const isGeneralApi = GENERAL_API_PATTERNS.some((p) =>
-    url.pathname.startsWith(p)
-  );
-  const isStaticAsset = STATIC_ASSET_PATTERN.test(url.pathname);
 
-  if (isNavigation) {
-    // Network-first with app-shell fallback → any route works offline
-    event.respondWith(networkFirstWithShellFallback(request));
-  } else if (isAuditApi || isGeneralApi) {
+  if (isAuditApi) {
     event.respondWith(staleWhileRevalidate(request, AUDIT_CACHE));
-  } else if (isStaticAsset) {
+  } else if (isStaticAsset(url.pathname)) {
     event.respondWith(cacheFirst(request, STATIC_CACHE));
   } else {
-    // Plain-page routes and anything else: cache sensitive, network first
     event.respondWith(networkFirst(request, AUDIT_CACHE));
   }
 });
@@ -203,44 +168,6 @@ async function networkFirst(request, cacheName) {
     const cached = await cache.match(request);
     if (cached) return cached;
     return offlineFallback();
-  }
-}
-
-/**
- * Network-first for navigation; if the network is down, serve the cached
- * app shell ("/") so the PWA remains fully navigable offline. The client
- * rehydrates with cached SWR/IndexedDB data.
- */
-async function networkFirstWithShellFallback(request) {
-  try {
-    const response = await fetch(request);
-    // Cache every successfully-navigated route for later offline use
-    if (response.ok) {
-      const cache = await caches.open(SHELL_CACHE);
-      await enforceCacheQuota(cache);
-      await cache.put(request, response.clone());
-    }
-    return response;
-  } catch {
-    // Offline — first check a cached copy of this exact route
-    const cached = await caches.match(request);
-    if (cached) return cached;
-
-    // Fall back to the cached app shell
-    const shell = await caches.match('/');
-    if (shell) return shell;
-
-    // Last resort: a minimal offline page
-    return new Response(
-      '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Offline</title></head>' +
-        '<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#FAF5FF">' +
-        '<div style="text-align:center"><h1 style="color:#7C3AED">You are offline</h1>' +
-        '<p style="color:#6b7280">Reconnect to browse the Carbon Ledger.</p></div></body></html>',
-      {
-        status: 503,
-        headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Offline': 'true' },
-      }
-    );
   }
 }
 
@@ -327,6 +254,10 @@ self.addEventListener('message', (event) => {
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function isStaticAsset(pathname) {
+  return /\.(js|css|png|jpg|jpeg|gif|svg|woff2?|ttf|ico)$/.test(pathname);
+}
 
 function offlineFallback() {
   return new Response(
