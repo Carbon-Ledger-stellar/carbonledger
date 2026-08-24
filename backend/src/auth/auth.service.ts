@@ -11,9 +11,28 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { TokenFamilyService } from './token-family.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
+
+/**
+ * Access tokens are capped at 15 minutes regardless of any (mis)configured
+ * JWT_EXPIRY — issue #892 requires short-lived tokens so a stolen token has
+ * a strictly bounded window and the logout blacklist only needs to live for
+ * at most 15 minutes.
+ */
+export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+
+/** Parse a jwt-style expiry string ('900s' | '15m' | '1h') into seconds. Unknown → 15m. */
+export function parseExpirySeconds(raw: string): number {
+  const match = /^(\d+)\s*(s|m|h|d)?$/.exec(raw.trim());
+  if (!match) return ACCESS_TOKEN_TTL_SECONDS;
+  const value = Number(match[1]);
+  const unit = match[2] ?? 's';
+  const factor = { s: 1, m: 60, h: 3600, d: 86400 }[unit] ?? 1;
+  return value * factor;
+}
 
 // In-memory nonce store: publicKey → { nonce, expiresAt }
 // A Redis store would be preferable in multi-instance deployments.
@@ -26,6 +45,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly tokenFamily: TokenFamilyService,
+    private readonly tokenBlacklist: TokenBlacklistService,
     private readonly secretsRefresh: SecretsRefreshService,
   ) { }
 
@@ -127,11 +147,39 @@ export class AuthService {
   }
 
   /**
-   * Logout — invalidate the full token family so every device using the
-   * same refresh token chain is signed out immediately.
+   * Logout — invalidate the full token family AND blacklist the current
+   * access token's `jti` in Redis so it is rejected by route guards
+   * immediately, not just when its (≤15 min) natural expiry arrives.
    */
-  async logout(refreshToken: string): Promise<{ message: string }> {
+  async logout(refreshToken: string, accessToken?: string): Promise<{ message: string }> {
     await this.tokenFamily.invalidateFamilyByToken(refreshToken);
+
+    if (accessToken) {
+      try {
+        const issuer = process.env.JWT_ISSUER || 'carbonledger';
+        const candidates = this.secretsRefresh.getJwtVerificationSecrets();
+        for (const secret of candidates) {
+          try {
+            const decoded = jwt.verify(accessToken, secret, { issuer }) as {
+              jti?: string;
+              exp?: number;
+            };
+            if (decoded.jti && typeof decoded.exp === 'number') {
+              const remainingSec = decoded.exp - Math.floor(Date.now() / 1000);
+              if (remainingSec > 0) {
+                await this.tokenBlacklist.revoke(decoded.jti, remainingSec);
+              }
+            }
+            break;
+          } catch {
+            // try the next candidate secret (rotation overlap window)
+          }
+        }
+      } catch {
+        // best-effort: the refresh family is already invalidated; never fail logout here
+      }
+    }
+
     return { message: 'Logged out successfully' };
   }
 
@@ -172,10 +220,13 @@ export class AuthService {
    */
   private signAccessToken(publicKey: string, role: UserRole): string {
     const issuer = process.env.JWT_ISSUER || 'carbonledger';
-    const expiresIn = (process.env.JWT_EXPIRY || '15m') as jwt.SignOptions['expiresIn'];
+    // Strictly enforce the 15-minute maximum lifetime (#892): a longer
+    // JWT_EXPIRY is clamped down rather than honoured.
+    const requested = parseExpirySeconds(process.env.JWT_EXPIRY || '15m');
+    const expiresIn = Math.min(requested, ACCESS_TOKEN_TTL_SECONDS);
 
     return jwt.sign(
-      { sub: publicKey, role, type: 'access' },
+      { sub: publicKey, role, type: 'access', jti: crypto.randomUUID() },
       this.secretsRefresh.getJwtSigningSecret(),
       { expiresIn, issuer },
     );
