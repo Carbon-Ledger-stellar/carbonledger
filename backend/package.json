@@ -25,6 +25,12 @@
     "verify:certificate": "node scripts/verify-certificate.js"
   },
   "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "^0.79.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
+    "@opentelemetry/resources": "^2.10.0",
+    "@opentelemetry/sdk-node": "^0.221.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
     "@apollo/server": "^4.13.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.1101.0",
     "@aws-sdk/client-secrets-manager": "^3.1096.0",
