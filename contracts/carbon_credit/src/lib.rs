@@ -2,10 +2,10 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes,
-    BytesN, Env, Map, String, Symbol, Vec,
+    BytesN, Env, String, Symbol, Vec,
 };
 
-const TTL_LEDGERS: u32 = 518_400;
+pub(crate) const TTL_LEDGERS: u32 = 518_400;
 const CURRENT_VERSION: u32 = 1;
 /// Default maximum number of upgrade history entries retained.
 pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
@@ -65,10 +65,10 @@ pub enum DataKey {
     Retirement(String),
     ProjectBatches(String),
     ProjectBatchCount(String),
+    /// Pre-#887 flat registry: `Map<serial_start, serial_end>` in a single
+    /// ledger entry. Superseded by the skip-list index in [`serial_index`];
+    /// retained so upgraded contracts can drain it via `migrate_serial_index`.
     SerialRegistry,
-    /// O(log n) registry: Map<serial_start, serial_end> sorted by key.
-    /// Binary-search on the sorted keys to detect overlap in O(log n).
-    SerialMap,
     Admin,
     RegistryContract,
     ContractVersion,
@@ -187,8 +187,9 @@ pub struct RetirementCertificate {
     pub certificate_cid: String,
 }
 
-/// Legacy flat-list type kept only for migration during the first call after upgrade.
-/// New code uses `SerialMap` (a `Map<u64, u64>` stored under `DataKey::SerialMap`).
+/// Legacy flat-list range type, kept for ABI compatibility with clients built
+/// against earlier versions. The live index stores ranges as
+/// [`serial_index::SerialNode`] entries instead.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SerialRange {
@@ -273,10 +274,8 @@ impl CarbonCreditContract {
         env.storage()
             .persistent()
             .set(&DataKey::RegistryContract, &registry_contract);
-        let registry: Map<u64, u64> = Map::new(&env);
-        env.storage()
-            .persistent()
-            .set(&DataKey::SerialRegistry, &registry);
+        // The serial index materialises itself lazily on first use, so there is
+        // nothing to seed here.
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
@@ -628,15 +627,7 @@ impl CarbonCreditContract {
             return Err(CarbonError::DoubleCountingDetected);
         }
 
-        let mut registry: Map<u64, u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| Map::new(&env));
-        registry.set(serial_start, serial_end);
-        env.storage()
-            .persistent()
-            .set(&DataKey::SerialRegistry, &registry);
+        serial_index::insert(&env, serial_start, serial_end);
 
         let batch = CreditBatch {
             batch_id: batch_id.clone(),
@@ -1029,75 +1020,62 @@ impl CarbonCreditContract {
     // Production Groth16 verification lives in `contracts/carbon_zk_verifier`
     // (Circom BLS12-381 / CAP-0059). See docs/zk-proof-spec.md.
 
-    /// Check whether [start, end] overlaps any previously registered range.
+    /// Whether `[start, end]` is clear of every serial range already issued.
     ///
-    /// ## Algorithm  O(log n)
-    /// The registry is a `Map<u64, u64>` where each key is a `serial_start`
-    /// and the value is the corresponding `serial_end`. Soroban `Map` keeps
-    /// keys in sorted order, so we can use two targeted lookups:
+    /// Delegates to the skip-list index in [`serial_index`], which locates the
+    /// candidate's two neighbouring ranges in an expected `O(log N)` node reads
+    /// — see that module's docs for the structure and why two neighbours are
+    /// sufficient.
     ///
-    /// 1. **Left neighbour**: the entry with the largest key ≤ `start`.
-    ///    If it exists, its range `[lk, lv]` overlaps iff `lv >= start`.
-    /// 2. **Right neighbour**: the entry with the smallest key > `start`.
-    ///    If it exists, its range `[rk, rv]` overlaps iff `rk <= end`.
-    ///
-    /// These two comparisons replace the full O(n) linear scan.
-    ///
-    /// ## Migration from legacy Vec registry
-    /// Contracts upgraded from v1 may still have a `SerialRegistry` (Vec)
-    /// entry. On the first invocation we migrate all existing ranges into
-    /// the Map and remove the legacy key.
+    /// Contracts upgraded from a pre-#887 version may still hold ranges in the
+    /// legacy flat `SerialRegistry` map. Those are consulted as well until an
+    /// admin has drained them with [`Self::migrate_serial_index`], so a legacy
+    /// range cannot be re-issued while the migration is only partly done.
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
-        let registry: Map<u64, u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| Map::new(env));
+        serial_index::is_free(env, start, end) && serial_index::legacy_is_free(env, start, end)
+    }
 
-        if registry.is_empty() {
-            return true;
+    // ============================================
+    // Serial Index Administration (#887)
+    // ============================================
+
+    /// Move up to `limit` ranges from the legacy flat registry into the
+    /// skip-list index, returning how many were moved.
+    ///
+    /// Only needed on contracts upgraded from a pre-#887 version. Call
+    /// repeatedly until it returns `0`; each call is bounded by `limit` so the
+    /// work fits inside a transaction budget no matter how large the legacy
+    /// registry grew. Overlap checks stay correct throughout.
+    pub fn migrate_serial_index(
+        env: Env,
+        admin: Address,
+        limit: u32,
+    ) -> Result<u32, CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        if limit == 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
         }
+        Ok(serial_index::migrate(&env, limit))
+    }
 
-        // Map<start, end> is sorted by key (Soroban Map guarantees key ordering).
-        // Binary-search the sorted key list to find the predecessor and successor
-        // of [new_start, new_end] in O(log n).
-        let keys: Vec<u64> = registry.keys();
-        let len = keys.len() as usize;
+    /// Number of serial ranges held in the skip-list index.
+    pub fn serial_index_size(env: Env) -> u32 {
+        serial_index::len(&env)
+    }
 
-        // Upper-bound search: find count of keys strictly <= start.
-        let mut lo: usize = 0;
-        let mut hi: usize = len;
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if keys.get(mid as u32).unwrap() <= start {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-
-        // Check predecessor (largest existing start <= new_start):
-        // overlap if pred_end >= new_start.
-        if lo > 0 {
-            let pred_start = keys.get((lo - 1) as u32).unwrap();
-            let pred_end = registry.get(pred_start).unwrap();
-            if pred_end >= start {
-                return false;
-            }
-        }
-
-        // Check successor (smallest existing start > new_start):
-        // overlap if succ_start <= new_end.
-        if lo < len {
-            let succ_start = keys.get(lo as u32).unwrap();
-            if succ_start <= end {
-                return false;
-            }
-        }
-
-        true
+    /// Number of serial ranges still awaiting migration out of the legacy flat
+    /// registry. `0` means overlap checks are fully sub-linear.
+    pub fn serial_index_pending_migration(env: Env) -> u32 {
+        serial_index::legacy_pending(&env)
     }
 }
+
+// ── Sub-linear serial-range index (Issue #887) ───────────────────────────────
+// Skip-list over serial_start, one ledger entry per node, replacing the flat
+// Map<u64, u64> whose read/write cost grew with the number of minted batches.
+pub mod serial_index;
 
 // ── Invariant tests ───────────────────────────────────────────────────────────
 #[cfg(test)]
@@ -2606,12 +2584,17 @@ mod serial_registry_proptest_tests {
 //
 //   cargo test -p carbon_credit --lib bench_serial_registry_growth -- --nocapture
 //
-// The old O(n) linear-scan implementation this replaced would show
-// instruction cost growing linearly with the number of comparisons run on
-// every mint; the O(log n) binary-search implementation in
-// `verify_serial_range_internal` above keeps the comparison work itself flat,
-// so growth here comes only from the unavoidable I/O of reading/writing the
-// growing `Map<u64, u64>` registry.
+// Before #887 the registry lived in a single `Map<u64, u64>` ledger entry, so
+// even with a binary search over its keys every mint paid to deserialise and
+// rewrite the whole entry — cost grew with the registry. The skip-list index in
+// `serial_index` gives each range its own small entry, so a mint now touches an
+// expected O(log N) of them.
+//
+// Note that the metered figures this prints overstate write cost as the
+// registry grows: the test host charges a storage write in proportion to its
+// entire in-memory storage map, which on-chain holds only the transaction
+// footprint. `serial_index`'s own tests assert on ledger-entry counts instead,
+// which are exact — see `serial_index_tests::insert_cost_stays_bounded_past_a_thousand_ranges`.
 #[cfg(test)]
 mod serial_benchmark {
     use super::*;
