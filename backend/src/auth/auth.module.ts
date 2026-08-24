@@ -10,6 +10,7 @@ import { JWTRotationStrategy } from './jwt-rotation.strategy';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import { RolesGuard } from './roles.guard';
 import { TokenFamilyService } from './token-family.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { PrismaService } from '../prisma.service';
 import { KeyRotationModule } from '../key-rotation/key-rotation.module';
 
@@ -33,6 +34,7 @@ import { KeyRotationModule } from '../key-rotation/key-rotation.module';
   providers: [
     AuthService,
     TokenFamilyService,
+    TokenBlacklistService,
     JwtStrategy,
     JWTRotationStrategy,
     LoginRateLimitGuard,
@@ -41,6 +43,6 @@ import { KeyRotationModule } from '../key-rotation/key-rotation.module';
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
   controllers: [AuthController],
-  exports: [AuthService, TokenFamilyService, JwtModule, RolesGuard],
+  exports: [AuthService, TokenFamilyService, TokenBlacklistService, JwtModule, RolesGuard],
 })
 export class AuthModule { }

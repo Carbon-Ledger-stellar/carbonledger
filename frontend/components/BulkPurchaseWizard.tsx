@@ -156,6 +156,8 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   const t = useTranslations("bulkPurchaseWizard");
   const [step, setStep] = useState<WizardStep>("selection");
   const [items, setItems] = useState<WizardCartItem[]>([]);
+  const [amountErrors, setAmountErrors] = useState<Record<string, string>>({});
+  const amountErrorTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [walletKey, setWalletKey] = useState<string | null>(null);
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -207,6 +209,54 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   const clearItems = useCallback(() => {
     setItems([]);
   }, []);
+
+  // ── Amount validation ──────────────────────────────────────────────────────
+
+  const validateAmount = useCallback((listing: MarketListing, amount: number): string | null => {
+    if (Number.isNaN(amount) || amount <= 0) {
+      return "Amount must be greater than 0";
+    }
+    if (amount > listing.amountAvailable) {
+      return `Amount exceeds available ${formatTonnes(listing.amountAvailable)}`;
+    }
+    return null;
+  }, []);
+
+  const handleAmountChange = useCallback(
+    (listing: MarketListing, raw: string) => {
+      const amount = parseFloat(raw);
+      // Keep the raw draft in cart until it parses to a valid number
+      addItem(listing.listingId, amount || 0.01);
+      // Debounced real-time validation
+      if (amountErrorTimers.current[listing.listingId]) {
+        clearTimeout(amountErrorTimers.current[listing.listingId]);
+      }
+      amountErrorTimers.current[listing.listingId] = setTimeout(() => {
+        const error = validateAmount(listing, amount);
+        setAmountErrors((prev) => {
+          const next = { ...prev };
+          if (error) next[listing.listingId] = error;
+          else delete next[listing.listingId];
+          return next;
+        });
+        delete amountErrorTimers.current[listing.listingId];
+      }, 300);
+    },
+    [addItem, validateAmount]
+  );
+
+  const handleAmountBlur = useCallback(
+    (listing: MarketListing, amount: number) => {
+      const error = validateAmount(listing, amount);
+      setAmountErrors((prev) => {
+        const next = { ...prev };
+        if (error) next[listing.listingId] = error;
+        else delete next[listing.listingId];
+        return next;
+      });
+    },
+    [validateAmount]
+  );
 
   async function handleConnect() {
     try {
@@ -357,7 +407,8 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   }, [pollState, pollHash, pollError, clearItems, addToast, metrics.totalTonnes, onComplete, t]);
 
   const busy = txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
-  const canProceed = items.length > 0 && items.length <= 10;
+  const hasAmountErrors = Object.keys(amountErrors).length > 0;
+  const canProceed = items.length > 0 && items.length <= 10 && !hasAmountErrors;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render: Step 1 - Selection
@@ -460,39 +511,40 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                 key={listing.listingId}
                 style={{
                   display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                  flexDirection: "column",
                   padding: "0.75rem",
                   background: colors.surface,
-                  border: `1px solid ${colors.neutral[200]}`,
+                  border: `1px solid ${amountErrors[listing.listingId] ? colors.suspended.border : colors.neutral[200]}`,
                   borderRadius: "0.5rem",
                   marginBottom: "0.5rem",
                 }}
               >
-                <div>
-                  <p style={{ fontWeight: 600, fontSize: "0.875rem", margin: 0 }}>
-                    {listing.projectName || listing.projectId}
-                  </p>
-                  <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
-                    {listing.methodology} · {listing.vintageYear}
-                  </p>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                  <input
-                    type="number"
-                    min={0.01}
-                    max={listing.amountAvailable}
-                    step={0.01}
-                    value={amount}
-                    onChange={(e) => addItem(listing.listingId, parseFloat(e.target.value) || 0.01)}
-                    style={{
-                      width: "80px",
-                      border: `1px solid ${colors.neutral[300]}`,
-                      borderRadius: "0.375rem",
-                      padding: "0.4rem 0.5rem",
-                      fontSize: "0.875rem",
-                    }}
-                  />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <p style={{ fontWeight: 600, fontSize: "0.875rem", margin: 0 }}>
+                      {listing.projectName || listing.projectId}
+                    </p>
+                    <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
+                      {listing.methodology} · {listing.vintageYear}
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                    <input
+                      type="number"
+                      min={0.01}
+                      max={listing.amountAvailable}
+                      step={0.01}
+                      value={amount}
+                      onChange={(e) => handleAmountChange(listing, e.target.value)}
+                      onBlur={() => handleAmountBlur(listing, amount)}
+                      style={{
+                        width: "80px",
+                        border: `1px solid ${amountErrors[listing.listingId] ? colors.suspended.border : colors.neutral[300]}`,
+                        borderRadius: "0.375rem",
+                        padding: "0.4rem 0.5rem",
+                        fontSize: "0.875rem",
+                      }}
+                    />
                   <button
                     onClick={() => removeItem(listing.listingId)}
                     aria-label={t("remove")}
@@ -507,6 +559,11 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                     ✕
                   </button>
                 </div>
+                {amountErrors[listing.listingId] && (
+                  <p style={{ fontSize: "0.75rem", color: colors.suspended.text, margin: "0.4rem 0 0" }}>
+                    {amountErrors[listing.listingId]}
+                  </p>
+                )}
               </div>
             ))}
           </div>

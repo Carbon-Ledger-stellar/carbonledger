@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { verify } from 'jsonwebtoken';
 import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 
 /**
  * Previously verified against a single static process.env.JWT_SECRET,
@@ -14,7 +15,10 @@ import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(private readonly secretsRefresh: SecretsRefreshService) {
+  constructor(
+    private readonly secretsRefresh: SecretsRefreshService,
+    private readonly tokenBlacklist: TokenBlacklistService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -35,9 +39,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; role: string; type: string }) {
+  async validate(payload: { sub: string; role: string; type: string; jti?: string }) {
     if (payload.type !== 'access') {
       throw new UnauthorizedException('Invalid token type');
+    }
+    if (payload.jti && (await this.tokenBlacklist.isRevoked(payload.jti))) {
+      throw new UnauthorizedException('Token has been revoked');
     }
     return { publicKey: payload.sub, role: payload.role };
   }

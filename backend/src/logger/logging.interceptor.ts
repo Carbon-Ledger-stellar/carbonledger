@@ -38,6 +38,12 @@ export class LoggingInterceptor implements NestInterceptor {
     const role     = user?.role;
     const contractId = (req.headers["x-contract-id"] as string) ?? undefined;
 
+    const store = CorrelationIdContext.getContext();
+    if (store) {
+      store.actor = actor;
+      store.ip = req.ip;
+    }
+
     const start = Date.now();
 
     this.logger.log(`→ ${method} ${path}`, {
@@ -69,8 +75,8 @@ export class LoggingInterceptor implements NestInterceptor {
           if (duration >= SLOW_QUERY_THRESHOLD_MS) {
             this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold`, {
               correlationId,
-              user_id,
-              contract_id,
+              user_id: actor,
+              contract_id: contractId,
               statusCode,
               duration,
               threshold_ms: SLOW_QUERY_THRESHOLD_MS,
@@ -106,8 +112,8 @@ export class LoggingInterceptor implements NestInterceptor {
           if (duration >= SLOW_QUERY_THRESHOLD_MS) {
             this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold (error)`, {
               correlationId,
-              user_id,
-              contract_id,
+              user_id: actor,
+              contract_id: contractId,
               statusCode,
               duration,
               threshold_ms: SLOW_QUERY_THRESHOLD_MS,

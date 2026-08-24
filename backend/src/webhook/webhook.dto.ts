@@ -12,6 +12,8 @@ export const WEBHOOK_EVENTS = [
   'retirement.confirmed',
   'certificate.ready',
   'credit.purchased',
+  'credits.minted',
+  'project.verified',
   'monitoring.data_submitted',
   'oracle.price_updated',
 ] as const;

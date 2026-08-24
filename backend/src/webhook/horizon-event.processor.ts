@@ -5,6 +5,7 @@ import { WEBHOOK_QUEUE_NAME } from '../queue/queue.constants';
 import { WebhookService } from './webhook.service';
 import type { HorizonEvent } from './horizon.listener';
 import type { WebhookEvent } from './webhook.dto';
+import { processWithTrace } from '../telemetry/tracing';
 
 /**
  * Maps inbound on-chain Horizon events to outbound webhook event types.
@@ -33,13 +34,14 @@ export class HorizonEventProcessor extends WorkerHost {
   }
 
   async process(job: Job<HorizonEvent>): Promise<unknown> {
-    const event = job.data;
-    const outboundEvent = HORIZON_TO_OUTBOUND_EVENT[event.type];
+    return processWithTrace(WEBHOOK_QUEUE_NAME, job.name, job.data as Record<string, unknown>, async () => {
+      const event = job.data;
+      const outboundEvent = HORIZON_TO_OUTBOUND_EVENT[event.type];
 
-    if (!outboundEvent) {
-      this.logger.debug(`No outbound mapping for horizon event ${event.type} — skipping`);
-      return { dispatched: false };
-    }
+      if (!outboundEvent) {
+        this.logger.debug(`No outbound mapping for horizon event ${event.type} — skipping`);
+        return { dispatched: false };
+      }
 
     await this.webhookService.dispatch(outboundEvent, {
       contractId: event.contractId,
@@ -48,6 +50,7 @@ export class HorizonEventProcessor extends WorkerHost {
       ...event.payload,
     });
 
-    return { dispatched: true, outboundEvent };
+      return { dispatched: true, outboundEvent };
+    });
   }
 }

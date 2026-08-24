@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { RedisService } from "../redis.service";
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
@@ -16,6 +16,7 @@ import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
 import { randomUUID, randomBytes } from "crypto";
 import { sanitizeProjectPayload, sanitizeProjectForResponse } from "../common/sanitization.util";
+import { WebhookService } from "../webhook/webhook.service";
 
 /** Flat attestation fee, in stroops (1 XLM = 10,000,000 stroops). */
 const ATTESTATION_FEE_STROOPS = process.env.VERIFIER_ATTESTATION_FEE_STROOPS ?? "10000000";
@@ -52,6 +53,7 @@ export class ProjectsService {
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   // ── Authenticated, role-scoped reads ─────────────────────────────────────
@@ -447,6 +449,26 @@ export class ProjectsService {
 
     const txHash = await this.recordAttestationFee(projectId, verifierPublicKey, 'Verified');
     await this.invalidateProjectCache(projectId);
+
+    // Dispatch webhook: project.verified
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('project.verified', {
+          projectId: updated.projectId,
+          projectName: updated.name,
+          methodology: updated.methodology,
+          country: updated.country,
+          vintageYear: updated.vintageYear,
+          ownerAddress: updated.ownerAddress,
+          verifierAddress: verifierPublicKey,
+          txHash,
+          verifiedAt: new Date().toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
+    }
+
     return { ...updated, txHash };
   }
 

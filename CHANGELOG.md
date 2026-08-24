@@ -76,4 +76,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [Unreleased]: https://github.com/dev-fatima-24/carbonledger/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/dev-fatima-24/carbonledger/releases/tag/v0.1.0
 
-<!-- Helix Ops addressed issue: Add Overflow/Underflow Protection in Marketplace Fee Logic -->
+<!-- Helix Ops addressed issue: Implement Access Control Lists (ACLs) for Role Management -->
