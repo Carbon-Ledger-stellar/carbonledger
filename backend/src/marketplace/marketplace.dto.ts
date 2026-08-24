@@ -113,15 +113,23 @@ export class ListingsQueryDto {
   @IsString() @IsOptional() @MaxLength(128) cursor?: string;
   @IsInt() @Min(1) @Max(1000) @IsOptional() @Type(() => Number) page?: number;
   @IsInt() @Min(1) @Max(100) @Type(() => Number) @IsOptional() limit?: number = 20;
+  @IsInt() @Min(0) @Type(() => Number) @IsOptional() offset?: number = 0;
   @IsString() @IsOptional() @IsIn(LISTING_SORT_FIELDS) sortBy?: ListingSortField;
   @IsString() @IsOptional() @IsIn(SORT_ORDERS) sortOrder?: SortOrder = "asc";
 }
 
 export class PaginatedListingsResponse {
+  data: any[];
   listings: any[];
+  total: number;
+  total_count: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  has_more: boolean;
+  nextOffset?: number | null;
   next_cursor?: string;
   prev_cursor?: string;
-  total_count: number;
   page?: number;
   total_pages?: number;
 }
@@ -197,6 +205,9 @@ export class SearchListingsDto {
 
   /** Page size. Min 1, max 100. Defaults to 20. */
   @IsInt() @Min(1) @Max(100) @IsOptional() @Type(() => Number) limit?: number = 20;
+
+  /** Offset for pagination. Defaults to 0. */
+  @IsInt() @Min(0) @IsOptional() @Type(() => Number) offset?: number = 0;
 }
 
 /** A single search result row returned by the search endpoint. */

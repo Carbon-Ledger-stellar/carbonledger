@@ -24,6 +24,7 @@ export class ProjectsController {
     @Query('vintage')     vintage?: string,
     @Query('cursor')      cursor?: string,
     @Query('limit')       limit?: string,
+    @Query('offset')      offset?: string,
   ) {
     const safeMethodology = typeof methodology === 'string' ? methodology : undefined;
     const safeCountry     = typeof country     === 'string' ? country     : undefined;
@@ -33,7 +34,8 @@ export class ProjectsController {
         country:     safeCountry,
         vintage: vintage ? Number(vintage) : undefined,
         cursor,
-        limit: limit ? Number(limit) : 20,
+        limit: limit !== undefined ? Number(limit) : 20,
+        offset: offset !== undefined ? Number(offset) : 0,
       },
       req.user,
     );

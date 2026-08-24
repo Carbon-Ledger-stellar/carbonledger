@@ -57,8 +57,9 @@ export class MarketplaceService {
     const cached = await this.cache.get<PaginatedListingsResponse>(cacheKey);
     if (cached) return cached;
 
-    const { methodology, vintage, country, minPrice, maxPrice, search, cursor, page, limit = 20, sortBy, sortOrder = "asc" } = query;
+    const { methodology, vintage, country, minPrice, maxPrice, search, cursor, page, limit = 20, offset = 0, sortBy, sortOrder = "asc" } = query;
     const normalizedLimit = normalizePaginationLimit(limit, 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
     const decodedCursor = decodeCursor(cursor);
 
     // Validate price range values
@@ -118,12 +119,20 @@ export class MarketplaceService {
         });
 
       const effectivePage = page ?? 1;
-      const start = (effectivePage - 1) * normalizedLimit;
+      const start = page !== undefined ? (effectivePage - 1) * normalizedLimit : safeOffset;
       const listings = sorted.slice(start, start + normalizedLimit);
+      const hasMore = start + listings.length < total_count;
 
       const result: PaginatedListingsResponse = {
+        data: listings,
         listings,
+        total: total_count,
         total_count,
+        limit: normalizedLimit,
+        offset: start,
+        hasMore,
+        has_more: hasMore,
+        nextOffset: hasMore ? start + normalizedLimit : null,
         page: effectivePage,
         total_pages: Math.ceil(total_count / normalizedLimit),
       };
@@ -137,12 +146,23 @@ export class MarketplaceService {
     if (page !== undefined) {
       const skip = (page - 1) * normalizedLimit;
       const [listings, total_count] = await Promise.all([
-        this.prisma.marketListing.findMany({ where, include, orderBy, take: normalizedLimit, skip }),
+        this.prisma.marketListing.findMany({ where, include, orderBy, take: normalizedLimit + 1, skip }),
         this.prisma.marketListing.count({ where }),
       ]);
+      const hasMore = listings.length > normalizedLimit;
+      if (hasMore) listings.pop();
+      const mapped = listings.map(MarketplaceService.withProjectName);
+
       const result: PaginatedListingsResponse = {
-        listings: listings.map(MarketplaceService.withProjectName),
+        data: mapped,
+        listings: mapped,
+        total: total_count,
         total_count,
+        limit: normalizedLimit,
+        offset: skip,
+        hasMore,
+        has_more: hasMore,
+        nextOffset: hasMore ? skip + normalizedLimit : null,
         page,
         total_pages: Math.ceil(total_count / normalizedLimit),
       };
@@ -150,27 +170,37 @@ export class MarketplaceService {
       return result;
     }
 
-    // Cursor-based pagination (issue #598)
+    // Offset / Cursor-based pagination
     const [listings, total_count] = await Promise.all([
       this.prisma.marketListing.findMany({
         where: cursorWhere ? { ...where, ...cursorWhere } : where,
         include,
         orderBy,
-        take: limit + 1,
+        take: normalizedLimit + 1,
         cursor: decodedCursorId ? { id: decodedCursorId } : undefined,
-        skip:   decodedCursorId ? 1 : 0,
+        skip: decodedCursorId ? 1 : safeOffset,
       }),
       this.prisma.marketListing.count({ where }),
     ]);
 
-    const hasMore = listings.length > limit;
+    const hasMore = listings.length > normalizedLimit;
+    const next_cursor = hasMore && listings[normalizedLimit - 1] ? createOpaqueCursor(listings[normalizedLimit - 1].id, (listings[normalizedLimit - 1] as any).createdAt) : undefined;
+    const prev_cursor = decodedCursor && listings.length > 0 ? createOpaqueCursor(listings[0].id, (listings[0] as any).createdAt) : undefined;
     if (hasMore) listings.pop();
+    const mapped = listings.map(MarketplaceService.withProjectName);
 
     const result: PaginatedListingsResponse = {
-      listings: listings.map(MarketplaceService.withProjectName),
+      data: mapped,
+      listings: mapped,
+      total: total_count,
+      total_count,
+      limit: normalizedLimit,
+      offset: safeOffset,
+      hasMore,
+      has_more: hasMore,
+      nextOffset: hasMore ? safeOffset + normalizedLimit : null,
       next_cursor,
       prev_cursor,
-      total_count,
     };
     await this.cache.set(cacheKey, result);
     return result;

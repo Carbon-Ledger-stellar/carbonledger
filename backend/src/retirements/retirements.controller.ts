@@ -62,8 +62,14 @@ export class RetirementsController {
     @Request() req: any,
     @Query('cursor') cursor?: string,
     @Query('limit')  limit?: string,
+    @Query('offset') offset?: string,
   ) {
-    return this.retirementsService.findAll(cursor, limit ? Number(limit) : 20, req.user.publicKey);
+    return this.retirementsService.findAll(
+      cursor,
+      limit ? Number(limit) : 20,
+      offset ? Number(offset) : 0,
+      req.user.publicKey,
+    );
   }
 
   /**
@@ -78,6 +84,7 @@ export class RetirementsController {
     @Query('vintageYear') vintageYear?: string,
     @Query('cursor')      cursor?: string,
     @Query('limit')       limit?: string,
+    @Query('offset')      offset?: string,
   ) {
     return this.retirementsService.searchRetirements({
       search,
@@ -86,6 +93,7 @@ export class RetirementsController {
       vintageYear: vintageYear ? Number(vintageYear) : undefined,
       cursor,
       limit: limit ? Number(limit) : 20,
+      offset: offset ? Number(offset) : 0,
     });
   }
 
