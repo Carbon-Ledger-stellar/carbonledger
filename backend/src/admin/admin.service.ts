@@ -240,4 +240,42 @@ export class AdminService {
 
     return this.serializeQuarantine(updated);
   }
+
+  async purgeDeletedRecords() {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [projects, batches, listings, retirements] = await this.prisma.$transaction([
+      this.prisma.carbonProject.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+      this.prisma.creditBatch.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+      this.prisma.marketListing.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+      this.prisma.retirementRecord.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+    ]);
+
+    return {
+      success: true,
+      purged: {
+        projects: projects.count,
+        batches: batches.count,
+        listings: listings.count,
+        retirements: retirements.count,
+      },
+    };
+  }
 }

@@ -18,4 +18,8 @@ export class PaginationQueryDto {
   @IsString()
   @IsOptional()
   cursor?: string;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  includeDeleted?: boolean;
 }

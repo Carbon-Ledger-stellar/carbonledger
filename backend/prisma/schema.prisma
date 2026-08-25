@@ -64,6 +64,7 @@ model CreditBatch {
   status      String   @default("Active")
   metadataCid String
   issuedAt    DateTime @default(now()) @db.Timestamptz
+  deletedAt   DateTime?
 
   project     CarbonProject      @relation(fields: [projectId], references: [projectId])
   retirements RetirementRecord[]
@@ -71,6 +72,7 @@ model CreditBatch {
   ipfsFiles   IPFSFile[]
 
   @@index([projectId, vintageYear, status])
+  @@index([deletedAt])
 }
 
 model RetirementRecord {
@@ -105,10 +107,13 @@ model RetirementRecord {
   isValid                  Boolean   @default(true)
   validatedAt              DateTime?
   retiredAt                DateTime  @default(now())
+  deletedAt                DateTime?
 
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   ipfsFiles IPFSFile[]
+
+  @@index([deletedAt])
   certificates RetirementCertificate[]
   zkProofs     ZkRetirementProof[]
 
@@ -179,6 +184,7 @@ model MarketListing {
   status          String   @default("Active")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
 
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
@@ -186,6 +192,7 @@ model MarketListing {
   @@index([methodology, vintageYear, status, pricePerCredit])
   // Supports queries that filter active/partial listings by seller (My Listings page)
   @@index([seller, status])
+  @@index([deletedAt])
   // Supports ORDER BY status, createdAt DESC on the listings browse page
   @@index([status, createdAt])
 }
