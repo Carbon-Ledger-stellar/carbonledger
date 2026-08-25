@@ -468,6 +468,8 @@ def compute_twap(
 
     weighted_sum = 0.0
     total_weight = 0.0
+    min_contributing_price = None
+    max_contributing_price = None
 
     for i, entry in enumerate(price_history):
         price = entry.get("price")
@@ -486,11 +488,19 @@ def compute_twap(
 
         weighted_sum += float(price) * duration
         total_weight += duration
+        min_contributing_price = float(price) if min_contributing_price is None else min(min_contributing_price, float(price))
+        max_contributing_price = float(price) if max_contributing_price is None else max(max_contributing_price, float(price))
 
     if total_weight <= 0:
         return None
 
-    return weighted_sum / total_weight
+    twap = weighted_sum / total_weight
+    # A weighted average is a convex combination of the contributing prices,
+    # so it must mathematically lie within their range — clamp away any
+    # floating-point rounding drift that pushes it a ULP outside that bound.
+    if min_contributing_price is not None:
+        twap = max(min_contributing_price, min(max_contributing_price, twap))
+    return twap
 
 
 def check_deviation_alert(

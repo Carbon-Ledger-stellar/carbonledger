@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import Redis from "ioredis";
 
-const ALLOWED_REDIS_KEY_PREFIXES = ["project-detail:", "auth:family:", "indexer:", "abuse:blocked:", "abuse:serials:", "abuse:log", "cache:"];
+const ALLOWED_REDIS_KEY_PREFIXES = ["project-detail:", "auth:family:", "auth:bl:", "indexer:", "abuse:blocked:", "abuse:serials:", "abuse:log", "cache:"];
 
 function normalizeRedisKey(key: string): string {
   const trimmed = key.trim();

@@ -34,6 +34,75 @@ redis_client = redis.Redis(
     decode_responses=True
 )
 
+# Minimum methodology score for credit issuance (#641). Matches the score
+# gate enforced at the backend service layer — see business-rules.validator.ts.
+METHODOLOGY_SCORE_MIN = 70
+
+# Fields expected on a verifier monitoring-report payload, and the type(s)
+# a well-formed value for that field must have.
+_REPORT_FIELD_TYPES = {
+    "project_id": (str,),
+    "period": (str,),
+    "tonnes_verified": (int, float),
+    "satellite_cid": (str,),
+    "verifier_signature": (str,),
+    "additionality_proof": (str,),
+    "permanence_buffer": (int, float),
+}
+
+_KNOWN_METHODOLOGIES = {"VCS", "Gold Standard", "ACM"}
+
+
+def _field_is_present(value, expected_types):
+    """True if `value` is a well-formed, non-empty instance of one of
+    `expected_types` — deliberately permissive about what "well-formed"
+    means since this only feeds a soft score, not a hard rejection."""
+    # bool is a subclass of int in Python — a boolean is never a valid
+    # numeric/string field value here, regardless of expected_types.
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, expected_types):
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, float):
+        # NaN != NaN; also reject +/-inf — neither is a real measurement.
+        return value == value and value not in (float("inf"), float("-inf"))
+    return True
+
+
+def validate_methodology_report(report, methodology):
+    """
+    Scores an untrusted verifier monitoring-report JSON payload against the
+    expected methodology-report shape (issue #641), used to gate credit
+    issuance before a score is derived and submitted on-chain.
+
+    This sits directly on the untrusted-input boundary from third-party
+    verifier APIs, so it never raises: any input that isn't a well-formed
+    dict, or any field with a missing/malformed value, simply scores 0 for
+    that criterion rather than erroring.
+
+    Returns (is_valid, score): score is an int in [0, 100], and
+    is_valid == (score >= METHODOLOGY_SCORE_MIN).
+    """
+    if not isinstance(report, dict):
+        report = {}
+
+    criteria = list(_REPORT_FIELD_TYPES.items())
+    per_criterion = 100.0 / (len(criteria) + 1)  # +1 for methodology itself
+
+    points = 0.0
+    for field, expected_types in criteria:
+        if _field_is_present(report.get(field), expected_types):
+            points += per_criterion
+
+    if isinstance(methodology, str) and methodology in _KNOWN_METHODOLOGIES:
+        points += per_criterion
+
+    score = max(0, min(100, round(points)))
+    return score >= METHODOLOGY_SCORE_MIN, score
+
+
 class VerificationListener:
     """
     Verification Listener with distributed lock protection and

@@ -117,6 +117,10 @@ export class CertificateProcessor {
         },
       });
 
+      // Sign the certificate content so third parties can verify authenticity
+      // using only the public key published in Stellar.toml (#594).
+      const { signature, publicKey } = this.certificateSigning.sign(certificateContent);
+
       // Create RetirementCertificate record with IPFS CID and signature
       await this.prisma.retirementCertificate.create({
         data: {

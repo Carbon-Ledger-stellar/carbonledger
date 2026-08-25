@@ -22,6 +22,17 @@ export const REFRESH_COOKIE = 'refresh_token';
 /** 30 days — matches the TokenFamilyService hard TTL. */
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * Must match how this controller is actually mounted: main.ts sets
+ * `setGlobalPrefix('api')` plus URI versioning (`prefix: 'v'`,
+ * `defaultVersion: '1'`), so `@Controller('auth')` is served at
+ * `/api/v1/auth/*` — not `/auth/*`. A cookie scoped to the wrong Path is
+ * simply never sent back by the browser, which silently breaks the
+ * refresh flow entirely (verified: a client that calls /api/v1/auth/verify
+ * then /api/v1/auth/refresh never gets the cookie and refresh 401s).
+ */
+const REFRESH_COOKIE_PATH = '/api/v1/auth';
+
 @Controller('auth')
 @Public()
 @UseGuards(ThrottlerGuard)
@@ -104,7 +115,7 @@ export class AuthController {
 
     const result = await this.authService.logout(refreshToken ?? '', accessToken ?? undefined);
 
-    res.clearCookie(REFRESH_COOKIE, { path: '/auth' });
+    res.clearCookie(REFRESH_COOKIE, { path: REFRESH_COOKIE_PATH });
     return result;
   }
 
@@ -115,7 +126,7 @@ export class AuthController {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      path: '/auth',
+      path: REFRESH_COOKIE_PATH,
       maxAge: REFRESH_COOKIE_MAX_AGE_MS,
     });
   }

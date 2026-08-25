@@ -73,6 +73,34 @@ surface.
 | `set_liveness_sla` | `(c_ledger, sla_upd)` | `(admin: Address, seconds: u64)` |
 | `upgrade` | `(c_ledger, upgraded)` | `(from_version: u32, to_version: u32, admin: Address)` |
 
+## `backend_indexing`
+
+`EventIndexerService` (`backend/src/queue/event-indexer.service.ts`) polls the
+Soroban RPC `/getEvents` endpoint and reconciles every `c_ledger` event into
+Prisma. It runs on an interval (`EVENT_INDEXER_POLL_INTERVAL_MS`, default 15s),
+scans at most `MAX_LEDGERS_PER_POLL` ledgers per poll, and only advances its
+cursor after the whole page succeeds — a failed poll (network disconnect, RPC
+outage, DB error) leaves the cursor untouched and the next poll retries the
+same window, so no ledger range is skipped. On first boot with no cursor it
+bootstraps from the last ~1000 ledgers instead of starting "now".
+
+The last fully-processed ledger sequence is persisted in the **database**
+config table `SyncMetadata` (singleton row, `lastIndexedLedger`), so the
+cursor survives restarts and Redis flushes (#893).
+
+| Contract event | Prisma update |
+|---|---|
+| `(c_ledger, minted)` | `CreditBatch` upsert (status `Active`) + `CarbonProject.totalCreditsIssued` increment inside a transaction |
+| `(c_ledger, retired)` | `CarbonProject.totalCreditsRetired` increment + `CreditBatch.status` → `Retired` inside a transaction |
+| `(c_ledger, transfer)` | Append-only `CreditEvent` row (`eventType: 'transfer'`, `actor` = sender, `newState` = `{ from, to, amount }`, `txHash` = RPC event id), HMAC-signed with the same scheme as `EventSourcingService` so the provenance log stays verifiable. Replays are skipped via an existence check on `(txHash, eventType)`. |
+| `(c_ledger, reg_proj)` | `CarbonProject.status` → `Pending` |
+| `(c_ledger, verified)` | `CarbonProject.status` → `Verified` |
+| `(c_ledger, rejected)` | `CarbonProject.status` → `Rejected` |
+| `(c_ledger, st_update)` / `(c_ledger, suspended)` / `(c_ledger, mkt_susp)` | `CarbonProject.status` → `Suspended` |
+
+Every handler is idempotent, so replaying a ledger range (restart overlap,
+error retry) converges to the same state.
+
 ## Testing conventions
 
 - Each documented event has at least one assertion in the corresponding
