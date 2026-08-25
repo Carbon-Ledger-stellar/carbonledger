@@ -14,12 +14,14 @@ import { PrismaService } from '../prisma.service';
 import { RetirementsModule } from '../retirements/retirements.module';
 import { CertificateProcessor } from '../certificates/certificate.processor';
 import { CertificatesModule } from '../certificates/certificates.module';
+import { CreditsModule } from '../credits/credits.module';
 
 @Module({
   imports: [
     BullModule.registerQueue({ name: QUEUE_NAME }),
     AuthModule,
     forwardRef(() => RetirementsModule),
+    forwardRef(() => CreditsModule),
     CertificatesModule,
   ],
   providers: [

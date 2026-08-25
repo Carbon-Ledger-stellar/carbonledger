@@ -1,4 +1,4 @@
-import { IsString, Length, Validate } from 'class-validator';
+import { IsString, Length, ValidateNested, ArrayMaxSize, ArrayMinSize } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
   IsStellarAddress,
@@ -94,4 +94,12 @@ export class RetireCreditsDto {
   /** Stellar public key of the account holding the credits being retired. */
   @IsStellarAddress()
   holderPublicKey: string;
+}
+
+export class BulkMintCreditsDto {
+  @ValidateNested({ each: true })
+  @Type(() => MintCreditsDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  items: MintCreditsDto[];
 }

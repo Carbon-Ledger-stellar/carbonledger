@@ -7,6 +7,7 @@ import { CertificateService } from '../retirements/certificate.service';
 import { CertificateProcessor } from '../certificates/certificate.processor';
 import { RetirementsService } from '../retirements/retirements.service';
 import { processWithTrace } from '../telemetry/tracing';
+import { CreditsService } from '../credits/credits.service';
 
 @Processor(QUEUE_NAME)
 export class QueueProcessor extends WorkerHost {
@@ -18,6 +19,8 @@ export class QueueProcessor extends WorkerHost {
     private readonly certificateProcessor: CertificateProcessor,
     @Inject(forwardRef(() => RetirementsService))
     private readonly retirementsService: RetirementsService,
+    @Inject(forwardRef(() => CreditsService))
+    private readonly creditsService: CreditsService,
   ) {
     super();
   }
@@ -36,6 +39,8 @@ export class QueueProcessor extends WorkerHost {
           return this.handleEmailNotification(job.data);
         case JobType.BULK_RETIREMENT:
           return this.handleBulkRetirement(job.data);
+        case JobType.BULK_MINT:
+          return this.handleBulkMint(job.data);
         default:
           throw new Error(`Unknown job type: ${job.name}`);
       }
@@ -105,5 +110,10 @@ export class QueueProcessor extends WorkerHost {
       retirementReason: data['retirementReason'] as string,
       retiredBy: data['retiredBy'] as string,
     });
+  }
+
+  private async handleBulkMint(data: Record<string, unknown>) {
+    this.logger.log(`Processing bulk mint job with ${Array.isArray(data['items']) ? data['items'].length : 0} items`);
+    return this.creditsService.executeBulkMintJob(data['items'] as any);
   }
 }
