@@ -43,7 +43,7 @@ jobs:
       - name: Install Rust + wasm32 target
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
           targets: wasm32-unknown-unknown
         with:
           targets: wasm32-unknown-unknown

@@ -76,14 +76,18 @@ jest.mock("@nestjs/bullmq", () => {
   };
 });
 
-jest.mock("@nestjs/schedule", () => ({
-  ScheduleModule: {
-    forRoot: () => ({ module: class ScheduleRootModule {} }),
-  },
-  Interval: () => () => undefined,
-  Cron: () => () => undefined,
-  Timeout: () => () => undefined,
-}));
+jest.mock("@nestjs/schedule", () => {
+  const actual = jest.requireActual("@nestjs/schedule");
+  return {
+    ...actual,
+    ScheduleModule: {
+      forRoot: () => ({ module: class ScheduleRootModule {} }),
+    },
+    Interval: () => () => undefined,
+    Cron: () => () => undefined,
+    Timeout: () => () => undefined,
+  };
+});
 
 // In-memory Soroban/Horizon mock — see src/__mocks__/stellar.provider.ts.
 // Ensures no backend test ever depends on a live Stellar network connection.

@@ -67,7 +67,9 @@
     "projectTypeAgroforestry": "Agroforestry",
     "projectTypeSoilCarbon": "Soil Carbon",
     "projectTypeWasteToEnergy": "Waste to Energy",
-    "projectTypeForestConservation": "Forest Conservation"
+    "projectTypeForestConservation": "Forest Conservation",
+    "resultsFoundSingular": "{count} listing found",
+    "resultsFoundPlural": "{count} listings found"
   },
   "creditCard": {
     "vintageSuffix": "Vintage",

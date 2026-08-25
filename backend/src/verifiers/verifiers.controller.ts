@@ -6,6 +6,7 @@ import { VerifiersService } from './verifiers.service';
 import { ApplyVerifierDto, ReviewVerifierDto } from './verifiers.dto';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, UserSubject } from '../policies';
+
 @Controller('verifiers')
 export class VerifiersController {
   constructor(private readonly verifiersService: VerifiersService) {}

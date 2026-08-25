@@ -31,6 +31,7 @@ describe('CertificateProcessor — content pinning + self-referential CID (#600)
   let notificationServiceMock: jest.Mocked<
     Pick<NotificationService, 'sendCertificateReady' | 'sendCertificateFailed'>
   >;
+  let certificateSigningMock: { sign: jest.Mock };
 
   beforeEach(() => {
     prismaMock = {
@@ -53,12 +54,20 @@ describe('CertificateProcessor — content pinning + self-referential CID (#600)
       sendCertificateReady: jest.fn().mockResolvedValue(undefined),
       sendCertificateFailed: jest.fn().mockResolvedValue(undefined),
     };
+    certificateSigningMock = {
+      sign: jest.fn().mockReturnValue({
+        contentHash: 'mock-signing-content-hash',
+        signature: 'mock-signature',
+        publicKey: 'mock-public-key',
+      }),
+    };
 
     processor = new CertificateProcessor(
       prismaMock,
       certificateServiceMock as any,
       pinataServiceMock as any,
       notificationServiceMock as any,
+      certificateSigningMock as any,
     );
   });
 
