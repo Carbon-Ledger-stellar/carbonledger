@@ -1,6 +1,8 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/common";
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Optional } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { poolMetricsRegistry } from "./common/metrics.registry";
+import { RedisService } from "./redis.service";
+import { createPrismaCacheMiddleware, PrismaCacheMiddlewareOptions } from "./cache/prisma-cache.middleware";
 
 // Pool sizing: allow override via env, default to 10 for production safety.
 // Formula: (num_cores * 2) + effective_spindle_count — start conservative.
@@ -17,7 +19,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private _totalQueries = 0;
   private _poolErrors = 0;
 
-  constructor() {
+  constructor(@Optional() private readonly redisService?: RedisService) {
     const url = new URL(process.env.DATABASE_URL!);
     url.searchParams.set("connection_limit", String(POOL_MAX));
     url.searchParams.set("pool_timeout", String(POOL_TIMEOUT_MS / 1000));
@@ -26,18 +28,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     super({
       datasources: { db: { url: url.toString() } },
       log: process.env.NODE_ENV === "development" ? ["query", "warn", "error"] : ["warn", "error"],
-    });
+    } as any);
 
     // Prisma 6 removed client middleware ($use); register only when available.
     const client = this as PrismaClient & {
       $use?: (
         middleware: (
-          params: { model?: string; action: string },
-          next: (params: { model?: string; action: string }) => Promise<unknown>,
+          params: { model?: string; action: string; args?: any },
+          next: (params: { model?: string; action: string; args?: any }) => Promise<unknown>,
         ) => Promise<unknown>,
       ) => void;
     };
     if (typeof client.$use === 'function') {
+      // 1. Connection pool metrics tracking middleware
       client.$use(async (params, next) => {
         this._activeQueries++;
         this._totalQueries++;
@@ -53,6 +56,39 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           poolMetricsRegistry.update(this.getPoolMetrics());
         }
       });
+
+      // 2. Automatic query result caching middleware
+      if (this.redisService) {
+        client.$use(
+          createPrismaCacheMiddleware({
+            redisService: this.redisService,
+            logger: new Logger('PrismaCacheMiddleware'),
+          }),
+        );
+      }
+    }
+  }
+
+  /**
+   * Registers or updates query result caching middleware with custom options.
+   */
+  public attachCacheMiddleware(redisService: RedisService, options?: Omit<PrismaCacheMiddlewareOptions, 'redisService'>): void {
+    const client = this as PrismaClient & {
+      $use?: (
+        middleware: (
+          params: { model?: string; action: string; args?: any },
+          next: (params: { model?: string; action: string; args?: any }) => Promise<unknown>,
+        ) => Promise<unknown>,
+      ) => void;
+    };
+    if (typeof client.$use === 'function') {
+      client.$use(
+        createPrismaCacheMiddleware({
+          ...options,
+          redisService,
+          logger: options?.logger ?? new Logger('PrismaCacheMiddleware'),
+        }),
+      );
     }
   }
 
