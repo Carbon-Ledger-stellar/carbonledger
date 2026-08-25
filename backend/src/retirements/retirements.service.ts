@@ -55,10 +55,16 @@ interface NormalizedBulkItem {
 }
 
 export interface PaginatedRetirementsResponse {
+  data: any[];
   retirements: any[];
+  total: number;
+  total_count: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  nextOffset?: number | null;
   next_cursor?: string;
   prev_cursor?: string;
-  total_count: number;
 }
 
 @Injectable()
@@ -333,8 +339,9 @@ export class RetirementsService {
     return results;
   }
 
-  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
+  async findAll(cursor?: string, limit = 20, offset = 0, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
     const take = normalizePaginationLimit(limit, 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
     const where = retiredBy ? { retiredBy } : {};
     const decodedCursor = decodeCursor(cursor);
     const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
@@ -344,6 +351,7 @@ export class RetirementsService {
         where: cursorWhere ? { ...where, ...cursorWhere } : where,
         orderBy: [{ retiredAt: "desc" }, { id: "desc" }],
         take: take + 1,
+        skip: decodedCursor ? 0 : safeOffset,
       }),
       this.prisma.retirementRecord.count({ where }),
     ]);
@@ -353,7 +361,20 @@ export class RetirementsService {
     const prev_cursor = decodedCursor && retirements.length > 0 ? createOpaqueCursor(retirements[0].id, retirements[0].retiredAt) : undefined;
     if (hasMore) retirements.pop();
 
-    return { retirements: retirements.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, prev_cursor, total_count };
+    const sanitized = retirements.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      retirements: sanitized,
+      total: total_count,
+      total_count,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      next_cursor,
+      prev_cursor,
+    };
   }
 
   /**
@@ -367,12 +388,14 @@ export class RetirementsService {
     vintageYear?: number;
     cursor?: string;
     limit?: number;
+    offset?: number;
   }): Promise<PaginatedRetirementsResponse> {
-    const { search, projectId, retiredBy, vintageYear, cursor, limit = 20 } = query;
+    const { search, projectId, retiredBy, vintageYear, cursor, limit = 20, offset = 0 } = query;
     const take = normalizePaginationLimit(limit, 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
 
     if (!search) {
-      return this.findAll(cursor, take, retiredBy);
+      return this.findAll(cursor, take, safeOffset, retiredBy);
     }
 
     const decodedCursor = decodeCursor(cursor);
@@ -392,6 +415,7 @@ export class RetirementsService {
       this.prisma.retirementRecord.findMany({
         where: cursorWhere ? { ...where, ...cursorWhere } : where,
         take: take + 1,
+        skip: decodedCursor ? 0 : safeOffset,
         orderBy: [{ retiredAt: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.retirementRecord.count({ where }),
@@ -402,7 +426,20 @@ export class RetirementsService {
     const prev_cursor = decodedCursor && rows.length > 0 ? createOpaqueCursor(rows[0].id, rows[0].retiredAt) : undefined;
     if (hasMore) rows.pop();
 
-    return { retirements: rows.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>)), next_cursor, prev_cursor, total_count };
+    const sanitized = rows.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      retirements: sanitized,
+      total: total_count,
+      total_count,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      next_cursor,
+      prev_cursor,
+    };
   }
 
   async findOne(retirementId: string) {
