@@ -72,13 +72,23 @@ export class LoggerService implements NestLoggerService {
     };
   }
 
-  private sanitizeContext(context: LogContext): LogContext {
-    const sanitized: LogContext = { ...context };
+  private sanitizeContext(context: any): any {
+    if (context == null || typeof context !== "object") {
+      return context;
+    }
+
+    if (Array.isArray(context)) {
+      return context.map((item) => this.sanitizeContext(item));
+    }
+
+    const sanitized: any = { ...context };
     const secretKeys = ["password", "secret", "token", "key", "api_key", "private_key", "authorization"];
 
     for (const key of Object.keys(sanitized)) {
       if (secretKeys.some((secretKey) => key.toLowerCase().includes(secretKey))) {
         sanitized[key] = "[REDACTED]";
+      } else {
+        sanitized[key] = this.sanitizeContext(sanitized[key]);
       }
     }
 

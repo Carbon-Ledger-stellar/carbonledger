@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/commo
 import { PrismaClient } from "@prisma/client";
 import { poolMetricsRegistry } from "./common/metrics.registry";
 import { CorrelationIdContext } from "./logger/correlation-id.context";
+import { LoggerService as CustomLoggerService } from "./logger/logger.service";
 
 // Pool sizing: allow override via env, default to 10 for production safety.
 // Formula: (num_cores * 2) + effective_spindle_count — start conservative.
@@ -26,7 +27,31 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     super({
       datasources: { db: { url: url.toString() } },
-      log: process.env.NODE_ENV === "development" ? ["query", "warn", "error"] : ["warn", "error"],
+      log: [
+        { emit: "event", level: "query" },
+        { emit: "event", level: "warn" },
+        { emit: "event", level: "error" },
+      ],
+    });
+
+    const customLogger = new CustomLoggerService();
+    // @ts-ignore - Prisma 6 typings for $on might need adjustment, ignoring for safety
+    this.$on("query", (e: any) => {
+      customLogger.debug(`Database Query`, {
+        query: e.query,
+        params: e.params,
+        duration: e.duration,
+        target: e.target,
+        type: "DATABASE_QUERY",
+      });
+    });
+    // @ts-ignore
+    this.$on("warn", (e: any) => {
+      customLogger.warn(`Database Warn: ${e.message}`, { target: e.target });
+    });
+    // @ts-ignore
+    this.$on("error", (e: any) => {
+      customLogger.error(`Database Error: ${e.message}`, undefined, { target: e.target });
     });
 
     // Prisma 6 removed client middleware ($use); register only when available.

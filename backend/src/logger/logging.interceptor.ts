@@ -53,6 +53,9 @@ export class LoggingInterceptor implements NestInterceptor {
       endpoint:    `${method} ${path}`,
       contract_id: contractId,
       ip:          req.ip,
+      params:      req.params,
+      query:       req.query,
+      body:        req.body,
     });
 
     return next.handle().pipe(
