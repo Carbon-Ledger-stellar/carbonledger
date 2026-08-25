@@ -152,3 +152,12 @@ export class ExportRetirementsDto {
   @MaxLength(64)
   batchId?: string;
 }
+
+export class RetirementsQueryDto {
+  @IsOptional() @IsString() search?: string;
+  @IsOptional() @IsString() projectId?: string;
+  @IsOptional() @IsInt() @Min(1990) @Type(() => Number) vintageYear?: number;
+  @IsOptional() @IsString() cursor?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(100) @Type(() => Number) limit?: number = 20;
+  @IsOptional() @IsInt() @Min(0) @Type(() => Number) offset?: number = 0;
+}

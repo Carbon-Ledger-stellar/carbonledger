@@ -53,10 +53,14 @@ fn report(name: &str, cpu_instructions: u64, mem_bytes: u64, io: DeclaredIo) {
     );
 }
 
-/// Reads: has(Batch), get(SerialRegistry) x2 [verify_serial_range_internal
-/// + ranges load], has(Batch) [extend_batch_ttl], get(ProjectBatches) = 5
-/// Writes: set(SerialRegistry), set(Batch), extend_ttl(Batch),
-/// set(ProjectBatches) = 4
+/// Reads: has(Batch), get(ProjectBatchCount), serial index lookup + insert
+/// walk [O(log N) nodes, ~10 at 1k ranges], get(SerialRegistry) [legacy probe],
+/// has(Batch) [extend_batch_ttl], get(ProjectBatches) = 5 + O(log N)
+/// Writes: serial index splice [<= MAX_LEVEL + 2, measured 3], set(Batch),
+/// extend_ttl(Batch), set(ProjectBatches), set(ProjectBatchCount) = 4 + O(1)
+///
+/// The serial-range terms became sub-linear in #887; they were previously one
+/// read and one write of a single entry holding every registered range.
 #[test]
 fn bench_mint_credits() {
     let env = Env::default();
@@ -124,7 +128,8 @@ fn bench_retire_credits() {
     report("retire_credits", cpu, mem, DeclaredIo { reads: 3, writes: 5 });
 }
 
-/// Reads: get(SerialRegistry) = 1. Writes: 0 (read-only function).
+/// Reads: serial index walk [O(log N) nodes, ~10 at 1k ranges] +
+/// get(SerialRegistry) [legacy probe]. Writes: 0 (read-only function).
 #[test]
 fn bench_verify_serial_range() {
     let env = Env::default();

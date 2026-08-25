@@ -5,9 +5,10 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { createHmac } from 'crypto';
 import { scValToNative } from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma.service';
-import { RedisService } from '../redis.service';
+import { CreditEventType } from '../events/credit-event.types';
 
 /**
  * Injection token for the Soroban RPC client. Provided by QueueModule as a
@@ -45,18 +46,20 @@ export interface SorobanEventClient {
 }
 
 // ── Tunables ──────────────────────────────────────────────────────────────────
-const CHECKPOINT_KEY = 'indexer:event-indexer:last-ledger';
-
 const POLL_INTERVAL_MS = Number(process.env.EVENT_INDEXER_POLL_INTERVAL_MS ?? 15_000);
 /** RPC servers cap getEvents ranges; stay safely below typical limits. */
 const MAX_LEDGERS_PER_POLL = 5_000;
 /**
- * When no checkpoint exists (first boot, or Redis was flushed), re-scan this
- * many recent ledgers instead of starting "now" — closes the gap between the
- * last real-time poll of a previous deployment and this one. All handlers are
- * idempotent upserts/increments-guarded-by-events, so rescanning is safe.
+ * When no checkpoint exists (first boot, or the SyncMetadata row was deleted),
+ * re-scan this many recent ledgers instead of starting "now" — closes the gap
+ * between the last real-time poll of a previous deployment and this one. All
+ * handlers are idempotent upserts/increments-guarded-by-events, so rescanning
+ * is safe.
  */
 const BOOTSTRAP_WINDOW_LEDGERS = 1_000;
+
+/** Singleton row id of the SyncMetadata table that stores the indexer cursor. */
+const SYNC_METADATA_ID = 'singleton';
 
 /** Contracts whose c_ledger events reconcile local state. */
 function contractFilterIds(): string[] {
@@ -76,7 +79,6 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(SOROBAN_RPC_CLIENT) private readonly rpc: SorobanEventClient,
     private readonly prisma: PrismaService,
-    private readonly redis: RedisService,
   ) {}
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -108,17 +110,25 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
 
   // ── Checkpoint ──────────────────────────────────────────────────────────────
 
-  /** Last fully-processed ledger sequence. Persists across restarts (#893). */
+  /**
+   * Last fully-processed ledger sequence. Persists in the database
+   * (`SyncMetadata` singleton, #893) so the cursor survives Redis flushes and
+   * is shared with any other process that reads the same store.
+   */
   async getCheckpoint(): Promise<number | null> {
-    const raw = await this.redis.get<number>(CHECKPOINT_KEY);
-    return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+    const meta = await this.prisma.syncMetadata.findUnique({
+      where: { id: SYNC_METADATA_ID },
+    });
+    if (!meta) return null;
+    return Number.isFinite(meta.lastIndexedLedger) ? meta.lastIndexedLedger : null;
   }
 
   async setCheckpoint(ledger: number): Promise<void> {
-    // TTL generous enough to outlive any downtime that still allows catch-up
-    // via RPC retention windows; expiry keeps stale checkpoints from pinning
-    // startLedger values the server can no longer serve.
-    await this.redis.set(CHECKPOINT_KEY, ledger, 30 * 24 * 60 * 60);
+    await this.prisma.syncMetadata.upsert({
+      where: { id: SYNC_METADATA_ID },
+      update: { lastIndexedLedger: ledger },
+      create: { id: SYNC_METADATA_ID, lastIndexedLedger: ledger },
+    });
   }
 
   // ── Polling ─────────────────────────────────────────────────────────────────
@@ -206,6 +216,7 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
    * converges to the same state.
    */
   async handleEvent(event: {
+    id?: string;
     topic: unknown[];
     data?: unknown;
     ledger?: number;
@@ -232,6 +243,9 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
       case 'retired':
         await this.applyRetired(data[0]);
         break;
+      case 'transfer':
+        await this.applyTransfer(data, event.id);
+        break;
       case 'reg_proj':
         await this.applyProjectStatus(this.firstString(data), 'Pending');
         break;
@@ -247,8 +261,8 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
         await this.applyProjectStatus(this.firstString(data), 'Suspended');
         break;
       default:
-        // transfer / listed / delisted / purchase / upgraded / … are handled
-        // by their own flows or carry no CreditBatch/Project status change.
+        // listed / delisted / purchase / upgraded / … are handled by their
+        // own flows or carry no CreditBatch/Project status change.
         break;
     }
   }
@@ -353,6 +367,71 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /**
+   * `(c_ledger, transfer)` → `(batch_id: String, from: Address, to: Address,
+   * amount: i128)`.
+   *
+   * Transfers move ownership between holders and never change batch/project
+   * totals, so the local update is an append-only `CreditEvent` provenance row
+   * (the same log the API flows write through EventSourcingService, using the
+   * identical HMAC scheme so `verifySignature`/`auditIntegrity` accept it).
+   * Replays are guarded by the event id (used as txHash), which is unique per
+   * on-chain event.
+   */
+  async applyTransfer(data: unknown[], eventId?: string): Promise<void> {
+    const batchId = typeof data[0] === 'string' ? data[0] : String(data[0] ?? '');
+    const from = typeof data[1] === 'string' ? data[1] : String(data[1] ?? '');
+    const to = typeof data[2] === 'string' ? data[2] : String(data[2] ?? '');
+    const amount = data[3]?.toString() ?? '';
+
+    if (!batchId || !from || !to) {
+      this.logger.warn('transfer event missing batch_id/from/to — skipping');
+      return;
+    }
+
+    // Soroban RPC event ids are unique per on-chain event; reusing one as the
+    // txHash makes replays idempotent (see the existence guard below).
+    const txHash = eventId || `transfer:${batchId}:${from}:${to}:${amount}`;
+    const existing = await this.prisma.creditEvent.findFirst({
+      where: { txHash, eventType: CreditEventType.TRANSFER },
+    });
+    if (existing) return;
+
+    await this.prisma.creditEvent.create({
+      data: {
+        creditBatchId: batchId,
+        eventType:     CreditEventType.TRANSFER,
+        actor:         from,
+        oldState:      null,
+        newState:      { from, to, amount },
+        txHash,
+        timestamp:     new Date(),
+        signature:     this.computeTransferSignature(batchId, from, txHash, new Date()),
+      },
+    });
+  }
+
+  /**
+   * Mirrors EventSourcingService.computeSignature so rows written here verify
+   * under `EventSourcingService.verifySignature` / `auditIntegrity`.
+   */
+  private computeTransferSignature(
+    creditBatchId: string,
+    actor: string,
+    txHash: string,
+    timestamp: Date,
+  ): string {
+    const secret = process.env.EVENT_HMAC_SECRET ?? 'carbonledger-dev-hmac-secret';
+    const payload = [
+      creditBatchId,
+      CreditEventType.TRANSFER,
+      actor,
+      txHash,
+      timestamp.toISOString(),
+    ].join('|');
+    return createHmac('sha256', secret).update(payload).digest('hex');
+  }
+
   private async applyProjectStatus(projectId: string | undefined, status: string): Promise<void> {
     if (!projectId) return;
     await this.prisma.carbonProject.updateMany({
@@ -361,3 +440,4 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
     });
   }
 }
+

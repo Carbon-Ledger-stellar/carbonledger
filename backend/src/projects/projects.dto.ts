@@ -227,6 +227,12 @@ export class SearchProjectsDto {
   @IsOptional()
   limit?: number = 20;
 
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  @IsOptional()
+  offset?: number = 0;
+
   @IsString()
   @IsOptional()
   @MaxLength(32)
@@ -238,8 +244,12 @@ export class SearchProjectsDto {
 }
 
 export class PaginatedProjectsResponse {
+  data: any[];
   projects: any[];
-  nextCursor?: string;
-  hasMore: boolean;
   total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  nextOffset?: number | null;
+  nextCursor?: string;
 }

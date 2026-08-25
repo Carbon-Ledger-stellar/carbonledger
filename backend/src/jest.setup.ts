@@ -2,7 +2,9 @@
 import 'reflect-metadata';
 
 // Set required environment variables before any module is loaded
-process.env.DATABASE_URL = "postgresql://carbonledger:testpass@localhost:5433/carbonledger_test";
+// Matches docker-compose.test.yml / .env.test — do not override an already-set
+// DATABASE_URL (e.g. from .env.test) so `npm run test:e2e` and friends keep working.
+process.env.DATABASE_URL ??= "postgresql://testuser:testpass@localhost:5433/carbonledger_test";
 process.env.JWT_SECRET = "dev-secret-change-in-production";
 process.env.REDIS_HOST = "localhost";
 process.env.REDIS_PORT = "6379";
@@ -87,18 +89,6 @@ jest.mock("@nestjs/schedule", () => {
   };
 });
 
-jest.mock("@stellar/stellar-sdk", () => {
-  const actual = jest.requireActual("@stellar/stellar-sdk");
-  return {
-    ...actual,
-    Server: jest.fn().mockImplementation(() => ({
-      root: jest.fn().mockResolvedValue({}),
-    })),
-    SorobanRpc: {
-      ...actual.SorobanRpc,
-      Server: jest.fn().mockImplementation(() => ({
-        getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1 }),
-      })),
-    },
-  };
-});
+// In-memory Soroban/Horizon mock — see src/__mocks__/stellar.provider.ts.
+// Ensures no backend test ever depends on a live Stellar network connection.
+jest.mock("@stellar/stellar-sdk", () => require("./__mocks__/stellar.provider").stellarSdkMock);

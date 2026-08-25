@@ -59,10 +59,11 @@ export class ProjectsService {
   // ── Authenticated, role-scoped reads ─────────────────────────────────────
 
   async findAll(
-    filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number },
+    filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number; offset?: number },
     caller: CallerContext,
   ) {
     const take = Math.min(Math.max(filters.limit ?? 20, 1), 100);
+    const offset = typeof filters.offset === 'number' && filters.offset >= 0 ? filters.offset : 0;
     const where: any = scopeWhereForCaller(
       {
         deletedAt: null,
@@ -73,33 +74,49 @@ export class ProjectsService {
       caller,
     );
 
-    const [projects, total_count] = await Promise.all([
+    const [projects, total] = await Promise.all([
       this.prisma.carbonProject.findMany({
         where,
         orderBy: { createdAt: "desc" },
         take: take + 1,
         cursor: filters.cursor ? { id: filters.cursor } : undefined,
-        skip: filters.cursor ? 1 : 0,
+        skip: filters.cursor ? 1 : offset,
       }),
       this.prisma.carbonProject.count({ where }),
     ]);
 
     const hasMore = projects.length > take;
-    const next_cursor = hasMore ? projects[projects.length - 2].id : undefined;
+    const nextCursor = hasMore ? projects[take - 1].id : undefined;
     if (hasMore) projects.pop();
 
-    return { projects: projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>)), next_cursor, total_count };
+    const sanitized = projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      projects: sanitized,
+      total,
+      limit: take,
+      offset,
+      hasMore,
+      nextOffset: hasMore ? offset + take : null,
+      nextCursor,
+      next_cursor: nextCursor,
+      total_count: total,
+    };
   }
 
   async searchProjects(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
     const {
       search, methodology, country, status, vintageYear,
-      oracleFreshness, cursor, limit = 20, sortBy = 'createdAt', sortOrder = 'desc',
+      oracleFreshness, cursor, limit = 20, offset = 0, sortBy = 'createdAt', sortOrder = 'desc',
     } = searchDto;
 
     if (search) {
       return this.searchProjectsFullText(searchDto, caller);
     }
+
+    const take = Math.min(Math.max(limit, 1), 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
 
     const where: any = { deletedAt: null };
 
@@ -142,9 +159,9 @@ export class ProjectsService {
       this.prisma.carbonProject.findMany({
         where,
         orderBy,
-        take: limit + 1,
+        take: take + 1,
         cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
+        skip: cursor ? 1 : safeOffset,
         select: {
           id: true, projectId: true, name: true, description: true,
           methodology: true, country: true, projectType: true, status: true,
@@ -157,13 +174,24 @@ export class ProjectsService {
       this.prisma.carbonProject.count({ where }),
     ]);
 
-    const hasMore = projects.length > limit;
-    const nextCursor = hasMore ? projects[projects.length - 2].id : undefined;
+    const hasMore = projects.length > take;
+    const nextCursor = hasMore ? projects[take - 1].id : undefined;
     if (hasMore) {
       projects.pop();
     }
 
-    return { projects: projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>)), nextCursor, hasMore, total };
+    const sanitized = projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      projects: sanitized,
+      total,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      nextCursor,
+    };
   }
 
   /**
@@ -178,8 +206,9 @@ export class ProjectsService {
    * role so the scoping applied by the ORM path is consistent here.
    */
   private async searchProjectsFullText(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
-    const { search, methodology, country, status, vintageYear, limit = 20, cursor } = searchDto;
-    const take = limit + 1;
+    const { search, methodology, country, status, vintageYear, limit = 20, offset = 0, cursor } = searchDto;
+    const take = Math.min(Math.max(limit, 1), 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
 
     const where: any = {
       deletedAt: null,
@@ -201,10 +230,9 @@ export class ProjectsService {
     if (vintageYear && vintageYear.length > 0) {
       where.vintageYear = { in: vintageYear };
     }
-    // Ownership scoping: project_developer sees only their own projects
-    if (caller.role === 'project_developer') {
-      where.ownerAddress = caller.publicKey;
-    }
+
+    scopeWhereForCaller(where, caller);
+
     if (cursor) {
       where.id = { lt: cursor };
     }
@@ -212,7 +240,8 @@ export class ProjectsService {
     const [rows, total] = await Promise.all([
       this.prisma.carbonProject.findMany({
         where,
-        take,
+        take: take + 1,
+        skip: cursor ? 0 : safeOffset,
         orderBy: { createdAt: 'desc' },
         select: {
           id: true, projectId: true, name: true, description: true,
@@ -226,15 +255,21 @@ export class ProjectsService {
       this.prisma.carbonProject.count({ where }),
     ]);
 
-    const hasMore = rows.length > limit;
-    const nextCursor = hasMore ? rows[rows.length - 2].id : undefined;
+    const hasMore = rows.length > take;
+    const nextCursor = hasMore ? rows[take - 1].id : undefined;
     if (hasMore) rows.pop();
 
+    const sanitized = rows.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
     return {
-      projects: rows.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>)),
-      nextCursor,
-      hasMore,
+      data: sanitized,
+      projects: sanitized,
       total,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      nextCursor,
     };
   }
 

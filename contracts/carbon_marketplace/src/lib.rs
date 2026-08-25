@@ -80,6 +80,7 @@ pub enum DataKey {
     SweepThreshold,
     TotalFeesSwept,
     OracleContract,
+    PriceFreshnessWindow,
 }
 
 /// Governance-controlled fee configuration.
@@ -125,18 +126,6 @@ pub struct CircuitBreakerEvent {
     pub price_age_secs: u64,
     pub threshold_secs: u64,
     pub tripped_at: u64,
-}
-
-/// Governance-controlled fee configuration stored on-chain.
-/// `numerator / denom` = fee rate. e.g. 1/100 = 1%.
-/// Invariant enforced by `set_fee_rate`: numerator <= denom / 10 (max 10%).
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct FeeConfig {
-    pub numerator:  i128,
-    pub denom:      i128,
-    pub updated_at: u64,
-    pub updated_by: Address,
 }
 
 /// Compile-time default fee constants (1%).
@@ -892,19 +881,13 @@ impl CarbonMarketplaceContract {
             let amount = amounts.get(i).unwrap();
             let mut listing = validated_listings.get(i).unwrap();
 
-            let total_cost = listing.price_per_credit.checked_mul(amount)
-                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-            let protocol_fee = total_cost.checked_div(FEE_RATE_DENOM)
-                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-            let seller_proceeds = total_cost.checked_sub(protocol_fee)
-                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-
-        listing.amount_available = listing.amount_available.checked_sub(amount)
-            .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+            // Deduct the purchased amount from the listing's available supply.
+            // total_cost / fee calculations are intentionally deferred to Phase 3
+            // where load_fee_config() is used for consistency with governance-set rates.
             listing.amount_available = listing
                 .amount_available
                 .checked_sub(amount)
-                .ok_or(CarbonError::Arithmetic)?;
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
             listing.status = if listing.amount_available == 0 {
                 ListingStatus::Sold
             } else {
