@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
@@ -143,8 +143,139 @@ export class AdminService {
   async getAbuseLog() {
     const client = this.redis.getClient();
     if (!client) return [];
-    
+
     const logs = await client.lrange('abuse:log', 0, -1);
     return logs.map(log => JSON.parse(log));
+  }
+
+  // ── Satellite quarantine queue (#579) ───────────────────────────────────────
+
+  /**
+   * The `id` column is a BigInt, which `JSON.stringify` refuses to serialise.
+   * Every response path that touches a quarantine row goes through here.
+   */
+  private serializeQuarantine(entry: any) {
+    return { ...entry, id: entry.id.toString() };
+  }
+
+  /**
+   * Submissions held by the oracle's anomaly detection for manual review.
+   *
+   * Defaults to `pending` — the queue an operator actually works through.
+   * Pass `status=approved|rejected` to audit past decisions.
+   */
+  async listQuarantine(query: { status?: string; limit?: number; offset?: number }) {
+    const status = query.status ?? 'pending';
+    const [entries, total] = await Promise.all([
+      this.prisma.satelliteQuarantine.findMany({
+        where:   status === 'all' ? undefined : { status },
+        take:    Math.min(Number(query.limit) || 50, 200),
+        skip:    Number(query.offset) || 0,
+        orderBy: { quarantinedAt: 'desc' },
+      }),
+      this.prisma.satelliteQuarantine.count({
+        where: status === 'all' ? undefined : { status },
+      }),
+    ]);
+
+    return { entries: entries.map((e) => this.serializeQuarantine(e)), total, status };
+  }
+
+  /** Count of entries awaiting review — for dashboards and alert thresholds. */
+  async getQuarantineDepth() {
+    const pending = await this.prisma.satelliteQuarantine.count({
+      where: { status: 'pending' },
+    });
+    return { pending };
+  }
+
+  async getQuarantineEntry(id: string) {
+    const entry = await this.prisma.satelliteQuarantine.findUnique({
+      where: { id: BigInt(id) },
+    });
+    if (!entry) {
+      throw new NotFoundException(`Quarantine entry ${id} not found`);
+    }
+    return this.serializeQuarantine(entry);
+  }
+
+  /**
+   * Record a reviewer's decision on a quarantined submission.
+   *
+   * Approving does **not** resubmit the data on chain — it clears the hold so
+   * the provider's next submission for that period is accepted normally. Auto-
+   * submitting from here would bypass the IPFS integrity and consensus checks
+   * the payload never reached.
+   *
+   * Only pending entries can be reviewed, so two admins cannot silently
+   * overwrite each other's decision.
+   */
+  async reviewQuarantineEntry(
+    id: string,
+    decision: string,
+    reviewedBy: string,
+    note?: string,
+  ) {
+    const entry = await this.prisma.satelliteQuarantine.findUnique({
+      where: { id: BigInt(id) },
+    });
+    if (!entry) {
+      throw new NotFoundException(`Quarantine entry ${id} not found`);
+    }
+    if (entry.status !== 'pending') {
+      throw new ConflictException(
+        `Quarantine entry ${id} was already ${entry.status}`,
+      );
+    }
+
+    const updated = await this.prisma.satelliteQuarantine.update({
+      where: { id: BigInt(id) },
+      data:  {
+        status:     decision,
+        reviewedBy,
+        reviewNote: note ?? null,
+        reviewedAt: new Date(),
+      },
+    });
+
+    return this.serializeQuarantine(updated);
+  }
+
+  async purgeDeletedRecords() {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const [projects, batches, listings, retirements] = await this.prisma.$transaction([
+      this.prisma.carbonProject.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+      this.prisma.creditBatch.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+      this.prisma.marketListing.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+      this.prisma.retirementRecord.deleteMany({
+        where: {
+          deletedAt: { not: null, lt: thirtyDaysAgo },
+        },
+      }),
+    ]);
+
+    return {
+      success: true,
+      purged: {
+        projects: projects.count,
+        batches: batches.count,
+        listings: listings.count,
+        retirements: retirements.count,
+      },
+    };
   }
 }

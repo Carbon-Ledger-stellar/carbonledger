@@ -1,14 +1,19 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, forwardRef, OnModuleInit } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from './queue.service';
 import { QueueController } from './queue.controller';
 import { QueueProcessor } from './queue.processor';
+import {
+  EventIndexerService,
+  SOROBAN_RPC_CLIENT,
+  SorobanEventClient,
+} from './event-indexer.service';
 import { AuthModule } from '../auth/auth.module';
 import { QUEUE_NAME } from './queue.constants';
 import { PrismaService } from '../prisma.service';
 import { RetirementsModule } from '../retirements/retirements.module';
 import { CertificateProcessor } from '../certificates/certificate.processor';
-import { CertificatesModule as RetirementsCertificatesModule } from '../retirements/certificates.module';
+import { CertificatesModule } from '../certificates/certificates.module';
 
 @Module({
   imports: [
@@ -16,11 +21,26 @@ import { CertificatesModule as RetirementsCertificatesModule } from '../retireme
     AuthModule,
     forwardRef(() => RetirementsModule),
     CertificatesModule,
-    RetirementsCertificatesModule,
   ],
-  providers: [QueueService, QueueProcessor, PrismaService],
+  providers: [
+    QueueService,
+    QueueProcessor,
+    PrismaService,
+    {
+      provide: SOROBAN_RPC_CLIENT,
+      useFactory: (): SorobanEventClient => {
+        // stellar-sdk >= 12 exposes the RPC client via the ./rpc exports
+        // subpath, which TS "node" moduleResolution cannot resolve statically.
+        const { Server } = require('@stellar/stellar-sdk/rpc');
+        return new Server(
+          process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org',
+        ) as unknown as SorobanEventClient;
+      },
+    },
+    EventIndexerService,
+  ],
   controllers: [QueueController],
-  exports: [QueueService],
+  exports: [QueueService, EventIndexerService],
 })
 export class QueueModule implements OnModuleInit {
   constructor(private readonly certificateProcessor: CertificateProcessor) {}

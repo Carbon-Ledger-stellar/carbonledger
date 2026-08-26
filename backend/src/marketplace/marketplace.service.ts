@@ -1,16 +1,25 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { CreateListingDto, PurchaseDto, BulkPurchaseDto, ListingsQueryDto, PaginatedListingsResponse } from "./marketplace.dto";
 import { randomBytes } from "crypto";
 import { ListingsCacheService } from "./listings-cache.service";
 import { MarketplaceContractService } from "./marketplace-contract.service";
+import { WebhookService } from "../webhook/webhook.service";
+
+import { EventSourcingService } from "../events/event-sourcing.service";
+import { CreditEventType } from "../events/credit-event.types";
+import { buildCursorWhere, createOpaqueCursor, decodeCursor, normalizePaginationLimit } from "../common/cursor-pagination";
 
 @Injectable()
 export class MarketplaceService {
+  private readonly logger = new Logger(MarketplaceService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: ListingsCacheService,
     private readonly contractService: MarketplaceContractService,
+    @Optional() private readonly webhookService?: WebhookService,
+    @Optional() private readonly eventSourcing?: EventSourcingService,
   ) {}
 
   /** projectName isn't a MarketListing column — it's joined in from the related project for display. */
@@ -48,7 +57,10 @@ export class MarketplaceService {
     const cached = await this.cache.get<PaginatedListingsResponse>(cacheKey);
     if (cached) return cached;
 
-    const { methodology, vintage, country, minPrice, maxPrice, search, cursor, page, limit = 20, sortBy, sortOrder = "asc" } = query;
+    const { methodology, vintage, country, minPrice, maxPrice, search, cursor, page, limit = 20, offset = 0, sortBy, sortOrder = "asc" } = query;
+    const normalizedLimit = normalizePaginationLimit(limit, 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
+    const decodedCursor = decodeCursor(cursor);
 
     // Validate price range values
     if (minPrice !== undefined && isNaN(parseFloat(minPrice))) {
@@ -59,6 +71,19 @@ export class MarketplaceService {
     }
     if (minPrice !== undefined && maxPrice !== undefined && parseFloat(minPrice) > parseFloat(maxPrice)) {
       throw new BadRequestException("minPrice must be less than or equal to maxPrice");
+    }
+
+    // Decode opaque cursor — base64-encoded JSON { id: string }
+    let decodedCursorId: string | undefined;
+    if (cursor) {
+      try {
+        const raw = Buffer.from(cursor, 'base64').toString('utf8');
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.id !== 'string') throw new Error('missing id');
+        decodedCursorId = parsed.id;
+      } catch {
+        throw new BadRequestException('Invalid cursor');
+      }
     }
 
     const where: any = {
@@ -94,14 +119,22 @@ export class MarketplaceService {
         });
 
       const effectivePage = page ?? 1;
-      const start = (effectivePage - 1) * limit;
-      const listings = sorted.slice(start, start + limit);
+      const start = page !== undefined ? (effectivePage - 1) * normalizedLimit : safeOffset;
+      const listings = sorted.slice(start, start + normalizedLimit);
+      const hasMore = start + listings.length < total_count;
 
       const result: PaginatedListingsResponse = {
+        data: listings,
         listings,
+        total: total_count,
         total_count,
+        limit: normalizedLimit,
+        offset: start,
+        hasMore,
+        has_more: hasMore,
+        nextOffset: hasMore ? start + normalizedLimit : null,
         page: effectivePage,
-        total_pages: Math.ceil(total_count / limit),
+        total_pages: Math.ceil(total_count / normalizedLimit),
       };
       await this.cache.set(cacheKey, result);
       return result;
@@ -109,43 +142,76 @@ export class MarketplaceService {
 
     const orderBy = this.buildOrderBy(sortBy, sortOrder);
 
-    // Support both page-based and cursor-based pagination
+    // Page-based pagination (legacy)
     if (page !== undefined) {
-      const skip = (page - 1) * limit;
+      const skip = (page - 1) * normalizedLimit;
       const [listings, total_count] = await Promise.all([
-        this.prisma.marketListing.findMany({ where, include, orderBy, take: limit, skip }),
+        this.prisma.marketListing.findMany({ where, include, orderBy, take: normalizedLimit + 1, skip }),
         this.prisma.marketListing.count({ where }),
       ]);
+      const hasMore = listings.length > normalizedLimit;
+      if (hasMore) listings.pop();
+      const mapped = listings.map(MarketplaceService.withProjectName);
+
       const result: PaginatedListingsResponse = {
-        listings: listings.map(MarketplaceService.withProjectName),
+        data: mapped,
+        listings: mapped,
+        total: total_count,
         total_count,
+        limit: normalizedLimit,
+        offset: skip,
+        hasMore,
+        has_more: hasMore,
+        nextOffset: hasMore ? skip + normalizedLimit : null,
         page,
-        total_pages: Math.ceil(total_count / limit),
+        total_pages: Math.ceil(total_count / normalizedLimit),
       };
       await this.cache.set(cacheKey, result);
       return result;
     }
 
+    // Offset / Cursor-based pagination
     const [listings, total_count] = await Promise.all([
       this.prisma.marketListing.findMany({
         where,
         include,
         orderBy,
-        take: limit + 1,
-        cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
+        take: normalizedLimit + 1,
+        cursor: decodedCursorId ? { id: decodedCursorId } : undefined,
+        skip: decodedCursorId ? 1 : safeOffset,
       }),
       this.prisma.marketListing.count({ where }),
     ]);
 
-    const hasMore = listings.length > limit;
-    const next_cursor = hasMore ? listings[listings.length - 2].id : undefined;
+    const hasMore = listings.length > normalizedLimit;
+    const next_cursor = hasMore && listings[normalizedLimit - 1] ? createOpaqueCursor(listings[normalizedLimit - 1].id, (listings[normalizedLimit - 1] as any).createdAt) : undefined;
+    const prev_cursor = decodedCursor && listings.length > 0 ? createOpaqueCursor(listings[0].id, (listings[0] as any).createdAt) : undefined;
     if (hasMore) listings.pop();
+    const mapped = listings.map(MarketplaceService.withProjectName);
+
+    // Encode next_cursor as opaque base64 JSON — matches the { id } shape
+    // this method already decodes above.
+    const next_cursor = hasMore
+      ? Buffer.from(JSON.stringify({ id: listings[listings.length - 1].id })).toString('base64')
+      : undefined;
+
+    // Encode prev_cursor pointing back to the first item of this page.
+    const prev_cursor = decodedCursorId && listings.length > 0
+      ? Buffer.from(JSON.stringify({ id: listings[0].id })).toString('base64')
+      : undefined;
 
     const result: PaginatedListingsResponse = {
-      listings: listings.map(MarketplaceService.withProjectName),
-      next_cursor,
+      data: mapped,
+      listings: mapped,
+      total: total_count,
       total_count,
+      limit: normalizedLimit,
+      offset: safeOffset,
+      hasMore,
+      has_more: hasMore,
+      nextOffset: hasMore ? safeOffset + normalizedLimit : null,
+      next_cursor,
+      prev_cursor,
     };
     await this.cache.set(cacheKey, result);
     return result;
@@ -191,11 +257,30 @@ export class MarketplaceService {
       },
     });
     await this.cache.invalidateAll();
+
+    if (this.eventSourcing) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: dto.credit_batch_id,
+        eventType: CreditEventType.LIST,
+        actor: dto.seller,
+        newState: {
+          listingId: dto.listingId,
+          batchId: dto.credit_batch_id,
+          projectId: dto.projectId,
+          seller: dto.seller,
+          pricePerCredit: dto.price_per_tonne,
+          amountAvailable: dto.amount,
+          status: 'Listed',
+        },
+        txHash,
+      }).catch(() => undefined);
+    }
+
     return { ...result, txHash };
   }
 
   async delistListing(listingId: string) {
-    await this.findOne(listingId);
+    const listing = await this.findOne(listingId);
     
     // Call delist_credits on the carbon_marketplace contract
     const txHash = await this.contractService.delistCredits(listingId);
@@ -207,6 +292,17 @@ export class MarketplaceService {
     });
     await this.cache.invalidateAll();
     
+    if (this.eventSourcing && listing.batchId) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: listing.batchId,
+        eventType: CreditEventType.DELIST,
+        actor: listing.seller,
+        oldState: { status: 'Listed' },
+        newState: { listingId, status: 'Delisted' },
+        txHash,
+      }).catch(() => undefined);
+    }
+
     return { ...result, txHash };
   }
 
@@ -227,11 +323,51 @@ export class MarketplaceService {
       data:  { amountAvailable: newAmount, status: newStatus },
     });
 
-    return {
-      txHash:  randomBytes(32).toString("hex"),
+    const txHash = randomBytes(32).toString("hex");
+    const result = {
+      txHash,
       batchId: listing.batchId,
-      amount:  dto.amount,
+      amount: dto.amount,
     };
+
+    if (this.eventSourcing && listing.batchId) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: listing.batchId,
+        eventType: CreditEventType.PURCHASE,
+        actor: dto.buyerPublicKey,
+        oldState: { amountAvailable: listing.amountAvailable, ownerPublicKey: listing.seller },
+        newState: {
+          batchId: listing.batchId,
+          amountAvailable: newAmount,
+          ownerPublicKey: dto.buyerPublicKey,
+          status: newStatus === 'Sold' ? 'Sold' : 'Listed',
+        },
+        txHash,
+      }).catch(() => undefined);
+    }
+
+    // Dispatch webhook: credit.purchased
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('credit.purchased', {
+          listingId: dto.listingId,
+          batchId: listing.batchId,
+          projectId: listing.projectId,
+          buyer: dto.buyerPublicKey,
+          seller: listing.seller,
+          amount: dto.amount,
+          pricePerCredit: listing.pricePerCredit,
+          txHash,
+          vintageYear: listing.vintageYear,
+          methodology: listing.methodology,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
+    }
+
+    return result;
   }
 
   async bulkPurchase(dto: BulkPurchaseDto) {

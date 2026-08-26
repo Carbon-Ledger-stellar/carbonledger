@@ -32,11 +32,13 @@ pub enum CarbonError {
     AlreadyInitialized = 19,
     MethodologyScoreLow = 20,
     UnauthorizedUpgrade = 21,
-    Arithmetic = 22,
-    ProposalNotFound = 23,
-    ProposalExpired = 24,
-    DuplicateApproval = 25,
-    ThresholdNotMet = 26,
+    PageSizeTooLarge = 22,
+    Arithmetic = 23,
+    ProposalNotFound = 24,
+    ProposalExpired = 25,
+    DuplicateApproval = 26,
+    ThresholdNotMet = 27,
+    StorageLimitExceeded = 28,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -45,6 +47,7 @@ pub enum CarbonError {
 #[derive(Clone)]
 pub enum DataKey {
     Project(String),
+    ProjectCount(Address),
     Verifiers,
     OracleAddress,
     RegistryAdmin,
@@ -119,6 +122,14 @@ pub struct UpgradeProposal {
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 const CURRENT_VERSION: u32 = 1;
+/// Default maximum number of upgrade history entries retained.
+pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
+/// Minimum allowed value for max_history_entries.
+pub const MIN_HISTORY_ENTRIES: u32 = 10;
+/// Maximum allowed value for max_history_entries.
+pub const MAX_HISTORY_ENTRIES_LIMIT: u32 = 200;
+/// Maximum number of projects a single admin can register before storage caps kick in.
+pub const MAX_PROJECTS_PER_ADMIN: u32 = 1_000;
 
 #[contract]
 pub struct CarbonRegistryContract;
@@ -150,7 +161,16 @@ impl CarbonRegistryContract {
         Ok(())
     }
 
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
+    /// Replaces this contract's WASM executable after authenticating the stored admin.
+    ///
+    /// Persistent contract storage is retained by Soroban during the executable
+    /// replacement. Schema changes must therefore follow the migration rules in
+    /// `docs/UPGRADE_GUIDE.md`.
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
@@ -175,6 +195,35 @@ impl CarbonRegistryContract {
             upgraded_by: admin.clone(),
             wasm_hash: new_wasm_hash,
         };
+
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        history.push_back(record);
+
+        let max_entries: u32 = env.storage()
+            .persistent()
+            .get(&DataKey::MaxHistoryEntries)
+            .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
+        let max = max_entries as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
         env.storage()
             .persistent()
             .set(&DataKey::UpgradeHistory, &record);
@@ -193,8 +242,89 @@ impl CarbonRegistryContract {
             .unwrap_or(1)
     }
 
+    /// Returns the most recent upgrade record, or None if no upgrades have occurred.
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
-        env.storage().persistent().get(&DataKey::UpgradeHistory)
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history.get(history.len() - 1).unwrap())
+        }
+    }
+
+    /// Returns a paginated slice of the upgrade history.
+    /// `offset` is zero-based (0 = oldest record). `limit` caps at 50.
+    pub fn get_upgrade_history_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<UpgradeRecord>, CarbonError> {
+        let effective_limit = if limit > 50 { 50 } else { limit };
+        if effective_limit == 0 {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let len = history.len();
+
+        if offset >= len {
+            return Ok(vec![&env]);
+        }
+
+        let mut result: Vec<UpgradeRecord> = vec![&env];
+        let end = core::cmp::min(offset + effective_limit, len);
+        for i in offset..end {
+            result.push_back(history.get(i).unwrap());
+        }
+        Ok(result)
+    }
+
+    /// Admin: set the maximum number of upgrade history entries to retain.
+    /// Values are clamped to [MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES_LIMIT].
+    pub fn set_max_history_entries(
+        env: Env,
+        admin: Address,
+        n: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        let clamped = core::cmp::max(
+            MIN_HISTORY_ENTRIES,
+            core::cmp::min(n, MAX_HISTORY_ENTRIES_LIMIT),
+        );
+        env.storage().persistent().set(&DataKey::MaxHistoryEntries, &clamped);
+
+        // If current history exceeds the new cap, prune immediately
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let max = clamped as usize;
+
+        if history.len() > max {
+            let excess = (history.len() - max) as u32;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
+            env.events().publish(
+                (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len() as u32,
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        Ok(())
     }
 
     // ── MultiSig Upgrade Functions (#648) ────────────────────────────────────
@@ -417,6 +547,8 @@ impl CarbonRegistryContract {
         project_type: String,
         methodology_score: u32,
         vintage_year: u32,
+        methodology_score: u32,
+        metadata_hash: BytesN<32>,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
@@ -457,6 +589,16 @@ impl CarbonRegistryContract {
             return Err(CarbonError::ProjectAlreadyExists);
         }
 
+        let project_count_key = DataKey::ProjectCount(admin.clone());
+        let project_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&project_count_key)
+            .unwrap_or(0u32);
+        if project_count >= MAX_PROJECTS_PER_ADMIN {
+            return Err(CarbonError::StorageLimitExceeded);
+        }
+
         let project = CarbonProject {
             project_id: project_id.clone(),
             name: name.clone(),
@@ -475,6 +617,9 @@ impl CarbonRegistryContract {
         env.storage()
             .persistent()
             .set(&DataKey::Project(project_id.clone()), &project);
+        env.storage()
+            .persistent()
+            .set(&project_count_key, &(project_count + 1));
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("reg_proj")),
@@ -604,6 +749,21 @@ impl CarbonRegistryContract {
 
     pub fn get_project(env: Env, project_id: String) -> Result<CarbonProject, CarbonError> {
         Self::load_project(&env, &project_id)
+    }
+
+    /// View function: returns true if the provided SHA-256 hash matches the
+    /// `metadata_hash` stored when the project was registered. Returns false
+    /// for unknown projects (avoids leaking existence information via errors).
+    ///
+    /// Callers (backend, oracle, frontend) should:
+    ///   1. Fetch the raw IPFS content via the gateway.
+    ///   2. Compute SHA-256 locally.
+    ///   3. Call this function with the result.
+    pub fn verify_metadata_integrity(env: Env, project_id: String, hash: BytesN<32>) -> bool {
+        match Self::load_project(&env, &project_id) {
+            Ok(project) => project.metadata_hash == hash,
+            Err(_) => false,
+        }
     }
 
     pub fn increment_issued(
@@ -798,7 +958,6 @@ mod tests {
             &make_str(env, "VCS"),
             &make_str(env, "Brazil"),
             &make_str(env, "forestry"),
-            &75_u32,
             &2023_u32,
         );
     }
@@ -833,8 +992,9 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &75_u32,
             &2023_u32,
+            &75_u32,
+            &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert!(result.is_err());
     }
@@ -946,8 +1106,9 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &69_u32,
             &2023_u32,
+            &69_u32,
+            &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result, Err(Ok(CarbonError::MethodologyScoreLow)));
     }
@@ -968,12 +1129,49 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &70_u32,
             &2023_u32,
         );
 
         let p = client.get_project(&make_str(&env, "proj-min"));
         assert_eq!(p.methodology_score, 70);
+    }
+
+    #[test]
+    fn test_registering_past_project_cap_fails() {
+        let (env, admin, oracle, verifier) = setup();
+        let contract_id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(&env, &contract_id);
+        client.initialize(&admin, &oracle, &vec![&env, verifier.clone()]);
+
+        for index in 0..MAX_PROJECTS_PER_ADMIN {
+            let project_id = format!("proj-{index}");
+            client.register_project(
+                &admin,
+                &String::from_str(&env, &project_id),
+                &make_str(&env, "Project"),
+                &make_str(&env, "cid"),
+                &Address::generate(&env),
+                &make_str(&env, "VCS"),
+                &make_str(&env, "Brazil"),
+                &make_str(&env, "forestry"),
+                &75_u32,
+                &2023_u32,
+            );
+        }
+
+        let result = client.try_register_project(
+            &admin,
+            &make_str(&env, "proj-cap-exceeded"),
+            &make_str(&env, "Overflow"),
+            &make_str(&env, "cid"),
+            &Address::generate(&env),
+            &make_str(&env, "VCS"),
+            &make_str(&env, "Brazil"),
+            &make_str(&env, "forestry"),
+            &75_u32,
+            &2023_u32,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::StorageLimitExceeded);
     }
 
     #[test]
@@ -1073,7 +1271,7 @@ mod tests {
 
         let attacker = Address::generate(&env);
         let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-        let result = client.try_upgrade(&attacker, &fake_hash);
+        let result = client.try_upgrade_contract(&attacker, &fake_hash);
         assert!(result.is_err());
     }
 
@@ -1605,5 +1803,98 @@ mod multisig_tests {
         // Proposal should be gone
         let pending = client.get_pending_upgrade();
         assert!(pending.is_none());
+    }
+}
+
+// ── Metadata integrity tests (Issue #2) ──────────────────────────────────────
+
+#[cfg(test)]
+mod metadata_integrity_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, BytesN, Env, String};
+
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
+
+    fn setup_with_project(env: &Env, hash: BytesN<32>) -> CarbonRegistryContractClient {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1735689600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        let admin    = Address::generate(env);
+        let oracle   = Address::generate(env);
+        let verifier = Address::generate(env);
+        let id = env.register_contract(None, CarbonRegistryContract);
+        let client = CarbonRegistryContractClient::new(env, &id);
+        client.initialize(&admin, &oracle, &vec![env, verifier.clone()]).unwrap();
+
+        client.register_project(
+            &admin,
+            &s(env, "proj-hash-test"),
+            &s(env, "Hash Test Project"),
+            &s(env, "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"),
+            &Address::generate(env),
+            &s(env, "VCS"),
+            &s(env, "Brazil"),
+            &s(env, "forestry"),
+            &2024_u32,
+            &85_u32,
+            &hash,
+        ).unwrap();
+
+        client
+    }
+
+    /// verify_metadata_integrity returns true when the correct hash is supplied.
+    #[test]
+    fn test_verify_metadata_integrity_match() {
+        let env = Env::default();
+        let correct_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+        let client = setup_with_project(&env, correct_hash.clone());
+
+        let result = client.verify_metadata_integrity(
+            &s(&env, "proj-hash-test"),
+            &correct_hash,
+        );
+        assert!(result, "Expected integrity check to return true for matching hash");
+    }
+
+    /// verify_metadata_integrity returns false when the wrong hash is supplied.
+    #[test]
+    fn test_verify_metadata_integrity_mismatch() {
+        let env = Env::default();
+        let correct_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+        let wrong_hash   = BytesN::from_array(&env, &[0xcdu8; 32]);
+        let client = setup_with_project(&env, correct_hash);
+
+        let result = client.verify_metadata_integrity(
+            &s(&env, "proj-hash-test"),
+            &wrong_hash,
+        );
+        assert!(!result, "Expected integrity check to return false for mismatched hash");
+    }
+
+    /// verify_metadata_integrity returns false (not an error) for unknown projects.
+    /// This prevents leaking project existence information via error variants.
+    #[test]
+    fn test_verify_metadata_integrity_missing_project() {
+        let env = Env::default();
+        let any_hash = BytesN::from_array(&env, &[0x00u8; 32]);
+        let correct_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+        let client = setup_with_project(&env, correct_hash);
+
+        let result = client.verify_metadata_integrity(
+            &s(&env, "project-does-not-exist"),
+            &any_hash,
+        );
+        assert!(!result, "Expected integrity check to return false for non-existent project");
     }
 }

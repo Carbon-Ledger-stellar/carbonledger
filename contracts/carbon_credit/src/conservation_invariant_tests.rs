@@ -23,6 +23,7 @@ mod conservation_invariant_tests {
         testutils::{Address as _, Ledger as _},
         Address, Env, String,
     };
+    extern crate std;
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -104,15 +105,8 @@ mod conservation_invariant_tests {
         to: &Address,
         batch_id: &str,
         amount: i128,
-        new_batch_id: &str,
     ) {
-        client.transfer_credits(
-            from,
-            &s(env, batch_id),
-            &amount,
-            to,
-            &s(env, new_batch_id),
-        );
+        client.transfer_credits(from, to, &s(env, batch_id), &amount);
     }
 
     // ── Conservation assertion helpers ────────────────────────────────────────
@@ -411,20 +405,19 @@ mod conservation_invariant_tests {
         do_mint(&env, &client, &admin, &owner, "b1", 1_000, 1, 1_000);
         assert_conservation_law(&env, &client, &["b1"], &[]);
 
-        // Transfer half to buyer (creates a new batch for buyer)
-        do_transfer(&env, &client, &owner, &buyer, "b1", 500, "b1-buyer");
+        // transfer_credits reassigns ownership of the whole batch — it does
+        // not split off a new batch; `amount` is only an eligibility check.
+        do_transfer(&env, &client, &owner, &buyer, "b1", 500);
 
-        // Both batches together must still equal original minted amount
         let b1 = client.get_credit_batch(&s(&env, "b1"));
-        let b1_buyer = client.get_credit_batch(&s(&env, "b1-buyer"));
-        let total_after = b1.amount + b1_buyer.amount;
-
+        assert_eq!(b1.owner, buyer, "ownership must move to buyer");
         assert_eq!(
-            total_after, 1_000,
+            b1.amount, 1_000,
             "CONSERVATION VIOLATED after transfer_credits: \
-             total credits changed from 1000 to {total_after}"
+             total credits changed from 1000 to {}",
+            b1.amount
         );
-        assert_conservation_law(&env, &client, &["b1", "b1-buyer"], &[]);
+        assert_conservation_law(&env, &client, &["b1"], &[]);
     }
 
     #[test]
@@ -435,13 +428,13 @@ mod conservation_invariant_tests {
         let buyer = Address::generate(&env);
 
         do_mint(&env, &client, &admin, &owner, "b1", 1_000, 1, 1_000);
-        do_transfer(&env, &client, &owner, &buyer, "b1", 400, "b1-buyer");
+        do_transfer(&env, &client, &owner, &buyer, "b1", 400);
 
-        // buyer retires their credits
-        do_retire(&env, &client, &buyer, "b1-buyer", 200, "ret-001");
+        // buyer now owns "b1" and retires part of it
+        do_retire(&env, &client, &buyer, "b1", 200, "ret-001");
 
-        assert_conservation_law(&env, &client, &["b1", "b1-buyer"], &["ret-001"]);
-        assert_no_phantom_credits(&env, &client, &["b1", "b1-buyer"], &["ret-001"]);
+        assert_conservation_law(&env, &client, &["b1"], &["ret-001"]);
+        assert_no_phantom_credits(&env, &client, &["b1"], &["ret-001"]);
     }
 
     // ── Tests: rejected operations must not alter supply ──────────────────────
@@ -641,10 +634,12 @@ mod conservation_invariant_tests {
         ];
 
         let batch_ids: std::vec::Vec<&str> = batches.iter().map(|(id, ..)| *id).collect();
+        let mut minted_so_far: std::vec::Vec<&str> = std::vec::Vec::new();
 
         for (bid, amount, ss, se) in batches {
             do_mint(&env, &client, &admin, &owner, bid, *amount, *ss, *se);
-            assert_conservation_law(&env, &client, batch_ids.as_slice(), &[]);
+            minted_so_far.push(bid);
+            assert_conservation_law(&env, &client, minted_so_far.as_slice(), &[]);
         }
 
         // Retire from several batches

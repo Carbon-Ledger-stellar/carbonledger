@@ -12,10 +12,18 @@ import {
   RetireCreditsDto,
 } from "./retirements.dto";
 import { CertificateService } from "./certificate.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
 import { v4 as uuidv4 } from "uuid";
 import { createHash } from "crypto";
 import { QueueService } from "../queue/queue.service";
 import { JobType } from "../queue/queue.constants";
+import { sanitizeRetirementPayload, sanitizeRetirementForResponse } from "../common/sanitization.util";
+
+import { Optional } from "@nestjs/common";
+import { EventSourcingService } from "../events/event-sourcing.service";
+import { CreditEventType } from "../events/credit-event.types";
+import { WebhookService } from "../webhook/webhook.service";
+import { buildCursorWhere, createOpaqueCursor, decodeCursor, normalizePaginationLimit } from "../common/cursor-pagination";
 
 export interface BulkRetirementResult {
   batchId: string;
@@ -47,9 +55,16 @@ interface NormalizedBulkItem {
 }
 
 export interface PaginatedRetirementsResponse {
+  data: any[];
   retirements: any[];
-  next_cursor?: string;
+  total: number;
   total_count: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  nextOffset?: number | null;
+  next_cursor?: string;
+  prev_cursor?: string;
 }
 
 @Injectable()
@@ -61,15 +76,20 @@ export class RetirementsService {
     private readonly ipfsService: IpfsService,
     private readonly certificateService: CertificateService,
     private readonly queueService: QueueService,
+    private readonly certificateSigning: CertificateSigningService,
+    @Optional() private readonly eventSourcing?: EventSourcingService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   async retireCredits(dto: RetireCreditsDto) {
+    const sanitizedDto = sanitizeRetirementPayload(dto as unknown as Record<string, unknown>) as RetireCreditsDto;
+
     // Replay-attack guard: reject any txHash that has already been recorded.
     // Without this check, a different `retiredBy` address could reuse a real
     // (or fabricated) transaction hash to generate a second certificate for the
     // same on-chain retirement — effectively double-counting carbon credits.
     const txHashExists = await this.prisma.retirementRecord.findFirst({
-      where: { txHash: dto.txHash },
+      where: { txHash: sanitizedDto.txHash },
     });
     if (txHashExists) {
       throw new ConflictException('Transaction hash already used');
@@ -77,57 +97,94 @@ export class RetirementsService {
 
     // Check if already retired (same batchId + retiredBy combination)
     const existing = await this.prisma.retirementRecord.findFirst({
-      where: { batchId: dto.batchId, retiredBy: dto.retiredBy },
+      where: { batchId: sanitizedDto.batchId, retiredBy: sanitizedDto.retiredBy },
     });
     if (existing) {
       throw new ConflictException('Credits already retired (AlreadyRetired)');
     }
 
-    const batch = await this.prisma.creditBatch.findUnique({ where: { batchId: dto.batchId } });
-    if (!batch) throw new NotFoundException(`Credit batch ${dto.batchId} not found`);
+    const batch = await this.prisma.creditBatch.findUnique({ where: { batchId: sanitizedDto.batchId } });
+    if (!batch) throw new NotFoundException(`Credit batch ${sanitizedDto.batchId} not found`);
 
     const retirementId = uuidv4();
     const retirement = await this.prisma.retirementRecord.create({
       data: {
         retirementId,
-        batchId: dto.batchId,
-        projectId: dto.projectId,
-        amount: dto.amount,
-        retiredBy: dto.retiredBy,
-        beneficiary: dto.beneficiary,
-        retirementReason: dto.retirementReason,
+        batchId: sanitizedDto.batchId,
+        projectId: sanitizedDto.projectId,
+        amount: sanitizedDto.amount,
+        retiredBy: sanitizedDto.retiredBy,
+        beneficiary: sanitizedDto.beneficiary,
+        retirementReason: sanitizedDto.retirementReason,
         vintageYear: batch.vintageYear,
         serialStart: batch.serialStart,
         serialEnd: batch.serialEnd,
         serialNumbers: [],
-        txHash: dto.txHash,
+        txHash: sanitizedDto.txHash,
       },
     });
 
-    // Generate and pin certificate to IPFS
-    let certificateCid: string | null = null;
+    if (this.eventSourcing) {
+      await this.eventSourcing.recordEvent({
+        creditBatchId: dto.batchId,
+        eventType: CreditEventType.RETIRE,
+        actor: dto.retiredBy,
+        oldState: { status: batch.status ?? 'Active' },
+        newState: {
+          batchId: dto.batchId,
+          amountRetired: dto.amount,
+          status: 'Retired',
+          beneficiary: dto.beneficiary,
+        },
+        txHash: dto.txHash,
+      }).catch(() => undefined);
+    }
+
+    // Enqueue certificate generation job via BullMQ for async PDF generation
     try {
-      const result = await this.certificateService.generateAndPinCertificate(retirementId);
-      certificateCid = result.cid;
-    } catch (err) {
-      this.logger.warn(`Certificate generation failed for ${retirementId}: ${err.message}`);
+      await this.queueService.enqueue(JobType.CERTIFICATE_GENERATION, {
+        retirementId,
+      });
+      this.logger.log(`Certificate generation job enqueued for ${retirementId}`);
+    } catch (err: any) {
+      this.logger.warn(`Failed to enqueue certificate generation for ${retirementId}: ${err.message}`);
+      // Don't fail retirement creation if queue enqueue fails
+    }
+
+    // Dispatch webhook: retirement.confirmed
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('retirement.confirmed', {
+          retirementId: retirement.retirementId,
+          batchId: retirement.batchId,
+          projectId: retirement.projectId,
+          amount: Number(retirement.amount),
+          retiredBy: retirement.retiredBy,
+          beneficiary: retirement.beneficiary,
+          vintageYear: retirement.vintageYear,
+          txHash: retirement.txHash,
+          retiredAt: retirement.retiredAt.toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
     }
 
     return {
       retirementId: retirement.retirementId,
       txHash: retirement.txHash,
-      certificateCid,
-      certificateUrl: certificateCid
-        ? `https://gateway.pinata.cloud/ipfs/${certificateCid}`
-        : null,
+      certificateCid: null,
+      certificateUrl: null,
+      certificateStatus: 'pending_certificate',
     };
   }
 
   async bulkRetireCredits(dto: BulkRetirementRequest): Promise<BulkRetirementResult[] | BulkRetirementQueuedResponse> {
-    const normalized = await this.validateBulkRetirementRequest(dto);
+    const sanitizedDto = sanitizeRetirementPayload(dto as unknown as Record<string, unknown>) as BulkRetirementRequest;
+    const normalized = await this.validateBulkRetirementRequest(sanitizedDto);
 
     if (normalized.length > 10) {
-      const jobId = this.bulkRetirementJobId(dto, normalized);
+      const jobId = this.bulkRetirementJobId(sanitizedDto, normalized);
       const job = await this.queueService.enqueue(
         JobType.BULK_RETIREMENT,
         {
@@ -137,9 +194,9 @@ export class RetirementsService {
             beneficiary: item.beneficiary,
             reason: item.reason,
           })),
-          beneficiary: dto.beneficiary,
-          retirementReason: dto.retirementReason,
-          retiredBy: dto.retiredBy,
+          beneficiary: sanitizedDto.beneficiary,
+          retirementReason: sanitizedDto.retirementReason,
+          retiredBy: sanitizedDto.retiredBy,
         },
         { jobId },
       );
@@ -147,15 +204,93 @@ export class RetirementsService {
       return { jobId: String(job.id ?? jobId) };
     }
 
-    return this.executeBulkRetirements(dto, normalized);
+    return this.executeBulkRetirements(sanitizedDto, normalized);
+  }
+
+  async bulkRetireCreditsFromCsv(dto: { csv: string; retiredBy: string }) {
+    const rows = this.parseCsvRows(dto.csv);
+    if (rows.length === 0) {
+      throw new BadRequestException('CSV contains no retirements');
+    }
+
+    const normalized = await this.validateBulkCsvRows(rows, dto.retiredBy);
+    const accepted = normalized.validItems;
+    const rejected = normalized.invalidItems;
+
+    const largeBatch = accepted.length > 100;
+    if (largeBatch) {
+      const jobId = `bulk-csv-${createHash('sha256').update(`${dto.retiredBy}:${dto.csv}`).digest('hex')}`;
+      await this.queueService.enqueue(JobType.BULK_RETIREMENT, {
+        items: accepted.map((item) => ({
+          batchId: item.batchId,
+          amount: item.amount,
+          beneficiary: item.beneficiary,
+          reason: item.reason,
+        })),
+        beneficiary: dto.retiredBy,
+        retirementReason: 'Bulk CSV retirement',
+        retiredBy: dto.retiredBy,
+        requestId: jobId,
+      }, { jobId });
+
+      return {
+        status: 'queued',
+        jobId,
+        acceptedCount: accepted.length,
+        rejectedCount: rejected.length,
+        rejected,
+      };
+    }
+
+    const executed = await this.executeBulkRetirements({
+      items: accepted.map((item) => ({
+        batchId: item.batchId,
+        amount: item.amount,
+        beneficiary: item.beneficiary,
+        reason: item.reason,
+      })),
+      beneficiary: dto.retiredBy,
+      retirementReason: 'Bulk CSV retirement',
+      retiredBy: dto.retiredBy,
+    }, accepted as unknown as NormalizedBulkItem[]);
+
+    return {
+      status: 'completed',
+      accepted: executed,
+      rejected,
+    };
+  }
+
+  async getBulkCsvStatus(jobId: string) {
+    const job = await this.queueService.getJobStatus(jobId);
+    return job ?? { jobId, state: 'missing' };
+  }
+
+  async getCertificateStatus(retirementId: string, retiredBy?: string) {
+    const retirement = await this.prisma.retirementRecord.findFirst({
+      where: { retirementId, ...(retiredBy ? { retiredBy } : {}) },
+      select: {
+        retirementId: true,
+        certificateStatus: true,
+        certificateRetries: true,
+        certificateCid: true,
+        certificateUrl: true,
+        certificateGeneratedAt: true,
+        certificateFailedAt: true,
+      },
+    });
+
+    if (!retirement) throw new NotFoundException('Retirement not found');
+    return retirement;
   }
 
   async executeBulkRetirements(
     dto: BulkRetirementRequest,
     normalized?: NormalizedBulkItem[],
   ): Promise<BulkRetirementResult[]> {
-    const items = normalized ?? await this.validateBulkRetirementRequest(dto);
-    const txHash = this.buildBulkTransactionHash(dto, items);
+    const sanitizedDto = sanitizeRetirementPayload(dto as unknown as Record<string, unknown>) as BulkRetirementRequest;
+    const items = normalized ?? await this.validateBulkRetirementRequest(sanitizedDto);
+    const txHash = this.buildBulkTransactionHash(sanitizedDto, items);
 
     const created = await this.prisma.$transaction(async (tx) => {
       const records: Array<{ retirementId: string; batchId: string }> = [];
@@ -168,7 +303,7 @@ export class RetirementsService {
             batchId: item.batchId,
             projectId: item.batch.projectId,
             amount: item.amount,
-            retiredBy: dto.retiredBy,
+            retiredBy: sanitizedDto.retiredBy,
             beneficiary: item.beneficiary,
             retirementReason: item.reason,
             vintageYear: item.batch.vintageYear,
@@ -204,7 +339,44 @@ export class RetirementsService {
     return results;
   }
 
-  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
+  async findAll(cursor?: string, limit = 20, offset = 0, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
+    const take = normalizePaginationLimit(limit, 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
+    const where = retiredBy ? { retiredBy } : {};
+    const decodedCursor = decodeCursor(cursor);
+    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
+
+    const [retirements, total_count] = await Promise.all([
+      this.prisma.retirementRecord.findMany({
+        where: cursorWhere ? { ...where, ...cursorWhere } : where,
+        orderBy: [{ retiredAt: "desc" }, { id: "desc" }],
+        take: take + 1,
+        skip: decodedCursor ? 0 : safeOffset,
+      }),
+      this.prisma.retirementRecord.count({ where }),
+    ]);
+
+    const hasMore = retirements.length > take;
+    const next_cursor = hasMore ? createOpaqueCursor(retirements[take - 1].id, retirements[take - 1].retiredAt) : undefined;
+    const prev_cursor = decodedCursor && retirements.length > 0 ? createOpaqueCursor(retirements[0].id, retirements[0].retiredAt) : undefined;
+    if (hasMore) retirements.pop();
+
+    const sanitized = retirements.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      retirements: sanitized,
+      total: total_count,
+      total_count,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      next_cursor,
+      prev_cursor,
+    };
+  }
+
   /**
    * Full-text search over retirements using the PostgreSQL tsvector GIN index (#670).
    * Searches beneficiary (weight A) and retirementReason (weight B).
@@ -216,76 +388,58 @@ export class RetirementsService {
     vintageYear?: number;
     cursor?: string;
     limit?: number;
+    offset?: number;
   }): Promise<PaginatedRetirementsResponse> {
-    const { search, projectId, retiredBy, vintageYear, cursor, limit = 20 } = query;
-    const take = Math.min(Math.max(limit, 1), 100);
+    const { search, projectId, retiredBy, vintageYear, cursor, limit = 20, offset = 0 } = query;
+    const take = normalizePaginationLimit(limit, 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
 
     if (!search) {
-      return this.findAll(cursor, take, retiredBy);
+      return this.findAll(cursor, take, safeOffset, retiredBy);
     }
 
-    const conditions: string[] = ['"searchVector" @@ plainto_tsquery(\'english\', $1)'];
-    const args: unknown[] = [search];
-    let idx = 2;
-
-    if (projectId) { conditions.push(`"projectId" = $${idx}`); args.push(projectId); idx++; }
-    if (retiredBy) { conditions.push(`"retiredBy" = $${idx}`); args.push(retiredBy); idx++; }
-    if (vintageYear) { conditions.push(`"vintageYear" = $${idx}`); args.push(vintageYear); idx++; }
-    if (cursor) { conditions.push(`"id" < $${idx}`); args.push(cursor); idx++; }
-
-    const where = conditions.join(' AND ');
-
-    type RetirementRow = {
-      id: string; retirementId: string; batchId: string; projectId: string;
-      amount: string; retiredBy: string; beneficiary: string; retirementReason: string;
-      vintageYear: number; serialStart: string; serialEnd: string; serialNumbers: string[];
-      txHash: string; certificateCid: string | null; isValid: boolean;
-      validatedAt: Date | null; retiredAt: Date;
+    const decodedCursor = decodeCursor(cursor);
+    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
+    const where: any = {
+      OR: [
+        { beneficiary: { contains: search, mode: 'insensitive' } },
+        { retirementReason: { contains: search, mode: 'insensitive' } },
+      ],
     };
 
-    const [rows, countRows] = await Promise.all([
-      this.prisma.$queryRawUnsafe<RetirementRow[]>(
-        `SELECT id, "retirementId", "batchId", "projectId", amount, "retiredBy",
-                beneficiary, "retirementReason", "vintageYear", "serialStart", "serialEnd",
-                "serialNumbers", "txHash", "certificateCid", "isValid", "validatedAt", "retiredAt"
-         FROM "RetirementRecord"
-         WHERE ${where}
-         ORDER BY ts_rank("searchVector", plainto_tsquery('english', $1)) DESC
-         LIMIT ${take + 1}`,
-        ...args,
-      ),
-      this.prisma.$queryRawUnsafe<[{ count: bigint }]>(
-        `SELECT COUNT(*)::bigint AS count FROM "RetirementRecord" WHERE ${where}`,
-        ...args,
-      ),
-    ]);
+    if (projectId) { where.projectId = projectId; }
+    if (retiredBy) { where.retiredBy = retiredBy; }
+    if (vintageYear) { where.vintageYear = vintageYear; }
 
-    const hasMore = rows.length > take;
-    const next_cursor = hasMore ? rows[rows.length - 2].id : undefined;
-    if (hasMore) rows.pop();
-
-    return { retirements: rows, next_cursor, total_count: Number(countRows[0]?.count ?? 0) };
-  }
-
-  async findAll(cursor?: string, limit = 20, retiredBy?: string): Promise<PaginatedRetirementsResponse> {    const take = Math.min(Math.max(limit, 1), 100);
-    const where = retiredBy ? { retiredBy } : {};
-
-    const [retirements, total_count] = await Promise.all([
+    const [rows, total_count] = await Promise.all([
       this.prisma.retirementRecord.findMany({
-        where,
-        orderBy: { retiredAt: "desc" },
+        where: cursorWhere ? { ...where, ...cursorWhere } : where,
         take: take + 1,
-        cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
+        skip: decodedCursor ? 0 : safeOffset,
+        orderBy: [{ retiredAt: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.retirementRecord.count({ where }),
     ]);
 
-    const hasMore = retirements.length > take;
-    const next_cursor = hasMore ? retirements[retirements.length - 2].id : undefined;
-    if (hasMore) retirements.pop();
+    const hasMore = rows.length > take;
+    const next_cursor = hasMore ? createOpaqueCursor(rows[take - 1].id, rows[take - 1].retiredAt) : undefined;
+    const prev_cursor = decodedCursor && rows.length > 0 ? createOpaqueCursor(rows[0].id, rows[0].retiredAt) : undefined;
+    if (hasMore) rows.pop();
 
-    return { retirements, next_cursor, total_count };
+    const sanitized = rows.map((retirement) => sanitizeRetirementForResponse(retirement as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      retirements: sanitized,
+      total: total_count,
+      total_count,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      next_cursor,
+      prev_cursor,
+    };
   }
 
   async findOne(retirementId: string) {
@@ -294,7 +448,7 @@ export class RetirementsService {
       include: { project: true, batch: true },
     });
     if (!r) throw new NotFoundException('Retirement not found');
-    return r;
+    return sanitizeRetirementForResponse(r as Record<string, unknown>);
   }
 
   /**
@@ -364,6 +518,46 @@ export class RetirementsService {
     }
   }
 
+  /**
+   * Verifies a certificate's Ed25519 `issuer_signature` (#594). Self-
+   * contained: needs only the certificate JSON and the published signing
+   * public key — no database lookup — mirroring how the standalone CLI
+   * tool (scripts/verify-certificate.js) verifies.
+   *
+   * Also flags a mismatch between the certificate's embedded
+   * `issuer_public_key` and the currently-published `CERTIFICATE_SIGNING_KEY`
+   * as `keyIsCurrent: false` (rather than failing verification outright) so
+   * certificates signed under a rotated-out key remain verifiable during
+   * the rotation transition window — see CERTIFICATE_SIGNING.md.
+   */
+  verifyCertificateSignature(certificate: Record<string, unknown>) {
+    const { issuer_signature, issuer_public_key, ...signedContent } = certificate ?? {};
+
+    if (typeof issuer_signature !== "string" || typeof issuer_public_key !== "string") {
+      return {
+        valid: false,
+        message: "Certificate is missing issuer_signature or issuer_public_key",
+      };
+    }
+
+    const valid = CertificateSigningService.verify(signedContent, issuer_signature, issuer_public_key);
+
+    const publishedKey = process.env.CERTIFICATE_SIGNING_KEY;
+    const previousPublishedKey = process.env.CERTIFICATE_SIGNING_KEY_PREVIOUS;
+    const keyIsCurrent = publishedKey ? issuer_public_key === publishedKey : undefined;
+    const keyIsKnownPrevious = previousPublishedKey ? issuer_public_key === previousPublishedKey : false;
+
+    return {
+      valid,
+      issuerPublicKey: issuer_public_key,
+      keyIsCurrent,
+      keyIsKnownPrevious,
+      message: valid
+        ? "Certificate signature is valid"
+        : "Certificate signature is invalid — content may have been tampered with",
+    };
+  }
+
   async generatePdf(retirementId: string): Promise<Buffer> {
     const retirement = await this.findOne(retirementId);
     return Buffer.from(JSON.stringify(retirement));
@@ -391,6 +585,77 @@ export class RetirementsService {
     const csvBuffer = await this.exportCsv(filters);
     // Minimal PDF wrapper — production would use pdfkit
     return Buffer.from(`%PDF-1.4\n% ESG Retirement Report\n${csvBuffer.toString()}`);
+  }
+
+  private parseCsvRows(csv: string): Array<{ batchId: string; amount: string; beneficiary: string; reason: string }> {
+    const lines = csv.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (lines.length === 0) return [];
+    const header = lines[0].split(',').map((cell) => cell.trim().toLowerCase());
+    const rows = lines.slice(1).map((line) => {
+      const values = line.split(',').map((cell) => cell.trim());
+      const row: Record<string, string> = {};
+      header.forEach((key, index) => {
+        row[key] = values[index] ?? '';
+      });
+      return {
+        batchId: row.batchid ?? '',
+        amount: row.amount ?? '',
+        beneficiary: row.beneficiary ?? '',
+        reason: row.reason ?? '',
+      };
+    });
+
+    return rows;
+  }
+
+  private async validateBulkCsvRows(rows: Array<{ batchId: string; amount: string; beneficiary: string; reason: string }>, retiredBy: string) {
+    const invalidItems: Array<{ row: number; error: string }> = [];
+    const validItems: NormalizedBulkItem[] = [];
+
+    const batchIds = rows.map((row) => row.batchId).filter(Boolean);
+    const uniqueBatchIds = new Set(batchIds);
+    if (uniqueBatchIds.size !== batchIds.length) {
+      invalidItems.push({ row: 0, error: 'Each batchId must be unique in a CSV upload' });
+    }
+
+    const batches = await this.prisma.creditBatch.findMany({ where: { batchId: { in: [...uniqueBatchIds] } } });
+    const batchMap = new Map(batches.map((batch) => [batch.batchId, batch]));
+    const retiredBatchIds = new Set((await this.prisma.retirementRecord.findMany({ where: { retiredBy, batchId: { in: [...uniqueBatchIds] } }, select: { batchId: true } })).map((row) => row.batchId));
+
+    rows.forEach((row, index) => {
+      const amount = Number(row.amount);
+      if (!row.batchId || !row.beneficiary || !row.reason || !Number.isFinite(amount) || amount <= 0) {
+        invalidItems.push({ row: index + 2, error: 'Each row must include batchId, amount, beneficiary, and reason' });
+        return;
+      }
+
+      const batch = batchMap.get(row.batchId);
+      if (!batch) {
+        invalidItems.push({ row: index + 2, error: `Credit batch ${row.batchId} not found` });
+        return;
+      }
+
+      if (retiredBatchIds.has(row.batchId)) {
+        invalidItems.push({ row: index + 2, error: `Credits already retired for batch ${row.batchId}` });
+        return;
+      }
+
+      const batchAmount = this.batchAmountToNumber(batch.amount);
+      if (amount > batchAmount) {
+        invalidItems.push({ row: index + 2, error: `Cannot retire ${amount} from batch ${row.batchId} — only ${batchAmount} available` });
+        return;
+      }
+
+      validItems.push({
+        batchId: row.batchId,
+        amount,
+        beneficiary: row.beneficiary,
+        reason: row.reason,
+        batch,
+      });
+    });
+
+    return { validItems, invalidItems };
   }
 
   private async validateBulkRetirementRequest(dto: BulkRetirementRequest): Promise<NormalizedBulkItem[]> {

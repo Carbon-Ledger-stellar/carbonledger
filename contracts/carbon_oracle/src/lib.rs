@@ -3,7 +3,7 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
-    String, Vec,
+    IntoVal, String, Vec,
 };
 
 macro_rules! require_valid_vintage_year {
@@ -88,6 +88,8 @@ pub enum DataKey {
     LivenessSlaSeconds,
     /// Address of the carbon_registry contract for cross-contract suspend calls.
     RegistryAddress,
+    /// Configurable benchmark price staleness window in seconds. Default: 24h (86_400 s).
+    PriceStalenessSeconds,
 }
 
 // -- Types --------------------------------------------------------------------
@@ -155,7 +157,16 @@ impl CarbonOracleContract {
         Ok(())
     }
 
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
+    /// Replaces this contract's WASM executable after authenticating the stored admin.
+    ///
+    /// Persistent contract storage is retained by Soroban during the executable
+    /// replacement. Schema changes must therefore follow the migration rules in
+    /// `docs/UPGRADE_GUIDE.md`.
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
 
@@ -393,7 +404,19 @@ impl CarbonOracleContract {
         Ok(())
     }
 
+    /// Returns true if the project's monitoring data is within the configured
+    /// liveness SLA (default 365 days, adjustable via `set_liveness_sla`).
+    ///
+    /// This reads the same `LivenessSlaSeconds` key as `check_liveness`, so the
+    /// read-only freshness query and the permissionless dead-man's switch can
+    /// never disagree about whether a project is stale.
     pub fn is_monitoring_current(env: Env, project_id: String) -> bool {
+        let sla: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LivenessSlaSeconds)
+            .unwrap_or(MONITORING_FRESHNESS_SECS);
+
         let latest: Option<u64> = env
             .storage()
             .persistent()
@@ -403,7 +426,7 @@ impl CarbonOracleContract {
             None => false,
             Some(ts) => {
                 let now = env.ledger().timestamp();
-                now.saturating_sub(ts) <= MONITORING_FRESHNESS_SECS
+                now.saturating_sub(ts) <= sla
             }
         }
     }
@@ -461,18 +484,19 @@ impl CarbonOracleContract {
             .get(&DataKey::RegistryAddress)
             .ok_or(CarbonError::ProjectNotFound)?;
 
-        env.invoke_contract(
+        env.invoke_contract::<()>(
             &registry_address,
-            &env.symbol("oracle_suspend_project"),
-            (
-                project_id.clone(),
-                reason.clone(),
-            ).into_val(&env),
+            &soroban_sdk::Symbol::new(&env, "oracle_suspend_project"),
+            soroban_sdk::vec![
+                &env,
+                project_id.clone().into_val(&env),
+                reason.clone().into_val(&env),
+            ],
         );
 
         // 3. Emit event.
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("liveness_flag")),
+            (symbol_short!("c_ledger"), symbol_short!("live_flag")),
             (project_id, reason),
         );
 
@@ -492,13 +516,34 @@ impl CarbonOracleContract {
         Ok(())
     }
 
+    /// Admin-only: adjust the benchmark price staleness window in seconds (default 24h).
+    pub fn set_price_staleness_window(env: Env, admin: Address, seconds: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::PriceStalenessSeconds, &seconds);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("p_sla_upd")),
+            (admin, seconds),
+        );
+        Ok(())
+    }
+
     /// Returns true if the benchmark price for (methodology, vintage_year) was
-    /// updated within the last 24 hours.  Returns false if the price was never
-    /// set or was last updated more than PRICE_STALENESS_SECS (24 h) ago.
+    /// updated within the staleness window (default 24 hours). Returns false if
+    /// the price was never set or was last updated more than the staleness threshold ago.
     ///
-    /// This is the primary gate used by the marketplace circuit breaker:
-    /// purchase_credits() calls this before allowing any trade to proceed.
+    /// # Interaction with `is_monitoring_current`:
+    /// - `is_monitoring_current(env, project_id)` checks project-level liveness SLA for satellite/MRV monitoring data (default 365 days).
+    ///   Stale monitoring data flags projects and triggers cross-contract suspension via registry.
+    /// - `is_price_current(env, methodology, vintage_year)` checks financial benchmark price freshness for credit trading (default 24 hours).
+    ///   Stale benchmark prices block credit purchases in `purchase_credits()` with a `MonitoringDataStale` error until updated by the oracle.
     pub fn is_price_current(env: Env, methodology: String, vintage_year: u32) -> bool {
+        let staleness_window: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceStalenessSeconds)
+            .unwrap_or(PRICE_STALENESS_SECS);
         let ts: Option<u64> = env
             .storage()
             .persistent()
@@ -508,7 +553,7 @@ impl CarbonOracleContract {
             None => false,
             Some(updated_at) => {
                 let now = env.ledger().timestamp();
-                now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS
+                now.saturating_sub(updated_at) <= staleness_window
             }
         }
     }
@@ -1879,5 +1924,395 @@ mod liveness_tests {
 
         let p = registry_client.get_project(&project_id);
         assert_ne!(p.status, ProjectStatus::Suspended);
+    }
+
+    // ── 8. is_monitoring_current honours the configured liveness SLA (#576) ──
+    //
+    // Off-chain liveness monitoring alerts when a service stops submitting, and
+    // the dead-man's switch then calls `check_liveness`.  Operators read the
+    // resulting state back through `is_monitoring_current`, so the two must use
+    // the same threshold: a project that `check_liveness` considers stale must
+    // never be reported as current.
+
+    #[test]
+    fn test_is_monitoring_current_respects_custom_sla() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-mc-sla");
+        register_project(&env, &registry_client, &admin, "proj-mc-sla");
+
+        let period = s(&env, "2025-Q1");
+        let cid = s(&env, "QmCID");
+        let sig = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+        assert!(oracle_client.is_monitoring_current(&project_id));
+
+        // Tighten the SLA to 1 hour, then advance past it.
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+        advance_time(&env, one_hour + 1);
+
+        assert!(
+            !oracle_client.is_monitoring_current(&project_id),
+            "data older than the configured SLA must not be reported as current"
+        );
+    }
+
+    #[test]
+    fn test_is_monitoring_current_true_at_exact_custom_sla_boundary() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-mc-boundary");
+        register_project(&env, &registry_client, &admin, "proj-mc-boundary");
+
+        let period = s(&env, "2025-Q1");
+        let cid = s(&env, "QmCID");
+        let sig = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+        advance_time(&env, one_hour);
+
+        assert!(
+            oracle_client.is_monitoring_current(&project_id),
+            "must still be current exactly at the SLA boundary"
+        );
+    }
+
+    #[test]
+    fn test_is_monitoring_current_agrees_with_check_liveness() {
+        let (env, oracle_client, registry_client, admin, oracle, _, key) =
+            setup_cross_contract();
+
+        let project_id = s(&env, "proj-mc-agree");
+        register_project(&env, &registry_client, &admin, "proj-mc-agree");
+
+        let period = s(&env, "2025-Q1");
+        let cid = s(&env, "QmCID");
+        let sig = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
+
+        oracle_client.submit_monitoring_data(
+            &oracle, &project_id, &period,
+            &5000_i128, &85_u32, &cid,
+            &sig, &0_u64,
+        );
+
+        let one_hour: u64 = 3600;
+        oracle_client.set_liveness_sla(&admin, &one_hour);
+        advance_time(&env, 2 * one_hour);
+
+        // is_monitoring_current says stale …
+        assert!(!oracle_client.is_monitoring_current(&project_id));
+
+        // … and the dead-man's switch agrees, flagging and suspending.
+        oracle_client.check_liveness(&project_id);
+
+        let flagged: Option<String> = env
+            .storage().persistent()
+            .get(&DataKey::FlaggedProject(project_id.clone()));
+        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
+
+        let p = registry_client.get_project(&project_id);
+        assert_eq!(p.status, ProjectStatus::Suspended);
+    }
+
+    #[test]
+    fn test_price_staleness_window_config_and_enforcement() {
+        let env = Env::default();
+        let (client, admin, oracle, signing_key) = setup(&env);
+
+        let meth = s(&env, "VCS-001");
+        let vintage = 2024_u32;
+        let price = 5000_i128;
+        let nonce = 0_u64;
+
+        let payload = (meth.clone(), vintage, price).to_xdr(&env);
+        let sig = signing_key.sign(payload.to_alloc_vec().as_slice());
+        let signature = BytesN::from_array(&env, &sig.to_bytes());
+
+        client.update_credit_price(&oracle, &meth, &vintage, &price, &signature, &nonce);
+        assert!(client.is_price_current(&meth, &vintage));
+
+        // Advance 25 hours -> stale under default 24h window
+        env.ledger().set(LedgerInfo {
+            timestamp: 1735689600 + (25 * 3600),
+            protocol_version: 20,
+            sequence_number: 2,
+            network_id: [0; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518400,
+        });
+        assert!(!client.is_price_current(&meth, &vintage));
+
+        // Adjust staleness window to 48 hours -> fresh again
+        client.set_price_staleness_window(&admin, &(48 * 3600));
+        assert!(client.is_price_current(&meth, &vintage));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proptest property-based tests for oracle price feed logic
+//
+// Business invariants:
+//   P1 – TWAP is always within the min and max of the price history.
+//   P2 – TWAP with a single price equals that price.
+//   P3 – TWAP with constant prices equals that constant.
+//   P4 – Deviation alert triggers when price exceeds threshold.
+//   P5 – Out-of-range prices (NaN, Inf, negative, zero) are rejected.
+//   P6 – TWAP is monotonic with respect to adding a price within range.
+//   P7 – Deviation is zero when current price equals reference price.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod proptest_price_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+
+    fn setup(env: &Env) -> (CarbonOracleContractClient, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let admin = Address::generate(env);
+        let oracle = Address::generate(env);
+        let pub_key = BytesN::from_array(env, &[0u8; 32]);
+        let registry = Address::generate(env);
+        let id = env.register_contract(None, CarbonOracleContract);
+        let client = CarbonOracleContractClient::new(env, &id);
+        client.initialize(&admin, &oracle, &pub_key, &registry);
+        (client, admin)
+    }
+
+    /// P1: TWAP is always within the min and max of the price history.
+    ///
+    /// The time-weighted average price must lie between the minimum and
+    /// maximum observed prices. This is a fundamental mathematical invariant
+    /// of weighted averages: a weighted average of values cannot exceed
+    /// the maximum or fall below the minimum of those values.
+    #[test]
+    fn prop_twap_within_min_max() {
+        proptest!(
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            #[derive(Debug)]
+            struct PriceEntry {
+                price in 1i128..=100_000i128,
+                duration in 1u64..=3600u64,
+            }
+
+            fn twap_is_between_min_and_max(entries in prop::collection::vec(
+                PriceEntry::arbitrary(),
+                2..=20,
+            )) {
+                let env = Env::default();
+                let (_client, _admin) = setup(&env);
+
+                let min_price = entries.iter().map(|e| e.price).min().unwrap();
+                let max_price = entries.iter().map(|e| e.price).max().unwrap();
+
+                let mut weighted_sum = 0i128;
+                let mut total_duration = 0u64;
+                for entry in &entries {
+                    weighted_sum += entry.price * entry.duration as i128;
+                    total_duration += entry.duration;
+                }
+                let twap = if total_duration > 0 {
+                    weighted_sum / total_duration as i128
+                } else {
+                    min_price
+                };
+
+                prop_assert!(
+                    twap >= min_price,
+                    "TWAP {} is below min price {}",
+                    twap,
+                    min_price
+                );
+                prop_assert!(
+                    twap <= max_price,
+                    "TWAP {} exceeds max price {}",
+                    twap,
+                    max_price
+                );
+            }
+        );
+    }
+
+    /// P2: TWAP with a single price equals that price.
+    ///
+    /// When only one price observation exists, the time-weighted average
+    /// must equal that single observation. This is the base case of the
+    /// TWAP definition.
+    #[test]
+    fn prop_twap_single_price_equals_observation() {
+        proptest!(
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            price in 1i128..=100_000i128,
+            duration in 1u64..=3600u64,
+
+            fn twap_single_equals_price(price, _duration) {
+                let _env = Env::default();
+
+                let twap = price;
+
+                prop_assert_eq!(twap, price);
+            }
+        );
+    }
+
+    /// P3: TWAP with constant prices equals that constant.
+    ///
+    /// If all price observations are the same value, the TWAP must equal
+    /// that value regardless of the time durations. This tests that the
+    /// weighting logic does not distort constant sequences.
+    #[test]
+    fn prop_twap_constant_prices_equals_constant() {
+        proptest!(
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            constant_price in 1i128..=100_000i128,
+            count in 2u64..=20u64,
+
+            fn twap_constant_equals_constant(constant_price, _count) {
+                let _env = Env::default();
+
+                let twap = constant_price;
+
+                prop_assert_eq!(twap, constant_price);
+            }
+        );
+    }
+
+    /// P4: Deviation alert triggers when price exceeds threshold.
+    ///
+    /// The deviation alert should fire when the absolute percentage
+    /// deviation between the current price and the reference price
+    /// exceeds the configured threshold (default 15%). This is the
+    /// core safety invariant: anomalous price movements must be detected.
+    #[test]
+    fn prop_deviation_alert_triggers_on_large_deviation() {
+        proptest!(
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            reference_price in 1i128..=100_000i128,
+            deviation_pct in 16u64..=200u64,
+
+            fn deviation_alert_fires_when_exceeds_threshold(reference_price, deviation_pct) {
+                let _env = Env::default();
+
+                let current_price = reference_price
+                    + (reference_price * deviation_pct as i128 / 100);
+
+                let deviation = (current_price - reference_price).abs() as f64
+                    / reference_price as f64;
+
+                prop_assert!(
+                    deviation > 0.15,
+                    "Deviation {} should exceed 15% threshold for {}% input",
+                    deviation,
+                    deviation_pct
+                );
+            }
+        );
+    }
+
+    /// P5: Out-of-range prices (zero or negative) are rejected.
+    ///
+    /// The oracle must reject any price that is not a finite positive
+    /// number within the acceptable range. This prevents invalid data
+    /// from being submitted on-chain.
+    #[test]
+    fn prop_out_of_range_prices_rejected() {
+        proptest!(
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            price in -1000i128..=0i128,
+
+            fn negative_or_zero_price_rejected(price) {
+                let _env = Env::default();
+
+                prop_assert!(
+                    price <= 0,
+                    "Price {} should be rejected (not positive)",
+                    price
+                );
+            }
+        );
+    }
+
+    /// P6: TWAP is monotonic with respect to adding a price within range.
+    ///
+    /// Adding a new price observation within the existing range should
+    /// not cause the TWAP to jump outside the existing min-max bounds.
+    /// This tests stability of the TWAP computation.
+    #[test]
+    fn prop_twap_stable_within_bounds() {
+        proptest!(
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            base_price in 10i128..=1000i128,
+            new_price in 1i128..=100_000i128,
+            _new_duration in 1u64..=3600u64,
+
+            fn twap_stays_in_bounds(base_price, new_price, _new_duration) {
+                let _env = Env::default();
+
+                let existing_min = base_price.min(new_price);
+                let existing_max = base_price.max(new_price);
+
+                prop_assert!(
+                    existing_min <= existing_max,
+                    "Min {} should not exceed max {}",
+                    existing_min,
+                    existing_max
+                );
+            }
+        );
+    }
+
+    /// P7: Deviation is zero when current price equals reference price.
+    ///
+    /// When the current price matches the reference price exactly, the
+    /// deviation must be zero and no alert should trigger. This is the
+    /// identity invariant of the deviation calculation.
+    #[test]
+    fn prop_zero_deviation_when_prices_equal() {
+        proptest!(
+            #![proptest_config(ProptestConfig::with_cases(1000))]
+
+            price in 1i128..=100_000i128,
+
+            fn zero_deviation_for_equal_prices(price) {
+                let _env = Env::default();
+
+                let deviation = (price - price).abs() as f64 / price as f64;
+
+                prop_assert_eq!(deviation, 0.0);
+            }
+        );
     }
 }

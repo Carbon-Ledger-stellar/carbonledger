@@ -1,12 +1,18 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN, Env,
-    Map, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes,
+    BytesN, Env, String, Symbol, Vec,
 };
 
-const TTL_LEDGERS: u32 = 518_400;
+pub(crate) const TTL_LEDGERS: u32 = 518_400;
 const CURRENT_VERSION: u32 = 1;
+/// Default maximum number of upgrade history entries retained.
+pub const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 50;
+/// Minimum allowed value for max_history_entries.
+pub const MIN_HISTORY_ENTRIES: u32 = 10;
+/// Maximum allowed value for max_history_entries.
+pub const MAX_HISTORY_ENTRIES_LIMIT: u32 = 200;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -34,10 +40,23 @@ pub enum CarbonError {
     AlreadyInitialized = 20,
     Arithmetic = 21,
     UnauthorizedUpgrade = 22,
+    /// Cross-contract invariant violation: total issued credits would exceed
+    /// the oracle-verified tonnes for this project.
+    IssuanceExceedsVerified = 23,
+    InvalidZkProofFormat = 24,
+    ZkProofVerificationFailed = 25,
+    PageSizeTooLarge = 26,
+    StorageLimitExceeded = 27,
+    InvalidPauseWindow = 28,
+    EmergencyPaused = 29,
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
+/// Maximum number of credit batches a single project can host before storage caps kick in.
+pub const MAX_BATCHES_PER_PROJECT: u32 = 10_000;
 pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
+pub const DEFAULT_MIN_VINTAGE_YEAR: u32 = 1990;
+pub const DEFAULT_MAX_VINTAGE_YEAR: u32 = 0;
 
 #[contracttype]
 #[derive(Clone)]
@@ -45,24 +64,45 @@ pub enum DataKey {
     Batch(String),
     Retirement(String),
     ProjectBatches(String),
+    ProjectBatchCount(String),
+    /// Pre-#887 flat registry: `Map<serial_start, serial_end>` in a single
+    /// ledger entry. Superseded by the skip-list index in [`serial_index`];
+    /// retained so upgraded contracts can drain it via `migrate_serial_index`.
     SerialRegistry,
     Admin,
     RegistryContract,
     ContractVersion,
     UpgradeHistory,
+    PauseEnabled,
+    PauseUntil,
+    VintageYearMin,
+    VintageYearMax,
+    /// Maximum number of upgrade history entries to retain.
+    MaxHistoryEntries,
+    /// Address of the carbon_oracle contract, used to query verified tonnes
+    /// before minting.  Set by admin via set_oracle_contract().
+    OracleContract,
+    /// Per-project list of monitoring period strings used to sum verified tonnes.
+    /// Key = project_id; Value = Vec<String> of period identifiers.
+    VerifiedPeriods(String),
+    UserBatches(Address),
+    TotalSupply,
+    Allowance(Address, Address),
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
-pub struct CreditMintedEvent {
-    pub batch_id: String,
-    pub project_id: String,
-    pub admin: Address,
-    pub amount: i128,
+#[derive(Clone)]
+pub struct CarbonCredit {
+    pub project_id: u32,
+    pub serial_number: String,
     pub vintage_year: u32,
     pub serial_start: u64,
     pub serial_end: u64,
     pub timestamp: u64,
+    pub amount: i128,
+    pub owner: Address,
+    pub retired: bool,
+    pub created_at: u64,
 }
 
 #[contracttype]
@@ -75,6 +115,28 @@ pub struct CreditRetiredEvent {
     pub retired_by: Address,
     pub beneficiary: String,
     pub timestamp: u64,
+    /// IPFS CID of the pinned retirement certificate (#600). Lets indexers
+    /// and off-chain verifiers resolve the certificate directly from the
+    /// on-chain event without a separate backend lookup.
+    pub certificate_cid: String,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CreditMintedEvent {
+    pub batch_id: String,
+    pub project_id: String,
+    pub amount: i128,
+    pub retired_by: Address,
+    pub beneficiary: String,
+    pub timestamp: u64,
+    pub retirement_id: String,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub enum RetiredKey {
+    BatchRetired(String),
 }
 
 #[contracttype]
@@ -125,6 +187,9 @@ pub struct RetirementCertificate {
     pub certificate_cid: String,
 }
 
+/// Legacy flat-list range type, kept for ABI compatibility with clients built
+/// against earlier versions. The live index stores ranges as
+/// [`serial_index::SerialNode`] entries instead.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct SerialRange {
@@ -133,15 +198,37 @@ pub struct SerialRange {
 }
 
 #[contracttype]
-#[derive(Clone)]
-pub enum RetiredKey {
-    BatchRetired(String),
+pub struct ProjectInfo {
+    pub id: u32,
+    pub name: String,
+    pub methodology_score: u32,
 }
 
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct UpgradeRecord {
     pub from_version: u32,
+    pub to_version:   u32,
+    pub timestamp:    u64,
+    pub upgraded_by:  Address,
+    pub wasm_hash:    BytesN<32>,
+}
+
+/// Emitted when old upgrade history entries are pruned to stay within bounds.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HistoryPrunedEvent {
+    pub entries_pruned: u32,
+    pub remaining:      u32,
+    pub pruned_at:      u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZkProof {
+    pub commitment: Bytes,
+    pub salt: Bytes,
+    pub proof: Bytes,
     pub to_version: u32,
     pub timestamp: u64,
     pub upgraded_by: Address,
@@ -187,19 +274,29 @@ impl CarbonCreditContract {
         env.storage()
             .persistent()
             .set(&DataKey::RegistryContract, &registry_contract);
-        let registry: Map<u64, u64> = Map::new(&env);
-        env.storage()
-            .persistent()
-            .set(&DataKey::SerialRegistry, &registry);
+        // The serial index materialises itself lazily on first use, so there is
+        // nothing to seed here.
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         Ok(())
     }
 
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
+    /// Replaces this contract's WASM executable after authenticating the stored admin.
+    ///
+    /// Persistent contract storage is retained by Soroban during the executable
+    /// replacement. Schema changes must therefore follow the migration rules in
+    /// `docs/UPGRADE_GUIDE.md`.
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         let current_version: u32 = env
             .storage()
@@ -222,9 +319,34 @@ impl CarbonCreditContract {
             upgraded_by: admin.clone(),
             wasm_hash: new_wasm_hash,
         };
-        env.storage()
+
+        let mut history: Vec<UpgradeRecord> = env.storage()
             .persistent()
-            .set(&DataKey::UpgradeHistory, &record);
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        history.push_back(record);
+
+        let max: u32 = env.storage()
+            .persistent()
+            .get(&DataKey::MaxHistoryEntries)
+            .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
+
+        if history.len() > max {
+            let excess = history.len() - max;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.events().publish(
+                (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len(),
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("upgraded")),
@@ -240,8 +362,164 @@ impl CarbonCreditContract {
             .unwrap_or(1)
     }
 
+    /// Returns the most recent upgrade record, or None if no upgrades have occurred.
     pub fn get_upgrade_history(env: Env) -> Option<UpgradeRecord> {
-        env.storage().persistent().get(&DataKey::UpgradeHistory)
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        if history.is_empty() {
+            None
+        } else {
+            Some(history.get(history.len() - 1).unwrap())
+        }
+    }
+
+    /// Returns a paginated slice of the upgrade history.
+    /// `offset` is zero-based (0 = oldest record). `limit` caps at 50.
+    pub fn get_upgrade_history_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<UpgradeRecord>, CarbonError> {
+        let effective_limit = if limit > 50 { 50 } else { limit };
+        if effective_limit == 0 {
+            return Err(CarbonError::PageSizeTooLarge);
+        }
+
+        let history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let len = history.len();
+
+        if offset >= len {
+            return Ok(vec![&env]);
+        }
+
+        let mut result: Vec<UpgradeRecord> = vec![&env];
+        let end = core::cmp::min(offset + effective_limit, len);
+        for i in offset..end {
+            result.push_back(history.get(i).unwrap());
+        }
+        Ok(result)
+    }
+
+    /// Admin: set the maximum number of upgrade history entries to retain.
+    /// Values are clamped to [MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES_LIMIT].
+    pub fn set_max_history_entries(
+        env: Env,
+        admin: Address,
+        n: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+
+        let clamped = core::cmp::max(
+            MIN_HISTORY_ENTRIES,
+            core::cmp::min(n, MAX_HISTORY_ENTRIES_LIMIT),
+        );
+        env.storage().persistent().set(&DataKey::MaxHistoryEntries, &clamped);
+
+        // If current history exceeds the new cap, prune immediately
+        let mut history: Vec<UpgradeRecord> = env.storage()
+            .persistent()
+            .get(&DataKey::UpgradeHistory)
+            .unwrap_or_else(|| vec![&env]);
+        let max = clamped;
+
+        if history.len() > max {
+            let excess = history.len() - max;
+            while history.len() > max {
+                history.remove(0);
+            }
+            env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
+            env.events().publish(
+                (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "hist_prune")),
+                HistoryPrunedEvent {
+                    entries_pruned: excess,
+                    remaining:      history.len(),
+                    pruned_at:      env.ledger().timestamp(),
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn set_oracle_contract(
+        env: Env,
+        admin: Address,
+        oracle: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        env.storage().persistent().set(&DataKey::OracleContract, &oracle);
+        env.events().publish(
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "ora_set")),
+            (admin, oracle),
+        );
+        Ok(())
+    }
+
+    pub fn set_verified_periods(
+        env: Env,
+        admin: Address,
+        project_id: String,
+        periods: Vec<String>,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        env.storage().persistent().set(&DataKey::VerifiedPeriods(project_id.clone()), &periods);
+        env.events().publish(
+            (Symbol::new(&env, "c_ledger"), Symbol::new(&env, "per_set")),
+            (project_id, periods.len()),
+        );
+        Ok(())
+    }
+
+    pub fn pause_operations(env: Env, admin: Address, until_timestamp: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        let now = env.ledger().timestamp();
+        if until_timestamp <= now || until_timestamp > now.saturating_add(72 * 60 * 60) {
+            return Err(CarbonError::InvalidPauseWindow);
+        }
+        env.storage().persistent().set(&DataKey::PauseEnabled, &true);
+        env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        Ok(())
+    }
+
+    pub fn unpause_operations(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        Ok(())
+    }
+
+    pub fn set_vintage_year_bounds(
+        env: Env,
+        admin: Address,
+        min_year: u32,
+        max_year: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        if min_year > max_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        env.storage().persistent().set(&DataKey::VintageYearMin, &min_year);
+        env.storage().persistent().set(&DataKey::VintageYearMax, &max_year);
+        Ok(())
+    }
+
+    pub fn get_oracle_contract(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::OracleContract)
     }
 
     fn current_year(env: &Env) -> u32 {
@@ -250,14 +528,51 @@ impl CarbonCreditContract {
         1970 + (timestamp / seconds_per_year) as u32
     }
 
+    fn min_vintage_year(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VintageYearMin)
+            .unwrap_or(DEFAULT_MIN_VINTAGE_YEAR)
+    }
+
+    fn max_vintage_year(env: &Env) -> u32 {
+        let configured: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VintageYearMax)
+            .unwrap_or(DEFAULT_MAX_VINTAGE_YEAR);
+        if configured == 0 {
+            Self::current_year(env) + 1
+        } else {
+            configured
+        }
+    }
+
+    fn validate_vintage_year(env: &Env, vintage_year: u32) -> Result<(), CarbonError> {
+        let min_year = Self::min_vintage_year(env);
+        let max_year = Self::max_vintage_year(env);
+        if vintage_year < min_year || vintage_year > max_year {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+        Ok(())
+    }
 
     /// Returns `true` when the batch's vintage year is older than
     /// `MAX_VINTAGE_AGE_YEARS` (30) relative to the current ledger year.
     /// An age of exactly 30 is still valid; only `age > 30` is expired.
     fn is_batch_expired(env: &Env, batch: &CreditBatch) -> bool {
         let year = Self::current_year(env);
+        if batch.vintage_year < Self::min_vintage_year(env)
+            || batch.vintage_year > Self::max_vintage_year(env)
+        {
+            return true;
+        }
         year.saturating_sub(batch.vintage_year) > MAX_VINTAGE_AGE_YEARS
     }
+
+    // ============================================
+    // Mint Credits
+    // ============================================
 
     pub fn mint_credits(
         env: Env,
@@ -273,6 +588,7 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         if project_id.is_empty() || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
@@ -283,7 +599,6 @@ impl CarbonCreditContract {
         if metadata_cid.is_empty() || metadata_cid.len() > 128 {
             return Err(CarbonError::ProjectNotFound);
         }
-
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
@@ -294,32 +609,25 @@ impl CarbonCreditContract {
             return Err(CarbonError::InvalidSerialRange);
         }
 
-        let current_year = Self::current_year(&env);
-        if vintage_year < 1990 || vintage_year > current_year + 1 {
-            return Err(CarbonError::InvalidVintageYear);
-        }
-
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Batch(batch_id.clone()))
-        {
+        Self::validate_vintage_year(&env, vintage_year)?;
+        if env.storage().persistent().has(&DataKey::Batch(batch_id.clone())) {
             return Err(CarbonError::SerialNumberConflict);
         }
 
+        let batch_count_key = DataKey::ProjectBatchCount(project_id.clone());
+        let batch_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&batch_count_key)
+            .unwrap_or(0u32);
+        if batch_count >= MAX_BATCHES_PER_PROJECT {
+            return Err(CarbonError::StorageLimitExceeded);
+        }
         if !Self::verify_serial_range_internal(&env, serial_start, serial_end) {
             return Err(CarbonError::DoubleCountingDetected);
         }
 
-        let mut registry: Map<u64, u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| Map::new(&env));
-        registry.set(serial_start, serial_end);
-        env.storage()
-            .persistent()
-            .set(&DataKey::SerialRegistry, &registry);
+        serial_index::insert(&env, serial_start, serial_end);
 
         let batch = CreditBatch {
             batch_id: batch_id.clone(),
@@ -348,22 +656,55 @@ impl CarbonCreditContract {
             &DataKey::ProjectBatches(project_id.clone()),
             &project_batches,
         );
+        env.storage()
+            .persistent()
+            .set(&batch_count_key, &(batch_count + 1));
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("minted")),
             CreditMintedEvent {
                 batch_id: batch_id.clone(),
                 project_id: project_id.clone(),
-                admin: admin.clone(),
                 amount,
-                vintage_year,
-                serial_start,
-                serial_end,
+                retired_by: admin.clone(),
+                beneficiary: String::from_str(&env, ""),
                 timestamp: env.ledger().timestamp(),
+                retirement_id: String::from_str(&env, ""),
             },
         );
         Ok(())
     }
+
+    // ============================================
+    // Get Project from Registry
+    // ============================================
+
+    fn get_project_from_registry(
+        env: &Env,
+        registry_address: &Address,
+        project_id: &String,
+    ) -> Result<ProjectInfo, CarbonError> {
+        // Cross-contract call to registry
+        // This is a placeholder - actual implementation depends on registry contract
+        // In production, you would call:
+        // let result = env.invoke_contract(
+        //     registry_address,
+        //     &Symbol::new(env, "get_project"),
+        //     vec![env, project_id.clone().into_val(env)],
+        // );
+        // let project: ProjectInfo = result.unwrap();
+        
+        // For now, return a default project with score 100
+        Ok(ProjectInfo {
+            id: 1,
+            name: String::from_str(env, "Default Project"),
+            methodology_score: 100,
+        })
+    }
+
+    // ============================================
+    // Retirement and Transfer Functions
+    // ============================================
 
     pub fn retire_credits(
         env: Env,
@@ -377,9 +718,18 @@ impl CarbonCreditContract {
         cert_cid: String,
     ) -> Result<RetirementCertificate, CarbonError> {
         holder.require_auth();
+        Self::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Retirement(retire_id.clone()))
+        {
+            return Err(CarbonError::SerialNumberConflict);
         }
 
         let mut batch = Self::load_batch(&env, &batch_id)?;
@@ -390,7 +740,6 @@ impl CarbonCreditContract {
         if batch.status == CreditStatus::Suspended {
             return Err(CarbonError::ProjectSuspended);
         }
-
         // Enforce vintage expiry: credits older than MAX_VINTAGE_AGE_YEARS cannot be retired.
         if Self::is_batch_expired(&env, &batch) {
             return Err(CarbonError::InvalidVintageYear);
@@ -405,7 +754,7 @@ impl CarbonCreditContract {
             .storage()
             .persistent()
             .get(&RetiredKey::BatchRetired(batch_id.clone()))
-            .unwrap_or(0i128);
+            .unwrap_or(0_i128);
 
         let already_retired_u64 =
             u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
@@ -446,6 +795,7 @@ impl CarbonCreditContract {
             .set(&DataKey::Batch(batch_id.clone()), &batch);
         Self::extend_batch_ttl(&env, &batch_id);
 
+        let now = env.ledger().timestamp();
         let cert = RetirementCertificate {
             retirement_id: retire_id.clone(),
             credit_batch_id: batch_id.clone(),
@@ -456,7 +806,7 @@ impl CarbonCreditContract {
             retirement_reason: reason.clone(),
             vintage_year: batch.vintage_year,
             serial_numbers: serial_numbers.clone(),
-            retired_at: env.ledger().timestamp(),
+            retired_at: now,
             tx_hash: tx_hash.clone(),
             certificate_cid: cert_cid.clone(),
         };
@@ -473,7 +823,8 @@ impl CarbonCreditContract {
                 amount,
                 retired_by: holder.clone(),
                 beneficiary: beneficiary.clone(),
-                timestamp: env.ledger().timestamp(),
+                timestamp: now,
+                certificate_cid: cert_cid.clone(),
             },
         );
         Ok(cert)
@@ -487,6 +838,7 @@ impl CarbonCreditContract {
         amount: i128,
     ) -> Result<(), CarbonError> {
         from.require_auth();
+        Self::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
@@ -569,6 +921,7 @@ impl CarbonCreditContract {
     pub fn undo_retire(env: Env, admin: Address, retire_id: String) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
         if env
             .storage()
             .persistent()
@@ -598,6 +951,10 @@ impl CarbonCreditContract {
         }
         result
     }
+
+    // ============================================
+    // Helper Functions
+    // ============================================
 
     fn extend_batch_ttl(env: &Env, batch_id: &String) {
         let key = DataKey::Batch(batch_id.clone());
@@ -645,61 +1002,80 @@ impl CarbonCreditContract {
         batch.amount.checked_sub(retired).unwrap_or(0)
     }
 
+    fn require_not_paused(env: &Env) -> Result<(), CarbonError> {
+        let paused: bool = env.storage().persistent().get(&DataKey::PauseEnabled).unwrap_or(false);
+        let until: u64 = env.storage().persistent().get(&DataKey::PauseUntil).unwrap_or(0);
+        let now = env.ledger().timestamp();
+        if paused && until > now {
+            return Err(CarbonError::EmergencyPaused);
+        }
+        if paused && until <= now {
+            env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+            env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        }
+        Ok(())
+    }
+
     // Legacy XOR `verify_zk_proof_internal` stub was removed upstream.
     // Production Groth16 verification lives in `contracts/carbon_zk_verifier`
     // (Circom BLS12-381 / CAP-0059). See docs/zk-proof-spec.md.
 
+    /// Whether `[start, end]` is clear of every serial range already issued.
+    ///
+    /// Delegates to the skip-list index in [`serial_index`], which locates the
+    /// candidate's two neighbouring ranges in an expected `O(log N)` node reads
+    /// — see that module's docs for the structure and why two neighbours are
+    /// sufficient.
+    ///
+    /// Contracts upgraded from a pre-#887 version may still hold ranges in the
+    /// legacy flat `SerialRegistry` map. Those are consulted as well until an
+    /// admin has drained them with [`Self::migrate_serial_index`], so a legacy
+    /// range cannot be re-issued while the migration is only partly done.
     fn verify_serial_range_internal(env: &Env, start: u64, end: u64) -> bool {
-        let registry: Map<u64, u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::SerialRegistry)
-            .unwrap_or_else(|| Map::new(env));
+        serial_index::is_free(env, start, end) && serial_index::legacy_is_free(env, start, end)
+    }
 
-        if registry.is_empty() {
-            return true;
+    // ============================================
+    // Serial Index Administration (#887)
+    // ============================================
+
+    /// Move up to `limit` ranges from the legacy flat registry into the
+    /// skip-list index, returning how many were moved.
+    ///
+    /// Only needed on contracts upgraded from a pre-#887 version. Call
+    /// repeatedly until it returns `0`; each call is bounded by `limit` so the
+    /// work fits inside a transaction budget no matter how large the legacy
+    /// registry grew. Overlap checks stay correct throughout.
+    pub fn migrate_serial_index(
+        env: Env,
+        admin: Address,
+        limit: u32,
+    ) -> Result<u32, CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
+        if limit == 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
         }
+        Ok(serial_index::migrate(&env, limit))
+    }
 
-        // Map<start, end> is sorted by key (Soroban Map guarantees key ordering).
-        // Binary-search the sorted key list to find the predecessor and successor
-        // of [new_start, new_end] in O(log n).
-        let keys: Vec<u64> = registry.keys();
-        let len = keys.len() as usize;
+    /// Number of serial ranges held in the skip-list index.
+    pub fn serial_index_size(env: Env) -> u32 {
+        serial_index::len(&env)
+    }
 
-        // Upper-bound search: find count of keys strictly <= start.
-        let mut lo: usize = 0;
-        let mut hi: usize = len;
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if keys.get(mid as u32).unwrap() <= start {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-
-        // Check predecessor (largest existing start <= new_start):
-        // overlap if pred_end >= new_start.
-        if lo > 0 {
-            let pred_start = keys.get((lo - 1) as u32).unwrap();
-            let pred_end = registry.get(pred_start).unwrap();
-            if pred_end >= start {
-                return false;
-            }
-        }
-
-        // Check successor (smallest existing start > new_start):
-        // overlap if succ_start <= new_end.
-        if lo < len {
-            let succ_start = keys.get(lo as u32).unwrap();
-            if succ_start <= end {
-                return false;
-            }
-        }
-
-        true
+    /// Number of serial ranges still awaiting migration out of the legacy flat
+    /// registry. `0` means overlap checks are fully sub-linear.
+    pub fn serial_index_pending_migration(env: Env) -> u32 {
+        serial_index::legacy_pending(&env)
     }
 }
+
+// ── Sub-linear serial-range index (Issue #887) ───────────────────────────────
+// Skip-list over serial_start, one ledger entry per node, replacing the flat
+// Map<u64, u64> whose read/write cost grew with the number of minted batches.
+pub mod serial_index;
 
 // ── Invariant tests ───────────────────────────────────────────────────────────
 #[cfg(test)]
@@ -732,6 +1108,8 @@ mod tests {
         testutils::{Address as _, Ledger as _},
         Env, String,
     };
+    extern crate std;
+    use std::format;
 
     fn s(env: &Env, v: &str) -> String {
         String::from_str(env, v)
@@ -933,6 +1311,47 @@ mod tests {
             result.unwrap_err().unwrap(),
             CarbonError::InvalidSerialRange
         );
+    }
+
+    #[test]
+    fn test_minting_past_project_batch_cap_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        // Minting MAX_BATCHES_PER_PROJECT (10,000) batches in one Env would
+        // exceed the default metered CPU budget long before reaching the cap
+        // this test is actually exercising; disable metering for this test.
+        env.budget().reset_unlimited();
+
+        for index in 0..MAX_BATCHES_PER_PROJECT {
+            let batch_id = format!("batch-{index}");
+            let serial_start = (index as u64) * 1000 + 1;
+            let serial_end = serial_start + 99;
+            client.mint_credits(
+                &admin,
+                &s(&env, "proj-001"),
+                &100_i128,
+                &2023_u32,
+                &String::from_str(&env, &batch_id),
+                &serial_start,
+                &serial_end,
+                &s(&env, "cid"),
+                &owner,
+            );
+        }
+
+        let result = client.try_mint_credits(
+            &admin,
+            &s(&env, "proj-001"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "batch-over-cap"),
+            &(MAX_BATCHES_PER_PROJECT as u64 * 1000 + 1),
+            &(MAX_BATCHES_PER_PROJECT as u64 * 1000 + 100),
+            &s(&env, "cid"),
+            &owner,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::StorageLimitExceeded);
     }
 
     #[test]
@@ -1214,7 +1633,7 @@ mod tests {
 
         let attacker = Address::generate(&env);
         let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-        let result = client.try_upgrade(&attacker, &fake_hash);
+        let result = client.try_upgrade_contract(&attacker, &fake_hash);
         assert!(result.is_err());
     }
 
@@ -1638,7 +2057,6 @@ mod tests {
         // [201, 300] is strictly adjacent with no shared serial — not an overlap.
         assert!(client.verify_serial_range(&201_u64, &300_u64));
     }
-}
 
     // ── Vintage Expiry Tests (#649) ───────────────────────────────────────────
     // seconds_per_year = 31_557_600
@@ -1777,7 +2195,7 @@ mod tests {
         let view = client.get_credit_batch_view(&s(&env, "b-view-ok"));
         assert!(!view.is_expired);
     }
-
+}
 
 // ── PR #655 — Property-based fuzz tests: 4 core invariants ────────────────────
 //
@@ -1889,7 +2307,8 @@ mod proptest_invariant_tests {
             prop_assert_eq!(
                 r2.unwrap_err().unwrap(),
                 CarbonError::DoubleCountingDetected,
-                "P2 violated: overlapping range [{start2},{end2}] over [{start1},{end1}] was not rejected"
+                "P2 violated: overlapping range [{},{}] over [{},{}] was not rejected",
+                start2, end2, start1, end1
             );
         }
 
@@ -2153,6 +2572,97 @@ mod serial_registry_proptest_tests {
             // Exact same range must be rejected
             prop_assert!(!client.verify_serial_range(&base, &range_end),
                 "SR4: exact same range must be rejected");
+        }
+    }
+}
+
+// ── Issue #650 — CPU instruction benchmark ─────────────────────────────────────
+//
+// Measures the Soroban CPU-instruction cost of `mint_credits` (which performs
+// the serial-range overlap check on every call) as the registry grows, using
+// the SDK's test budget meter. Run with:
+//
+//   cargo test -p carbon_credit --lib bench_serial_registry_growth -- --nocapture
+//
+// Before #887 the registry lived in a single `Map<u64, u64>` ledger entry, so
+// even with a binary search over its keys every mint paid to deserialise and
+// rewrite the whole entry — cost grew with the registry. The skip-list index in
+// `serial_index` gives each range its own small entry, so a mint now touches an
+// expected O(log N) of them.
+//
+// Note that the metered figures this prints overstate write cost as the
+// registry grows: the test host charges a storage write in proportion to its
+// entire in-memory storage map, which on-chain holds only the transaction
+// footprint. `serial_index`'s own tests assert on ledger-entry counts instead,
+// which are exact — see `serial_index_tests::insert_cost_stays_bounded_past_a_thousand_ranges`.
+#[cfg(test)]
+mod serial_benchmark {
+    use super::*;
+    extern crate std;
+    use std::{format, println};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+
+    fn setup(env: &Env) -> (CarbonCreditContractClient, Address) {
+        env.mock_all_auths();
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            timestamp: 1_735_689_600,
+            protocol_version: 20,
+            sequence_number: 1,
+            network_id: [0u8; 32],
+            base_reserve: 10,
+            min_temp_entry_ttl: 1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl: 518_400,
+        });
+        let admin = Address::generate(env);
+        let registry = Address::generate(env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(env, &id);
+        client.initialize(&admin, &registry);
+        (client, admin)
+    }
+
+    #[test]
+    fn bench_serial_registry_growth() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+
+        let checkpoints: [u64; 4] = [10, 50, 100, 250];
+        let mut cursor: u64 = 1;
+        let mut checkpoint_idx = 0usize;
+
+        for i in 0..*checkpoints.last().unwrap() {
+            let start = cursor;
+            let end = start + 5;
+            cursor = end + 2;
+
+            let is_checkpoint =
+                checkpoint_idx < checkpoints.len() && i + 1 == checkpoints[checkpoint_idx];
+            // Reset before every mint so each call is measured in isolation —
+            // the budget otherwise accumulates cost across the whole Env and
+            // would eventually hit the default CPU limit.
+            env.budget().reset_default();
+
+            client.mint_credits(
+                &admin,
+                &String::from_str(&env, "p"),
+                &6_i128,
+                &2023_u32,
+                &String::from_str(&env, &format!("b{i}")),
+                &start,
+                &end,
+                &String::from_str(&env, "QmCID"),
+                &Address::generate(&env),
+            );
+
+            if is_checkpoint {
+                println!(
+                    "[bench] mint_credits at registry size {:>4}: {} CPU instructions",
+                    i + 1,
+                    env.budget().cpu_instruction_cost()
+                );
+                checkpoint_idx += 1;
+            }
         }
     }
 }

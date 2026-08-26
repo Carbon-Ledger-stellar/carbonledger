@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, Request, Header } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, Request, Header, UseGuards } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, CreateProjectDto } from './projects.dto';
 import { IsString } from 'class-validator';
 import { Public, Roles } from '../auth/decorators';
+import { CheckPolicies, PoliciesGuard, ProjectSubject } from '../policies';
 
 class VerifyDto { @IsString() verifierPublicKey: string; }
 class RejectDto { @IsString() verifierPublicKey: string; @IsString() reason: string; }
@@ -12,8 +13,7 @@ export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
   // ── Authenticated, role-scoped read endpoints ────────────────────────────
-  // @Public() removed from all three below — RolesGuard now requires a valid
-  // JWT. No @Roles(...) means "any authenticated role is admitted"; scoping
+  // No @Roles(...) means "any authenticated role is admitted"; scoping
   // by role happens inside ProjectsService, not by gating roles out here.
 
   @Get()
@@ -24,6 +24,7 @@ export class ProjectsController {
     @Query('vintage')     vintage?: string,
     @Query('cursor')      cursor?: string,
     @Query('limit')       limit?: string,
+    @Query('offset')      offset?: string,
   ) {
     const safeMethodology = typeof methodology === 'string' ? methodology : undefined;
     const safeCountry     = typeof country     === 'string' ? country     : undefined;
@@ -33,7 +34,8 @@ export class ProjectsController {
         country:     safeCountry,
         vintage: vintage ? Number(vintage) : undefined,
         cursor,
-        limit: limit ? Number(limit) : 20,
+        limit: limit !== undefined ? Number(limit) : 20,
+        offset: offset !== undefined ? Number(offset) : 0,
       },
       req.user,
     );
@@ -46,8 +48,6 @@ export class ProjectsController {
 
   @Get(':id')
   @Header('Cache-Control', 'private, max-age=60')
-  // Note: was "public, max-age=60" — this endpoint now returns caller-specific
-  // data (a project_developer's own draft), so a shared/public cache is wrong.
   findOne(@Param('id') id: string, @Request() req: any) {
     return this.projectsService.findOne(id, req.user);
   }
@@ -56,18 +56,24 @@ export class ProjectsController {
 
   @Post()
   @Roles('project_developer', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('create', ProjectSubject))
   create(@Body() dto: CreateProjectDto, @Request() req: any) {
     return this.projectsService.createProject(dto, req.user?.publicKey);
   }
 
   @Post('register')
   @Roles('project_developer', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('create', ProjectSubject))
   register(@Body() dto: RegisterProjectDto) {
     return this.projectsService.register(dto);
   }
 
   @Patch(':id/status')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', ProjectSubject))
   updateStatus(@Param('id') id: string, @Body() dto: UpdateProjectStatusDto, @Request() req: any) {
     return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin');
   }
@@ -76,12 +82,16 @@ export class ProjectsController {
 
   @Post(':id/verify')
   @Roles('verifier', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('verify', ProjectSubject))
   verify(@Param('id') id: string, @Body() dto: VerifyDto) {
     return this.projectsService.verify(id, dto.verifierPublicKey);
   }
 
   @Post(':id/reject')
   @Roles('verifier', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('reject', ProjectSubject))
   reject(@Param('id') id: string, @Body() dto: RejectDto) {
     return this.projectsService.reject(id, dto.verifierPublicKey, dto.reason);
   }

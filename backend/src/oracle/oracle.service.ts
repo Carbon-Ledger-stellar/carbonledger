@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { enqueueWithTrace } from '../telemetry/tracing';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma.service';
 import { QUEUE_NAME, JobType } from '../queue/queue.constants';
@@ -121,16 +122,15 @@ export class OracleService {
     );
 
     // 3. Enqueue Soroban submission with exponential backoff
-    await this.queue.add(
-      JobType.ORACLE_SUBMISSION,
+    await enqueueWithTrace(QUEUE_NAME, JobType.ORACLE_SUBMISSION,
       { oracleUpdateId: oracleUpdate.id, type: 'monitoring', ...dto },
-      {
-        jobId:   `oracle-monitoring-${idempotencyKey}`, // deduplication key
+      (data) => this.queue.add(JobType.ORACLE_SUBMISSION, data, {
+        jobId: `oracle-monitoring-${idempotencyKey}`,
         attempts: 5,
-        backoff:  { type: 'exponential', delay: 5000 },
+        backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: false,
-        removeOnFail:     false,
-      },
+        removeOnFail: false,
+      }),
     );
 
     return monitoring;
@@ -160,16 +160,15 @@ export class OracleService {
       `price=${dto.priceUsdc} oracleUpdateId=${oracleUpdate.id} at=${new Date().toISOString()}`,
     );
 
-    await this.queue.add(
-      JobType.ORACLE_SUBMISSION,
+    await enqueueWithTrace(QUEUE_NAME, JobType.ORACLE_SUBMISSION,
       { oracleUpdateId: oracleUpdate.id, type: 'price', ...dto },
-      {
-        jobId:    `oracle-price-${idempotencyKey}`,
+      (data) => this.queue.add(JobType.ORACLE_SUBMISSION, data, {
+        jobId: `oracle-price-${idempotencyKey}`,
         attempts: 5,
-        backoff:  { type: 'exponential', delay: 5000 },
+        backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: false,
-        removeOnFail:     false,
-      },
+        removeOnFail: false,
+      }),
     );
 
     return { received: true, oracleUpdateId: oracleUpdate.id };

@@ -1,5 +1,6 @@
 export const QUEUE_NAME = 'carbonledger';
 export const WEBHOOK_QUEUE_NAME = 'carbonledger-webhooks';
+export const OUTBOUND_WEBHOOK_QUEUE = 'carbonledger-outbound-webhooks';
 
 export const JobType = {
   CERTIFICATE_GENERATION: 'certificate_generation',

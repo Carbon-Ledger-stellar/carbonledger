@@ -12,6 +12,7 @@ module.exports = {
   moduleNameMapper: {
     '^uuid$': '<rootDir>/../node_modules/uuid/dist-node/index.js',
   },
+  setupFiles: ['<rootDir>/jest.setup.ts'],
   collectCoverageFrom: [
     '**/*.(t|j)s',
     '!**/*.spec.ts',

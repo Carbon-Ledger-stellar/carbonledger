@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { colors, borderRadius, shadows, spacing, typography } from "../styles/design-system";
 import { formatTonnes } from "../lib/carbon-utils";
+import LoadingSkeleton from "./LoadingSkeleton";
 import {
   ORDER_BOOK_POLL_MS,
   AggregatedOrderBook,
@@ -299,6 +300,9 @@ export default function OrderBookChart({ title = "Live SDEX order book" }: Order
           </div>
         </div>
 
+        {loading && !orderBook && !error ? (
+          <LoadingSkeleton variant="PricingTable" />
+        ) : (
         <div className="sdex-widget-grid">
           <div>
             {error ? (
@@ -499,6 +503,7 @@ export default function OrderBookChart({ title = "Live SDEX order book" }: Order
             </div>
           </aside>
         </div>
+        )}
       </div>
     </section>
   );

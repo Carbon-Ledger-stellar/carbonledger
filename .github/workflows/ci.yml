@@ -19,7 +19,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo-audit advisory DB
@@ -94,7 +94,11 @@ jobs:
         working-directory: oracle
         run: |
           pip install pip-audit --quiet
-          pip-audit -r requirements.txt --severity critical --format markdown 2>&1 | tee /tmp/pip-audit.txt
+          # pip-audit has no --severity flag (the underlying advisory sources
+          # don't reliably carry severity ratings for it to filter on) —
+          # passing one made every invocation fail with an argparse error
+          # before pip-audit ever ran, regardless of actual findings.
+          pip-audit -r requirements.txt --format markdown 2>&1 | tee /tmp/pip-audit.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         continue-on-error: true
 
@@ -166,7 +170,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
           components: clippy, rustfmt
 
       - name: Cache Cargo
@@ -223,7 +227,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
           targets: wasm32-unknown-unknown
 
       # ── Rust: cargo audit ────────────────────────────────────────────────────
@@ -316,7 +320,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -414,6 +418,69 @@ jobs:
         run: |
           npx jest --testPathPatterns="src/security/(xss|sql-injection|injection|owasp-top10|auth-bypass|idor|privilege-escalation)\\.spec\\.ts" \
             --forceExit --runInBand
+
+  security-regression-tests:
+    name: Security Regression Tests (required gate)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carbonledger_regression
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: regressiontestpassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:regressiontestpassword@localhost:5432/carbonledger_regression
+        run: npx prisma generate
+
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:regressiontestpassword@localhost:5432/carbonledger_regression
+        run: npx prisma migrate deploy
+
+      - name: Run security regression tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:regressiontestpassword@localhost:5432/carbonledger_regression
+          JWT_SECRET: regression-test-secret
+          REDIS_HOST: localhost
+          REDIS_PORT: "6379"
+        run: |
+          npx jest \
+            --testPathPattern="(tests/security-regressions|../../tests/security-regressions)" \
+            --rootDir .. \
+            --testRegex "tests/security-regressions/.*\\.spec\\.ts$" \
+            --forceExit --runInBand --passWithNoTests
+        # NOTE: This job is a non-bypassable required check. Adding a security patch
+        # requires a corresponding regression test — see tests/security-regressions/README.md
 
   backend:
     name: NestJS Backend
@@ -541,9 +608,6 @@ jobs:
   visual-regression:
     name: Visual Regression Tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -566,6 +630,18 @@ jobs:
       - name: Run Hypothesis fuzz tests (#641)
         run: pytest tests/fuzz/oracle/test_hypothesis_*.py -v
 
+      - name: Run reconciliation integration tests
+        working-directory: oracle
+        run: pytest test_reconciliation.py -v
+
+      - name: Run failover tests
+        working-directory: oracle
+        run: pytest test_failover.py -v
+
+      - name: Run submission retry / DLQ tests (#578)
+        working-directory: oracle
+        run: pytest test_verification_retry.py -v
+
   fuzz:
     name: Property-Based Fuzz Tests
     runs-on: ubuntu-latest
@@ -576,7 +652,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
           targets: wasm32-unknown-unknown
 
       - name: Cache Cargo
@@ -633,6 +709,12 @@ jobs:
           --skip fuzz_purchase_valid_reduces_available
           --skip fuzz_purchase_full_amount_marks_sold
 
+      - name: Run proptest invariants (carbon_oracle)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_oracle 'proptest_price_tests::' -- --nocapture"
+
 
   rust-contracts-ci:
     name: Rust Contracts CI (test / clippy / fmt)
@@ -645,7 +727,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
 
@@ -816,7 +898,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.86.0
+          toolchain: 1.91.0
           targets: wasm32-unknown-unknown
 
       - name: Cache Cargo registry and build artifacts

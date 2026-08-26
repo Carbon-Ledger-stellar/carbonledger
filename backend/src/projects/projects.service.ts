@@ -1,7 +1,7 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
-import { RedisService } from "../redis.service"; // ⚠️ ASSUMED PATH — verify this matches your actual file
-import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants"; // ⚠️ ASSUMED — verify these exist here
+import { RedisService } from "../redis.service";
+import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import {
   RegisterProjectDto,
   UpdateProjectStatusDto,
@@ -14,9 +14,9 @@ import {
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
-import { RedisService } from "../redis.service";
-import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { randomUUID, randomBytes } from "crypto";
+import { sanitizeProjectPayload, sanitizeProjectForResponse } from "../common/sanitization.util";
+import { WebhookService } from "../webhook/webhook.service";
 
 /** Flat attestation fee, in stroops (1 XLM = 10,000,000 stroops). */
 const ATTESTATION_FEE_STROOPS = process.env.VERIFIER_ATTESTATION_FEE_STROOPS ?? "10000000";
@@ -53,17 +53,20 @@ export class ProjectsService {
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   // ── Authenticated, role-scoped reads ─────────────────────────────────────
 
   async findAll(
-    filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number },
+    filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number; offset?: number },
     caller: CallerContext,
   ) {
     const take = Math.min(Math.max(filters.limit ?? 20, 1), 100);
+    const offset = typeof filters.offset === 'number' && filters.offset >= 0 ? filters.offset : 0;
     const where: any = scopeWhereForCaller(
       {
+        deletedAt: null,
         ...(filters.methodology && { methodology: filters.methodology }),
         ...(filters.country && { country: filters.country }),
         ...(filters.vintage && { vintageYear: filters.vintage }),
@@ -71,39 +74,51 @@ export class ProjectsService {
       caller,
     );
 
-    const [projects, total_count] = await Promise.all([
+    const [projects, total] = await Promise.all([
       this.prisma.carbonProject.findMany({
         where,
         orderBy: { createdAt: "desc" },
         take: take + 1,
         cursor: filters.cursor ? { id: filters.cursor } : undefined,
-        skip: filters.cursor ? 1 : 0,
+        skip: filters.cursor ? 1 : offset,
       }),
       this.prisma.carbonProject.count({ where }),
     ]);
 
     const hasMore = projects.length > take;
-    const next_cursor = hasMore ? projects[projects.length - 2].id : undefined;
+    const nextCursor = hasMore ? projects[take - 1].id : undefined;
     if (hasMore) projects.pop();
 
-    return { projects, next_cursor, total_count };
+    const sanitized = projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      projects: sanitized,
+      total,
+      limit: take,
+      offset,
+      hasMore,
+      nextOffset: hasMore ? offset + take : null,
+      nextCursor,
+      next_cursor: nextCursor,
+      total_count: total,
+    };
   }
 
   async searchProjects(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
     const {
       search, methodology, country, status, vintageYear,
-      oracleFreshness, cursor, limit = 20, sortBy = 'createdAt', sortOrder = 'desc',
+      oracleFreshness, cursor, limit = 20, offset = 0, sortBy = 'createdAt', sortOrder = 'desc',
     } = searchDto;
 
-
-    const where: any = {};
-
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-      ];
+      return this.searchProjectsFullText(searchDto, caller);
     }
+
+    const take = Math.min(Math.max(limit, 1), 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
+
+    const where: any = { deletedAt: null };
 
     if (methodology && methodology.length > 0) {
       where.methodology = { in: methodology };
@@ -116,28 +131,6 @@ export class ProjectsService {
     if (status && status.length > 0) {
       where.status = { in: status };
     }
-
-
-    // When a free-text query is present, use the PostgreSQL tsvector GIN index
-    // for ranked full-text search (#670). Fall back to prisma-only filters
-    // otherwise so simple list calls stay on the ORM path.
-    if (search) {
-      return this.searchProjectsFullText(searchDto);
-    }
-
-    // Build where clause (no free-text)
-    const where: any = {};
-
-    if (methodology && methodology.length > 0) {
-      where.methodology = { in: methodology };
-    }
-    if (country && country.length > 0) {
-      where.country = { in: country };
-    }
-    if (status && status.length > 0) {
-      where.status = { in: status };
-    }
-
     if (vintageYear && vintageYear.length > 0) {
       where.vintageYear = { in: vintageYear };
     }
@@ -149,14 +142,7 @@ export class ProjectsService {
           where.lastMonitoringAt = { gte: thirtyDaysAgo };
           break;
         case OracleFreshness.STALE:
-
-          where.OR = [
-            { lastMonitoringAt: { lt: thirtyDaysAgo } },
-            { lastMonitoringAt: null },
-          ];
-
           where.OR = [{ lastMonitoringAt: { lt: thirtyDaysAgo } }, { lastMonitoringAt: null }];
-
           break;
         case OracleFreshness.UNKNOWN:
           where.lastMonitoringAt = null;
@@ -164,11 +150,7 @@ export class ProjectsService {
       }
     }
 
-
-    // Ownership scoping — added right before execution, after all filter
-    // building, so it always applies regardless of which branches above ran.
     scopeWhereForCaller(where, caller);
-
 
     const orderBy: any = {};
     orderBy[sortBy] = sortOrder;
@@ -177,13 +159,9 @@ export class ProjectsService {
       this.prisma.carbonProject.findMany({
         where,
         orderBy,
-
-        take: limit + 1,
-
-        take:   limit + 1,
-
+        take: take + 1,
         cursor: cursor ? { id: cursor } : undefined,
-        skip:   cursor ? 1 : 0,
+        skip: cursor ? 1 : safeOffset,
         select: {
           id: true, projectId: true, name: true, description: true,
           methodology: true, country: true, projectType: true, status: true,
@@ -196,17 +174,24 @@ export class ProjectsService {
       this.prisma.carbonProject.count({ where }),
     ]);
 
-
-    const hasMore = projects.length > limit;
-    const nextCursor = hasMore ? projects[projects.length - 2].id : undefined;
+    const hasMore = projects.length > take;
+    const nextCursor = hasMore ? projects[take - 1].id : undefined;
     if (hasMore) {
       projects.pop();
+    }
 
-    const hasMore   = projects.length > limit;
-    const nextCursor = hasMore ? projects[projects.length - 2].id : undefined;
-    if (hasMore) projects.pop();
+    const sanitized = projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
 
-    return { projects, nextCursor, hasMore, total };
+    return {
+      data: sanitized,
+      projects: sanitized,
+      total,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      nextCursor,
+    };
   }
 
   /**
@@ -216,83 +201,75 @@ export class ProjectsService {
    * relevance ordering, then applies structured filters in a sub-select.
    * Falls back gracefully if the searchVector column is not yet present
    * (e.g., running against a pre-migration DB in tests).
+   *
+   * The `caller` is used to add an ownership filter for project_developer
+   * role so the scoping applied by the ORM path is consistent here.
    */
-  private async searchProjectsFullText(searchDto: SearchProjectsDto): Promise<PaginatedProjectsResponse> {
-    const { search, methodology, country, status, vintageYear, limit = 20, cursor } = searchDto;
+  private async searchProjectsFullText(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
+    const { search, methodology, country, status, vintageYear, limit = 20, offset = 0, cursor } = searchDto;
+    const take = Math.min(Math.max(limit, 1), 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
 
-    // Build parameterised clause fragments. Prisma raw accepts $1, $2 … style.
-    // We compose in JS and pass a flat args array.
-    const conditions: string[] = ['"searchVector" @@ plainto_tsquery(\'english\', $1)'];
-    const args: unknown[]      = [search];
-    let   idx = 2;
-
-    if (methodology && methodology.length > 0) {
-      conditions.push(`"methodology" = ANY($${idx}::text[])`);
-      args.push(methodology);
-      idx++;
-
-    }
-    if (country && country.length > 0) {
-      conditions.push(`"country" = ANY($${idx}::text[])`);
-      args.push(country);
-      idx++;
-    }
-    if (status && status.length > 0) {
-      conditions.push(`"status" = ANY($${idx}::text[])`);
-      args.push(status);
-      idx++;
-    }
-    if (vintageYear && vintageYear.length > 0) {
-      conditions.push(`"vintageYear" = ANY($${idx}::int[])`);
-      args.push(vintageYear);
-      idx++;
-    }
-    if (cursor) {
-      conditions.push(`"id" < $${idx}`);
-      args.push(cursor);
-      idx++;
-    }
-
-    const where = conditions.join(' AND ');
-    const take  = limit + 1;
-
-    type ProjectRow = {
-      id: string; projectId: string; name: string; description: string | null;
-      methodology: string; country: string; projectType: string; status: string;
-      vintageYear: number; totalCreditsIssued: string; totalCreditsRetired: string;
-      metadataCid: string; verifierAddress: string; ownerAddress: string;
-      methodologyScore: number; coordinates: unknown; lastMonitoringAt: Date | null;
-      createdAt: Date; updatedAt: Date;
+    const where: any = {
+      deletedAt: null,
+      OR: [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ],
     };
 
-    const [rows, countRows] = await Promise.all([
-      this.prisma.$queryRawUnsafe<ProjectRow[]>(
-        `SELECT id, "projectId", name, description, methodology, country,
-                "projectType", status, "vintageYear", "totalCreditsIssued",
-                "totalCreditsRetired", "metadataCid", "verifierAddress",
-                "ownerAddress", "methodologyScore", coordinates,
-                "lastMonitoringAt", "createdAt", "updatedAt"
-         FROM "CarbonProject"
-         WHERE ${where}
-         ORDER BY ts_rank("searchVector", plainto_tsquery('english', $1)) DESC
-         LIMIT ${take}`,
-        ...args,
-      ),
-      this.prisma.$queryRawUnsafe<[{ count: bigint }]>(
-        `SELECT COUNT(*)::bigint AS count FROM "CarbonProject" WHERE ${where}`,
-        ...args,
-      ),
+    if (methodology && methodology.length > 0) {
+      where.methodology = { in: methodology };
+    }
+    if (country && country.length > 0) {
+      where.country = { in: country };
+    }
+    if (status && status.length > 0) {
+      where.status = { in: status };
+    }
+    if (vintageYear && vintageYear.length > 0) {
+      where.vintageYear = { in: vintageYear };
+    }
+
+    scopeWhereForCaller(where, caller);
+
+    if (cursor) {
+      where.id = { lt: cursor };
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.carbonProject.findMany({
+        where,
+        take: take + 1,
+        skip: cursor ? 0 : safeOffset,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true, projectId: true, name: true, description: true,
+          methodology: true, country: true, projectType: true, status: true,
+          vintageYear: true, totalCreditsIssued: true, totalCreditsRetired: true,
+          metadataCid: true, verifierAddress: true, ownerAddress: true,
+          methodologyScore: true, coordinates: true, lastMonitoringAt: true,
+          createdAt: true, updatedAt: true,
+        },
+      }),
+      this.prisma.carbonProject.count({ where }),
     ]);
 
-    const hasMore    = rows.length > limit;
-    const nextCursor = hasMore ? rows[rows.length - 2].id : undefined;
+    const hasMore = rows.length > take;
+    const nextCursor = hasMore ? rows[take - 1].id : undefined;
     if (hasMore) rows.pop();
 
+    const sanitized = rows.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
     return {
-      projects:   rows,
-      nextCursor,
+      data: sanitized,
+      projects: sanitized,
+      total,
+      limit: take,
+      offset: safeOffset,
       hasMore,
-      total: Number(countRows[0]?.count ?? 0),
+      nextOffset: hasMore ? safeOffset + take : null,
+      nextCursor,
     };
   }
 
@@ -312,6 +289,7 @@ export class ProjectsService {
     const take = Math.min(Math.max(filters.limit ?? 20, 1), 100);
     const where: any = {
       status: 'Verified',
+      deletedAt: null,
       ...(filters.methodology && { methodology: filters.methodology }),
       ...(filters.country && { country: filters.country }),
       ...(filters.vintage && { vintageYear: filters.vintage }),
@@ -365,7 +343,7 @@ export class ProjectsService {
       throw new NotFoundException(`Project ${projectId} not found`);
     }
 
-    return project;
+    return sanitizeProjectForResponse(project as Record<string, unknown>);
   }
 
   /**
@@ -384,50 +362,43 @@ export class ProjectsService {
 
     this.logger.log(`Project detail cache miss: ${cacheKey}`);
 
-    const project = await this.prisma.carbonProject.findUnique({ where: { projectId } });
+    const project = await this.prisma.carbonProject.findFirst({ where: { projectId, deletedAt: null } });
     if (!project) throw new NotFoundException(`Project ${projectId} not found`);
 
-    await this.redisService.set(cacheKey, project, PROJECT_DETAIL_CACHE_TTL_SECONDS);
-    return project;
+    const sanitizedProject = sanitizeProjectForResponse(project as Record<string, unknown>);
+    await this.redisService.set(cacheKey, sanitizedProject, PROJECT_DETAIL_CACHE_TTL_SECONDS);
+    return sanitizedProject;
   }
 
 
   // ── Mutations (unchanged from before, aside from calling getProjectOrThrow) ─
 
-  private async invalidateProjectCache(projectId: string): Promise<void> {
-    await this.redisService.del(projectDetailCacheKey(projectId));
-  }
-
-
   async register(dto: RegisterProjectDto) {
-    const existing = await this.prisma.carbonProject.findUnique({ where: { projectId: dto.projectId } });
-    if (existing) throw new ConflictException(`Project ${dto.projectId} already exists`);
-    if (dto.methodologyScore < 70) {
-      throw new ConflictException(`Project registration rejected: methodology score ${dto.methodologyScore} is below minimum 70/100`);
+    const sanitizedDto = sanitizeProjectPayload(dto as unknown as Record<string, unknown>) as unknown as RegisterProjectDto;
+    const existing = await this.prisma.carbonProject.findFirst({ where: { projectId: sanitizedDto.projectId, deletedAt: null } });
+    if (existing) throw new ConflictException(`Project ${sanitizedDto.projectId} already exists`);
+    if (sanitizedDto.methodologyScore < 70) {
+      throw new ConflictException(`Project registration rejected: methodology score ${sanitizedDto.methodologyScore} is below minimum 70/100`);
     }
-    return this.prisma.carbonProject.create({ data: dto });
+    return this.prisma.carbonProject.create({ data: sanitizedDto as any });
   }
 
   async createProject(dto: CreateProjectDto, ownerAddress?: string) {
-
-    const projectId = uuidv4();
-
+    const sanitizedDto = sanitizeProjectPayload(dto as unknown as Record<string, unknown>) as unknown as CreateProjectDto;
     const projectId = randomUUID();
-    // Upload documents to IPFS: store CIDs as metadataCid (first doc) and coordinates as JSON
-
-    const metadataCid = dto.documents[0] ?? '';
+    const metadataCid = sanitizedDto.documents?.[0] ?? '';
     const data = {
       projectId,
-      name: dto.name,
-      methodology: dto.methodology,
-      description: dto.description,
-      coordinates: dto.coordinates as any,
-      country: dto.country ?? '',
-      projectType: dto.projectType ?? 'carbon_offset',
-      ownerAddress: ownerAddress ?? dto.ownerAddress ?? '',
-      verifierAddress: dto.verifierAddress ?? '',
-      vintageYear: dto.vintageYear ?? new Date().getFullYear(),
-      methodologyScore: dto.methodologyScore ?? 70,
+      name: sanitizedDto.name,
+      methodology: sanitizedDto.methodology,
+      description: sanitizedDto.description,
+      coordinates: sanitizedDto.coordinates as any,
+      country: sanitizedDto.country ?? '',
+      projectType: sanitizedDto.projectType ?? 'carbon_offset',
+      ownerAddress: ownerAddress ?? sanitizedDto.ownerAddress ?? '',
+      verifierAddress: sanitizedDto.verifierAddress ?? '',
+      vintageYear: sanitizedDto.vintageYear ?? new Date().getFullYear(),
+      methodologyScore: sanitizedDto.methodologyScore ?? 70,
       metadataCid,
       status: 'Pending',
     };
@@ -499,7 +470,7 @@ export class ProjectsService {
       data: { status: 'Verified' },
     });
 
-    const owner = await this.prisma.user.findUnique({ where: { publicKey: updated.ownerAddress } });
+    const owner = await this.prisma.user.findFirst({ where: { publicKey: updated.ownerAddress, deletedAt: null } });
     if (owner && owner.email && owner.isSubscribed) {
       await this.mailService.sendEmail(owner.email, MailEvent.PROJECT_APPROVED, {
         projectName: updated.name,
@@ -511,6 +482,26 @@ export class ProjectsService {
 
     const txHash = await this.recordAttestationFee(projectId, verifierPublicKey, 'Verified');
     await this.invalidateProjectCache(projectId);
+
+    // Dispatch webhook: project.verified
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('project.verified', {
+          projectId: updated.projectId,
+          projectName: updated.name,
+          methodology: updated.methodology,
+          country: updated.country,
+          vintageYear: updated.vintageYear,
+          ownerAddress: updated.ownerAddress,
+          verifierAddress: verifierPublicKey,
+          txHash,
+          verifiedAt: new Date().toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
+    }
+
     return { ...updated, txHash };
   }
 
@@ -533,9 +524,41 @@ export class ProjectsService {
     return { ...updated, txHash };
   }
 
-  // ⚠️ ASSUMED implementation — you had a working invalidateProjectCache
-  // that wasn't in the snippet you pasted. If yours does more (e.g. also
-  // invalidating a list cache), keep yours and discard this stub.
+  async softDeleteProject(projectId: string, reason: string, caller?: CallerContext) {
+    const project = await this.prisma.carbonProject.findFirst({ where: { projectId, deletedAt: null } });
+    if (!project) throw new NotFoundException(`Project ${projectId} not found`);
+
+    if (caller?.role === 'project_developer' && project.ownerAddress !== caller.publicKey) {
+      throw new NotFoundException(`Project ${projectId} not found`);
+    }
+
+    const retentionDays = this.getRetentionDays();
+    const retentionUntil = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+    const anonymousName = `Deleted Project ${project.projectId}`;
+
+    const updated = await this.prisma.carbonProject.update({
+      where: { id: project.id },
+      data: {
+        deletedAt: new Date(),
+        deletionReason: reason,
+        retentionUntil,
+        name: anonymousName,
+        description: null,
+        metadataCid: '',
+        verifierAddress: '',
+        ownerAddress: '',
+      },
+    });
+
+    await this.invalidateProjectCache(projectId);
+    return updated;
+  }
+
+  private getRetentionDays(): number {
+    const raw = Number(process.env.DATA_RETENTION_DAYS ?? process.env.RETENTION_DAYS ?? '90');
+    return Number.isFinite(raw) && raw > 0 ? raw : 90;
+  }
+
   private async invalidateProjectCache(projectId: string): Promise<void> {
     const cacheKey = projectDetailCacheKey(projectId);
     await this.redisService.del(cacheKey);

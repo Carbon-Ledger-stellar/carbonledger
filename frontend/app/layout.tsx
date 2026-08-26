@@ -4,6 +4,7 @@ import { ThemeProvider } from '../lib/theme-context';
 import Navbar from '../components/Navbar';
 import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
 import AppProviders from '../components/AppProviders';
+import RealtimeNotificationProvider from '../components/RealtimeNotificationProvider';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,18 +28,24 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes" />
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#7C3AED" />
+        <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
+        <link rel="icon" href="/icons/icon-192.svg" type="image/svg+xml" />
       </head>
        <body>
          <a href="#main-content" className="skip-link">Skip to main content</a>
          <ServiceWorkerRegistration />
          <ThemeProvider>
-           <AppProviders>
-             <Navbar />
-             <main id="main-content">
-               {children}
-             </main>
-           </AppProviders>
-         </ThemeProvider>
+                   <AppProviders>
+                     <RealtimeNotificationProvider>
+                       <Navbar />
+                       <main id="main-content">
+                         {children}
+                       </main>
+                     </RealtimeNotificationProvider>
+                   </AppProviders>
+                 </ThemeProvider>
        </body>
     </html>
   );

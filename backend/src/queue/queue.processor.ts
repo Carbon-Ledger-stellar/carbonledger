@@ -4,7 +4,9 @@ import { Job } from 'bullmq';
 import { QUEUE_NAME, JobType } from './queue.constants';
 import { PrismaService } from '../prisma.service';
 import { CertificateService } from '../retirements/certificate.service';
+import { CertificateProcessor } from '../certificates/certificate.processor';
 import { RetirementsService } from '../retirements/retirements.service';
+import { processWithTrace } from '../telemetry/tracing';
 
 @Processor(QUEUE_NAME)
 export class QueueProcessor extends WorkerHost {
@@ -13,6 +15,7 @@ export class QueueProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly certificateService: CertificateService,
+    private readonly certificateProcessor: CertificateProcessor,
     @Inject(forwardRef(() => RetirementsService))
     private readonly retirementsService: RetirementsService,
   ) {
@@ -20,30 +23,31 @@ export class QueueProcessor extends WorkerHost {
   }
 
   async process(job: Job): Promise<unknown> {
-    this.logger.log(`Processing job ${job.id} type=${job.name} attempt=${job.attemptsMade + 1}`);
-
-    switch (job.name as JobType) {
-      case JobType.CERTIFICATE_GENERATION:
-        return this.handleCertificateGeneration(job.data);
-      case JobType.IPFS_PINNING:
-        return this.handleIpfsPinning(job.data);
-      case JobType.ORACLE_SUBMISSION:
-        return this.handleOracleSubmission(job.data);
-      case JobType.EMAIL_NOTIFICATION:
-        return this.handleEmailNotification(job.data);
-      case JobType.BULK_RETIREMENT:
-        return this.handleBulkRetirement(job.data);
-      default:
-        throw new Error(`Unknown job type: ${job.name}`);
-    }
+    return processWithTrace(QUEUE_NAME, job.name, job.data as Record<string, unknown>, async () => {
+      this.logger.log(`Processing job ${job.id} type=${job.name} attempt=${job.attemptsMade + 1}`);
+      switch (job.name as JobType) {
+        case JobType.CERTIFICATE_GENERATION:
+          return this.handleCertificateGeneration(job.data);
+        case JobType.IPFS_PINNING:
+          return this.handleIpfsPinning(job.data);
+        case JobType.ORACLE_SUBMISSION:
+          return this.handleOracleSubmission(job.data);
+        case JobType.EMAIL_NOTIFICATION:
+          return this.handleEmailNotification(job.data);
+        case JobType.BULK_RETIREMENT:
+          return this.handleBulkRetirement(job.data);
+        default:
+          throw new Error(`Unknown job type: ${job.name}`);
+      }
+    });
   }
 
   private async handleCertificateGeneration(data: Record<string, unknown>) {
     const retirementId = data['retirementId'] as string;
     this.logger.log(`Generating certificate for retirement ${retirementId}`);
     try {
-      const result = await this.certificateService.generateAndPinCertificate(retirementId);
-      return { retirementId, cid: result.cid, status: 'generated_and_pinned' };
+      await this.certificateProcessor.processCertificateGeneration(retirementId);
+      return { retirementId, status: 'generated_and_pinned' };
     } catch (err: any) {
       this.logger.error(`Failed to generate certificate for ${retirementId}: ${err.message}`);
       throw err;

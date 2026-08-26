@@ -235,6 +235,38 @@ services:
       start_period: 10s
     logging: *default-logging
 
+  oracle_verification_standby:
+    build:
+      context: ./oracle
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    <<: *resources-oracle
+    environment:
+      ORACLE_SECRET_KEY:           ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID:   ${CARBON_ORACLE_CONTRACT_ID}
+      CARBON_REGISTRY_CONTRACT_ID: ${CARBON_REGISTRY_CONTRACT_ID}
+      STELLAR_RPC_URL:             ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      DATABASE_URL:                postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@postgres:5432/carbonledger
+      ADMIN_ALERT_WEBHOOK:         ${ADMIN_ALERT_WEBHOOK}
+      GOLD_STANDARD_API_URL:       ${GOLD_STANDARD_API_URL}
+      GOLD_STANDARD_API_KEY:       ${GOLD_STANDARD_API_KEY}
+      VERRA_VCS_API_URL:           ${VERRA_VCS_API_URL}
+      VERRA_VCS_API_KEY:           ${VERRA_VCS_API_KEY}
+      LOG_LEVEL:                   ${LOG_LEVEL:-INFO}
+      ORACLE_STANDBY_MODE:         "true"
+      FAILOVER_SERVICE_NAME:       verification_listener
+    command: python3 verification_listener.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep verification_listener.py | grep -v grep || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
   oracle_price:
     build:
       context: ./oracle
@@ -249,6 +281,31 @@ services:
       TOUCAN_API_KEY:            ${TOUCAN_API_KEY}
       ADMIN_ALERT_WEBHOOK:       ${ADMIN_ALERT_WEBHOOK}
       LOG_LEVEL:                 ${LOG_LEVEL:-INFO}
+    command: python3 price_oracle.py
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep price_oracle.py | grep -v grep || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  oracle_price_standby:
+    build:
+      context: ./oracle
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    <<: *resources-oracle
+    environment:
+      ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID: ${CARBON_ORACLE_CONTRACT_ID}
+      STELLAR_RPC_URL:           ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      XPANSIV_API_KEY:           ${XPANSIV_API_KEY}
+      TOUCAN_API_KEY:            ${TOUCAN_API_KEY}
+      ADMIN_ALERT_WEBHOOK:       ${ADMIN_ALERT_WEBHOOK}
+      LOG_LEVEL:                 ${LOG_LEVEL:-INFO}
+      ORACLE_STANDBY_MODE:       "true"
+      FAILOVER_SERVICE_NAME:     price_oracle
     command: python3 price_oracle.py
     healthcheck:
       test: ["CMD-SHELL", "ps aux | grep price_oracle.py | grep -v grep || exit 1"]
@@ -278,6 +335,32 @@ services:
       - "5001:5001"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  oracle_satellite_standby:
+    build:
+      context: ./oracle
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    <<: *resources-oracle
+    environment:
+      ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID: ${CARBON_ORACLE_CONTRACT_ID}
+      STELLAR_RPC_URL:           ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      BACKEND_API_URL:           http://backend:3001/api/v1
+      GEE_WEBHOOK_SECRET:        ${GEE_WEBHOOK_SECRET}
+      ADMIN_ALERT_WEBHOOK:       ${ADMIN_ALERT_WEBHOOK}
+      SATELLITE_MONITOR_PORT:    5002
+      LOG_LEVEL:                 ${LOG_LEVEL:-INFO}
+      ORACLE_STANDBY_MODE:       "true"
+      FAILOVER_SERVICE_NAME:     satellite_monitor
+    command: python3 satellite_monitor.py
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5002/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -6,11 +6,12 @@ import { MonitoringService } from "./monitoring.service";
 import { DashboardController } from "./dashboard.controller";
 import { PrismaService } from "../prisma.service";
 import { CorrelationIdContext } from "./correlation-id.context";
+import { FinancialTracingService } from "./financial-tracing.service";
 
 @Global()
 @Module({
   controllers: [LogsController, DashboardController],
-  providers: [LoggerService, AlertingService, MonitoringService, PrismaService, CorrelationIdContext],
-  exports: [LoggerService, AlertingService, MonitoringService, CorrelationIdContext],
+  providers: [LoggerService, AlertingService, MonitoringService, PrismaService, CorrelationIdContext, FinancialTracingService],
+  exports: [LoggerService, AlertingService, MonitoringService, CorrelationIdContext, FinancialTracingService],
 })
 export class LoggerModule {}

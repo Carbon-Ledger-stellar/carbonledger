@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma.service';
+import { buildCursorWhere, createOpaqueCursor, decodeCursor, normalizePaginationLimit } from '../common/cursor-pagination';
 
 @Injectable()
 export class AuditService {
@@ -100,16 +101,176 @@ export class AuditService {
     offset?: number;
     userId?: string;
     action?: string;
+    cursor?: string;
   }) {
-    return this.prisma.auditLog.findMany({
-      where: {
-        ...(query.userId && { userId: query.userId }),
-        ...(query.action && { action: query.action }),
-      },
-      take:    Number(query.limit)  || 50,
-      skip:    Number(query.offset) || 0,
-      orderBy: { timestamp: 'desc' },
-    });
+    const limit = normalizePaginationLimit(Number(query.limit ?? 50), 100);
+    const decodedCursor = decodeCursor(query.cursor);
+    const where: any = {
+      ...(query.userId && { userId: query.userId }),
+      ...(query.action && { action: query.action }),
+    };
+    const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
+    const [entries, total_count] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where: cursorWhere ? { ...where, ...cursorWhere } : where,
+        take: limit + 1,
+        orderBy: { timestamp: 'desc', id: 'desc' },
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    const hasMore = entries.length > limit;
+    const next_cursor = hasMore ? createOpaqueCursor(entries[limit - 1].id, entries[limit - 1].timestamp) : undefined;
+    const prev_cursor = decodedCursor && entries.length > 0 ? createOpaqueCursor(entries[0].id, entries[0].timestamp) : undefined;
+    if (hasMore) entries.pop();
+
+    return {
+      entries,
+      next_cursor,
+      prev_cursor,
+      total_count,
+    };
+  }
+
+  /**
+   * Cursor-based pagination over the audit log (issue #598).
+   *
+   * Returns an opaque base64-encoded `next_cursor` that callers pass back
+   * as `?cursor=` to fetch the next page. Cursor encodes the row `id` so it
+   * remains stable under concurrent inserts. Page size bounded at 100.
+   *
+   * Falls back to offset pagination when `offset` is provided without a cursor.
+   */
+  async findAllCursor(query: {
+    cursor?: { id: string };
+    limit?:  number;
+    userId?: string;
+    action?: string;
+    offset?: number;
+  }): Promise<{
+    logs:         any[];
+    next_cursor?: string;
+    prev_cursor?: string;
+    total_count:  number;
+  }> {
+    const take = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
+
+    const where: any = {
+      ...(query.userId && { userId: query.userId }),
+      ...(query.action && { action: query.action }),
+    };
+
+    // Legacy offset path (backward-compatible)
+    if (query.offset !== undefined && query.cursor === undefined) {
+      const [logs, total_count] = await Promise.all([
+        this.prisma.auditLog.findMany({
+          where,
+          take,
+          skip: query.offset,
+          orderBy: { timestamp: 'desc' },
+        }),
+        this.prisma.auditLog.count({ where }),
+      ]);
+      return { logs, total_count };
+    }
+
+    // Cursor path: fetch take+1 to detect whether there is a next page
+    const [logs, total_count] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        take: take + 1,
+        cursor: query.cursor ? { id: query.cursor.id } : undefined,
+        skip:   query.cursor ? 1 : 0,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    const hasMore = logs.length > take;
+    if (hasMore) logs.pop();
+
+    // Encode next_cursor as opaque base64 JSON — stable across concurrent inserts
+    const next_cursor = hasMore
+      ? Buffer.from(JSON.stringify({ id: logs[logs.length - 1].id })).toString('base64')
+      : undefined;
+
+    // Encode prev_cursor pointing back to the first item of this page
+    const prev_cursor =
+      query.cursor && logs.length > 0
+        ? Buffer.from(JSON.stringify({ id: logs[0].id })).toString('base64')
+        : undefined;
+
+    return { logs, next_cursor, prev_cursor, total_count };
+  }
+
+  /**
+   * Cursor-based pagination over the audit log (issue #598).
+   *
+   * Returns an opaque base64-encoded `next_cursor` that callers pass back
+   * as `?cursor=` to fetch the next page. The cursor encodes the internal row
+   * `id` so it stays stable even under concurrent inserts.
+   *
+   * Falls back to offset pagination when `offset` is supplied (legacy support).
+   */
+  async findAllCursor(query: {
+    cursor?: { id: string };
+    limit?:  number;
+    userId?: string;
+    action?: string;
+    offset?: number;
+  }): Promise<{
+    logs:        any[];
+    next_cursor?: string;
+    prev_cursor?: string;
+    total_count: number;
+  }> {
+    const take = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
+
+    const where: any = {
+      ...(query.userId && { userId: query.userId }),
+      ...(query.action && { action: query.action }),
+    };
+
+    // Legacy offset path
+    if (query.offset !== undefined && query.cursor === undefined) {
+      const [logs, total_count] = await Promise.all([
+        this.prisma.auditLog.findMany({
+          where,
+          take,
+          skip: query.offset,
+          orderBy: { timestamp: 'desc' },
+        }),
+        this.prisma.auditLog.count({ where }),
+      ]);
+      return { logs, total_count };
+    }
+
+    // Cursor path: fetch take+1 to detect hasMore
+    const [logs, total_count] = await Promise.all([
+      this.prisma.auditLog.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        take: take + 1,
+        cursor: query.cursor ? { id: query.cursor.id } : undefined,
+        skip: query.cursor ? 1 : 0,
+      }),
+      this.prisma.auditLog.count({ where }),
+    ]);
+
+    const hasMore = logs.length > take;
+    if (hasMore) logs.pop();
+
+    // Encode next_cursor as opaque base64 JSON
+    const next_cursor = hasMore
+      ? Buffer.from(JSON.stringify({ id: logs[logs.length - 1].id })).toString('base64')
+      : undefined;
+
+    // Encode prev_cursor pointing back to the first item of this page
+    const prev_cursor = query.cursor && logs.length > 0
+      ? Buffer.from(JSON.stringify({ id: logs[0].id })).toString('base64')
+      : undefined;
+
+    return { logs, next_cursor, prev_cursor, total_count };
   }
 
   /**

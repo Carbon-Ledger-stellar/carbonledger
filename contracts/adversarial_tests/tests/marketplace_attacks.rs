@@ -265,6 +265,49 @@ fn test_vintage_year_invalid_listing() {
     assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
 }
 
+// ── Bulk purchase rejects mixed vintage years ───────────────────────────────
+#[test]
+fn test_bulk_purchase_mixed_vintage_years_rejected() {
+    let env = Env::default();
+    let (client, _, _) = setup_marketplace(&env);
+    let seller = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    client.list_credits(
+        &seller,
+        &s(&env, "list-vintage-2023"),
+        &s(&env, "batch-2023"),
+        &s(&env, "proj-2023"),
+        &100_i128,
+        &10_0000000_i128,
+        &2023_u32,
+        &s(&env, "VCS"),
+        &s(&env, "Brazil"),
+    ).unwrap();
+
+    client.list_credits(
+        &seller,
+        &s(&env, "list-vintage-2024"),
+        &s(&env, "batch-2024"),
+        &s(&env, "proj-2024"),
+        &100_i128,
+        &10_0000000_i128,
+        &2024_u32,
+        &s(&env, "VCS"),
+        &s(&env, "Brazil"),
+    ).unwrap();
+
+    let ids = soroban_sdk::vec![
+        &env,
+        s(&env, "list-vintage-2023"),
+        s(&env, "list-vintage-2024"),
+    ];
+    let amounts = soroban_sdk::vec![&env, 1_i128, 1_i128];
+
+    let result = client.try_bulk_purchase(&buyer, &ids, &amounts);
+    assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
+}
+
 // ── Attack 13: non-admin treasury update ─────────────────────────────────────
 /// ATTACK: An attacker calls update_treasury() to redirect the 1% protocol fee
 /// stream to their own wallet address, draining all future trading revenue.

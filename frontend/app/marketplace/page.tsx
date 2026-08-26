@@ -10,7 +10,7 @@ import { formatTonnes } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
 import { joinListingsWithProjects } from "../../lib/map-utils";
 import { colors } from "../../styles/design-system";
-import MarketplaceFilter, { FilterState, EMPTY_FILTERS } from "../../components/MarketplaceFilter";
+import MarketplaceFilter, { FilterState, EMPTY_FILTERS, filtersFromParams } from "../../components/MarketplaceFilter";
 import MarketplaceSortControls from "../../components/MarketplaceSortControls";
 import ComparisonTray, { MAX_COMPARISON_ITEMS } from "../../components/ComparisonTray";
 import VirtualizedList from "../../components/VirtualizedList";
@@ -35,14 +35,7 @@ function MarketplaceContent() {
   const { formatCurrency } = useLocaleFormatters();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [filters, setFilters] = useState<FilterState>({
-    methodology: "", vintageYear: "", country: "", minPrice: "", maxPrice: "", projectType: "", search: "", availableOnly: "",
-  });
-
-  useEffect(() => {
-    const vintage = searchParams.get("vintage");
-    if (vintage) setFilters(prev => ({ ...prev, vintageYear: vintage }));
-  }, [searchParams]);
+  const [filters, setFilters] = useState<FilterState>(() => filtersFromParams(searchParams));
 
   // Sort state lives in the URL so sorted views are shareable/bookmarkable.
   const rawSort = searchParams.get("sort");
