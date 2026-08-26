@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Param, Body, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Request, UseGuards, BadRequestException } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CreditsService } from './credits.service';
-import { MintCreditsDto, RetireCreditsDto } from './credits.dto';
+import { MintCreditsDto, RetireCreditsDto, BatchMintCreditsDto, BatchRetireCreditsDto } from './credits.dto';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, CreditBatchSubject, RetirementSubject } from '../policies';
 
@@ -63,6 +63,18 @@ export class CreditsController {
     return this.creditsService.mintCredits(dto);
   }
 
+  @Post('batch-mint')
+  @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('mint', CreditBatchSubject))
+  batchMint(@Body() body: BatchMintCreditsDto | MintCreditsDto[], @Request() req: any) {
+    const items = Array.isArray(body) ? body : body?.items;
+    if (!items || !Array.isArray(items)) {
+      throw new BadRequestException('Request body must be an array of MintCreditsDto or contain an items array');
+    }
+    return this.creditsService.batchMintCredits(items, req.user?.publicKey);
+  }
+
   // ── Corporation: retire credits ──────────────────────────────────────────
 
   @Post('retire')
@@ -75,4 +87,22 @@ export class CreditsController {
     const authedDto = { ...dto, holderPublicKey: req.user.publicKey };
     return this.creditsService.retireCredits(authedDto);
   }
+
+  @Post('batch-retire')
+  @Roles('corporation', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('retire', RetirementSubject))
+  @Throttle({ retire: { ttl: 60_000, limit: 10 } })
+  batchRetire(@Body() body: BatchRetireCreditsDto | RetireCreditsDto[], @Request() req: any) {
+    const rawItems = Array.isArray(body) ? body : body?.items;
+    if (!rawItems || !Array.isArray(rawItems)) {
+      throw new BadRequestException('Request body must be an array of RetireCreditsDto or contain an items array');
+    }
+    const authedItems = rawItems.map((dto) => ({
+      ...dto,
+      holderPublicKey: req.user.publicKey,
+    }));
+    return this.creditsService.batchRetireCredits(authedItems);
+  }
 }
+

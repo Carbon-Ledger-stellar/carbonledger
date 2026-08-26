@@ -13,6 +13,8 @@ import {
   ValidateNested,
   IsObject,
   IsNumber,
+  ArrayMinSize,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import {
@@ -253,3 +255,36 @@ export class PaginatedProjectsResponse {
   nextOffset?: number | null;
   nextCursor?: string;
 }
+
+export class BatchCreateProjectsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateProjectDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: CreateProjectDto[];
+}
+
+export class UpdateProjectStatusItemDto {
+  @IsString()
+  @Length(1, 64)
+  projectId: string;
+
+  @IsEnum(ProjectStatus)
+  status: ProjectStatus;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class BatchUpdateProjectStatusDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdateProjectStatusItemDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: UpdateProjectStatusItemDto[];
+}
+

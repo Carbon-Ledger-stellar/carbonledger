@@ -1,4 +1,4 @@
-import { IsString, Length, Validate } from 'class-validator';
+import { IsString, Length, Validate, IsArray, ArrayMinSize, ArrayMaxSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
   IsStellarAddress,
@@ -95,3 +95,38 @@ export class RetireCreditsDto {
   @IsStellarAddress()
   holderPublicKey: string;
 }
+
+export class BatchMintCreditsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MintCreditsDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: MintCreditsDto[];
+}
+
+export class BatchRetireCreditsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RetireCreditsDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: RetireCreditsDto[];
+}
+
+export interface BatchItemStatus<T = any> {
+  index: number;
+  status: 'success' | 'error';
+  itemIdentifier?: string;
+  data?: T;
+  error?: string;
+}
+
+export interface BatchOperationResult<T = any> {
+  success: boolean;
+  totalProcessed: number;
+  successCount: number;
+  errorCount: number;
+  results: BatchItemStatus<T>[];
+}
+

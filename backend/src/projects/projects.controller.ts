@@ -1,6 +1,6 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, Request, Header, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, Request, Header, UseGuards, BadRequestException } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
-import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, CreateProjectDto } from './projects.dto';
+import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, CreateProjectDto, BatchCreateProjectsDto, BatchUpdateProjectStatusDto, UpdateProjectStatusItemDto } from './projects.dto';
 import { IsString } from 'class-validator';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, ProjectSubject } from '../policies';
@@ -13,8 +13,6 @@ export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
   // ── Authenticated, role-scoped read endpoints ────────────────────────────
-  // No @Roles(...) means "any authenticated role is admitted"; scoping
-  // by role happens inside ProjectsService, not by gating roles out here.
 
   @Get()
   findAll(
@@ -62,6 +60,18 @@ export class ProjectsController {
     return this.projectsService.createProject(dto, req.user?.publicKey);
   }
 
+  @Post('batch-create')
+  @Roles('project_developer', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('create', ProjectSubject))
+  batchCreate(@Body() body: BatchCreateProjectsDto | CreateProjectDto[], @Request() req: any) {
+    const items = Array.isArray(body) ? body : body?.items;
+    if (!items || !Array.isArray(items)) {
+      throw new BadRequestException('Request body must be an array of CreateProjectDto or contain an items array');
+    }
+    return this.projectsService.batchCreateProjects(items, req.user?.publicKey);
+  }
+
   @Post('register')
   @Roles('project_developer', 'admin')
   @UseGuards(PoliciesGuard)
@@ -76,6 +86,18 @@ export class ProjectsController {
   @CheckPolicies((ability) => ability.can('update', ProjectSubject))
   updateStatus(@Param('id') id: string, @Body() dto: UpdateProjectStatusDto, @Request() req: any) {
     return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin');
+  }
+
+  @Post('batch-update-status')
+  @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', ProjectSubject))
+  batchUpdateStatus(@Body() body: BatchUpdateProjectStatusDto | UpdateProjectStatusItemDto[], @Request() req: any) {
+    const items = Array.isArray(body) ? body : body?.items;
+    if (!items || !Array.isArray(items)) {
+      throw new BadRequestException('Request body must be an array of UpdateProjectStatusItemDto or contain an items array');
+    }
+    return this.projectsService.batchUpdateStatus(items, req.user?.publicKey ?? 'admin');
   }
 
   // ── Verifier actions ─────────────────────────────────────────────────────
@@ -96,3 +118,4 @@ export class ProjectsController {
     return this.projectsService.reject(id, dto.verifierPublicKey, dto.reason);
   }
 }
+
