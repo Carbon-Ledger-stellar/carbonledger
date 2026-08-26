@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ConflictException, ForbiddenException, L
 import { PrismaService } from "../prisma.service";
 import { RedisService } from "../redis.service";
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { CacheInvalidationService } from "../cache/cache.service";
 import {
   RegisterProjectDto,
   UpdateProjectStatusDto,
@@ -53,6 +54,7 @@ export class ProjectsService {
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
+    @Optional() private readonly cacheInvalidation?: CacheInvalidationService,
     @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
@@ -562,5 +564,10 @@ export class ProjectsService {
   private async invalidateProjectCache(projectId: string): Promise<void> {
     const cacheKey = projectDetailCacheKey(projectId);
     await this.redisService.del(cacheKey);
+    // Also invalidate listings cache — a project status change (verify, reject,
+    // suspend) can make active listings stale.
+    if (this.cacheInvalidation) {
+      await this.cacheInvalidation.invalidateAllListings();
+    }
   }
 }
