@@ -66,7 +66,7 @@
     "projectTypeBlueCarbon": "蓝碳",
     "projectTypeAgroforestry": "农林复合",
     "projectTypeSoilCarbon": "土壤碳",
-    "projectTypeWasteToEnergy": "垃圾发电",
+    "projectTypeWastetoEnergy": "垃圾发电",
     "projectTypeForestConservation": "森林保护",
     "resultsFoundSingular": "找到 {count} 个列表",
     "resultsFoundPlural": "找到 {count} 个列表"

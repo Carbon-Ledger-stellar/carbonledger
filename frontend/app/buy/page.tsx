@@ -116,6 +116,7 @@ function BuyPageContent() {
   async function handlePurchase() {
     if (!walletKey || !listing) return;
     setConfirming(true);
+    let succeeded = false;
     await runBuy(async () => {
       setTxStatus("pending");
       setTxStatus("submitted");
@@ -126,6 +127,7 @@ function BuyPageContent() {
       );
       setTxHash(result.txHash);
       setTxStatus("confirmed");
+      succeeded = true;
       addToast({
         type: "success",
         title: t("purchaseConfirmedTitle"),
@@ -139,7 +141,7 @@ function BuyPageContent() {
       }
     });
     setConfirming(false);
-    if (txStatus !== "confirmed") {
+    if (!succeeded) {
       setTxStatus("failed");
     }
   }
