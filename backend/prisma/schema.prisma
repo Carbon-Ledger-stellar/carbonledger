@@ -6,6 +6,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model CarbonProject {
@@ -234,14 +235,14 @@ model OracleJob {
 }
 
 model OracleSyncState {
-  id                String   @id @default(cuid())
-  lastSyncedAt      DateTime @default(now())
-  lastSyncedBlock   Int      @default(0)
-  recordsSynced     Int      @default(0)
+  id                String    @id @default(cuid())
+  lastSyncedAt      DateTime  @default(now())
+  lastSyncedBlock   Int       @default(0)
+  recordsSynced     Int       @default(0)
   lastError         String?
   lastErrorAt       DateTime?
-  syncStatus        String   @default("idle")  // idle | syncing | completed | failed
-  updatedAt         DateTime @updatedAt
+  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
+  updatedAt         DateTime  @updatedAt
 
   @@unique([id])
 }
@@ -521,19 +522,6 @@ model CreditEvent {
   @@index([creditBatchId, timestamp])
 }
 
-
-model OracleSyncState {
-  id                String    @id @default(cuid())
-  lastSyncedAt      DateTime  @default(now())
-  lastSyncedBlock   Int       @default(0)
-  recordsSynced     Int       @default(0)
-  lastError         String?
-  lastErrorAt       DateTime?
-  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
-  updatedAt         DateTime  @updatedAt
-
-  @@unique([id])
-
 model SatelliteWebhookProvider {
   id          String   @id @default(cuid())
   providerId  String   @unique
@@ -545,7 +533,6 @@ model SatelliteWebhookProvider {
 
   @@index([providerId])
   @@index([isActive])
-
 }
 
 /// Idempotency ledger for oracle submissions (#578).  One row per logical
