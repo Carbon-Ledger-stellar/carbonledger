@@ -7,7 +7,7 @@ import {
 } from '@opentelemetry/api';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
-import { Resource } from '@opentelemetry/resources';
+import * as otelResources from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions';
 import { NodeSDK } from '@opentelemetry/sdk-node';
 
@@ -25,7 +25,7 @@ export function initializeTracing(): void {
     `${process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'http://localhost:4318'}/v1/traces`;
 
   sdk = new NodeSDK({
-    resource: new Resource({
+    resource: new (otelResources as any).Resource({
       [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME ?? 'carbonledger-backend',
     }),
     traceExporter: new OTLPTraceExporter({ url: endpoint }),

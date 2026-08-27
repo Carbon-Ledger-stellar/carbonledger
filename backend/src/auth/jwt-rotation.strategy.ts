@@ -4,7 +4,6 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { verify } from 'jsonwebtoken';
 import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
-import { TokenBlacklistService } from './token-blacklist.service';
 
 /**
  * Previously read JWT_SECRET / JWT_SECRET_NEW directly from ConfigService,
@@ -20,7 +19,6 @@ export class JWTRotationStrategy extends PassportStrategy(Strategy, 'jwt-rotatio
   constructor(
     private readonly configService: ConfigService,
     private readonly secretsRefresh: SecretsRefreshService,
-    private readonly tokenBlacklist: TokenBlacklistService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),

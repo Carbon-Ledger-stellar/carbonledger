@@ -51,6 +51,16 @@ export class CreateListingDto {
   country: string;
 }
 
+export class BatchCreateListingsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateListingDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: CreateListingDto[];
+}
+
+
 /**
  * DTO for purchasing credits from a single listing.
  *

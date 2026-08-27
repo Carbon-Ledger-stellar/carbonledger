@@ -5,6 +5,8 @@ import Navbar from '../components/Navbar';
 import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
 import AppProviders from '../components/AppProviders';
 import RealtimeNotificationProvider from '../components/RealtimeNotificationProvider';
+import LocaleProvider from '../components/LocaleProvider';
+import en from '../public/locales/en/common.json';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,18 +36,20 @@ export default function RootLayout({
         <link rel="icon" href="/icons/icon-192.svg" type="image/svg+xml" />
       </head>
        <body>
-         <a href="#main-content" className="skip-link">Skip to main content</a>
-         <ServiceWorkerRegistration />
-         <ThemeProvider>
-                   <AppProviders>
-                     <RealtimeNotificationProvider>
-                       <Navbar />
-                       <main id="main-content">
-                         {children}
-                       </main>
-                     </RealtimeNotificationProvider>
-                   </AppProviders>
-                 </ThemeProvider>
+         <LocaleProvider initialMessages={en}>
+           <a href="#main-content" className="skip-link">Skip to main content</a>
+           <ServiceWorkerRegistration />
+           <ThemeProvider>
+                     <AppProviders>
+                       <RealtimeNotificationProvider>
+                         <Navbar />
+                         <main id="main-content">
+                           {children}
+                         </main>
+                       </RealtimeNotificationProvider>
+                     </AppProviders>
+                   </ThemeProvider>
+         </LocaleProvider>
        </body>
     </html>
   );

@@ -3,7 +3,6 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { verify } from 'jsonwebtoken';
 import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
-import { TokenBlacklistService } from './token-blacklist.service';
 
 /**
  * Previously verified against a single static process.env.JWT_SECRET,
@@ -15,10 +14,7 @@ import { TokenBlacklistService } from './token-blacklist.service';
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(
-    private readonly secretsRefresh: SecretsRefreshService,
-    private readonly tokenBlacklist: TokenBlacklistService,
-  ) {
+  constructor(private readonly secretsRefresh: SecretsRefreshService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,

@@ -184,8 +184,6 @@ export class MarketplaceService {
     ]);
 
     const hasMore = listings.length > normalizedLimit;
-    const next_cursor = hasMore && listings[normalizedLimit - 1] ? createOpaqueCursor(listings[normalizedLimit - 1].id, (listings[normalizedLimit - 1] as any).createdAt) : undefined;
-    const prev_cursor = decodedCursor && listings.length > 0 ? createOpaqueCursor(listings[0].id, (listings[0] as any).createdAt) : undefined;
     if (hasMore) listings.pop();
     const mapped = listings.map(MarketplaceService.withProjectName);
 
@@ -386,4 +384,89 @@ export class MarketplaceService {
     }
     return results;
   }
+
+  async batchCreateListings(dtos: Array<CreateListingDto & { seller: string }>) {
+    if (!dtos || !Array.isArray(dtos) || dtos.length === 0) {
+      throw new BadRequestException("Batch input must be a non-empty array of items");
+    }
+    if (dtos.length > 1000) {
+      throw new BadRequestException("Batch operations are limited to 1,000 items per request");
+    }
+
+    for (const dto of dtos) {
+      const ownsBatch = await this.contractService.verifyCreditBatchOwnership(dto.credit_batch_id, dto.seller);
+      if (!ownsBatch) {
+        throw new ForbiddenException(`You do not own the credit batch ${dto.credit_batch_id}`);
+      }
+    }
+
+    const createdListings = await this.prisma.$transaction(async (tx) => {
+      const records = [];
+      for (const dto of dtos) {
+        const txHash = await this.contractService.listCredits(
+          dto.listingId,
+          dto.credit_batch_id,
+          dto.amount,
+          dto.price_per_tonne,
+        );
+
+        const listing = await tx.marketListing.create({
+          data: {
+            listingId:       dto.listingId,
+            projectId:       dto.projectId,
+            batchId:         dto.credit_batch_id,
+            seller:          dto.seller,
+            amountAvailable: dto.amount,
+            pricePerCredit:  dto.price_per_tonne,
+            vintageYear:     dto.vintageYear,
+            methodology:     dto.methodology,
+            country:         dto.country,
+            status:          "Active",
+          },
+        });
+        records.push({ listing, txHash });
+      }
+      return records;
+    });
+
+    await this.cache.invalidateAll();
+
+    for (let i = 0; i < dtos.length; i++) {
+      const dto = dtos[i];
+      const { txHash } = createdListings[i];
+      if (this.eventSourcing) {
+        this.eventSourcing.recordEvent({
+          creditBatchId: dto.credit_batch_id,
+          eventType: CreditEventType.LIST,
+          actor: dto.seller,
+          newState: {
+            listingId: dto.listingId,
+            batchId: dto.credit_batch_id,
+            projectId: dto.projectId,
+            seller: dto.seller,
+            pricePerCredit: dto.price_per_tonne,
+            amountAvailable: dto.amount,
+            status: 'Listed',
+          },
+          txHash,
+        }).catch(() => undefined);
+      }
+    }
+
+    const results = createdListings.map(({ listing, txHash }, idx) => ({
+      index: idx,
+      status: "success" as const,
+      itemIdentifier: listing.listingId,
+      data: { ...listing, txHash },
+    }));
+
+    return {
+      success: true,
+      totalProcessed: dtos.length,
+      successCount: dtos.length,
+      errorCount: 0,
+      results,
+    };
+  }
 }
+
