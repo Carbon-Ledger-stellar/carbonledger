@@ -64,6 +64,19 @@ function MarketplaceContent() {
   });
   const listings = data?.listings ?? [];
 
+  // Suggestion pool for the search autocomplete — project names, countries, and
+  // methodologies seen in the current listings, deduped. Filtering happens
+  // client-side inside SearchAutocomplete, so this stays cheap even with 1000+ listings.
+  const searchSuggestions = useMemo(() => {
+    const terms = new Set<string>();
+    for (const l of listings) {
+      if (l.projectName) terms.add(l.projectName);
+      if (l.country) terms.add(l.country);
+      if (l.methodology) terms.add(l.methodology);
+    }
+    return Array.from(terms);
+  }, [listings]);
+
   // "Available now" isn't a backend query param — applied client-side here so
   // it's a single source of truth shared by both the listings grid and the map.
   const visibleListings = listings.filter(
@@ -138,7 +151,7 @@ function MarketplaceContent() {
           </a>
         </div>
 
-        <MarketplaceFilter filters={filters} onChange={setFilters} />
+        <MarketplaceFilter filters={filters} onChange={setFilters} suggestions={searchSuggestions} />
 
         <div style={{ marginTop: "1.5rem" }}>
           <OrderBookChart />

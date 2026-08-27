@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useVerifierAuth } from "../../../lib/use-verifier-auth";
 import { useVerifierAttestationHistory } from "../../../lib/api";
 import { colors } from "../../../styles/design-system";
+import LoadingSkeleton from "../../../components/LoadingSkeleton";
 
 export default function VerifierHistoryPage() {
   const { publicKey, token } = useVerifierAuth();
@@ -22,7 +23,11 @@ export default function VerifierHistoryPage() {
       </p>
 
       {error && <p role="alert" style={{ color: "#dc2626" }}>{error.message}</p>}
-      {isLoading && <p>Loading history…</p>}
+      {isLoading && (
+        <div style={{ marginTop: "1.5rem" }} aria-label="Loading attestation history">
+          <LoadingSkeleton variant="Table" columns={6} count={6} />
+        </div>
+      )}
       {!isLoading && data?.projects.length === 0 && (
         <p style={{ color: "#666" }}>No attestations recorded yet.</p>
       )}
