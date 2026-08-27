@@ -342,7 +342,7 @@ export class RetirementsService {
   async findAll(cursor?: string, limit = 20, offset = 0, retiredBy?: string): Promise<PaginatedRetirementsResponse> {
     const take = normalizePaginationLimit(limit, 100);
     const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
-    const where = retiredBy ? { retiredBy } : {};
+    const where: any = retiredBy ? { retiredBy, deletedAt: null } : { deletedAt: null };
     const decodedCursor = decodeCursor(cursor);
     const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
 
@@ -401,6 +401,7 @@ export class RetirementsService {
     const decodedCursor = decodeCursor(cursor);
     const cursorWhere = decodedCursor ? buildCursorWhere(decodedCursor) : undefined;
     const where: any = {
+      deletedAt: null,
       OR: [
         { beneficiary: { contains: search, mode: 'insensitive' } },
         { retirementReason: { contains: search, mode: 'insensitive' } },
@@ -443,12 +444,42 @@ export class RetirementsService {
   }
 
   async findOne(retirementId: string) {
-    const r = await this.prisma.retirementRecord.findUnique({
-      where: { retirementId },
+    const r = await this.prisma.retirementRecord.findFirst({
+      where: { retirementId, deletedAt: null },
       include: { project: true, batch: true },
     });
     if (!r) throw new NotFoundException('Retirement not found');
     return sanitizeRetirementForResponse(r as Record<string, unknown>);
+  }
+
+  /**
+   * Soft-delete a retirement record (#964). Kept out of default read paths
+   * (findAll/searchRetirements/findOne) but recoverable by an admin until the
+   * retention job purges it (AdminService#purgeDeletedRecords, 30 days).
+   */
+  async softDeleteRetirement(retirementId: string) {
+    const retirement = await this.prisma.retirementRecord.findFirst({
+      where: { retirementId, deletedAt: null },
+    });
+    if (!retirement) throw new NotFoundException(`Retirement ${retirementId} not found`);
+
+    return this.prisma.retirementRecord.update({
+      where: { id: retirement.id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  /** Admin recovery (#964): un-hides a soft-deleted retirement record. */
+  async restoreRetirement(retirementId: string) {
+    const retirement = await this.prisma.retirementRecord.findFirst({
+      where: { retirementId, deletedAt: { not: null } },
+    });
+    if (!retirement) throw new NotFoundException(`Deleted retirement ${retirementId} not found`);
+
+    return this.prisma.retirementRecord.update({
+      where: { id: retirement.id },
+      data: { deletedAt: null },
+    });
   }
 
   /**

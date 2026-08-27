@@ -94,6 +94,28 @@ export class CreditsController {
   @CheckPolicies((ability) => ability.can('retire', RetirementSubject))
   @Throttle({ retire: { ttl: 60_000, limit: 10 } })
   batchRetire(@Body() body: BatchRetireCreditsDto | RetireCreditsDto[], @Request() req: any) {
+    return this.processBulkRetire(body, req);
+  }
+
+  /**
+   * POST /credits/bulk-retire (#965)
+   *
+   * Alias of batch-retire under the endpoint name requested by the issue.
+   * Retires up to 1,000 credit batches in a single atomic transaction —
+   * either every item succeeds or none are written. See
+   * CreditsService#batchRetireCredits for the per-item error reporting and
+   * size-limit enforcement.
+   */
+  @Post('bulk-retire')
+  @Roles('corporation', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('retire', RetirementSubject))
+  @Throttle({ retire: { ttl: 60_000, limit: 10 } })
+  bulkRetire(@Body() body: BatchRetireCreditsDto | RetireCreditsDto[], @Request() req: any) {
+    return this.processBulkRetire(body, req);
+  }
+
+  private processBulkRetire(body: BatchRetireCreditsDto | RetireCreditsDto[], req: any) {
     const rawItems = Array.isArray(body) ? body : body?.items;
     if (!rawItems || !Array.isArray(rawItems)) {
       throw new BadRequestException('Request body must be an array of RetireCreditsDto or contain an items array');

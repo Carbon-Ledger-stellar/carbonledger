@@ -39,9 +39,10 @@ export class ValidationExceptionFilter implements ExceptionFilter {
     const exceptionResponse = exception.getResponse() as any;
 
     // Only intercept class-validator ValidationPipe errors (which have a
-    // "message" array). Pass through plain BadRequestExceptions unchanged.
+    // "message" array). Pass through plain BadRequestExceptions, adding a
+    // standardized `code` (#966) if the exception didn't already set one.
     if (!Array.isArray(exceptionResponse?.message)) {
-      response.status(400).json(exceptionResponse);
+      response.status(400).json({ code: 'BAD_REQUEST', ...exceptionResponse });
       return;
     }
 

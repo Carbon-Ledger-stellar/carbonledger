@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma.service';
 import { IpfsService } from '../common/ipfs.service';
 import { CertificateService } from './certificate.service';
 import { QueueService } from '../queue/queue.service';
+import { CertificateSigningService } from '../common/certificate-signing.service';
 
 const mockPrisma = {
   retirementRecord: {
@@ -43,6 +44,9 @@ describe('RetirementsService pagination', () => {
         { provide: IpfsService, useValue: {} },
         { provide: CertificateService, useValue: {} },
         { provide: QueueService, useValue: mockQueue },
+        // RetirementsService gained a required CertificateSigningService
+        // dependency after this spec was written; this predates that.
+        { provide: CertificateSigningService, useValue: {} },
       ],
     }).compile();
     service = module.get(RetirementsService);

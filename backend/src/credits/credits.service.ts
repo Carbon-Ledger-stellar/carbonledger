@@ -192,15 +192,42 @@ export class CreditsService {
   }
 
   async getBatch(batchId: string) {
-    const batch = await this.prisma.creditBatch.findUnique({ where: { batchId } });
+    const batch = await this.prisma.creditBatch.findFirst({ where: { batchId, deletedAt: null } });
     if (!batch) throw new NotFoundException(`Batch ${batchId} not found`);
     return batch;
   }
 
   async getBatchesByProject(projectId: string) {
     return this.prisma.creditBatch.findMany({
-      where: { projectId },
+      where: { projectId, deletedAt: null },
       orderBy: { issuedAt: 'desc' },
+    });
+  }
+
+  /**
+   * Soft-delete a credit batch (#964). Retired/active batches stay queryable
+   * by admins via the recovery endpoint until the retention job purges them;
+   * every other read path (getBatch, getBatchesByProject, lookups, batch-retire
+   * validation) excludes deletedAt rows by default.
+   */
+  async softDeleteBatch(batchId: string) {
+    const batch = await this.prisma.creditBatch.findFirst({ where: { batchId, deletedAt: null } });
+    if (!batch) throw new NotFoundException(`Batch ${batchId} not found`);
+
+    return this.prisma.creditBatch.update({
+      where: { id: batch.id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  /** Admin recovery (#964): un-hides a soft-deleted credit batch. */
+  async restoreBatch(batchId: string) {
+    const batch = await this.prisma.creditBatch.findFirst({ where: { batchId, deletedAt: { not: null } } });
+    if (!batch) throw new NotFoundException(`Deleted batch ${batchId} not found`);
+
+    return this.prisma.creditBatch.update({
+      where: { id: batch.id },
+      data: { deletedAt: null },
     });
   }
 
@@ -268,19 +295,19 @@ export class CreditsService {
   }
 
   async getRetirement(retirementId: string) {
-    const r = await this.prisma.retirementRecord.findUnique({ where: { retirementId } });
+    const r = await this.prisma.retirementRecord.findFirst({ where: { retirementId, deletedAt: null } });
     if (!r) throw new NotFoundException(`Retirement ${retirementId} not found`);
     return r;
   }
 
   async lookupSerial(serial: string) {
     const retirement = await this.prisma.retirementRecord.findFirst({
-      where: { serialNumbers: { has: serial } },
+      where: { serialNumbers: { has: serial }, deletedAt: null },
     });
     if (retirement) return retirement;
 
     const batch = await this.prisma.creditBatch.findFirst({
-      where: { serialStart: { lte: serial }, serialEnd: { gte: serial } },
+      where: { serialStart: { lte: serial }, serialEnd: { gte: serial }, deletedAt: null },
     });
     if (!batch) throw new NotFoundException('Credit not found');
     return batch;
@@ -304,7 +331,7 @@ export class CreditsService {
     // 1. Locate the credit batch that owns this serial number.
     //    Must happen first — batchId is needed for all downstream queries.
     const batch = await this.prisma.creditBatch.findFirst({
-      where: { serialStart: { lte: serial }, serialEnd: { gte: serial } },
+      where: { serialStart: { lte: serial }, serialEnd: { gte: serial }, deletedAt: null },
       include: {
         project: {
           select: {
@@ -588,21 +615,54 @@ export class CreditsService {
 
     const batchIds = dtos.map((d) => d.batchId);
     const batches = await this.prisma.creditBatch.findMany({
-      where: { batchId: { in: batchIds } },
+      where: { batchId: { in: batchIds }, deletedAt: null },
     });
     const batchMap = new Map<string, any>((batches as any[]).map((b: any) => [b.batchId, b]));
 
-    for (const dto of dtos) {
+    // Validate every item and collect ALL failures instead of throwing on the
+    // first one (#965) — a 1,000-item request should tell the caller exactly
+    // which entries are bad in one round trip, not force a bisect-by-hand retry.
+    // The transaction below stays fully atomic: if anything failed validation,
+    // nothing is written and the response reports a reason per item.
+    const seenBatchIds = new Set<string>();
+    const itemErrors = new Map<number, string>();
+    dtos.forEach((dto, idx) => {
+      if (seenBatchIds.has(dto.batchId)) {
+        itemErrors.set(idx, `Duplicate batchId ${dto.batchId} found within the batch payload`);
+        return;
+      }
+      seenBatchIds.add(dto.batchId);
+
       const batch = batchMap.get(dto.batchId);
       if (!batch) {
-        throw new NotFoundException(`Batch ${dto.batchId} not found`);
+        itemErrors.set(idx, `Batch ${dto.batchId} not found`);
+      } else if (batch.status === "FullyRetired") {
+        itemErrors.set(idx, `Batch ${dto.batchId} credits are already fully retired`);
+      } else if (dto.amount > Number(batch.amount)) {
+        itemErrors.set(idx, `Cannot retire ${dto.amount} tCO₂e from batch ${dto.batchId} — only ${batch.amount} tCO₂e available`);
       }
-      if (batch.status === "FullyRetired") {
-        throw new ConflictException(`Batch ${dto.batchId} credits are already fully retired`);
-      }
-      if (dto.amount > Number(batch.amount)) {
-        throw new UnprocessableEntityException(`Cannot retire ${dto.amount} tCO₂e from batch ${dto.batchId} — only ${batch.amount} tCO₂e available`);
-      }
+    });
+
+    if (itemErrors.size > 0) {
+      const results: BatchItemStatus[] = dtos.map((dto, idx) => {
+        const error = itemErrors.get(idx);
+        return error
+          ? { index: idx, status: "error", itemIdentifier: dto.batchId, error }
+          : {
+              index: idx,
+              status: "error",
+              itemIdentifier: dto.batchId,
+              error: "Skipped: the whole batch was rolled back because other item(s) in the request failed validation",
+            };
+      });
+
+      throw new UnprocessableEntityException({
+        success: false,
+        totalProcessed: dtos.length,
+        successCount: 0,
+        errorCount: itemErrors.size,
+        results,
+      });
     }
 
     const retirementRecords = await this.prisma.$transaction(async (tx) => {

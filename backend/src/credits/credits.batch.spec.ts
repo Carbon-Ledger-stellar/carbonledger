@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma.service';
 import { MailService } from '../mail/mail.service';
 import { IpfsService } from '../common/ipfs.service';
 import { MintCreditsDto, RetireCreditsDto } from './credits.dto';
+import { QueueService } from '../queue/queue.service';
 
 describe('CreditsService - Batch Endpoints', () => {
   let service: CreditsService;
@@ -39,6 +40,12 @@ describe('CreditsService - Batch Endpoints', () => {
     uploadJson: jest.fn().mockResolvedValue('QmTestHash'),
   };
 
+  // CreditsService gained a required QueueService dependency in #949
+  // (bulk mint job queueing); this spec predates that and needs a mock too.
+  const mockQueueService = {
+    enqueue: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
@@ -48,6 +55,7 @@ describe('CreditsService - Batch Endpoints', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: MailService, useValue: mockMailService },
         { provide: IpfsService, useValue: mockIpfsService },
+        { provide: QueueService, useValue: mockQueueService },
       ],
     }).compile();
 
@@ -197,6 +205,54 @@ describe('CreditsService - Batch Endpoints', () => {
       expect(result.totalProcessed).toBe(1);
       expect(result.results[0].status).toBe('success');
       expect(mockPrismaService.$transaction).toHaveBeenCalled();
+    });
+
+    it('reports a per-item error for each invalid entry instead of throwing on the first one (#965)', async () => {
+      const items: RetireCreditsDto[] = [
+        {
+          batchId: 'batch-missing',
+          amount: 10,
+          beneficiary: 'Acme Corp',
+          retirementReason: 'Carbon Offset',
+          holderPublicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        },
+        {
+          batchId: 'batch-002',
+          amount: 999,
+          beneficiary: 'Acme Corp',
+          retirementReason: 'Carbon Offset',
+          holderPublicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        },
+        {
+          batchId: 'batch-003',
+          amount: 5,
+          beneficiary: 'Acme Corp',
+          retirementReason: 'Carbon Offset',
+          holderPublicKey: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+        },
+      ];
+
+      mockPrismaService.creditBatch.findMany.mockResolvedValue([
+        { batchId: 'batch-002', projectId: 'proj-1', amount: 100, status: 'Active', serialStart: '1000', serialEnd: '1099' },
+        { batchId: 'batch-003', projectId: 'proj-1', amount: 100, status: 'Active', serialStart: '2000', serialEnd: '2099' },
+      ]);
+
+      await expect(service.batchRetireCredits(items)).rejects.toMatchObject({
+        response: {
+          success: false,
+          totalProcessed: 3,
+          successCount: 0,
+          errorCount: 2,
+          results: [
+            { index: 0, status: 'error', itemIdentifier: 'batch-missing', error: expect.stringContaining('not found') },
+            { index: 1, status: 'error', itemIdentifier: 'batch-002', error: expect.stringContaining('999') },
+            { index: 2, status: 'error', itemIdentifier: 'batch-003' },
+          ],
+        },
+      });
+
+      // Atomic: nothing should have been written since validation failed.
+      expect(mockPrismaService.$transaction).not.toHaveBeenCalled();
     });
   });
 });

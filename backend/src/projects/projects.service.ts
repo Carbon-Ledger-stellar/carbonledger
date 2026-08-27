@@ -556,6 +556,30 @@ export class ProjectsService {
     return updated;
   }
 
+  /**
+   * Admin recovery (#964): un-hides a soft-deleted project by clearing
+   * deletedAt/deletionReason/retentionUntil.
+   *
+   * Note: softDeleteProject anonymizes name/description/metadataCid/
+   * verifierAddress/ownerAddress at delete time (GDPR-style scrub) — that
+   * data is gone for good, restoring only reverses the *visibility* of the
+   * row, not the redaction. This is intentional, not a bug.
+   */
+  async restoreProject(projectId: string) {
+    const project = await this.prisma.carbonProject.findFirst({
+      where: { projectId, deletedAt: { not: null } },
+    });
+    if (!project) throw new NotFoundException(`Deleted project ${projectId} not found`);
+
+    const restored = await this.prisma.carbonProject.update({
+      where: { id: project.id },
+      data: { deletedAt: null, deletionReason: null, retentionUntil: null },
+    });
+
+    await this.invalidateProjectCache(projectId);
+    return restored;
+  }
+
   private getRetentionDays(): number {
     const raw = Number(process.env.DATA_RETENTION_DAYS ?? process.env.RETENTION_DAYS ?? '90');
     return Number.isFinite(raw) && raw > 0 ? raw : 90;
