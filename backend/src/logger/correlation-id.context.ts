@@ -1,8 +1,10 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { v4 as uuidv4 } from 'uuid';
+import { getTraceId } from '../telemetry/tracing';
 
 export interface CorrelationContext {
   correlationId: string;
+  traceId?: string;
   method?: string;
   path?: string;
   statusCode?: number;
@@ -31,10 +33,15 @@ export class CorrelationIdContext {
   }
 
   static getCorrelationId(): string {
-    return this.storage.getStore()?.correlationId ?? '';
+    return this.storage.getStore()?.correlationId || getTraceId();
+  }
+
+  static getTraceId(): string {
+    return this.storage.getStore()?.traceId || getTraceId();
   }
 
   static run<T>(context: CorrelationContext, fn: () => T): T {
     return this.storage.run(context, fn);
   }
 }
+

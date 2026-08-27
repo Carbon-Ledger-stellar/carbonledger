@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SorobanRpc } from '@stellar/stellar-sdk';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
 import { contractCallsRegistry, ContractLabel } from './metrics.registry';
 
 const HTTP_TIMEOUT_MS = 2500;
@@ -114,6 +115,39 @@ export class StellarNetworkService {
    */
   recordCall(contract: ContractLabel, status: 'success' | 'error'): void {
     contractCallsRegistry.increment(contract, status);
+    const activeSpan = trace.getActiveSpan();
+    if (activeSpan) {
+      activeSpan.setAttribute('stellar.contract_label', contract);
+      activeSpan.setAttribute('stellar.call_status', status);
+    }
+  }
+
+  /**
+   * Wraps Stellar / Soroban contract invocations in OpenTelemetry active spans.
+   */
+  async traceContractCall<T>(
+    contractId: string,
+    method: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const tracer = trace.getTracer('carbonledger.stellar');
+    return tracer.startActiveSpan(`stellar contract ${method}`, async (span) => {
+      span.setAttributes({
+        'stellar.contract_id': contractId,
+        'stellar.method': method,
+      });
+      try {
+        const result = await operation();
+        span.setStatus({ code: SpanStatusCode.OK });
+        return result;
+      } catch (err: any) {
+        span.recordException(err instanceof Error ? err : String(err));
+        span.setStatus({ code: SpanStatusCode.ERROR, message: err?.message });
+        throw err;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   /**

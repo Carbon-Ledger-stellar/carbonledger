@@ -21,12 +21,14 @@ import { LoggerService } from './logger/logger.service';
 class JsonLogger extends ConsoleLogger {
   private write(level: string, message: unknown, context?: string): void {
     const correlationId = CorrelationIdContext.getCorrelationId();
+    const traceId = CorrelationIdContext.getTraceId();
     process.stdout.write(
       JSON.stringify({
         timestamp: new Date().toISOString(),
         level,
         service: 'backend',
         correlationId: correlationId || undefined,
+        traceId: traceId || undefined,
         context: context ?? this.context,
         message,
       }) + '\n',

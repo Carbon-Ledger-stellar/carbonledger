@@ -164,6 +164,10 @@ services:
       REDIS_SENTINEL_NAME: mymaster
       REDIS_PASSWORD:    ${REDIS_PASSWORD:-}
       LOG_LEVEL:         ${LOG_LEVEL:-info}
+      OTEL_ENABLED:      ${OTEL_ENABLED:-true}
+      OTEL_SERVICE_NAME: carbonledger-backend
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
     ports:
       - "3001:3001"
     healthcheck:
@@ -416,6 +420,24 @@ services:
     depends_on:
       loki:
         condition: service_healthy
+    logging: *default-logging
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    restart: unless-stopped
+    <<: *resources-observability
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+      - "6831:6831/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:16686/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     logging: *default-logging
 
 volumes:
