@@ -19,8 +19,9 @@ export class ThrottlerExceptionFilter implements ExceptionFilter {
         .set("Retry-After", "60")
         .json({
           statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          error: "Too Many Requests",
+          code: "TOO_MANY_REQUESTS",
           message: "Too Many Requests",
-          error: "ThrottlerException",
         });
     }
   }
