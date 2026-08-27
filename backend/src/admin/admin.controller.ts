@@ -6,10 +6,11 @@ import { Roles } from '../auth/decorators';
 import { AdminService } from './admin.service';
 import {
   VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto, UpdateCanaryDto,
-  ReviewQuarantineDto,
+  ReviewQuarantineDto, SoftDeleteDto,
 } from './admin.dto';
 import {
   CheckPolicies, PoliciesGuard, UserSubject, AuditLogSubject, OracleDataSubject,
+  ProjectSubject, CreditBatchSubject, RetirementSubject,
 } from '../policies';
 
 /**
@@ -85,6 +86,56 @@ export class AdminController {
   @CheckPolicies((ability) => ability.can('reindex', 'all'))
   reindex() {
     return this.admin.triggerReindex();
+  }
+
+  // ── Soft delete / recovery (#964) ───────────────────────────────────────────
+  //
+  // Delete + restore for the three retention-tracked resources. Reads
+  // everywhere else (project list, credit batch lookup, retirement search,
+  // ...) already exclude deletedAt rows by default — these are the only
+  // routes that can see or touch a soft-deleted row before the retention
+  // job purges it (30 days, see purgeDeletedRecords below).
+
+  @Delete('projects/:projectId')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('delete', ProjectSubject))
+  softDeleteProject(@Param('projectId') projectId: string, @Body() dto: SoftDeleteDto, @Req() req: any) {
+    return this.admin.softDeleteProject(projectId, req.user?.publicKey, dto.reason);
+  }
+
+  @Post('projects/:projectId/restore')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', ProjectSubject))
+  restoreProject(@Param('projectId') projectId: string, @Req() req: any) {
+    return this.admin.restoreProject(projectId, req.user?.publicKey);
+  }
+
+  @Delete('credits/:batchId')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('delete', CreditBatchSubject))
+  softDeleteCreditBatch(@Param('batchId') batchId: string, @Body() dto: SoftDeleteDto, @Req() req: any) {
+    return this.admin.softDeleteCreditBatch(batchId, req.user?.publicKey, dto.reason);
+  }
+
+  @Post('credits/:batchId/restore')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', CreditBatchSubject))
+  restoreCreditBatch(@Param('batchId') batchId: string, @Req() req: any) {
+    return this.admin.restoreCreditBatch(batchId, req.user?.publicKey);
+  }
+
+  @Delete('retirements/:retirementId')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('delete', RetirementSubject))
+  softDeleteRetirement(@Param('retirementId') retirementId: string, @Body() dto: SoftDeleteDto, @Req() req: any) {
+    return this.admin.softDeleteRetirement(retirementId, req.user?.publicKey, dto.reason);
+  }
+
+  @Post('retirements/:retirementId/restore')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', RetirementSubject))
+  restoreRetirement(@Param('retirementId') retirementId: string, @Req() req: any) {
+    return this.admin.restoreRetirement(retirementId, req.user?.publicKey);
   }
 
   // ── Purge Deleted ───────────────────────────────────────────────────────────

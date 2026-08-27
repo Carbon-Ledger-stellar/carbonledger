@@ -15,6 +15,10 @@ import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
 import { RedisService } from '../redis.service';
+import { ProjectsService } from '../projects/projects.service';
+import { CreditsService } from '../credits/credits.service';
+import { RetirementsService } from '../retirements/retirements.service';
+import { AuditService } from '../audit/audit.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -65,6 +69,11 @@ describe('Satellite quarantine admin API (#579)', () => {
         { provide: IndexerService, useValue: { sync: jest.fn() } },
         { provide: OracleService,  useValue: { getPriceApprovals: jest.fn() } },
         { provide: RedisService,   useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() } },
+        // #964 recovery deps — not under test here, only need to satisfy DI.
+        { provide: ProjectsService,    useValue: {} },
+        { provide: CreditsService,     useValue: {} },
+        { provide: RetirementsService, useValue: {} },
+        { provide: AuditService,       useValue: { createLog: jest.fn() } },
       ],
     }).compile();
 

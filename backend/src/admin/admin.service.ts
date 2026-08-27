@@ -5,6 +5,10 @@ import { OracleService } from '../oracle/oracle.service';
 import { RedisService } from '../redis.service';
 import { StellarNetworkService } from '../common/stellar-network.service';
 import { UpdateCanaryDto } from './admin.dto';
+import { ProjectsService } from '../projects/projects.service';
+import { CreditsService } from '../credits/credits.service';
+import { RetirementsService } from '../retirements/retirements.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class AdminService {
@@ -14,6 +18,10 @@ export class AdminService {
     private readonly oracle: OracleService,
     private readonly redis: RedisService,
     private readonly stellarNetwork: StellarNetworkService,
+    private readonly projectsService: ProjectsService,
+    private readonly creditsService: CreditsService,
+    private readonly retirementsService: RetirementsService,
+    private readonly auditService: AuditService,
   ) {}
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
@@ -239,6 +247,83 @@ export class AdminService {
     });
 
     return this.serializeQuarantine(updated);
+  }
+
+  // ── Soft delete / recovery (#964) ───────────────────────────────────────────
+  //
+  // Delete + restore for Project/Credit/Retirement all funnel through here so
+  // every one of them lands in the tamper-evident audit chain (AuditService),
+  // regardless of which resource module actually owns the row. The resource
+  // services (ProjectsService/CreditsService/RetirementsService) do the actual
+  // deletedAt mutation and enforce "not already deleted/not already active".
+
+  async softDeleteProject(projectId: string, actor: string, reason?: string) {
+    const deleted = await this.projectsService.softDeleteProject(projectId, reason ?? 'Deleted by admin');
+    await this.auditService.createLog({
+      userId: actor,
+      action: 'project.soft_delete',
+      resourceId: projectId,
+      result: 'success',
+      metadata: { reason },
+    });
+    return deleted;
+  }
+
+  async restoreProject(projectId: string, actor: string) {
+    const restored = await this.projectsService.restoreProject(projectId);
+    await this.auditService.createLog({
+      userId: actor,
+      action: 'project.restore',
+      resourceId: projectId,
+      result: 'success',
+    });
+    return restored;
+  }
+
+  async softDeleteCreditBatch(batchId: string, actor: string, reason?: string) {
+    const deleted = await this.creditsService.softDeleteBatch(batchId);
+    await this.auditService.createLog({
+      userId: actor,
+      action: 'credit_batch.soft_delete',
+      resourceId: batchId,
+      result: 'success',
+      metadata: { reason },
+    });
+    return deleted;
+  }
+
+  async restoreCreditBatch(batchId: string, actor: string) {
+    const restored = await this.creditsService.restoreBatch(batchId);
+    await this.auditService.createLog({
+      userId: actor,
+      action: 'credit_batch.restore',
+      resourceId: batchId,
+      result: 'success',
+    });
+    return restored;
+  }
+
+  async softDeleteRetirement(retirementId: string, actor: string, reason?: string) {
+    const deleted = await this.retirementsService.softDeleteRetirement(retirementId);
+    await this.auditService.createLog({
+      userId: actor,
+      action: 'retirement.soft_delete',
+      resourceId: retirementId,
+      result: 'success',
+      metadata: { reason },
+    });
+    return deleted;
+  }
+
+  async restoreRetirement(retirementId: string, actor: string) {
+    const restored = await this.retirementsService.restoreRetirement(retirementId);
+    await this.auditService.createLog({
+      userId: actor,
+      action: 'retirement.restore',
+      resourceId: retirementId,
+      result: 'success',
+    });
+    return restored;
   }
 
   async purgeDeletedRecords() {

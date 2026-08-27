@@ -56,6 +56,19 @@ export class ReviewQuarantineDto {
   note?: string;
 }
 
+/**
+ * DTO for admin soft-delete of a project/credit batch/retirement (#964).
+ *
+ * Validation:
+ *  - reason: optional free-text rationale, recorded in the audit log
+ */
+export class SoftDeleteDto {
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  reason?: string;
+}
+
 export class UpdateCanaryDto {
   /**
    * Canary contract address (Stellar contract ID, 56-char C... address).
