@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, ForbiddenException, Logger, Optional } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { RedisService } from "../redis.service";
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { CacheInvalidationService } from "../cache/cache.service";
 import {
   RegisterProjectDto,
   UpdateProjectStatusDto,
@@ -53,6 +54,7 @@ export class ProjectsService {
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
+    @Optional() private readonly cacheInvalidation?: CacheInvalidationService,
     @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
@@ -562,123 +564,10 @@ export class ProjectsService {
   private async invalidateProjectCache(projectId: string): Promise<void> {
     const cacheKey = projectDetailCacheKey(projectId);
     await this.redisService.del(cacheKey);
+    // Also invalidate listings cache — a project status change (verify, reject,
+    // suspend) can make active listings stale.
+    if (this.cacheInvalidation) {
+      await this.cacheInvalidation.invalidateAllListings();
+    }
   }
-
-  async batchCreateProjects(dtos: CreateProjectDto[], ownerAddress?: string) {
-    if (!dtos || !Array.isArray(dtos) || dtos.length === 0) {
-      throw new BadRequestException("Batch input must be a non-empty array of items");
-    }
-    if (dtos.length > 1000) {
-      throw new BadRequestException("Batch operations are limited to 1,000 items per request");
-    }
-
-    const createdProjects = await this.prisma.$transaction(async (tx) => {
-      const records = [];
-      for (const rawDto of dtos) {
-        const sanitizedDto = sanitizeProjectPayload(rawDto as unknown as Record<string, unknown>) as unknown as CreateProjectDto;
-        const projectId = randomUUID();
-        const metadataCid = sanitizedDto.documents?.[0] ?? '';
-        const data = {
-          projectId,
-          name: sanitizedDto.name,
-          methodology: sanitizedDto.methodology,
-          description: sanitizedDto.description,
-          coordinates: sanitizedDto.coordinates as any,
-          country: sanitizedDto.country ?? '',
-          projectType: sanitizedDto.projectType ?? 'carbon_offset',
-          ownerAddress: ownerAddress ?? sanitizedDto.ownerAddress ?? '',
-          verifierAddress: sanitizedDto.verifierAddress ?? '',
-          vintageYear: sanitizedDto.vintageYear ?? new Date().getFullYear(),
-          methodologyScore: sanitizedDto.methodologyScore ?? 70,
-          metadataCid,
-          status: 'Pending',
-        };
-        const p = await tx.carbonProject.create({ data });
-        records.push({
-          projectId: p.projectId,
-          id: p.id,
-          txHash: null,
-          status: p.status,
-          metadataCid,
-        });
-      }
-      return records;
-    });
-
-    const results = createdProjects.map((p, idx) => ({
-      index: idx,
-      status: "success" as const,
-      itemIdentifier: p.projectId,
-      data: p,
-    }));
-
-    return {
-      success: true,
-      totalProcessed: dtos.length,
-      successCount: dtos.length,
-      errorCount: 0,
-      results,
-    };
-  }
-
-  async batchUpdateStatus(items: Array<{ projectId: string; status: ProjectStatus; reason?: string }>, actor = 'admin') {
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      throw new BadRequestException("Batch input must be a non-empty array of items");
-    }
-    if (items.length > 1000) {
-      throw new BadRequestException("Batch operations are limited to 1,000 items per request");
-    }
-
-    const projectIds = items.map(i => i.projectId);
-    const existing = await this.prisma.carbonProject.findMany({
-      where: { projectId: { in: projectIds }, deletedAt: null },
-    });
-    const existingMap = new Map<string, any>((existing as any[]).map(p => [p.projectId, p]));
-
-    for (const item of items) {
-      const project = existingMap.get(item.projectId);
-      if (!project) {
-        throw new NotFoundException(`Project ${item.projectId} not found`);
-      }
-    }
-
-    const updatedProjects = await this.prisma.$transaction(async (tx) => {
-      const records = [];
-      for (const item of items) {
-        const project = existingMap.get(item.projectId)!;
-        await this.stateMachine.transition(
-          item.projectId,
-          project.status as SMStatus,
-          item.status as SMStatus,
-          actor,
-          item.reason,
-        );
-        const updated = await tx.carbonProject.update({
-          where: { projectId: item.projectId },
-          data: { status: item.status },
-        });
-        records.push(updated);
-      }
-      return records;
-    });
-
-    for (const item of items) {
-      await this.invalidateProjectCache(item.projectId);
-    }
-
-    const results = updatedProjects.map((p, idx) => ({
-      index: idx,
-      status: "success" as const,
-      itemIdentifier: p.projectId,
-      data: p,
-    }));
-
-    return {
-      success: true,
-      totalProcessed: items.length,
-      successCount: items.length,
-      errorCount: 0,
-      results,
-    };
-  }
-}
+}

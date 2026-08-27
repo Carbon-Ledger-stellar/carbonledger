@@ -1094,6 +1094,12 @@ mod conservation;
 #[cfg(test)]
 mod conservation_invariant_tests;
 
+// ── Property-based fuzz tests for serial allocation invariants ───────────────
+// Uses the proptest crate to generate thousands of randomized serial ranges
+// and verify pairwise-disjointness, overflow safety, and supply conservation.
+#[cfg(test)]
+mod serial_fuzz_tests;
+
 // ── Kani formal verification proofs ──────────────────────────────────────────
 // Compiled only by the Kani model checker toolchain (cfg(kani)).
 // Zero impact on production binary or regular test runs.

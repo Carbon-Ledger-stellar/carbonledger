@@ -21,5 +21,6 @@ import { WebhookModule } from "../webhook/webhook.module";
     PrismaService,
     AbilityFactory,
   ],
+  exports: [ListingsCacheService],
 })
 export class MarketplaceModule {}

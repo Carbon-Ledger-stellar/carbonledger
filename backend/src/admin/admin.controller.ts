@@ -87,6 +87,15 @@ export class AdminController {
     return this.admin.triggerReindex();
   }
 
+  // ── Purge Deleted ───────────────────────────────────────────────────────────
+
+  @Delete('purge')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('delete', 'all'))
+  purgeDeletedRecords() {
+    return this.admin.purgeDeletedRecords();
+  }
+
   // ── Audit log ───────────────────────────────────────────────────────────────
 
   @Get('audit-logs')
