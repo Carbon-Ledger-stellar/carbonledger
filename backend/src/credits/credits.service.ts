@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException, Logger, Inject, forwardRef } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { MintCreditsDto, RetireCreditsDto, BatchOperationResult, BatchItemStatus } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
@@ -8,6 +8,8 @@ import { randomBytes } from "crypto";
 import { EventSourcingService } from "../events/event-sourcing.service";
 import { CreditEventType } from "../events/credit-event.types";
 import { WebhookService } from "../webhook/webhook.service";
+import { QueueService } from "../queue/queue.service";
+import { JobType } from "../queue/queue.constants";
 
 /**
  * Serial numbers are stored as fixed-point integers scaled by 100.
@@ -32,6 +34,7 @@ export class CreditsService {
     private readonly ipfsService: IpfsService,
     @Optional() private readonly eventSourcing?: EventSourcingService,
     @Optional() private readonly webhookService?: WebhookService,
+    @Inject(forwardRef(() => QueueService)) private readonly queueService?: QueueService,
   ) {}
 
   async mintCredits(dto: MintCreditsDto, actor?: string) {
@@ -109,6 +112,83 @@ export class CreditsService {
     }
 
     return batch;
+  }
+
+  async bulkMintCredits(dtos: MintCreditsDto[], actor?: string) {
+    const startTime = performance.now();
+    const executionLog = [];
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const dto of dtos) {
+        try {
+          const existing = await tx.creditBatch.findUnique({ where: { batchId: dto.batchId } });
+          if (existing) throw new BadRequestException(`Batch ${dto.batchId} already exists`);
+
+          const serialStartUnits = BigInt(dto.serialStart);
+          const serialEndUnits = BigInt(dto.serialEnd);
+          if (serialStartUnits <= 0n || serialEndUnits <= 0n || serialEndUnits <= serialStartUnits) {
+            throw new BadRequestException("serialEnd must be greater than serialStart and both must be positive");
+          }
+
+          const overlap = await tx.creditBatch.findFirst({
+            where: {
+              OR: [{ serialStart: { lte: dto.serialEnd }, serialEnd: { gte: dto.serialStart } }],
+            },
+          });
+          if (overlap) throw new BadRequestException("Serial number range overlaps existing batch — double counting prevented");
+
+          const batch = await tx.creditBatch.create({ data: dto });
+
+          if (this.eventSourcing) {
+            await this.eventSourcing.recordEvent({
+              creditBatchId: batch.batchId,
+              eventType: CreditEventType.MINT,
+              actor: actor ?? dto.projectId ?? 'system',
+              newState: {
+                batchId: batch.batchId,
+                projectId: batch.projectId,
+                amountAvailable: Number(batch.amount),
+                amountRetired: 0,
+                status: 'Issued',
+                vintageYear: batch.vintageYear,
+                serialStart: batch.serialStart,
+                serialEnd: batch.serialEnd,
+              },
+              txHash: (batch as any).txHash ?? 'STUB_MINT_HASH',
+            }).catch(() => undefined);
+          }
+
+          executionLog.push({ batchId: dto.batchId, status: 'processed' });
+        } catch (error: any) {
+          executionLog.push({ batchId: dto.batchId, status: 'error', error: error.message });
+          throw error; // Re-throw to rollback the entire transaction
+        }
+      }
+    });
+
+    if (this.queueService) {
+      const chunkSize = 25; // chunk operations for BullMQ
+      for (let i = 0; i < dtos.length; i += chunkSize) {
+        const chunk = dtos.slice(i, i + chunkSize);
+        await this.queueService.enqueue(JobType.BULK_MINT, { items: chunk });
+      }
+    }
+
+    const duration = performance.now() - startTime;
+    this.logger.log(`Processed bulk mint of ${dtos.length} items in ${duration.toFixed(2)}ms`);
+
+    return {
+      status: 'success',
+      processed: dtos.length,
+      executionLog,
+      durationMs: duration
+    };
+  }
+
+  async executeBulkMintJob(items: any[]) {
+    this.logger.log(`Executing bulk mint on Stellar for ${items.length} items`);
+    // Placeholder for actual Stellar SDK bulk operations
+    return { status: 'submitted', itemsCount: items.length };
   }
 
   async getBatch(batchId: string) {
