@@ -1,8 +1,8 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/common";
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Optional } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { poolMetricsRegistry } from "./common/metrics.registry";
-import { CorrelationIdContext } from "./logger/correlation-id.context";
-import { LoggerService as CustomLoggerService } from "./logger/logger.service";
+import { RedisService } from "./redis.service";
+import { createPrismaCacheMiddleware, PrismaCacheMiddlewareOptions } from "./cache/prisma-cache.middleware";
 
 // Pool sizing: allow override via env, default to 10 for production safety.
 // Formula: (num_cores * 2) + effective_spindle_count — start conservative.
@@ -19,7 +19,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private _totalQueries = 0;
   private _poolErrors = 0;
 
-  constructor() {
+  constructor(@Optional() private readonly redisService?: RedisService) {
     const url = new URL(process.env.DATABASE_URL!);
     url.searchParams.set("connection_limit", String(POOL_MAX));
     url.searchParams.set("pool_timeout", String(POOL_TIMEOUT_MS / 1000));
@@ -27,43 +27,20 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     super({
       datasources: { db: { url: url.toString() } },
-      log: [
-        { emit: "event", level: "query" },
-        { emit: "event", level: "warn" },
-        { emit: "event", level: "error" },
-      ],
-    });
-
-    const customLogger = new CustomLoggerService();
-    // @ts-ignore - Prisma 6 typings for $on might need adjustment, ignoring for safety
-    this.$on("query", (e: any) => {
-      customLogger.debug(`Database Query`, {
-        query: e.query,
-        params: e.params,
-        duration: e.duration,
-        target: e.target,
-        type: "DATABASE_QUERY",
-      });
-    });
-    // @ts-ignore
-    this.$on("warn", (e: any) => {
-      customLogger.warn(`Database Warn: ${e.message}`, { target: e.target });
-    });
-    // @ts-ignore
-    this.$on("error", (e: any) => {
-      customLogger.error(`Database Error: ${e.message}`, undefined, { target: e.target });
-    });
+      log: process.env.NODE_ENV === "development" ? ["query", "warn", "error"] : ["warn", "error"],
+    } as any);
 
     // Prisma 6 removed client middleware ($use); register only when available.
     const client = this as PrismaClient & {
       $use?: (
         middleware: (
-          params: { model?: string; action: string },
-          next: (params: { model?: string; action: string }) => Promise<unknown>,
+          params: { model?: string; action: string; args?: any },
+          next: (params: { model?: string; action: string; args?: any }) => Promise<unknown>,
         ) => Promise<unknown>,
       ) => void;
     };
     if (typeof client.$use === 'function') {
+      // 1. Connection pool metrics tracking middleware
       client.$use(async (params, next) => {
         this._activeQueries++;
         this._totalQueries++;
@@ -80,80 +57,38 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         }
       });
 
-      client.$use(async (params, next) => {
-        if (['CarbonProject', 'User', 'CreditBatch'].includes(params.model || '') && params.action === 'update') {
-          let oldState = null;
-          if ((params as any).args && (params as any).args.where) {
-            const modelDelegate = params.model!.charAt(0).toLowerCase() + params.model!.slice(1);
-            oldState = await (client as any)[modelDelegate].findUnique({ where: (params as any).args.where });
-          }
-          const newState = await next(params);
+      // 2. Automatic query result caching middleware
+      if (this.redisService) {
+        client.$use(
+          createPrismaCacheMiddleware({
+            redisService: this.redisService,
+            logger: new Logger('PrismaCacheMiddleware'),
+          }),
+        );
+      }
+    }
+  }
 
-          const context = CorrelationIdContext.getContext();
-          const actor = context?.actor || null;
-          const ipAddress = context?.ip || null;
-
-          const resourceId = (newState as any)?.id || (newState as any)?.projectId || (newState as any)?.batchId || null;
-
-          await client.auditLog.create({
-            data: {
-              userId: actor,
-              action: 'update',
-              resourceId: resourceId,
-              ipAddress: ipAddress,
-              result: 'Success',
-              metadata: {
-                model: params.model,
-                oldState,
-                newState,
-              }
-            }
-          });
-
-          return newState;
-        }
-        return next(params);
-      });
-
-      client.$use(async (params, next) => {
-        const softDeleteModels = ['CarbonProject', 'CreditBatch', 'MarketListing', 'RetirementRecord'];
-        if (softDeleteModels.includes(params.model || '')) {
-          const includeDeleted = params.args?.includeDeleted;
-          if (params.args && 'includeDeleted' in params.args) {
-            delete params.args.includeDeleted;
-          }
-
-          if (!includeDeleted) {
-            if (params.action === 'findUnique' || params.action === 'findFirst') {
-              params.action = 'findFirst';
-              params.args.where = { deletedAt: null, ...params.args.where };
-            }
-            if (params.action === 'findMany') {
-              if (params.args.where?.deletedAt === undefined) {
-                params.args.where = { deletedAt: null, ...params.args.where };
-              }
-            }
-            if (params.action === 'updateMany') {
-              if (params.args.where?.deletedAt === undefined) {
-                params.args.where = { deletedAt: null, ...params.args.where };
-              }
-            }
-          }
-          if (params.action === 'delete') {
-            params.action = 'update';
-            params.args.data = { deletedAt: new Date() };
-          }
-          if (params.action === 'deleteMany') {
-            params.action = 'updateMany';
-            if (params.args.data !== undefined) {
-              params.args.data.deletedAt = new Date();
-            } else {
-              params.args.data = { deletedAt: new Date() };
-            }
-          }
-        }
-        return next(params);
-      });
+  /**
+   * Registers or updates query result caching middleware with custom options.
+   */
+  public attachCacheMiddleware(redisService: RedisService, options?: Omit<PrismaCacheMiddlewareOptions, 'redisService'>): void {
+    const client = this as PrismaClient & {
+      $use?: (
+        middleware: (
+          params: { model?: string; action: string; args?: any },
+          next: (params: { model?: string; action: string; args?: any }) => Promise<unknown>,
+        ) => Promise<unknown>,
+      ) => void;
+    };
+    if (typeof client.$use === 'function') {
+      client.$use(
+        createPrismaCacheMiddleware({
+          ...options,
+          redisService,
+          logger: options?.logger ?? new Logger('PrismaCacheMiddleware'),
+        }),
+      );
     }
   }
 

@@ -49,6 +49,7 @@ Thumbs.db
 venv/
 zk-out/
 
+
 # Soroban test snapshots from the serial-index scale tests (#887). These build
 # registries of thousands of ledger entries, so the generated JSON runs to tens
 # of megabytes — regenerated on every `cargo test`, not worth versioning.

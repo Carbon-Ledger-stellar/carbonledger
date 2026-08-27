@@ -11,7 +11,6 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { TokenFamilyService } from './token-family.service';
-import { TokenBlacklistService } from './token-blacklist.service';
 import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
@@ -45,7 +44,6 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly tokenFamily: TokenFamilyService,
-    private readonly tokenBlacklist: TokenBlacklistService,
     private readonly secretsRefresh: SecretsRefreshService,
   ) { }
 
@@ -226,7 +224,7 @@ export class AuthService {
     const expiresIn = Math.min(requested, ACCESS_TOKEN_TTL_SECONDS);
 
     return jwt.sign(
-      { sub: publicKey, role, type: 'access', jti: crypto.randomUUID() },
+      { sub: publicKey, role, type: 'access' },
       this.secretsRefresh.getJwtSigningSecret(),
       { expiresIn, issuer },
     );
