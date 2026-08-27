@@ -1,22 +1,28 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { CorrelationIdContext } from './correlation-id.context';
+import { getTraceId } from '../telemetry/tracing';
 
 /**
  * Middleware to generate and propagate correlation IDs across requests.
- * Extracts correlation ID from X-Correlation-ID header or generates a new one.
- * Sets the correlation ID in the response header and stores it in AsyncLocalStorage.
+ * Extracts trace ID from OpenTelemetry active span or request headers.
+ * Sets the trace ID and correlation ID in response headers and AsyncLocalStorage context.
  */
 @Injectable()
 export class CorrelationIdMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
-    // Extract correlation ID from request header or generate new one
+    const traceId = getTraceId();
     const correlationId =
       (req.headers['x-correlation-id'] as string) ||
-      CorrelationIdContext.generateCorrelationId();
+      (req.headers['x-trace-id'] as string) ||
+      (traceId ? traceId : CorrelationIdContext.generateCorrelationId());
 
     // Store in request object for access in controllers/services
     (req as any).correlationId = correlationId;
+    if (traceId) {
+      (req as any).traceId = traceId;
+      res.setHeader('X-Trace-ID', traceId);
+    }
 
     // Set correlation ID in response header
     res.setHeader('X-Correlation-ID', correlationId);
@@ -24,6 +30,7 @@ export class CorrelationIdMiddleware implements NestMiddleware {
     // Set correlation context for AsyncLocalStorage
     CorrelationIdContext.setContext({
       correlationId,
+      traceId: traceId || correlationId,
       method: req.method,
       path: req.path,
     });
@@ -31,3 +38,4 @@ export class CorrelationIdMiddleware implements NestMiddleware {
     next();
   }
 }
+
