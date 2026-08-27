@@ -2,12 +2,14 @@
 
 import { colors } from "../styles/design-system";
 
-type Variant = "CreditCard" | "MarketplaceItem" | "PoolStats" | "LoanCard" | "ProjectCard" | "ProvenanceTrail" | "Certificate" | "AuditItem" | "PricingTable";
+type Variant = "CreditCard" | "MarketplaceItem" | "PoolStats" | "LoanCard" | "ProjectCard" | "ProvenanceTrail" | "Certificate" | "AuditItem" | "PricingTable" | "Table";
 
 interface Props {
   variant?: Variant;
   count?: number;
   className?: string;
+  /** Only used by the "Table" variant — number of shimmer cells per row. Defaults to 4. */
+  columns?: number;
 }
 
 function Shimmer({ width, height, borderRadius = "0.375rem" }: { width: string; height: string; borderRadius?: string }) {
@@ -301,7 +303,28 @@ function PricingTableSkeleton() {
   );
 }
 
-export default function LoadingSkeleton({ variant = "CreditCard", count = 1, className }: Props) {
+// Generic table row — used wherever a real <table>/list is still loading.
+// Renders as its own bordered rows (not literal <tr>s) so a caller can drop
+// it in place of the whole table while data is in flight, same pattern as
+// MarketplaceItemSkeleton.
+function TableRowSkeleton({ columns = 4 }: { columns?: number }) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${columns}, 1fr)`,
+      alignItems: "center",
+      gap: "1rem",
+      padding: "0.85rem 1rem",
+      borderBottom: `1px solid ${colors.neutral[100]}`,
+    }}>
+      {Array.from({ length: columns }).map((_, i) => (
+        <Shimmer key={i} width={i === 0 ? "80%" : "55%"} height="14px" />
+      ))}
+    </div>
+  );
+}
+
+export default function LoadingSkeleton({ variant = "CreditCard", count = 1, className, columns }: Props) {
   const skeletons = Array.from({ length: count });
 
   return (
@@ -321,6 +344,7 @@ export default function LoadingSkeleton({ variant = "CreditCard", count = 1, cla
         if (variant === "Certificate")     return <CertificateSkeleton key={i} />;
         if (variant === "AuditItem")       return <AuditItemSkeleton key={i} />;
         if (variant === "PricingTable")    return <PricingTableSkeleton key={i} />;
+        if (variant === "Table")           return <TableRowSkeleton key={i} columns={columns} />;
         return <CreditCardSkeleton key={i} />;
       })}
     </div>

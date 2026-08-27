@@ -4,6 +4,7 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { colors } from "../styles/design-system";
+import SearchAutocomplete from "./SearchAutocomplete";
 
 export interface FilterState {
   methodology:  string;
@@ -39,6 +40,8 @@ interface Props {
   filters:      FilterState;
   onChange:     (filters: FilterState) => void;
   resultCount?: number;
+  /** Searchable terms (project names, countries, methodologies) for the search autocomplete dropdown. */
+  suggestions?: string[];
 }
 
 const METHODOLOGIES  = ["", "VCS", "Gold Standard", "ACR", "CAR", "Plan Vivo"];
@@ -109,7 +112,7 @@ function FilterFields({ filters, onChange }: { filters: FilterState; onChange: (
   );
 }
 
-export default function MarketplaceFilter({ filters, onChange, resultCount }: Props) {
+export default function MarketplaceFilter({ filters, onChange, resultCount, suggestions = [] }: Props) {
   const t = useTranslations("marketplaceFilter");
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -219,24 +222,27 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
       )}
 
       {/* Search — always visible */}
-      <div style={{ position: "relative", marginBottom: "1rem" }}>
+      <div style={{ marginBottom: "1rem" }}>
         <label htmlFor="filter-search" className="sr-only">{t("searchLabel")}</label>
-        <input
+        <SearchAutocomplete
           id="filter-search"
-          type="search"
-          placeholder={t("searchPlaceholder")}
+          data-shortcut-target="search"
           value={localSearch}
-          onChange={e => setLocalSearch(e.target.value)}
-          aria-label={t("searchAria")}
-          style={{
+          onChange={setLocalSearch}
+          suggestions={suggestions}
+          placeholder={t("searchPlaceholder")}
+          ariaLabel={t("searchAria")}
+          inputStyle={{
             ...controlStyle,
             padding: "0.75rem 1rem 0.75rem 2.5rem",
             fontSize: "1rem",
             borderRadius: "0.75rem",
             boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
           }}
+          leadingIcon={
+            <span aria-hidden="true" style={{ position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)", color: colors.neutral[400], zIndex: 1 }}>🔍</span>
+          }
         />
-        <span aria-hidden="true" style={{ position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)", color: colors.neutral[400] }}>🔍</span>
       </div>
 
       {/* Mobile: Filters toggle button */}

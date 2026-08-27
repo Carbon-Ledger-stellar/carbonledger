@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useVerifierAuth } from "../../../lib/use-verifier-auth";
 import { useVerifierFeeHistory, exportVerifierFeesCsv } from "../../../lib/api";
 import { colors } from "../../../styles/design-system";
+import LoadingSkeleton from "../../../components/LoadingSkeleton";
 
 function stroopsToXlm(stroops: string): string {
   return (Number(stroops) / 10_000_000).toFixed(7).replace(/0+$/, "").replace(/\.$/, "");
@@ -52,7 +53,11 @@ export default function VerifierFeesPage() {
       </p>
 
       {error && <p role="alert" style={{ color: "#dc2626" }}>{error.message}</p>}
-      {isLoading && <p>Loading fee history…</p>}
+      {isLoading && (
+        <div style={{ marginTop: "1.5rem" }} aria-label="Loading fee history">
+          <LoadingSkeleton variant="Table" columns={5} count={6} />
+        </div>
+      )}
 
       {data && (
         <p style={{ fontWeight: 700, fontSize: "1.05rem", margin: "1rem 0" }}>
