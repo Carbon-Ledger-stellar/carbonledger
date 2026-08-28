@@ -1,82 +1,373 @@
-"use client";
+'use client';
 
-import { useRetirements } from "../../lib/api";
-import { formatTonnes } from "../../lib/carbon-utils";
-import { colors } from "../../styles/design-system";
-import AuditExplorer from "../../components/AuditExplorer";
-import SerialNumberLookup from "../../components/SerialNumberLookup";
+import { useState, useEffect, useCallback } from 'react';
+import type { SearchResult, ProvenanceTrail } from '@/types/audit';
+
+const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function formatTimeSince(ts: number | null): string {
+  if (!ts) return 'never';
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
 
 export default function AuditPage() {
-  const { data: retirements } = useRetirements(5);
+  const [searchType, setSearchType] = useState<'serial' | 'project' | 'retirement'>('serial');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<SearchResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isNotFound, setIsNotFound] = useState(false);
+
+  const [isOnline, setIsOnline] = useState(true);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [cachedResult, setCachedResult] = useState<SearchResult | null>(null);
+
+  // Track online/offline status
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Register service worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/audit-sw.js').catch(() => {});
+    }
+  }, []);
+
+  // Load cached result from IndexedDB on mount
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.indexedDB) return;
+    const req = indexedDB.open('carbonledger-audit', 1);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('retirements')) return;
+      const tx = db.transaction('retirements', 'readonly');
+      const store = tx.objectStore('retirements');
+      const getAll = store.getAll();
+      getAll.onsuccess = () => {
+        const records = getAll.result as Array<{ cachedAt?: number; data?: SearchResult }>;
+        if (records.length > 0) {
+          const latest = records.reduce((a, b) => (a.cachedAt ?? 0) > (b.cachedAt ?? 0) ? a : b);
+          setLastSyncedAt(latest.cachedAt ?? null);
+          if (latest.data) setCachedResult(latest.data);
+        }
+      };
+    };
+  }, []);
+
+  const isStale = lastSyncedAt !== null && (Date.now() - lastSyncedAt) > STALE_THRESHOLD_MS;
+
+  const handleSearch = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchTerm.trim()) return;
+
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    setIsNotFound(false);
+
+    try {
+      const response = await fetch(`/api/audit/search?type=${searchType}&q=${encodeURIComponent(searchTerm)}`);
+
+      if (response.status === 404) {
+        setIsNotFound(true);
+        setLoading(false);
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Search failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setResult(data);
+      setLastSyncedAt(Date.now());
+      setCachedResult(data);
+    } catch (err) {
+      // Offline: serve from cache if available
+      if (!navigator.onLine && cachedResult) {
+        setResult(cachedResult);
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to search. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [searchType, searchTerm, cachedResult]);
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 2rem" }}>
-      <div style={{ marginBottom: "2rem" }}>
-        <div style={{
-          display: "inline-block",
-          background: colors.primary[50], color: colors.primary[700],
-          border: `1px solid ${colors.primary[200]}`,
-          borderRadius: "9999px", padding: "0.3rem 1rem",
-          fontSize: "0.8rem", fontWeight: 600, marginBottom: "1rem",
-        }}>
-          No wallet required · Fully public
-        </div>
-        <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
-          Public Audit Trail
-        </h1>
-        <p style={{ color: colors.neutral[500], margin: 0 }}>
-          Every issuance, transfer, and retirement is permanently recorded on Stellar.
-          Search any serial number or project to see complete provenance.
-        </p>
+    <div className="min-h-screen bg-gray-50">
+      {/* Offline Banner */}
+      <div
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+        className={`transition-all duration-300 ${isOnline ? 'h-0 overflow-hidden opacity-0' : 'bg-amber-500 text-white py-2 px-4 text-center font-medium'}`}
+      >
+        You are offline. Showing cached data.
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "2rem" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          <div style={{
-            background: colors.surface, border: `1px solid ${colors.neutral[200]}`,
-            borderRadius: "0.75rem", padding: "1.5rem",
-          }}>
-            <h2 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 1rem" }}>
-              All Retirements
-            </h2>
-            <AuditExplorer />
-          </div>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        {/* Header */}
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            Carbon Credit Audit Explorer
+          </h1>
+          <p className="text-xl text-gray-600">
+            Search credits by serial number, project ID, or retirement certificate ID
+          </p>
+          <p className="text-sm text-gray-500 mt-2">
+            No wallet required - Public audit trail for regulators, journalists, and the public
+          </p>
+
+          {/* Last synced indicator */}
+          {lastSyncedAt && (
+            <p className={`text-sm mt-2 ${isStale ? 'text-amber-600 font-medium' : 'text-gray-400'}`}>
+              Last synced: {formatTimeSince(lastSyncedAt)}
+              {isStale && ' — data may be outdated'}
+            </p>
+          )}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          <SerialNumberLookup />
+        {/* Search Form */}
+        <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+          <form onSubmit={handleSearch} className="space-y-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <select
+                value={searchType}
+                onChange={(e) => setSearchType(e.target.value as any)}
+                className="px-4 py-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+              >
+                <option value="serial">Serial Number</option>
+                <option value="project">Project ID</option>
+                <option value="retirement">Retirement Certificate ID</option>
+              </select>
 
-          {/* Recent retirements summary */}
-          <div style={{
-            background: colors.surface, border: `1px solid ${colors.neutral[200]}`,
-            borderRadius: "0.75rem", padding: "1.25rem",
-          }}>
-            <h3 style={{ fontSize: "0.875rem", fontWeight: 700, color: colors.neutral[800], margin: "0 0 0.75rem" }}>
-              Recent Retirements
-            </h3>
-            {(retirements ?? []).map(r => (
-              <div key={r.retirementId} style={{
-                padding: "0.6rem 0", borderBottom: `1px solid ${colors.neutral[100]}`,
-                display: "flex", justifyContent: "space-between",
-              }}>
-                <div>
-                  <p style={{ fontSize: "0.8rem", fontWeight: 600, color: colors.neutral[800], margin: 0 }}>
-                    {r.beneficiary}
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder={`Enter ${searchType}...`}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+                required
+              />
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? 'Searching...' : 'Search'}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* Stale data warning */}
+        {isStale && !loading && (
+          <div
+            role="alert"
+            className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-8"
+          >
+            <p className="text-amber-700 font-medium">
+              Cached data is over 24 hours old and may be outdated.
+            </p>
+          </div>
+        )}
+
+        {/* Loading State — mirrors the shape of the results below (Credit Details
+            card + Provenance Trail steps) so there's no layout shift on arrival. */}
+        {loading && (
+          <div className="space-y-6" aria-busy="true" aria-label="Searching carbon credit records">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="h-7 w-40 bg-gray-200 rounded animate-pulse mb-4" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="border-b border-gray-100 pb-2 space-y-2">
+                    <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-5 w-32 bg-gray-200 rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="h-7 w-48 bg-gray-200 rounded animate-pulse mb-4" />
+              <div className="space-y-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="border-l-4 border-gray-200 p-4 rounded-r-lg bg-gray-50">
+                    <div className="h-4 w-24 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="h-3 w-full bg-gray-100 rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && !isNotFound && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-8">
+            <p className="text-red-700">{error}</p>
+          </div>
+        )}
+
+        {/* Empty State / Not Found */}
+        {isNotFound && (
+          <div
+            className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow-sm border border-gray-100 text-center mb-8"
+            role="alert"
+            aria-live="polite"
+          >
+            <div className="text-6xl mb-4">🔍</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">No Records Found</h2>
+            <p className="text-gray-600 max-w-md mb-6">
+              We couldn&apos;t find any records matching your search. Please check for typos and try again.
+            </p>
+            <a
+              href="/projects"
+              className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-semibold"
+            >
+              Browse All Projects
+            </a>
+          </div>
+        )}
+
+        {/* Results */}
+        {result && (
+          <div className="space-y-6">
+            {/* Credit Details */}
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Credit Details</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <InfoRow label="Serial Number" value={result.serialNumber} />
+                <InfoRow label="Project ID" value={result.projectId} />
+                <InfoRow label="Project Name" value={result.projectName} />
+                <InfoRow label="Vintage Year" value={String(result.vintageYear)} />
+                <InfoRow label="Amount" value={`${result.amount} tonnes CO₂`} />
+                <InfoRow label="Status" value={result.status} highlight={result.status === 'Retired'} />
+                <InfoRow label="Issuance Date" value={new Date(result.issuanceDate).toLocaleDateString()} />
+                {result.retirementDate && (
+                  <InfoRow label="Retirement Date" value={new Date(result.retirementDate).toLocaleDateString()} />
+                )}
+              </div>
+            </div>
+
+            {/* Provenance Trail */}
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-2xl font-semibold text-gray-900 mb-4">Provenance Trail</h2>
+              <div className="space-y-4">
+                {result.provenance.map((step, index) => (
+                  <ProvenanceStep key={index} step={step} index={index} />
+                ))}
+              </div>
+            </div>
+
+            {/* Retirement Certificate (if retired) */}
+            {result.retirementCertificate && (
+              <div className="bg-white rounded-lg shadow-md p-6">
+                <h2 className="text-2xl font-semibold text-gray-900 mb-4">Retirement Certificate</h2>
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <p className="text-sm text-gray-600 mb-2">Certificate ID: {result.retirementCertificate.id}</p>
+                  <p className="text-sm text-gray-600 mb-4">
+                    Beneficiary: {result.retirementCertificate.beneficiary}
                   </p>
-                  <p style={{ fontSize: "0.7rem", color: colors.neutral[400], margin: "0.1rem 0 0" }}>
-                    {r.projectId}
+                  <a
+                    href={`/api/audit/certificate/${result.retirementCertificate.id}`}
+                    download
+                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  >
+                    Download Certificate (PDF)
+                  </a>
+                  <p className="text-xs text-gray-500 mt-2">
+                    This certificate is permanently verifiable on-chain
                   </p>
                 </div>
-                <a href={`/retire/${r.retirementId}`} style={{
-                  fontSize: "0.75rem", fontWeight: 700, color: colors.primary[700],
-                  textDecoration: "none", alignSelf: "center",
-                }}>
-                  {formatTonnes(r.amount)}
-                </a>
               </div>
-            ))}
+            )}
           </div>
+        )}
+
+        {/* Help Section */}
+        {!result && !loading && !isNotFound && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mt-8">
+            <h3 className="text-lg font-semibold text-blue-900 mb-2">How to use the audit explorer</h3>
+            <ul className="space-y-2 text-blue-800">
+              <li>• <strong>Serial Number:</strong> Format example: CRB-2024-001-12345</li>
+              <li>• <strong>Project ID:</strong> The unique identifier assigned to each carbon project</li>
+              <li>• <strong>Retirement Certificate ID:</strong> Appears on retirement certificates after credits are retired</li>
+            </ul>
+            <p className="mt-4 text-sm text-blue-700">
+              All data is sourced directly from the Stellar blockchain and verified by our oracle network.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div className="border-b border-gray-100 pb-2">
+      <dt className="text-sm font-medium text-gray-500">{label}</dt>
+      <dd className={`mt-1 text-lg ${highlight ? 'text-green-600 font-semibold' : 'text-gray-900'}`}>
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function ProvenanceStep({ step, index }: { step: ProvenanceTrail; index: number }) {
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'issued': return 'bg-green-100 text-green-800 border-green-200';
+      case 'transferred': return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'retired': return 'bg-purple-100 text-purple-800 border-purple-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  return (
+    <div className={`border-l-4 p-4 rounded-r-lg ${getStatusColor(step.status)}`}>
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-sm font-bold text-gray-500">Step {index + 1}</span>
+            <span className={`px-2 py-1 text-xs rounded-full ${getStatusColor(step.status)}`}>
+              {step.status.toUpperCase()}
+            </span>
+          </div>
+          <p className="text-gray-900">{step.description}</p>
+          <p className="text-sm text-gray-500 mt-1">
+            {new Date(step.timestamp).toLocaleString()}
+          </p>
+          {step.transactionHash && (
+            <p className="text-xs text-gray-400 mt-1">
+              Tx: {step.transactionHash.slice(0, 10)}...{step.transactionHash.slice(-8)}
+            </p>
+          )}
         </div>
+        {step.amount && (
+          <div className="text-right">
+            <p className="text-sm font-semibold text-gray-900">{step.amount} tonnes</p>
+          </div>
+        )}
       </div>
     </div>
   );

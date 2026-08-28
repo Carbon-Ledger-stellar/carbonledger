@@ -1,0 +1,203 @@
+apiVersion: 1
+
+groups:
+  - orgId:    1
+    name:     carbonledger-enhanced-alerts
+    folder:   CarbonLedger
+    interval: 30s
+    rules:
+      # Enhanced error rate alert (>10 errors/min as required)
+      - uid:     carbonledger-error-rate-enhanced
+        title:   High Error Rate (>10 errors/min)
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                sum by (service) (
+                  count_over_time(
+                    {service=~".+"} | json | level="error" [1m]
+                  )
+                )
+              queryType: range
+              maxDataPoints: 1
+
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to:   0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to:   0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [10]
+                    type: gt
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          1m
+        annotations:
+          summary:     "Critical error rate spike detected"
+          description: "More than 10 error-level log lines detected in the last minute. Service: {{ $labels.service }}"
+          runbook_url: "https://docs.carbonledger.com/runbooks/high-error-rate"
+        labels:
+          severity: critical
+          team:     carbonledger
+          alert_type: error_rate
+
+      # Service-specific error alerts
+      - uid:     backend-service-errors
+        title:   Backend Service Errors
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                sum(
+                  count_over_time(
+                    {service="backend"} | json | level="error" [5m]
+                  )
+                )
+              queryType: range
+
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [5]
+                    type: gt
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          2m
+        annotations:
+          summary:     "Backend service experiencing errors"
+          description: "Backend service has logged {{ $value }} errors in the last 5 minutes"
+        labels:
+          severity: warning
+          service:  backend
+          team:     carbonledger
+
+      # Oracle service health alert
+      - uid:     oracle-service-health
+        title:   Oracle Services Health Check
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                sum by (service) (
+                  count_over_time(
+                    {service=~"oracle.*"} | json | level=~"error|critical" [10m]
+                  )
+                )
+              queryType: range
+
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [3]
+                    type: gt
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          5m
+        annotations:
+          summary:     "Oracle service health degraded"
+          description: "Oracle service {{ $labels.service }} has {{ $value }} errors/critical logs in 10 minutes"
+        labels:
+          severity: warning
+          service_type: oracle
+          team:     carbonledger
+
+      # Database connection errors
+      - uid:     database-connection-errors
+        title:   Database Connection Issues
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                sum(
+                  count_over_time(
+                    {service=~".+"} | json | message=~".*database.*connection.*|.*postgres.*error.*|.*prisma.*error.*" [5m]
+                  )
+                )
+              queryType: range
+
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [2]
+                    type: gt
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          3m
+        annotations:
+          summary:     "Database connection issues detected"
+          description: "{{ $value }} database connection errors detected in the last 5 minutes"
+        labels:
+          severity: critical
+          component: database
+          team:     carbonledger

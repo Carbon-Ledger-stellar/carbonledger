@@ -1,43 +1,85 @@
-import { useRetirement } from "../../../lib/api";
-import RetirementCertificate from "../../../components/RetirementCertificate";
-import { colors } from "../../../styles/design-system";
+import type { Metadata } from "next";
+import RetirementCertificateClient from "../../../components/RetirementCertificateClient";
+import type { RetirementRecord } from "../../../lib/api";
 
-export default function RetirementCertificatePage({ params }: { params: { id: string } }) {
-  // This is a server component — data fetched server-side for SEO and public access
-  return <RetirementCertificateClient id={params.id} />;
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const SITE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+async function fetchRetirement(id: string): Promise<RetirementRecord | null> {
+  if (!API_URL) return null;
+  try {
+    const res = await fetch(`${API_URL}/retirements/${id}`, { next: { revalidate: 3600 } });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
 }
 
-// Client component for interactivity
-"use client";
-function RetirementCertificateClient({ id }: { id: string }) {
-  const { data: retirement, isLoading } = useRetirement(id);
+export async function generateMetadata(
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Metadata> {
+  const { id } = await params;
+  const retirement = await fetchRetirement(id);
+  const canonicalPath = `/retire/${id}`;
 
-  if (isLoading) return (
-    <div style={{ textAlign: "center", padding: "4rem", color: colors.neutral[400] }}>
-      Loading certificate…
-    </div>
-  );
+  if (!retirement) {
+    return {
+      title: "Retirement certificate — Carbon Ledger",
+      alternates: { canonical: canonicalPath },
+    };
+  }
 
-  if (!retirement) return (
-    <div style={{ textAlign: "center", padding: "4rem" }}>
-      <p style={{ color: colors.neutral[500] }}>Certificate not found.</p>
-      <p style={{ fontSize: "0.875rem", color: colors.neutral[400] }}>
-        Retirement ID: {id}
-      </p>
-    </div>
-  );
+  const projectName = retirement.projectName ?? retirement.project?.name ?? "a verified carbon project";
+  const title = `${retirement.amount} tCO₂e retired by ${retirement.beneficiary} — Carbon Ledger`;
+  const description = `${retirement.beneficiary} permanently retired ${retirement.amount} tonnes of CO₂e from ${projectName} (vintage ${retirement.vintageYear}). Verified on-chain on Stellar — certificate ${retirement.retirementId}.`;
+
+  return {
+    title,
+    description,
+    alternates: { canonical: canonicalPath },
+    openGraph: {
+      title,
+      description,
+      url: canonicalPath,
+      siteName: "Carbon Ledger",
+      type: "article",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+    },
+  };
+}
+
+export default async function RetirementCertificatePage(
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const retirement = await fetchRetirement(id);
 
   return (
-    <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "2.5rem 2rem" }}>
-      <div style={{ marginBottom: "1.5rem" }}>
-        <a href="/audit" style={{ fontSize: "0.875rem", color: colors.primary[600], textDecoration: "none" }}>
-          ← Public Audit Trail
-        </a>
-        <p style={{ fontSize: "0.8rem", color: colors.neutral[400], margin: "0.5rem 0 0" }}>
-          This certificate is permanently recorded on Stellar and publicly verifiable without a wallet.
-        </p>
-      </div>
-      <RetirementCertificate retirement={retirement} />
-    </div>
+    <>
+      {retirement && (
+        <script
+          type="application/ld+json"
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "Certificate",
+              name: `Carbon Retirement Certificate ${retirement.retirementId}`,
+              url: `${SITE_URL}/retire/${id}`,
+              recipient: { "@type": "Organization", name: retirement.beneficiary },
+              about: { "@type": "Thing", name: retirement.projectName ?? retirement.project?.name },
+              dateIssued: retirement.retiredAt,
+              identifier: retirement.retirementId,
+            }),
+          }}
+        />
+      )}
+      <RetirementCertificateClient id={id} />
+    </>
   );
 }
