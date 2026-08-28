@@ -15,6 +15,7 @@ import { PrismaService } from '../prisma.service';
 import { MailService } from '../mail/mail.service';
 import { IpfsService } from '../common/ipfs.service';
 import { MintCreditsDto, RetireCreditsDto } from './credits.dto';
+import { QueueService } from '../queue/queue.service';
 
 // ── In-memory state mirrors ───────────────────────────────────────────────────
 
@@ -205,6 +206,9 @@ describe('Credit Lifecycle Invariants', () => {
         { provide: PrismaService, useValue: state.mockPrisma },
         { provide: MailService,   useValue: state.mockMail },
         { provide: IpfsService,   useValue: state.mockIpfs },
+        // CreditsService gained a required QueueService dependency in #949
+        // (bulk mint job queueing); this spec predates that.
+        { provide: QueueService, useValue: { enqueue: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 

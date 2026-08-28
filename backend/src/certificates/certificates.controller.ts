@@ -4,10 +4,13 @@ import {
   Param,
   Res,
   NotFoundException,
+  ConflictException,
+  ServiceUnavailableException,
   Header,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { Response } from 'express';
 import { Public } from '../auth/decorators';
 import { PrismaService } from '../prisma.service';
@@ -44,6 +47,34 @@ export class CertificatesController {
       ? `https://stellar.expert/explorer/${stellarNetwork}/tx/${retirement.txHash}`
       : null;
 
+    // Most recent signed certificate record for this retirement (#594).
+    const signedCert = await this.prisma.retirementCertificate.findFirst({
+      where: { retirementId: retirement.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Reconstructs exactly the object CertificateSigningService signed
+    // (certificates/certificate.processor.ts) — save this as JSON and run
+    // `node backend/scripts/verify-certificate.js <file> Stellar.toml` to
+    // verify the signature offline, trusting only Stellar.toml.
+    const signedCertificate =
+      signedCert?.issuerSignature && signedCert.issuerPublicKey
+        ? {
+            retirement_id: retirement.retirementId,
+            project_id: retirement.projectId,
+            beneficiary: retirement.beneficiary,
+            amount: retirement.amount.toString(),
+            retirement_reason: retirement.retirementReason,
+            retired_at: Math.floor(retirement.retiredAt.getTime() / 1000),
+            serial_start: retirement.serialStart,
+            serial_end: retirement.serialEnd,
+            vintage_year: retirement.vintageYear,
+            tx_hash: retirement.txHash,
+            issuer_signature: signedCert.issuerSignature,
+            issuer_public_key: signedCert.issuerPublicKey,
+          }
+        : null;
+
     return {
       retirementId: retirement.retirementId,
       amount: retirement.amount.toString(),
@@ -68,6 +99,10 @@ export class CertificatesController {
       ipfsUrl: retirement.certificateCid
         ? this.pinataService.getPublicUrl(retirement.certificateCid)
         : null,
+      contentHash: signedCert?.contentHash ?? null,
+      issuerSignature: signedCert?.issuerSignature ?? null,
+      issuerPublicKey: signedCert?.issuerPublicKey ?? null,
+      signedCertificate,
       project: {
         name: retirement.project.name,
         country: retirement.project.country,
@@ -188,6 +223,70 @@ export class CertificatesController {
       retries: retirement.certificateRetries,
       generatedAt: retirement.certificateGeneratedAt,
       failedAt: retirement.certificateFailedAt,
+    };
+  }
+
+  /**
+   * Retrieves a certificate's pinned content by IPFS CID and cryptographically
+   * verifies it against the content hash recorded at generation time (#600).
+   *
+   * - 404 if no certificate was ever pinned under this CID.
+   * - 502 if the content can't currently be fetched from IPFS.
+   * - 409 if the fetched content's hash doesn't match what was recorded
+   *   (tampering, or the gateway served the wrong content).
+   * - 200 with `{ valid: true, ... }` otherwise.
+   *
+   * GET /certificates/:cid/verify
+   */
+  @Get(':cid/verify')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  async verifyByCid(@Param('cid') cid: string) {
+    const retirement = await this.prisma.retirementRecord.findFirst({
+      where: { certificateContentCid: cid },
+    });
+
+    if (!retirement) {
+      throw new NotFoundException(`No certificate found for CID ${cid}`);
+    }
+
+    let content: Buffer;
+    try {
+      const response = await fetch(this.pinataService.getPublicUrl(cid));
+      if (!response.ok) {
+        throw new Error(`IPFS gateway responded with HTTP ${response.status}`);
+      }
+      content = Buffer.from(await response.arrayBuffer());
+    } catch (err) {
+      throw new ServiceUnavailableException(
+        `Failed to retrieve content for CID ${cid} from IPFS: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    const actualHash = createHash('sha256').update(content).digest('hex');
+    const expectedHash = retirement.certificateContentHash;
+
+    if (!expectedHash || actualHash !== expectedHash) {
+      throw new ConflictException({
+        valid: false,
+        cid,
+        retirementId: retirement.retirementId,
+        message: expectedHash
+          ? 'Content hash mismatch — the pinned content does not match what was recorded at ' +
+            'generation time. This certificate may have been tampered with.'
+          : 'No content hash was recorded for this certificate — cannot verify integrity.',
+        expectedHash,
+        actualHash,
+      });
+    }
+
+    return {
+      valid: true,
+      cid,
+      retirementId: retirement.retirementId,
+      contentHash: actualHash,
+      message: 'Certificate content integrity verified',
+      verifiedAt: new Date().toISOString(),
     };
   }
 }

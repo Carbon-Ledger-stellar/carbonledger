@@ -1,7 +1,7 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { Controller, Get, Post, Patch, Param, Body, Query, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../auth/roles.guard';
 import { VerifiersService } from './verifiers.service';
 import { ApplyVerifierDto, ReviewVerifierDto } from './verifiers.dto';
 import { Public, Roles } from '../auth/decorators';

@@ -150,4 +150,19 @@ describe('MarketplaceService — sorting', () => {
     expect(result.listings.map((l: any) => l.listingId)).toEqual(['L2', 'L3']);
     expect(result.total_pages).toBe(3);
   });
+
+  it('returns opaque next and prev cursors for cursor-based pagination', async () => {
+    const rows = [
+      listing({ listingId: 'L-1', id: 'row-1', createdAt: new Date('2024-01-01T00:00:00.000Z') }),
+      listing({ listingId: 'L-2', id: 'row-2', createdAt: new Date('2024-01-02T00:00:00.000Z') }),
+      listing({ listingId: 'L-3', id: 'row-3', createdAt: new Date('2024-01-03T00:00:00.000Z') }),
+    ];
+    mockPrisma.marketListing.findMany.mockResolvedValue(rows);
+    mockPrisma.marketListing.count.mockResolvedValue(rows.length);
+
+    const result = await service.findAll({ limit: 2, cursor: undefined } as any);
+    expect(result.next_cursor).toBeDefined();
+    expect(result.prev_cursor).toBeUndefined();
+    expect(result.total_count).toBe(3);
+  });
 });

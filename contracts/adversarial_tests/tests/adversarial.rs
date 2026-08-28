@@ -10,3 +10,4 @@ mod registry_attacks;
 mod credit_attacks;
 mod marketplace_attacks;
 mod oracle_attacks;
+mod role_authorization;

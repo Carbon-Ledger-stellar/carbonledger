@@ -166,6 +166,8 @@ export default function Navbar() {
         role="dialog"
         aria-modal="true"
         aria-label={t('navMenu')}
+        aria-hidden={!drawerOpen}
+        inert={!drawerOpen}
         style={{
           position: 'fixed', top: 0, left: 0, bottom: 0,
           width: '280px', zIndex: 200,

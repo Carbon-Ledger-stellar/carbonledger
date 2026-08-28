@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Header, Res } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, Header, Res, BadRequestException } from '@nestjs/common';
 import { Response } from 'express';
 import {
   OracleService,
@@ -7,6 +7,8 @@ import {
   UpdatePriceDto,
   FlagProjectDto,
   HoldPriceUpdateDto,
+  BatchSubmitMonitoringDto,
+  BatchUpdatePriceDto,
 } from './oracle.service';
 import { OracleSyncService } from './oracle-sync.service';
 import { OracleSchedulerService } from './oracle-scheduler.service';
@@ -62,11 +64,33 @@ export class OracleController {
     return this.oracleService.submitMonitoring(dto);
   }
 
+  @Post('ingest/batch-monitoring')
+  @Public()
+  @UseGuards(OracleGuard)
+  submitBatchMonitoring(@Body() body: BatchSubmitMonitoringDto | SubmitMonitoringDto[]) {
+    const items = Array.isArray(body) ? body : body?.items;
+    if (!items || !Array.isArray(items)) {
+      throw new BadRequestException('Request body must be an array of SubmitMonitoringDto or contain an items array');
+    }
+    return this.oracleService.submitBatchMonitoring(items);
+  }
+
   @Post('ingest/price')
   @Public()
   @UseGuards(OracleGuard)
   updatePrice(@Body() dto: UpdatePriceDto) {
     return this.oracleService.submitPrice(dto);
+  }
+
+  @Post('ingest/batch-price')
+  @Public()
+  @UseGuards(OracleGuard)
+  updateBatchPrice(@Body() body: BatchUpdatePriceDto | UpdatePriceDto[]) {
+    const items = Array.isArray(body) ? body : body?.items;
+    if (!items || !Array.isArray(items)) {
+      throw new BadRequestException('Request body must be an array of UpdatePriceDto or contain an items array');
+    }
+    return this.oracleService.submitBatchPrice(items);
   }
 
   @Post('ingest/flag')

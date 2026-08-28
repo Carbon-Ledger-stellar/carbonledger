@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { contractCallsRegistry } from '../common/metrics.registry';
+
+// @nestjs/schedule's CronExpression preset only goes in 5/10/30-minute
+// steps — no EVERY_15_MINUTES constant exists, so a raw cron expression
+// is used to keep the intended 15-minute cadence.
+const EVERY_15_MINUTES = '*/15 * * * *';
 
 export type ReconciliationDivergenceType =
   | 'db_active_on_chain_retired'
@@ -28,7 +33,7 @@ export class ReconciliationService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  @Cron(CronExpression.EVERY_15_MINUTES)
+  @Cron(EVERY_15_MINUTES)
   async runReconciliation(): Promise<ReconciliationResult> {
     const batches = await this.prisma.creditBatch.findMany({
       select: {

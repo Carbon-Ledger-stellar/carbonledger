@@ -6,6 +6,7 @@ import { CertificateProcessor } from './certificate.processor';
 import { CertificatesController } from './certificates.controller';
 import { WebhookModule } from '../webhook/webhook.module';
 import { PrismaService } from '../prisma.service';
+import { CertificateSigningService } from '../common/certificate-signing.service';
 
 @Module({
   imports: [WebhookModule],
@@ -16,6 +17,7 @@ import { PrismaService } from '../prisma.service';
     NotificationService,
     CertificateProcessor,
     PrismaService,
+    CertificateSigningService,
   ],
   exports: [
     CertificateService,

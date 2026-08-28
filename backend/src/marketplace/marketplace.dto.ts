@@ -1,5 +1,9 @@
-import { IsString, IsInt, IsPositive, IsOptional, Min, Max, ArrayMaxSize, ArrayMinSize, Length, MaxLength, IsIn } from "class-validator";
+import { IsString, IsInt, IsPositive, IsOptional, Min, Max, ArrayMaxSize, ArrayMinSize, Length, MaxLength, IsIn, Matches } from "class-validator";
 import { Type } from "class-transformer";
+import { IsVintageYear } from '../common/validators';
+
+/** Regex for a positive decimal price string, e.g. "12.50" or "100". */
+const PRICE_REGEX = /^\d+(\.\d{1,7})?$/;
 
 export const LISTING_SORT_FIELDS = ["price", "vintageYear", "methodology", "verificationDate"] as const;
 export type ListingSortField = (typeof LISTING_SORT_FIELDS)[number];
@@ -8,32 +12,94 @@ export const SORT_ORDERS = ["asc", "desc"] as const;
 export type SortOrder = (typeof SORT_ORDERS)[number];
 
 export class CreateListingDto {
-  @IsString() @Length(1, 64) listingId: string;
-  @IsString() @Length(1, 64) projectId: string;
-  @IsString() @Length(1, 64) credit_batch_id: string;
+  @IsString()
+  @Length(1, 64)
+  listingId: string;
+
+  @IsString()
+  @Length(1, 64)
+  projectId: string;
+
+  @IsString()
+  @Length(1, 64)
+  credit_batch_id: string;
+
   // seller is intentionally omitted — always set from req.user.publicKey in the controller
-  @IsInt() @IsPositive() @Type(() => Number) amount: number;
-  @IsString() @Length(1, 32) price_per_tonne: string;
-  @IsInt() @Min(1990) @Max(new Date().getFullYear() + 1) @Type(() => Number) vintageYear: number;
-  @IsString() @Length(1, 64) methodology: string;
-  @IsString() @Length(1, 64) country: string;
+
+  @IsInt()
+  @IsPositive()
+  @Type(() => Number)
+  amount: number;
+
+  /** Price per tonne in USDC. Must be a positive decimal string (e.g. "12.50"). */
+  @IsString()
+  @Length(1, 32)
+  @Matches(PRICE_REGEX, { message: 'price_per_tonne must be a positive decimal string (e.g. "12.50")' })
+  price_per_tonne: string;
+
+  /** Vintage year of the credits being listed. Must be between 1990 and current year + 1. */
+  @IsVintageYear()
+  @Type(() => Number)
+  vintageYear: number;
+
+  @IsString()
+  @Length(1, 64)
+  methodology: string;
+
+  @IsString()
+  @Length(1, 64)
+  country: string;
 }
 
+export class BatchCreateListingsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateListingDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: CreateListingDto[];
+}
+
+
+/**
+ * DTO for purchasing credits from a single listing.
+ *
+ * Validation:
+ *  - listingId: non-empty string, max 64 chars
+ *  - amount: positive integer
+ *  - buyerPublicKey: set from req.user.publicKey (optional on incoming request)
+ */
 export class PurchaseDto {
-  @IsString() @Length(1, 64) listingId: string;
-  @IsInt() @IsPositive() @Type(() => Number) amount: number;
+  @IsString()
+  @Length(1, 64)
+  listingId: string;
+
+  @IsInt()
+  @IsPositive()
+  @Type(() => Number)
+  amount: number;
+
   // buyerPublicKey is set from req.user.publicKey in the controller
   buyerPublicKey?: string;
 }
 
+/**
+ * DTO for bulk purchasing credits from multiple listings in one request.
+ *
+ * Validation:
+ *  - listingIds: 1–50 strings, each max 64 chars
+ *  - amounts: 1–50 positive integers
+ *  - Length of listingIds and amounts must be equal (validated at service layer)
+ */
 export class BulkPurchaseDto {
   @IsString({ each: true })
   @Length(1, 64, { each: true })
   @ArrayMinSize(1)
-  @ArrayMaxSize(50)  // Fix API4: cap bulk operations to prevent resource exhaustion
+  @ArrayMaxSize(50) // Cap bulk operations to prevent resource exhaustion
   listingIds: string[];
 
   @IsInt({ each: true })
+  @IsPositive({ each: true })
   @ArrayMinSize(1)
   @ArrayMaxSize(50)
   amounts: number[];
@@ -42,6 +108,11 @@ export class BulkPurchaseDto {
   buyerPublicKey?: string;
 }
 
+/**
+ * DTO for querying / filtering marketplace listings.
+ *
+ * All fields are optional filters.
+ */
 export class ListingsQueryDto {
   @IsString() @IsOptional() @MaxLength(64) methodology?: string;
   @IsInt() @Min(1990) @Max(new Date().getFullYear() + 5) @IsOptional() @Type(() => Number) vintage?: number;
@@ -52,14 +123,23 @@ export class ListingsQueryDto {
   @IsString() @IsOptional() @MaxLength(128) cursor?: string;
   @IsInt() @Min(1) @Max(1000) @IsOptional() @Type(() => Number) page?: number;
   @IsInt() @Min(1) @Max(100) @Type(() => Number) @IsOptional() limit?: number = 20;
+  @IsInt() @Min(0) @Type(() => Number) @IsOptional() offset?: number = 0;
   @IsString() @IsOptional() @IsIn(LISTING_SORT_FIELDS) sortBy?: ListingSortField;
   @IsString() @IsOptional() @IsIn(SORT_ORDERS) sortOrder?: SortOrder = "asc";
 }
 
 export class PaginatedListingsResponse {
+  data: any[];
   listings: any[];
-  next_cursor?: string;
+  total: number;
   total_count: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  has_more: boolean;
+  nextOffset?: number | null;
+  next_cursor?: string;
+  prev_cursor?: string;
   page?: number;
   total_pages?: number;
 }
@@ -135,6 +215,9 @@ export class SearchListingsDto {
 
   /** Page size. Min 1, max 100. Defaults to 20. */
   @IsInt() @Min(1) @Max(100) @IsOptional() @Type(() => Number) limit?: number = 20;
+
+  /** Offset for pagination. Defaults to 0. */
+  @IsInt() @Min(0) @IsOptional() @Type(() => Number) offset?: number = 0;
 }
 
 /** A single search result row returned by the search endpoint. */

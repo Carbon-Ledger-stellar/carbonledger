@@ -58,7 +58,10 @@
   --bg-secondary: #f9fafb;
   --text-primary: #111827;
   --text-secondary: #6b7280;
-  --text-tertiary: #9ca3af;
+  /* #9ca3af (neutral-400) only hit 2.54:1 on white — fails WCAG AA (4.5:1
+     for normal text). #6d7480 sits between neutral-400/500 and clears it
+     at 4.71:1 while staying visually distinct from --text-secondary (#967). */
+  --text-tertiary: #6d7480;
 }
 
 /* Dark mode */

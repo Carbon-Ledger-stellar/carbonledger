@@ -8,11 +8,14 @@ import { getWalletErrorMessage } from "../lib/wallet-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import TransactionStatus, { TxStatus } from "./TransactionStatus";
+import TransactionPreview from "./TransactionPreview";
+import { PreviewState } from "../lib/transaction-preview-types";
 import Toast, { useToast } from "./Toast";
 import {
   useTransactionPoller,
   TRANSACTION_MAX_POLLS,
 } from "../hooks/useTransactionPoller";
+import { simulateBulkPurchasePreview } from "../lib/soroban";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -153,6 +156,8 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   const t = useTranslations("bulkPurchaseWizard");
   const [step, setStep] = useState<WizardStep>("selection");
   const [items, setItems] = useState<WizardCartItem[]>([]);
+  const [amountErrors, setAmountErrors] = useState<Record<string, string>>({});
+  const amountErrorTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [walletKey, setWalletKey] = useState<string | null>(null);
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -162,6 +167,14 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   });
   const { toasts, addToast, dismiss } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Simulation state ───────────────────────────────────────────────────────
+  const [preview, setPreview] = useState<PreviewState>({
+    loading: false,
+    ready: false,
+    effects: [],
+  });
+  const [confirming, setConfirming] = useState(false);
 
   const listingMap = useMemo(() => {
     const map = new Map<string, MarketListing>();
@@ -197,6 +210,54 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
     setItems([]);
   }, []);
 
+  // ── Amount validation ──────────────────────────────────────────────────────
+
+  const validateAmount = useCallback((listing: MarketListing, amount: number): string | null => {
+    if (Number.isNaN(amount) || amount <= 0) {
+      return "Amount must be greater than 0";
+    }
+    if (amount > listing.amountAvailable) {
+      return `Amount exceeds available ${formatTonnes(listing.amountAvailable)}`;
+    }
+    return null;
+  }, []);
+
+  const handleAmountChange = useCallback(
+    (listing: MarketListing, raw: string) => {
+      const amount = parseFloat(raw);
+      // Keep the raw draft in cart until it parses to a valid number
+      addItem(listing.listingId, amount || 0.01);
+      // Debounced real-time validation
+      if (amountErrorTimers.current[listing.listingId]) {
+        clearTimeout(amountErrorTimers.current[listing.listingId]);
+      }
+      amountErrorTimers.current[listing.listingId] = setTimeout(() => {
+        const error = validateAmount(listing, amount);
+        setAmountErrors((prev) => {
+          const next = { ...prev };
+          if (error) next[listing.listingId] = error;
+          else delete next[listing.listingId];
+          return next;
+        });
+        delete amountErrorTimers.current[listing.listingId];
+      }, 300);
+    },
+    [addItem, validateAmount]
+  );
+
+  const handleAmountBlur = useCallback(
+    (listing: MarketListing, amount: number) => {
+      const error = validateAmount(listing, amount);
+      setAmountErrors((prev) => {
+        const next = { ...prev };
+        if (error) next[listing.listingId] = error;
+        else delete next[listing.listingId];
+        return next;
+      });
+    },
+    [validateAmount]
+  );
+
   async function handleConnect() {
     try {
       const key = await connectFreighter();
@@ -214,6 +275,31 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
       });
     }
   }
+
+  // ── Simulation ─────────────────────────────────────────────────────────────
+
+  const runSimulation = useCallback(async () => {
+    if (!walletKey || items.length === 0) return;
+
+    const contractId = process.env.NEXT_PUBLIC_MARKETPLACE_CONTRACT_ID;
+    if (!contractId) {
+      // No contract configured; skip simulation, allow purchase directly
+      setPreview({ loading: false, ready: true, effects: [] });
+      return;
+    }
+
+    setPreview({ loading: true, ready: false, effects: [] });
+    const result = await simulateBulkPurchasePreview({
+      contractId,
+      sourcePublicKey: walletKey,
+      items: items.map((i) => ({
+        listingId: i.listing.listingId,
+        amount: i.amount,
+        pricePerCredit: i.listing.pricePerCredit.toString(),
+      })),
+    });
+    setPreview(result);
+  }, [walletKey, items]);
 
   async function handleCSVUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -254,6 +340,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   async function handlePurchase() {
     if (!walletKey || items.length === 0) return;
 
+    setConfirming(true);
     setTxStatus("building");
     try {
       await new Promise((r) => setTimeout(r, 600));
@@ -277,8 +364,18 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
       setPollHash(null);
       const message = e instanceof Error ? e.message : String(e);
       addToast({ type: "error", title: t("purchaseFailed"), message });
+    } finally {
+      setConfirming(false);
     }
   }
+
+  // Run simulation when the preview step becomes visible
+  useEffect(() => {
+    if (step === "preview") {
+      runSimulation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // Poll state effect
   useEffect(() => {
@@ -310,7 +407,8 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   }, [pollState, pollHash, pollError, clearItems, addToast, metrics.totalTonnes, onComplete, t]);
 
   const busy = txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
-  const canProceed = items.length > 0 && items.length <= 10;
+  const hasAmountErrors = Object.keys(amountErrors).length > 0;
+  const canProceed = items.length > 0 && items.length <= 10 && !hasAmountErrors;
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render: Step 1 - Selection
@@ -413,41 +511,43 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                 key={listing.listingId}
                 style={{
                   display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                  flexDirection: "column",
                   padding: "0.75rem",
                   background: colors.surface,
-                  border: `1px solid ${colors.neutral[200]}`,
+                  border: `1px solid ${amountErrors[listing.listingId] ? colors.suspended.border : colors.neutral[200]}`,
                   borderRadius: "0.5rem",
                   marginBottom: "0.5rem",
                 }}
               >
-                <div>
-                  <p style={{ fontWeight: 600, fontSize: "0.875rem", margin: 0 }}>
-                    {listing.projectName || listing.projectId}
-                  </p>
-                  <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
-                    {listing.methodology} · {listing.vintageYear}
-                  </p>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                  <input
-                    type="number"
-                    min={0.01}
-                    max={listing.amountAvailable}
-                    step={0.01}
-                    value={amount}
-                    onChange={(e) => addItem(listing.listingId, parseFloat(e.target.value) || 0.01)}
-                    style={{
-                      width: "80px",
-                      border: `1px solid ${colors.neutral[300]}`,
-                      borderRadius: "0.375rem",
-                      padding: "0.4rem 0.5rem",
-                      fontSize: "0.875rem",
-                    }}
-                  />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <p style={{ fontWeight: 600, fontSize: "0.875rem", margin: 0 }}>
+                      {listing.projectName || listing.projectId}
+                    </p>
+                    <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.1rem 0 0" }}>
+                      {listing.methodology} · {listing.vintageYear}
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                    <input
+                      type="number"
+                      min={0.01}
+                      max={listing.amountAvailable}
+                      step={0.01}
+                      value={amount}
+                      onChange={(e) => handleAmountChange(listing, e.target.value)}
+                      onBlur={() => handleAmountBlur(listing, amount)}
+                      style={{
+                        width: "80px",
+                        border: `1px solid ${amountErrors[listing.listingId] ? colors.suspended.border : colors.neutral[300]}`,
+                        borderRadius: "0.375rem",
+                        padding: "0.4rem 0.5rem",
+                        fontSize: "0.875rem",
+                      }}
+                    />
                   <button
                     onClick={() => removeItem(listing.listingId)}
+                    aria-label={t("remove")}
                     style={{
                       background: "transparent",
                       border: "none",
@@ -459,6 +559,11 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                     ✕
                   </button>
                 </div>
+                {amountErrors[listing.listingId] && (
+                  <p style={{ fontSize: "0.75rem", color: colors.suspended.text, margin: "0.4rem 0 0" }}>
+                    {amountErrors[listing.listingId]}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -607,39 +712,37 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
           </div>
         </div>
 
-        {/* Navigation */}
-        <div style={{ display: "flex", gap: "1rem", justifyContent: "space-between" }}>
-          <button
-            onClick={() => setStep("selection")}
-            style={{
-              background: "transparent",
-              color: colors.neutral[600],
-              border: `1px solid ${colors.neutral[300]}`,
-              borderRadius: "0.5rem",
-              padding: "0.75rem 1.5rem",
-              fontSize: "0.9rem",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            ← {t("back")}
-          </button>
-          <button
-            onClick={() => setStep("confirm")}
-            style={{
-              background: colors.primary[600],
-              color: "#fff",
-              border: "none",
-              borderRadius: "0.5rem",
-              padding: "0.75rem 1.5rem",
-              fontSize: "0.9rem",
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            {t("confirm")} →
-          </button>
-        </div>
+        {/* Soroban simulation preview card */}
+        <TransactionPreview
+          title="Bulk purchase preview"
+          description="Soroban simulation of the bulk_purchase transaction. Review the effects before signing."
+          preview={preview}
+          onConfirm={walletKey ? () => setStep("confirm") : undefined}
+          onCancel={() => setStep("selection")}
+          confirmLabel={t("confirm") + " →"}
+          confirming={confirming}
+        />
+
+        {/* Back button (kept for wallets not yet connected) */}
+        {!walletKey && (
+          <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-start", marginTop: "0.5rem" }}>
+            <button
+              onClick={() => setStep("selection")}
+              style={{
+                background: "transparent",
+                color: colors.neutral[600],
+                border: `1px solid ${colors.neutral[300]}`,
+                borderRadius: "0.5rem",
+                padding: "0.75rem 1.5rem",
+                fontSize: "0.9rem",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              ← {t("back")}
+            </button>
+          </div>
+        )}
 
         <Toast toasts={toasts} onDismiss={dismiss} />
       </div>

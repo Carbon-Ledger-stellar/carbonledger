@@ -20,6 +20,7 @@ import {
   ExportRetirementsDto,
   RetireCreditsDto,
   BulkRetirementsDto,
+  CsvBulkRetirementsDto,
 } from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
 import { QuotaBucket } from '../throttle';
@@ -38,6 +39,15 @@ class VerifyCertificateDto {
   @IsString() content: string;
 }
 
+class VerifyCertificateSignatureDto {
+  /**
+   * The full certificate JSON as issued (including `issuer_signature` and
+   * `issuer_public_key`). Verification is self-contained — no database
+   * lookup is required, matching how the standalone CLI tool verifies.
+   */
+  certificate: Record<string, unknown>;
+}
+
 @Controller('retirements')
 export class RetirementsController {
   constructor(
@@ -52,8 +62,14 @@ export class RetirementsController {
     @Request() req: any,
     @Query('cursor') cursor?: string,
     @Query('limit')  limit?: string,
+    @Query('offset') offset?: string,
   ) {
-    return this.retirementsService.findAll(cursor, limit ? Number(limit) : 20, req.user.publicKey);
+    return this.retirementsService.findAll(
+      cursor,
+      limit ? Number(limit) : 20,
+      offset ? Number(offset) : 0,
+      req.user.publicKey,
+    );
   }
 
   /**
@@ -68,6 +84,7 @@ export class RetirementsController {
     @Query('vintageYear') vintageYear?: string,
     @Query('cursor')      cursor?: string,
     @Query('limit')       limit?: string,
+    @Query('offset')      offset?: string,
   ) {
     return this.retirementsService.searchRetirements({
       search,
@@ -76,6 +93,7 @@ export class RetirementsController {
       vintageYear: vintageYear ? Number(vintageYear) : undefined,
       cursor,
       limit: limit ? Number(limit) : 20,
+      offset: offset ? Number(offset) : 0,
     });
   }
 
@@ -111,6 +129,38 @@ export class RetirementsController {
     }
 
     return result;
+  }
+
+  @Post('bulk/csv')
+  @Roles('corporation', 'admin')
+  @QuotaBucket('bulkRetire')
+  async bulkRetireCreditsFromCsv(
+    @Body() dto: CsvBulkRetirementsDto,
+    @Request() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.retirementsService.bulkRetireCreditsFromCsv({
+      csv: dto.csv,
+      retiredBy: req.user.publicKey,
+    });
+
+    if ('jobId' in result || 'status' in result && result.status === 'queued') {
+      res.status(HttpStatus.ACCEPTED);
+    }
+
+    return result;
+  }
+
+  @Get('bulk/csv/:jobId/status')
+  @Roles('corporation', 'admin')
+  async getBulkCsvStatus(@Param('jobId') jobId: string) {
+    return this.retirementsService.getBulkCsvStatus(jobId);
+  }
+
+  @Get(':id/certificate-status')
+  @Roles('corporation', 'admin')
+  async getCertificateStatus(@Param('id') id: string, @Request() req: any) {
+    return this.retirementsService.getCertificateStatus(id, req.user.publicKey);
   }
 
   // Fix IDOR: require auth; only the owner or admin may read a specific retirement
@@ -204,6 +254,20 @@ export class RetirementsController {
   @HttpCode(200)
   verifyCertificateIntegrity(@Body() dto: VerifyCertificateDto) {
     return this.retirementsService.verifyCertificateIntegrity(dto.retirementId, dto.content);
+  }
+
+  /**
+   * POST /retirements/verify-signature
+   *
+   * Verifies a certificate's Ed25519 issuer signature using only the
+   * signing public key from Stellar.toml (#594). Public — third parties
+   * (regulators, ESG auditors) must be able to verify without auth.
+   */
+  @Post('verify-signature')
+  @Public()
+  @HttpCode(200)
+  verifyCertificateSignature(@Body() dto: VerifyCertificateSignatureDto) {
+    return this.retirementsService.verifyCertificateSignature(dto.certificate);
   }
 
   /**

@@ -7,7 +7,8 @@ import { colors } from "../../../styles/design-system";
 
 export default function BulkWizardPage() {
   const router = useRouter();
-  const { data: listings, isLoading } = useListings();
+  const { data, isLoading } = useListings();
+  const listings = data?.listings ?? [];
 
   return (
     <div
@@ -70,7 +71,7 @@ export default function BulkWizardPage() {
             </div>
           ) : (
             <BulkPurchaseWizard
-              availableListings={listings ?? []}
+              availableListings={listings}
               onComplete={() => router.push("/dashboard")}
             />
           )}

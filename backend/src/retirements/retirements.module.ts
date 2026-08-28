@@ -10,23 +10,35 @@ import { UploadsModule } from "../uploads/uploads.module";
 import { QueueModule } from "../queue/queue.module";
 import { WebhookModule } from "../webhook/webhook.module";
 import { CertificateService } from "./certificate.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
 import { ZkProofService } from "./zk-proof.service";
 import { PoliciesModule } from "../policies/policies.module";
 import { AbilityFactory } from "../policies/ability.factory";
 
 @Module({
-  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule, PoliciesModule],
-  imports: [AuthModule, forwardRef(() => QueueModule), UploadsModule, CertificatesModule],
-  controllers: [RetirementsController, CertificatesController],
+  imports: [
+    AuthModule,
+    forwardRef(() => QueueModule),
+    UploadsModule,
+    CertificatesModule,
+    PoliciesModule,
+    WebhookModule,
+  ],
+  controllers: [RetirementsController],
   providers: [
     RetirementsService,
     PrismaService,
     IpfsService,
     RetirementIndexerService,
     CertificateService,
+    CertificateSigningService,
     ZkProofService,
     AbilityFactory,
   ],
-  exports: [RetirementsService],
+  // CertificateService is exported because QueueProcessor (in the
+  // forwardRef'd QueueModule) injects it directly — without this export
+  // the whole app fails to boot under Nest's DI container (and every e2e
+  // test with it).
+  exports: [RetirementsService, CertificateService],
 })
 export class RetirementsModule {}

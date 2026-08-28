@@ -10,7 +10,7 @@ import { formatTonnes } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
 import { joinListingsWithProjects } from "../../lib/map-utils";
 import { colors } from "../../styles/design-system";
-import MarketplaceFilter, { FilterState, EMPTY_FILTERS } from "../../components/MarketplaceFilter";
+import MarketplaceFilter, { FilterState, EMPTY_FILTERS, filtersFromParams } from "../../components/MarketplaceFilter";
 import MarketplaceSortControls from "../../components/MarketplaceSortControls";
 import ComparisonTray, { MAX_COMPARISON_ITEMS } from "../../components/ComparisonTray";
 import VirtualizedList from "../../components/VirtualizedList";
@@ -35,14 +35,7 @@ function MarketplaceContent() {
   const { formatCurrency } = useLocaleFormatters();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [filters, setFilters] = useState<FilterState>({
-    methodology: "", vintageYear: "", country: "", minPrice: "", maxPrice: "", projectType: "", search: "", availableOnly: "",
-  });
-
-  useEffect(() => {
-    const vintage = searchParams.get("vintage");
-    if (vintage) setFilters(prev => ({ ...prev, vintageYear: vintage }));
-  }, [searchParams]);
+  const [filters, setFilters] = useState<FilterState>(() => filtersFromParams(searchParams));
 
   // Sort state lives in the URL so sorted views are shareable/bookmarkable.
   const rawSort = searchParams.get("sort");
@@ -70,6 +63,19 @@ function MarketplaceContent() {
     limit:        100,
   });
   const listings = data?.listings ?? [];
+
+  // Suggestion pool for the search autocomplete — project names, countries, and
+  // methodologies seen in the current listings, deduped. Filtering happens
+  // client-side inside SearchAutocomplete, so this stays cheap even with 1000+ listings.
+  const searchSuggestions = useMemo(() => {
+    const terms = new Set<string>();
+    for (const l of listings) {
+      if (l.projectName) terms.add(l.projectName);
+      if (l.country) terms.add(l.country);
+      if (l.methodology) terms.add(l.methodology);
+    }
+    return Array.from(terms);
+  }, [listings]);
 
   // "Available now" isn't a backend query param — applied client-side here so
   // it's a single source of truth shared by both the listings grid and the map.
@@ -145,7 +151,7 @@ function MarketplaceContent() {
           </a>
         </div>
 
-        <MarketplaceFilter filters={filters} onChange={setFilters} />
+        <MarketplaceFilter filters={filters} onChange={setFilters} suggestions={searchSuggestions} />
 
         <div style={{ marginTop: "1.5rem" }}>
           <OrderBookChart />

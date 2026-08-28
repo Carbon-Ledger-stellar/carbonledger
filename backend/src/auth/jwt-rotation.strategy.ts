@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
@@ -45,7 +45,13 @@ export class JWTRotationStrategy extends PassportStrategy(Strategy, 'jwt-rotatio
     });
   }
 
-  async validate(payload: { sub: string; role: string }) {
+  async validate(payload: { sub: string; role: string; type?: string; jti?: string }) {
+    if (payload.type && payload.type !== 'access') {
+      throw new UnauthorizedException('Invalid token type');
+    }
+    if (payload.jti && (await this.tokenBlacklist.isRevoked(payload.jti))) {
+      throw new UnauthorizedException('Token has been revoked');
+    }
     return { publicKey: payload.sub, role: payload.role };
   }
 }

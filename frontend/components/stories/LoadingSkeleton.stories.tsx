@@ -8,7 +8,7 @@ const meta: Meta<typeof LoadingSkeleton> = {
   argTypes: {
     variant: {
       control: 'select',
-      options: ['CreditCard', 'MarketplaceItem', 'PoolStats', 'ProjectCard', 'ProvenanceTrail', 'Certificate', 'AuditItem'],
+      options: ['CreditCard', 'MarketplaceItem', 'PoolStats', 'ProjectCard', 'ProvenanceTrail', 'Certificate', 'AuditItem', 'PricingTable'],
     },
     count: { control: { type: 'range', min: 1, max: 5, step: 1 } },
   },
@@ -55,4 +55,8 @@ export const Certificate: Story = {
 
 export const AuditItem: Story = {
   args: { variant: 'AuditItem', count: 3 },
+};
+
+export const PricingTable: Story = {
+  args: { variant: 'PricingTable', count: 1 },
 };

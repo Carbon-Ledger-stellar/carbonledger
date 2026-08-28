@@ -4,6 +4,7 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { colors } from "../styles/design-system";
+import SearchAutocomplete from "./SearchAutocomplete";
 
 export interface FilterState {
   methodology:  string;
@@ -39,11 +40,14 @@ interface Props {
   filters:      FilterState;
   onChange:     (filters: FilterState) => void;
   resultCount?: number;
+  /** Searchable terms (project names, countries, methodologies) for the search autocomplete dropdown. */
+  suggestions?: string[];
 }
 
 const METHODOLOGIES  = ["", "VCS", "Gold Standard", "ACR", "CAR", "Plan Vivo"];
 const COUNTRIES      = ["", "Brazil", "Indonesia", "Kenya", "India", "Colombia", "Peru", "USA"];
 const VINTAGES       = ["", "2019", "2020", "2021", "2022", "2023", "2024"];
+const PROJECT_TYPES  = ["", "Reforestation", "Direct Air Capture", "Renewable Energy", "Methane Capture", "Blue Carbon", "Agroforestry", "Soil Carbon", "Waste to Energy", "Forest Conservation"];
 
 const controlStyle: React.CSSProperties = {
   border: `1px solid ${colors.neutral[300]}`,
@@ -70,6 +74,12 @@ function FilterFields({ filters, onChange }: { filters: FilterState; onChange: (
         <label htmlFor="filter-vintage" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>{t("vintageYear")}</label>
         <select id="filter-vintage" style={controlStyle} value={filters.vintageYear} onChange={e => onChange("vintageYear", e.target.value)} aria-label={t("filterByVintage")}>
           {VINTAGES.map(v => <option key={v} value={v}>{v || t("all")}</option>)}
+        </select>
+      </div>
+      <div>
+        <label htmlFor="filter-project-type" style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[600], display: "block", marginBottom: "0.3rem" }}>{t("projectType")}</label>
+        <select id="filter-project-type" style={controlStyle} value={filters.projectType} onChange={e => onChange("projectType", e.target.value)} aria-label={t("filterByProjectType")}>
+          {PROJECT_TYPES.map(pt => <option key={pt} value={pt}>{pt === "" ? t("all") : t(`projectType${pt.replace(/[^a-zA-Z]/g, "")}`)}</option>)}
         </select>
       </div>
       <div>
@@ -102,7 +112,7 @@ function FilterFields({ filters, onChange }: { filters: FilterState; onChange: (
   );
 }
 
-export default function MarketplaceFilter({ filters, onChange, resultCount }: Props) {
+export default function MarketplaceFilter({ filters, onChange, resultCount, suggestions = [] }: Props) {
   const t = useTranslations("marketplaceFilter");
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -113,13 +123,19 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
 
   const activeCount = Object.entries(filters).filter(([k, v]) => k !== "search" && v !== "").length;
 
+  const filterDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleFilterChange = useCallback((key: keyof FilterState, value: string) => {
     const newFilters = { ...filters, [key]: value };
-    onChange(newFilters);
-    const params = new URLSearchParams(searchParams.toString());
-    if (value) params.set(key, value);
-    else params.delete(key);
-    router.push(`?${params.toString()}`, { scroll: false });
+    // Debounce all filter changes to prevent network spam
+    if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
+    filterDebounceRef.current = setTimeout(() => {
+      onChange(newFilters);
+      const params = new URLSearchParams(searchParams.toString());
+      if (value) params.set(key, value);
+      else params.delete(key);
+      router.push(`?${params.toString()}`, { scroll: false });
+    }, 300);
   }, [filters, onChange, router, searchParams]);
 
   useEffect(() => {
@@ -184,6 +200,7 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
   }, [mobileOpen]);
 
   const handleClear = () => {
+    if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
     setLocalSearch("");
     onChange(EMPTY_FILTERS);
     router.push("?", { scroll: false });
@@ -191,25 +208,41 @@ export default function MarketplaceFilter({ filters, onChange, resultCount }: Pr
 
   return (
     <>
+      {/* Announces result-count updates to screen reader users (WCAG 2.1 AA) */}
+      {resultCount !== undefined && (
+        <div
+          aria-live="polite"
+          aria-atomic="true"
+          style={{ position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }}
+        >
+          {resultCount === 1
+            ? t("resultsFoundSingular", { count: resultCount })
+            : t("resultsFoundPlural", { count: resultCount })}
+        </div>
+      )}
+
       {/* Search — always visible */}
-      <div style={{ position: "relative", marginBottom: "1rem" }}>
+      <div style={{ marginBottom: "1rem" }}>
         <label htmlFor="filter-search" className="sr-only">{t("searchLabel")}</label>
-        <input
+        <SearchAutocomplete
           id="filter-search"
-          type="search"
-          placeholder={t("searchPlaceholder")}
+          data-shortcut-target="search"
           value={localSearch}
-          onChange={e => setLocalSearch(e.target.value)}
-          aria-label={t("searchAria")}
-          style={{
+          onChange={setLocalSearch}
+          suggestions={suggestions}
+          placeholder={t("searchPlaceholder")}
+          ariaLabel={t("searchAria")}
+          inputStyle={{
             ...controlStyle,
             padding: "0.75rem 1rem 0.75rem 2.5rem",
             fontSize: "1rem",
             borderRadius: "0.75rem",
             boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
           }}
+          leadingIcon={
+            <span aria-hidden="true" style={{ position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)", color: colors.neutral[400], zIndex: 1 }}>🔍</span>
+          }
         />
-        <span aria-hidden="true" style={{ position: "absolute", left: "1rem", top: "50%", transform: "translateY(-50%)", color: colors.neutral[400] }}>🔍</span>
       </div>
 
       {/* Mobile: Filters toggle button */}

@@ -92,7 +92,6 @@ export function EsgBarChart({ data, methodologies }: Props) {
       <table
         aria-label="Tonnes retired per year by methodology"
         style={{
-          width: "100%",
           borderCollapse: "collapse",
           fontSize: "0.75rem",
           marginTop: "1rem",

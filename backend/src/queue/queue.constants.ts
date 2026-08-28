@@ -9,6 +9,7 @@ export const JobType = {
   EMAIL_NOTIFICATION:     'email_notification',
   HORIZON_EVENT:          'horizon_event',
   BULK_RETIREMENT:        'bulk_retirement',
+  BULK_MINT:              'bulk_mint',
 } as const;
 
 export type JobType = typeof JobType[keyof typeof JobType];
