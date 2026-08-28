@@ -51,6 +51,43 @@ export function IsSerialNumber(options?: ValidationOptions): PropertyDecorator {
   };
 }
 
+/** Validates the protocol serial format: ASCII digits with no leading zeroes. */
+@ValidatorConstraint({ name: 'IsValidSerial', async: false })
+export class IsValidSerialConstraint implements ValidatorConstraintInterface {
+  private static readonly SERIAL_REGEX = /^(0|[1-9][0-9]*)$/;
+  private static readonly MAX_SAFE = 9_007_199_254_740_991n;
+
+  validate(value: unknown, _args?: ValidationArguments): boolean {
+    if (typeof value !== 'string' || !IsValidSerialConstraint.SERIAL_REGEX.test(value)) {
+      return false;
+    }
+    if (value.length > 16) return false;
+
+    try {
+      return BigInt(value) <= IsValidSerialConstraint.MAX_SAFE;
+    } catch {
+      return false;
+    }
+  }
+
+  defaultMessage(args: ValidationArguments): string {
+    return `${args.property} must be an ASCII numeric string without leading zeroes`;
+  }
+}
+
+/** Decorator for the strict protocol serial number format. */
+export function IsValidSerial(options?: ValidationOptions): PropertyDecorator {
+  return (object: object, propertyName: string | symbol) => {
+    registerDecorator({
+      name: 'IsValidSerial',
+      target: (object as any).constructor,
+      propertyName: propertyName as string,
+      options,
+      validator: IsValidSerialConstraint,
+    });
+  };
+}
+
 /**
  * Cross-field validator: validates that serialEnd >= serialStart when both
  * are provided on the same DTO instance.

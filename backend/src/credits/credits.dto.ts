@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   IsStellarAddress,
   IsSerialNumber,
+  IsValidSerial,
   ValidateSerialRange,
   IsVintageYear,
   IsCreditAmount,
@@ -44,12 +45,14 @@ export class MintCreditsDto {
   amount: number;
 
   /** First serial number in the batch range (non-negative integer string). */
+  @IsValidSerial()
   @IsSerialNumber()
   @IsString()
   @Length(1, 16)
   serialStart: string;
 
   /** Last serial number in the batch range (must be ≥ serialStart). */
+  @IsValidSerial()
   @IsSerialNumber()
   @IsString()
   @Length(1, 16)
