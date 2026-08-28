@@ -85,7 +85,7 @@ export class ProjectsController {
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('update', ProjectSubject))
   updateStatus(@Param('id') id: string, @Body() dto: UpdateProjectStatusDto, @Request() req: any) {
-    return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin');
+    return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin', req);
   }
 
   @Post('batch-update-status')

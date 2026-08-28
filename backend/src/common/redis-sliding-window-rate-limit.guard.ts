@@ -14,6 +14,14 @@ export class RedisSlidingWindowRateLimitGuard implements CanActivate {
     const res = context.switchToHttp().getResponse<Response>();
     const path = req.path ?? '/';
 
+    // Admin override: administrators are exempt from sliding-window limits
+    // entirely (issue #960) — operational/incident-response tooling must
+    // never be blocked by the same quotas applied to regular traffic.
+    if (req.user?.role === 'admin') {
+      res.setHeader('X-RateLimit-Bypass', 'admin');
+      return true;
+    }
+
     const tier = this.resolveTier(req, path);
     const config = getTierConfig(tier);
     const identity = this.resolveIdentity(req, tier);
