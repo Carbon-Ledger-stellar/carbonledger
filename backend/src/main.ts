@@ -8,10 +8,11 @@ import { validateEnv } from './env.validation';
 import * as express from 'express';
 import cookieParser from 'cookie-parser';
 import { StellarNetworkService } from './common/stellar-network.service';
-import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
+import { contractCallsRegistry, poolMetricsRegistry, rateLimitMetricsRegistry } from './common/metrics.registry';
 import { ValidationExceptionFilter } from './common/validation-exception.filter';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { LoggerService } from './logger/logger.service';
+import { DdosProtectionMiddleware } from './security/ddos-protection.middleware';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -50,6 +51,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: new JsonLogger(undefined, { logLevels: [logLevel] }),
   });
+
+  // #1076: DDoS-protection headers middleware — security headers + CF passthrough.
+  // Applied before any other middleware so all responses carry the headers.
+  const ddosMiddleware = new DdosProtectionMiddleware();
+  app.use((req: any, res: any, next: any) => ddosMiddleware.use(req, res, next));
 
   const bodyLimit = process.env.BODY_SIZE_LIMIT ?? '10kb';
   app.use(express.json({ limit: bodyLimit }));
@@ -198,7 +204,8 @@ async function bootstrap() {
     res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
     res.send(
       contractCallsRegistry.toPrometheusText() +
-      poolMetricsRegistry.toPrometheusText(),
+      poolMetricsRegistry.toPrometheusText() +
+      rateLimitMetricsRegistry.toPrometheusText(),
     );
   });
 
