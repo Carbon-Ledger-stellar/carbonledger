@@ -1,398 +1,192 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+﻿import { Test, TestingModule } from '@nestjs/testing';
+import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { RolesGuard, Roles } from './roles.guard';
+import { JwtService } from '@nestjs/jwt';
+import { RolesGuard } from './roles.guard';
+import { TokenBlacklistService } from './token-blacklist.service';
+import { PrismaService } from '../prisma.service';
+import { IS_PUBLIC_KEY, ROLES_KEY } from './decorators';
 
-/**
- * Build a mock ExecutionContext with a configurable request user.
- * A stable handler reference is returned via getHandler() so that
- * spy assertions can be made against it.
- */
-function createMockContext(
-  user: any,
-  handlerOverride?: Function,
-): ExecutionContext {
-  const handler = handlerOverride ?? function defaultHandler() {};
+const TEST_SECRET = 'test-secret';
+
+const prismaMock = {
+  user: { findUnique: jest.fn(), findFirst: jest.fn() },
+};
+
+function makeContext(overrides: {
+  token?: string;
+  isPublic?: boolean;
+  roles?: string[];
+}): ExecutionContext {
+  const getHandler = jest.fn();
+  const getClass = jest.fn();
   return {
-    getHandler: () => handler,
+    getHandler,
+    getClass,
     switchToHttp: () => ({
-      getRequest: () => ({ user }),
+      getRequest: () => ({
+        headers: { authorization: overrides.token ? `Bearer ${overrides.token}` : undefined },
+        user: undefined as any,
+      }),
     }),
+    // Reflector.getAllAndOverride will call getHandler/getClass
   } as unknown as ExecutionContext;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 describe('RolesGuard', () => {
-  let reflector: jest.Mocked<Reflector>;
   let guard: RolesGuard;
+  let jwt: JwtService;
+  let reflector: Reflector;
+  let blacklistServiceMock: { isRevoked: jest.Mock };
 
-  beforeEach(() => {
-    reflector = {
-      get: jest.fn(),
-    } as unknown as jest.Mocked<Reflector>;
-    guard = new RolesGuard(reflector);
+  beforeEach(async () => {
+    process.env.JWT_SECRET = TEST_SECRET;
+    process.env.JWT_ISSUER = 'carbonledger';
+
+    blacklistServiceMock = { isRevoked: jest.fn().mockResolvedValue(false) };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        RolesGuard,
+        Reflector,
+        { provide: JwtService, useValue: new JwtService({ secret: TEST_SECRET }) },
+        { provide: PrismaService, useValue: prismaMock },
+        { provide: TokenBlacklistService, useValue: blacklistServiceMock },
+      ],
+    }).compile();
+
+    guard = module.get(RolesGuard);
+    jwt = module.get(JwtService);
+    reflector = module.get(Reflector);
   });
 
-  afterEach(() => {
-    jest.clearAllMocks();
+  afterEach(() => jest.clearAllMocks());
+
+  function signToken(payload: object) {
+    return jwt.sign(payload, { issuer: 'carbonledger' });
+  }
+
+  function setupReflector(isPublic: boolean | undefined, roles: string[] | undefined) {
+    jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((metadataKey: unknown) => {
+      if (metadataKey === IS_PUBLIC_KEY) return isPublic;
+      if (metadataKey === ROLES_KEY) return roles;
+      return undefined;
+    });
+  }
+
+  it('allows public routes without a token', async () => {
+    setupReflector(true, undefined);
+    const ctx = makeContext({});
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  // ── No metadata / public routes ──────────────────────────────────────────
-
-  describe('when no roles metadata is defined (public routes)', () => {
-    it('returns true when metadata is undefined (no @Roles decorator)', () => {
-      reflector.get.mockReturnValue(undefined);
-      expect(guard.canActivate(createMockContext(null))).toBe(true);
-    });
-
-    it('returns true when metadata is null', () => {
-      reflector.get.mockReturnValue(null as any);
-      expect(guard.canActivate(createMockContext(null))).toBe(true);
-    });
-
-    it('returns true when metadata is an empty array', () => {
-      reflector.get.mockReturnValue([]);
-      expect(guard.canActivate(createMockContext(null))).toBe(true);
-    });
-
-    it('does NOT inspect the user when the roles array is empty', () => {
-      reflector.get.mockReturnValue([]);
-      // Even with no user at all this must pass — public route
-      expect(guard.canActivate(createMockContext(undefined))).toBe(true);
-    });
-
-    it('does NOT throw even when the request has no user and roles array is empty', () => {
-      reflector.get.mockReturnValue([]);
-      expect(() => guard.canActivate(createMockContext(undefined))).not.toThrow();
-    });
+  it('throws 401 when no token is provided on a protected route', async () => {
+    setupReflector(false, undefined);
+    const ctx = makeContext({});
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  // ── Authorized access ────────────────────────────────────────────────────
-
-  describe('when the user has the required role', () => {
-    it('returns true when user.role matches the single allowed role', () => {
-      reflector.get.mockReturnValue(['admin']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'admin' });
-      expect(guard.canActivate(ctx)).toBe(true);
-    });
-
-    it('returns true when user role is the first of multiple allowed roles', () => {
-      reflector.get.mockReturnValue(['admin', 'verifier', 'oracle']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'admin' });
-      expect(guard.canActivate(ctx)).toBe(true);
-    });
-
-    it('returns true when user role is the last of multiple allowed roles', () => {
-      reflector.get.mockReturnValue(['admin', 'verifier', 'oracle']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'oracle' });
-      expect(guard.canActivate(ctx)).toBe(true);
-    });
-
-    it('returns true when user role is in the middle of multiple allowed roles', () => {
-      reflector.get.mockReturnValue(['admin', 'verifier', 'oracle']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'verifier' });
-      expect(guard.canActivate(ctx)).toBe(true);
-    });
-
-    it('returns true for a single-role list with the exact matching role', () => {
-      reflector.get.mockReturnValue(['oracle']);
-      const ctx = createMockContext({ publicKey: 'GORACLE', role: 'oracle' });
-      expect(guard.canActivate(ctx)).toBe(true);
-    });
-
-    it('returns true with a two-role list and matching the second role', () => {
-      reflector.get.mockReturnValue(['admin', 'verifier']);
-      const ctx = createMockContext({ publicKey: 'GVERIFY', role: 'verifier' });
-      expect(guard.canActivate(ctx)).toBe(true);
-    });
+  it('throws 401 for an invalid token', async () => {
+    setupReflector(false, undefined);
+    const ctx = makeContext({ token: 'garbage.token' });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  // ── Unauthorized access ──────────────────────────────────────────────────
-
-  describe('when the user does not have the required role', () => {
-    it('throws ForbiddenException when user.role is not in the allowed list', () => {
-      reflector.get.mockReturnValue(['admin']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'user' });
-      expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
-    });
-
-    it('throws with message "Insufficient permissions"', () => {
-      reflector.get.mockReturnValue(['admin']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'user' });
-      expect(() => guard.canActivate(ctx)).toThrow('Insufficient permissions');
-    });
-
-    it('throws when user has none of multiple allowed roles', () => {
-      reflector.get.mockReturnValue(['admin', 'verifier']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'oracle' });
-      expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
-    });
-
-    it('is case-sensitive — "ADMIN" does not match allowed "admin"', () => {
-      reflector.get.mockReturnValue(['admin']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'ADMIN' });
-      expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
-    });
-
-    it('is case-sensitive — "Admin" does not match allowed "admin"', () => {
-      reflector.get.mockReturnValue(['admin']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'Admin' });
-      expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
-    });
-
-    it('is case-sensitive — "VERIFIER" does not match allowed "verifier"', () => {
-      reflector.get.mockReturnValue(['verifier']);
-      const ctx = createMockContext({ publicKey: 'GABC', role: 'VERIFIER' });
-      expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
-    });
+  it('throws 401 when a refresh token is used as bearer', async () => {
+    setupReflector(false, undefined);
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'refresh' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  // ── Null / undefined / incomplete user ───────────────────────────────────
-
-  describe('edge cases — null or incomplete user object', () => {
-    it('throws ForbiddenException when user is null', () => {
-      reflector.get.mockReturnValue(['admin']);
-      expect(() => guard.canActivate(createMockContext(null))).toThrow(
-        ForbiddenException,
-      );
-    });
-
-    it('throws ForbiddenException when user is undefined', () => {
-      reflector.get.mockReturnValue(['admin']);
-      expect(() => guard.canActivate(createMockContext(undefined))).toThrow(
-        ForbiddenException,
-      );
-    });
-
-    it('throws ForbiddenException when user object exists but has no role property', () => {
-      reflector.get.mockReturnValue(['admin']);
-      // role is absent — user.role will be undefined
-      expect(() =>
-        guard.canActivate(createMockContext({ publicKey: 'GABC' })),
-      ).toThrow(ForbiddenException);
-    });
-
-    it('throws ForbiddenException when user.role is null', () => {
-      reflector.get.mockReturnValue(['admin']);
-      expect(() =>
-        guard.canActivate(createMockContext({ publicKey: 'GABC', role: null })),
-      ).toThrow(ForbiddenException);
-    });
-
-    it('throws ForbiddenException when user.role is an empty string', () => {
-      reflector.get.mockReturnValue(['admin']);
-      expect(() =>
-        guard.canActivate(createMockContext({ publicKey: 'GABC', role: '' })),
-      ).toThrow(ForbiddenException);
-    });
-
-    it('throws ForbiddenException when user.role is 0 (falsy non-string)', () => {
-      reflector.get.mockReturnValue(['admin']);
-      expect(() =>
-        guard.canActivate(createMockContext({ publicKey: 'GABC', role: 0 })),
-      ).toThrow(ForbiddenException);
-    });
-
-    it('includes "Insufficient permissions" in the message for null user', () => {
-      reflector.get.mockReturnValue(['admin']);
-      expect(() => guard.canActivate(createMockContext(null))).toThrow(
-        'Insufficient permissions',
-      );
-    });
+  it('throws 401 when user is not found in DB', async () => {
+    setupReflector(false, undefined);
+    prismaMock.user.findFirst.mockResolvedValue(null);
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
   });
 
-  // ── Reflector metadata interaction ───────────────────────────────────────
-
-  describe('Reflector metadata interaction', () => {
-    it('calls reflector.get with the key "roles"', () => {
-      reflector.get.mockReturnValue(['admin']);
-      const ctx = createMockContext({ role: 'admin' });
-      guard.canActivate(ctx);
-      expect(reflector.get).toHaveBeenCalledWith('roles', expect.any(Function));
-    });
-
-    it('calls reflector.get with the exact handler returned by context.getHandler()', () => {
-      reflector.get.mockReturnValue(['admin']);
-      const handler = function specificHandler() {};
-      const ctx = createMockContext({ role: 'admin' }, handler);
-      guard.canActivate(ctx);
-      expect(reflector.get).toHaveBeenCalledWith('roles', handler);
-    });
-
-    it('calls reflector.get exactly once per canActivate call', () => {
-      reflector.get.mockReturnValue(undefined);
-      guard.canActivate(createMockContext({ role: 'admin' }));
-      expect(reflector.get).toHaveBeenCalledTimes(1);
-    });
-
-    it('calls reflector.get exactly once even when access is denied', () => {
-      reflector.get.mockReturnValue(['admin']);
-      try {
-        guard.canActivate(createMockContext({ role: 'user' }));
-      } catch {
-        // expected
-      }
-      expect(reflector.get).toHaveBeenCalledTimes(1);
-    });
-
-    it('reads metadata from handlerA and handlerB independently', () => {
-      const handlerA = function routeA() {};
-      const handlerB = function routeB() {};
-
-      reflector.get.mockImplementation((_key, handler) => {
-        if (handler === handlerA) return ['admin'];
-        if (handler === handlerB) return ['verifier'];
-        return undefined;
-      });
-
-      const ctxA = {
-        getHandler: () => handlerA,
-        switchToHttp: () => ({
-          getRequest: () => ({ user: { role: 'admin' } }),
-        }),
-      } as unknown as ExecutionContext;
-
-      const ctxB = {
-        getHandler: () => handlerB,
-        switchToHttp: () => ({
-          getRequest: () => ({ user: { role: 'admin' } }),
-        }),
-      } as unknown as ExecutionContext;
-
-      // admin is allowed on handlerA
-      expect(guard.canActivate(ctxA)).toBe(true);
-      // admin is NOT in ['verifier'] on handlerB → throws
-      expect(() => guard.canActivate(ctxB)).toThrow(ForbiddenException);
-    });
-
-    it('passes the "roles" string (not a symbol or other key) to Reflector', () => {
-      reflector.get.mockReturnValue(undefined);
-      guard.canActivate(createMockContext(null));
-      const [key] = reflector.get.mock.calls[0];
-      expect(key).toBe('roles');
-      expect(typeof key).toBe('string');
-    });
+  it('allows any authenticated user when no @Roles declared', async () => {
+    setupReflector(false, undefined);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  // ── @Roles decorator ─────────────────────────────────────────────────────
-
-  describe('@Roles decorator', () => {
-    it('defines "roles" metadata on the decorated method', () => {
-      class TestController {
-        @Roles('admin', 'verifier')
-        protectedRoute() {}
-      }
-      const metadata = Reflect.getMetadata(
-        'roles',
-        new TestController().protectedRoute,
-      );
-      expect(metadata).toEqual(['admin', 'verifier']);
-    });
-
-    it('defines metadata with a single role', () => {
-      class TestController {
-        @Roles('oracle')
-        oracleRoute() {}
-      }
-      const metadata = Reflect.getMetadata(
-        'roles',
-        new TestController().oracleRoute,
-      );
-      expect(metadata).toEqual(['oracle']);
-    });
-
-    it('defines an empty array when no roles are passed', () => {
-      class TestController {
-        @Roles()
-        publicRoute() {}
-      }
-      const metadata = Reflect.getMetadata(
-        'roles',
-        new TestController().publicRoute,
-      );
-      expect(metadata).toEqual([]);
-    });
-
-    it('preserves the original function reference after decoration', () => {
-      class TestController {
-        @Roles('admin')
-        route() {
-          return 'value';
-        }
-      }
-      expect(new TestController().route()).toBe('value');
-    });
-
-    it('supports multiple independent decorators on different methods', () => {
-      class TestController {
-        @Roles('admin')
-        adminRoute() {}
-
-        @Roles('verifier')
-        verifierRoute() {}
-      }
-      const c = new TestController();
-      expect(Reflect.getMetadata('roles', c.adminRoute)).toEqual(['admin']);
-      expect(Reflect.getMetadata('roles', c.verifierRoute)).toEqual([
-        'verifier',
-      ]);
-    });
+  it('allows access when user role matches @Roles', async () => {
+    setupReflector(false, ['verifier', 'admin']);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'verifier' });
+    const token = signToken({ sub: 'GKEY', role: 'verifier', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  // ── ForbiddenException shape ─────────────────────────────────────────────
+  it('throws 403 when user role does not match @Roles', async () => {
+    setupReflector(false, ['verifier', 'admin']);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+  });
 
-  describe('ForbiddenException response shape', () => {
-    it('thrown error is an instance of ForbiddenException', () => {
-      reflector.get.mockReturnValue(['admin']);
-      try {
-        guard.canActivate(createMockContext({ role: 'user' }));
-        fail('expected ForbiddenException to be thrown');
-      } catch (err) {
-        expect(err).toBeInstanceOf(ForbiddenException);
-      }
-    });
+  it('throws 403 with "Verifier role required" when verifier role is required', async () => {
+    setupReflector(false, ['verifier', 'admin']);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(
+      new ForbiddenException('Verifier role required'),
+    );
+  });
 
-    it('carries HTTP status 403', () => {
-      reflector.get.mockReturnValue(['admin']);
-      try {
-        guard.canActivate(createMockContext({ role: 'user' }));
-        fail('expected ForbiddenException to be thrown');
-      } catch (err: any) {
-        expect(err.getStatus()).toBe(403);
-      }
-    });
+  it('throws 403 with "Insufficient permissions" for non-verifier role mismatch', async () => {
+    setupReflector(false, ['admin']);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(
+      new ForbiddenException('Insufficient permissions'),
+    );
+  });
 
-    it('response body contains message "Insufficient permissions"', () => {
-      reflector.get.mockReturnValue(['admin']);
-      try {
-        guard.canActivate(createMockContext(null));
-        fail('expected ForbiddenException to be thrown');
-      } catch (err: any) {
-        const response = err.getResponse() as Record<string, any>;
-        expect(response.message).toBe('Insufficient permissions');
-      }
-    });
+  it('uses DB role, not JWT role claim', async () => {
+    // JWT says corporation, DB says admin â€” DB wins
+    setupReflector(false, ['admin']);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'admin' });
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
 
-    it('response body contains statusCode 403', () => {
-      reflector.get.mockReturnValue(['admin']);
-      try {
-        guard.canActivate(createMockContext(null));
-        fail('expected ForbiddenException to be thrown');
-      } catch (err: any) {
-        const response = err.getResponse() as Record<string, any>;
-        expect(response.statusCode).toBe(403);
-      }
-    });
+  it('denies when JWT says admin but DB says corporation', async () => {
+    setupReflector(false, ['admin']);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    const token = signToken({ sub: 'GKEY', role: 'admin', type: 'access' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+  });
 
-    it('response body contains error "Forbidden"', () => {
-      reflector.get.mockReturnValue(['admin']);
-      try {
-        guard.canActivate(createMockContext(null));
-        fail('expected ForbiddenException to be thrown');
-      } catch (err: any) {
-        const response = err.getResponse() as Record<string, any>;
-        expect(response.error).toBe('Forbidden');
-      }
-    });
+  it('rejects a blacklisted (logged-out) access token with its jti (#892)', async () => {
+    setupReflector(false, undefined);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+
+    blacklistServiceMock.isRevoked.mockResolvedValue(true);
+
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access', jti: 'abc-123' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow('Token has been revoked');
+  });
+
+  it('allows a non-revoked token that carries a jti (#892)', async () => {
+    setupReflector(false, undefined);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+
+    blacklistServiceMock.isRevoked.mockResolvedValue(false);
+
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access', jti: 'def-456' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 });
