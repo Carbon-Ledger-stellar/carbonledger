@@ -1,0 +1,299 @@
+name: Cache Performance Testing
+
+on:
+  schedule:
+    # Daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'backend/src/cache/**'
+      - 'backend/src/prisma.service.ts'
+      - '.github/workflows/cache-performance-test.yml'
+
+jobs:
+  cache-performance:
+    name: Measure Cache Performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: carbonledger_cache_perf
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6382:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Setup cache performance test environment
+        working-directory: ./backend
+        run: |
+          cp .env.test .env
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5435/carbonledger_cache_perf?schema=public" >> .env
+          echo "REDIS_URL=redis://localhost:6382" >> .env
+          echo "CACHE_ENABLED=true" >> .env
+          echo "NODE_ENV=test" >> .env
+
+      - name: Run Prisma migrations
+        working-directory: ./backend
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5435/carbonledger_cache_perf?schema=public
+
+      - name: Generate Prisma Client
+        working-directory: ./backend
+        run: npx prisma generate
+
+      - name: Run cache performance benchmarks
+        working-directory: ./backend
+        run: npm run test:cache:performance 2>&1 | tee cache-performance.log
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5435/carbonledger_cache_perf?schema=public
+          REDIS_URL: redis://localhost:6382
+          CACHE_PERFORMANCE_TEST: true
+
+      - name: Extract performance metrics
+        working-directory: ./backend
+        run: |
+          cat > extract-metrics.js << 'EOF'
+          const fs = require('fs');
+          const log = fs.readFileSync('cache-performance.log', 'utf8');
+          
+          const metrics = {
+            timestamp: new Date().toISOString(),
+            cacheHitRate: extractMetric(log, /Cache Hit Rate:\s+([\d.]+)%/),
+            avgCachedResponseTime: extractMetric(log, /Avg Cached Response Time:\s+([\d.]+)ms/),
+            avgDatabaseResponseTime: extractMetric(log, /Avg Database Response Time:\s+([\d.]+)ms/),
+            performanceImprovement: extractMetric(log, /Performance Improvement:\s+([\d.]+)%/),
+            memoryUsage: extractMetric(log, /Memory Usage:\s+([\d.]+)MB/),
+            queryCacheCoverage: extractMetric(log, /Query Cache Coverage:\s+([\d.]+)%/),
+          };
+          
+          function extractMetric(text, regex) {
+            const match = text.match(regex);
+            return match ? parseFloat(match[1]) : null;
+          }
+          
+          fs.writeFileSync('cache-metrics.json', JSON.stringify(metrics, null, 2));
+          
+          // Print summary
+          console.log('\n=== Cache Performance Summary ===');
+          console.log(`Hit Rate: ${metrics.cacheHitRate}%`);
+          console.log(`Cached Response Time: ${metrics.avgCachedResponseTime}ms`);
+          console.log(`Database Response Time: ${metrics.avgDatabaseResponseTime}ms`);
+          console.log(`Performance Improvement: ${metrics.performanceImprovement}%`);
+          console.log(`Memory Usage: ${metrics.memoryUsage}MB`);
+          EOF
+          node extract-metrics.js
+
+      - name: Upload performance metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-performance-metrics
+          path: ./backend/cache-metrics.json
+          retention-days: 90
+
+      - name: Check performance targets
+        working-directory: ./backend
+        run: |
+          cat > check-targets.js << 'EOF'
+          const fs = require('fs');
+          const metrics = JSON.parse(fs.readFileSync('cache-metrics.json', 'utf8'));
+          
+          const targets = {
+            cacheHitRate: { value: 60, symbol: '%', description: 'Cache hit rate' },
+            performanceImprovement: { value: 40, symbol: '%', description: 'Performance improvement' },
+            avgCachedResponseTime: { value: 50, symbol: 'ms', description: 'Avg cached response time' },
+          };
+          
+          let allTargetsMet = true;
+          let summary = '## Cache Performance Report\n\n';
+          
+          for (const [key, target] of Object.entries(targets)) {
+            const value = metrics[key];
+            if (value === null) continue;
+            
+            const isMet = key === 'avgCachedResponseTime' 
+              ? value <= target.value 
+              : value >= target.value;
+            
+            const status = isMet ? '✅' : '❌';
+            const change = isMet ? 'PASSED' : 'FAILED';
+            
+            summary += `| ${target.description} | ${value}${target.symbol} | ${target.value}${target.symbol} | ${status} ${change} |\n`;
+            
+            if (!isMet) allTargetsMet = false;
+          }
+          
+          fs.writeFileSync('CACHE_REPORT.md', summary);
+          
+          if (!allTargetsMet) {
+            console.error('\n⚠️ Some performance targets not met!\n');
+            process.exit(1);
+          }
+          EOF
+          node check-targets.js
+
+      - name: Create performance report
+        run: |
+          cat > PERFORMANCE_REPORT.md << 'EOF'
+          # Cache Performance Report
+          
+          Generated: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          
+          ## Metrics
+          
+          | Metric | Target | Actual | Status |
+          |--------|--------|--------|--------|
+          | Cache Hit Rate | > 60% | [PLACEHOLDER] | [PLACEHOLDER] |
+          | Performance Improvement | > 40% | [PLACEHOLDER] | [PLACEHOLDER] |
+          | Avg Cached Response | < 50ms | [PLACEHOLDER] | [PLACEHOLDER] |
+          | Memory Usage | < 512MB | [PLACEHOLDER] | [PLACEHOLDER] |
+          | Query Cache Coverage | > 80% | [PLACEHOLDER] | [PLACEHOLDER] |
+          
+          ## Recommendations
+          
+          - Monitor cache hit rate trending
+          - Review queries with low cache effectiveness
+          - Consider TTL adjustments based on access patterns
+          - Profile memory usage for large result sets
+          
+          ## Next Steps
+          
+          1. Review daily performance trend
+          2. Identify outliers or degradation
+          3. Adjust cache policies as needed
+          4. Update documentation with findings
+          EOF
+          cat PERFORMANCE_REPORT.md
+
+      - name: Upload performance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-performance-report
+          path: ./backend/PERFORMANCE_REPORT.md
+          retention-days: 90
+
+      - name: Post Slack notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "Cache Performance Test ${{ job.status }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Cache Performance Results*\n*Status:* ${{ job.status }}\n*Branch:* ${{ github.ref }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  cache-trend-analysis:
+    name: Analyze Cache Performance Trends
+    runs-on: ubuntu-latest
+    needs: cache-performance
+    if: github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download previous metrics
+        uses: actions/download-artifact@v4
+        with:
+          name: cache-performance-metrics
+          path: ./metrics
+
+      - name: Analyze trends
+        run: |
+          cat > analyze-trends.js << 'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          
+          // Load all historical metrics
+          const metricsDir = './metrics';
+          const metricsFiles = fs.readdirSync(metricsDir)
+            .filter(f => f.endsWith('.json'))
+            .sort();
+          
+          let trends = [];
+          for (const file of metricsFiles) {
+            try {
+              const metrics = JSON.parse(
+                fs.readFileSync(path.join(metricsDir, file), 'utf8')
+              );
+              trends.push(metrics);
+            } catch (e) {
+              console.error(`Error reading ${file}:`, e.message);
+            }
+          }
+          
+          if (trends.length < 2) {
+            console.log('Not enough historical data for trend analysis');
+            process.exit(0);
+          }
+          
+          // Calculate trends
+          const latest = trends[trends.length - 1];
+          const previous = trends[trends.length - 2];
+          
+          const hitRateTrend = latest.cacheHitRate - previous.cacheHitRate;
+          const perfTrend = latest.performanceImprovement - previous.performanceImprovement;
+          
+          console.log('\n=== Cache Performance Trends ===');
+          console.log(`Cache Hit Rate: ${latest.cacheHitRate}% (${hitRateTrend > 0 ? '+' : ''}${hitRateTrend.toFixed(2)}%)`);
+          console.log(`Performance Improvement: ${latest.performanceImprovement}% (${perfTrend > 0 ? '+' : ''}${perfTrend.toFixed(2)}%)`);
+          
+          if (hitRateTrend < -5) {
+            console.warn('⚠️ Warning: Cache hit rate declined significantly');
+          }
+          if (perfTrend < -10) {
+            console.warn('⚠️ Warning: Performance improvement declining');
+          }
+          EOF
+          node analyze-trends.js
+
+      - name: Generate trend visualization
+        run: |
+          echo "Trend analysis would generate visualization here"
+          echo "See: https://github.com/actions/actions-status-badge for badge examples"
+
