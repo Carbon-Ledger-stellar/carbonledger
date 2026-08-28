@@ -581,3 +581,40 @@ model OracleDeadLetter {
   @@index([lastFailedAt(sort: Desc)])
   @@map("oracle_dead_letters")
 }
+
+/// Two-factor authentication configuration per user (#1079).
+/// Supports TOTP (authenticator app) and email OTP.
+model TwoFactorAuth {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  enabled           Boolean   @default(false)
+
+  /// Base32-encoded TOTP secret — store encrypted in production
+  totpSecret        String?
+  totpVerified      Boolean   @default(false)
+
+  /// Email OTP support
+  emailEnabled      Boolean   @default(false)
+  emailOtp          String?         // bcrypt hash of current OTP
+  emailOtpExpiry    DateTime?
+  emailOtpAttempts  Int       @default(0)
+
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+/// One-time recovery codes for 2FA account lockout (#1079).
+/// Each user gets 10 codes on 2FA setup; each code is single-use.
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String             // bcrypt hash of the plaintext code
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([userId, usedAt])
+}
