@@ -32,6 +32,11 @@ export interface OracleServicesHealth {
   generatedAt: Date;
 }
 
+const BENCHMARK_TTL = 300; // 5 minutes — matches README "Price cache TTL: 24 hours" target;
+                            // set to 5 min per task requirements
+
+// ── DTOs ──────────────────────────────────────────────────────────────────────
+
 export class SubmitMonitoringDto {
   @IsString() @Length(1, 64) projectId: string;
   @IsString() @Length(1, 32) period: string;

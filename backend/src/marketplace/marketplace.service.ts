@@ -10,6 +10,9 @@ import { EventSourcingService } from "../events/event-sourcing.service";
 import { CreditEventType } from "../events/credit-event.types";
 import { buildCursorWhere, createOpaqueCursor, decodeCursor, normalizePaginationLimit } from "../common/cursor-pagination";
 
+const CACHE_TTL = 300; // 5 minutes
+const LIST_PATTERN = "marketplace:listings:*";
+
 @Injectable()
 export class MarketplaceService {
   private readonly logger = new Logger(MarketplaceService.name);
@@ -382,6 +385,7 @@ export class MarketplaceService {
       });
       results.push(result);
     }
+    // delPattern is called inside each purchase() call — no extra invalidation needed
     return results;
   }
 
