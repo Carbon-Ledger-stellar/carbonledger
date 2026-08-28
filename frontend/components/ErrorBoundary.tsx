@@ -8,6 +8,7 @@ import {
   getShortfall,
   formatShortfallMessage,
 } from "../lib/wallet-errors";
+import { captureException } from "../lib/sentry";
 
 const STELLAR_FUNDING_HREF =
   process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet"
@@ -180,7 +181,7 @@ export function classifyError(error: Error | null): ClassifiedError {
   return {
     type: "generic",
     title: "Something Went Wrong",
-    message: error?.message || "An unexpected error occurred. Please try again.",
+    message: "An unexpected error occurred. Please try again or contact support if the issue continues.",
     recoveryLabel: "Try Again",
     secondaryLabel: "Contact Support",
     icon: "⚠️",
@@ -549,6 +550,10 @@ export default class ErrorBoundary extends Component<Props, State> {
     this.setState({ componentStack: info.componentStack });
 
     console.error("ErrorBoundary caught:", error, info);
+    captureException(error, {
+      componentStack: info.componentStack,
+      errorType: classifyError(error).type,
+    });
     import("../lib/logger").then(({ clientLogger }) => {
       clientLogger.error(error.message, {
         stack: error.stack,
