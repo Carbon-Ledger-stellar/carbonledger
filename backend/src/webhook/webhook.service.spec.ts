@@ -43,7 +43,8 @@ describe('WebhookService', () => {
         let results = [...subscriptions];
         if (where?.ownerAddress) results = results.filter((s) => s.ownerAddress === where.ownerAddress);
         if (where?.active !== undefined) results = results.filter((s) => s.active === where.active);
-        if (where?.id) results = results.filter((s) => s.id === where.id);
+        if (where?.id?.in) results = results.filter((s) => where.id.in.includes(s.id));
+        else if (where?.id) results = results.filter((s) => s.id === where.id);
         if (where?.events?.has) results = results.filter((s) => s.events.includes(where.events.has));
         return Promise.resolve(results);
       }),
@@ -70,6 +71,8 @@ describe('WebhookService', () => {
       findMany: jest.fn(({ where, orderBy, skip, take }: any) => {
         let results = [...logs];
         if (where?.subscriptionId) results = results.filter((l) => l.subscriptionId === where.subscriptionId);
+        if (where?.eventType) results = results.filter((l) => l.eventType === where.eventType);
+        if (where?.success !== undefined) results = results.filter((l) => l.success === where.success);
         if (orderBy?.timestamp === 'desc') results.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
         if (skip) results = results.slice(skip);
         if (take) results = results.slice(0, take);
@@ -78,6 +81,8 @@ describe('WebhookService', () => {
       count: jest.fn(({ where }: any) => {
         let results = [...logs];
         if (where?.subscriptionId) results = results.filter((l) => l.subscriptionId === where.subscriptionId);
+        if (where?.eventType) results = results.filter((l) => l.eventType === where.eventType);
+        if (where?.success !== undefined) results = results.filter((l) => l.success === where.success);
         return Promise.resolve(results.length);
       }),
     };
@@ -196,6 +201,33 @@ describe('WebhookService', () => {
       expect(queueMock.add).toHaveBeenCalledTimes(2);
     });
 
+    it('enqueues jobs with 10 max attempts and a custom backoff strategy', async () => {
+      await service.subscribe({
+        ownerAddress: 'GCORP123',
+        url: 'https://esg1.example.com/webhook',
+        events: ['retirement.confirmed'] as any,
+      });
+
+      await service.dispatch('retirement.confirmed', { retirementId: 'R1' });
+
+      const [, , jobOpts] = queueMock.add.mock.calls[0];
+      expect(jobOpts.attempts).toBe(10);
+      expect(jobOpts.backoff).toEqual({ type: 'custom' });
+    });
+
+    it('dispatches monitoring.data_submitted and oracle.price_updated events', async () => {
+      await service.subscribe({
+        ownerAddress: 'GCORP123',
+        url: 'https://esg1.example.com/webhook',
+        events: ['monitoring.data_submitted', 'oracle.price_updated'] as any,
+      });
+
+      await service.dispatch('monitoring.data_submitted', { projectId: 'P1' });
+      await service.dispatch('oracle.price_updated', { methodology: 'VCS' });
+
+      expect(queueMock.add).toHaveBeenCalledTimes(2);
+    });
+
     it('does nothing when no subscriptions match', async () => {
       await service.dispatch('credit.purchased', { listingId: 'L1' });
       expect(queueMock.add).not.toHaveBeenCalled();
@@ -283,6 +315,77 @@ describe('WebhookService', () => {
       });
 
       await expect(service.getDeliveryLogs(sub.id, 'GOTHER456')).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ── getAllDeliveryLogs (admin) ────────────────────────────────────
+
+  describe('getAllDeliveryLogs', () => {
+    it('returns delivery logs across all subscriptions with owner attached', async () => {
+      const subA = await service.subscribe({
+        ownerAddress: 'GCORP123',
+        url: 'https://esg1.example.com/webhook',
+        events: ['retirement.confirmed'] as any,
+      });
+      const subB = await service.subscribe({
+        ownerAddress: 'GOTHER456',
+        url: 'https://esg2.example.com/webhook',
+        events: ['certificate.ready'] as any,
+      });
+
+      await service.recordDeliveryAttempt({
+        subscriptionId: subA.id,
+        eventType: 'retirement.confirmed',
+        url: subA.url,
+        statusCode: 200,
+        success: true,
+        attempt: 1,
+      });
+      await service.recordDeliveryAttempt({
+        subscriptionId: subB.id,
+        eventType: 'certificate.ready',
+        url: subB.url,
+        success: false,
+        attempt: 3,
+        error: 'timeout',
+      });
+
+      const result = await service.getAllDeliveryLogs({});
+      expect(result.total).toBe(2);
+      expect(result.logs.find((l: any) => l.subscriptionId === subA.id)?.subscriptionOwner).toBe(
+        'GCORP123',
+      );
+      expect(result.logs.find((l: any) => l.subscriptionId === subB.id)?.subscriptionOwner).toBe(
+        'GOTHER456',
+      );
+    });
+
+    it('filters by success and eventType', async () => {
+      const sub = await service.subscribe({
+        ownerAddress: 'GCORP123',
+        url: 'https://esg1.example.com/webhook',
+        events: ['retirement.confirmed'] as any,
+      });
+      await service.recordDeliveryAttempt({
+        subscriptionId: sub.id,
+        eventType: 'retirement.confirmed',
+        url: sub.url,
+        statusCode: 200,
+        success: true,
+        attempt: 1,
+      });
+      await service.recordDeliveryAttempt({
+        subscriptionId: sub.id,
+        eventType: 'retirement.confirmed',
+        url: sub.url,
+        success: false,
+        attempt: 2,
+        error: 'ECONNREFUSED',
+      });
+
+      const failedOnly = await service.getAllDeliveryLogs({ success: false });
+      expect(failedOnly.total).toBe(1);
+      expect(failedOnly.logs[0].success).toBe(false);
     });
   });
 

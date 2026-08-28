@@ -317,6 +317,7 @@ version = "0.1.0"
 dependencies = [
  "carbon_registry",
  "ed25519-dalek",
+ "proptest",
  "rand 0.9.4",
  "soroban-sdk 21.7.7",
 ]

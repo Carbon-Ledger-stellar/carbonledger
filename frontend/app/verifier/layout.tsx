@@ -1,7 +1,7 @@
 "use client";
 
-import { useVerifierAuth } from "../../../lib/use-verifier-auth";
-import WalletPrompt from "../../../components/WalletPrompt";
+import { useVerifierAuth } from "../../lib/use-verifier-auth";
+import WalletPrompt from "../../components/WalletPrompt";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 
 export default function VerifierLayout({ children }: { children: React.ReactNode }) {

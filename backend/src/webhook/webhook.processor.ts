@@ -3,18 +3,25 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import axios from 'axios';
 import { OUTBOUND_WEBHOOK_QUEUE } from '../queue/queue.constants';
-import { WebhookService } from './webhook.service';
+import { WebhookService, webhookRetryDelayMs } from './webhook.service';
 import type { OutboundWebhookJob } from './webhook.service';
 
 /**
  * Processes outbound webhook delivery jobs from the OUTBOUND_WEBHOOK_QUEUE.
  *
  * Each job delivers a signed HTTP POST to the subscriber's URL.
- * On failure the job is retried with BullMQ exponential backoff.
+ * On failure the job is retried up to MAX_DELIVERY_ATTEMPTS times with
+ * exponential backoff (registered here as the 'custom' strategy referenced
+ * by the job's `backoff: { type: 'custom' }` option — BullMQ requires
+ * strategy functions to live on the worker, not the job payload).
  * After all retries are exhausted the subscription is deactivated and the
  * owner is notified via email.
  */
-@Processor(OUTBOUND_WEBHOOK_QUEUE)
+@Processor(OUTBOUND_WEBHOOK_QUEUE, {
+  settings: {
+    backoffStrategy: (attemptsMade: number) => webhookRetryDelayMs(attemptsMade),
+  },
+})
 export class WebhookProcessor extends WorkerHost {
   private readonly logger = new Logger(WebhookProcessor.name);
 
@@ -27,7 +34,7 @@ export class WebhookProcessor extends WorkerHost {
     const attempt = job.attemptsMade + 1;
 
     this.logger.log(
-      `Delivering ${data.eventType} to ${data.url} (attempt ${attempt}/3, sub=${data.subscriptionId})`,
+      `Delivering ${data.eventType} to ${data.url} (attempt ${attempt}/${job.opts.attempts ?? attempt}, sub=${data.subscriptionId})`,
     );
 
     const timestamp = Math.floor(Date.now() / 1000);

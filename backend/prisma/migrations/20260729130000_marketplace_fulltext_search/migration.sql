@@ -59,7 +59,9 @@ END;
 $$;
 
 -- ── 3. Attach trigger to MarketListing ───────────────────────────────────────
-
+-- migrationlint: allow-destructive
+-- Rationale: DROP TRIGGER IF EXISTS is used to safely recreate an idempotent
+-- trigger definition.  No table data or user columns are affected.
 DROP TRIGGER IF EXISTS marketplace_listing_search_vector_trigger ON "MarketListing";
 
 CREATE TRIGGER marketplace_listing_search_vector_trigger

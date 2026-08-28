@@ -397,16 +397,21 @@ export default function BulkPurchaseCart() {
       <div
         ref={drawerRef}
         className={`bulk-cart-mobile-drawer ${drawerOpen ? 'open' : ''}`}
+        aria-hidden={!drawerOpen}
+        inert={!drawerOpen}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
+        {drawerOpen && (
+        <>
         <div className="bulk-cart-mobile-header">
           <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: 0 }}>
             {t("title", { count: items.length })}
           </h3>
           <button
             onClick={() => setDrawerOpen(false)}
+            aria-label={t("closeCart")}
             style={{
               background: "transparent",
               border: "none",
@@ -506,6 +511,8 @@ export default function BulkPurchaseCart() {
 
           <Toast toasts={toasts} onDismiss={dismiss} />
         </div>
+        </>
+        )}
       </div>
     </>
   );

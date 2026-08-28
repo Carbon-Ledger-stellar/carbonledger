@@ -8,6 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { IS_PUBLIC_KEY, ROLES_KEY, UserRole } from './decorators';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class RolesGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
+    private readonly tokenBlacklist: TokenBlacklistService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -31,7 +33,7 @@ export class RolesGuard implements CanActivate {
     const token = this.extractToken(request);
     if (!token) throw new UnauthorizedException('Authorization header missing or malformed');
 
-    let payload: { sub: string; type: string };
+    let payload: { sub: string; type: string; jti?: string };
     try {
       payload = this.jwt.verify(token, {
         secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
@@ -46,6 +48,11 @@ export class RolesGuard implements CanActivate {
 
     if (payload.type !== 'access') {
       throw new UnauthorizedException('Invalid token type');
+    }
+
+    // Reject tokens revoked via /auth/logout for their remaining lifetime
+    if (payload.jti && (await this.tokenBlacklist.isRevoked(payload.jti))) {
+      throw new UnauthorizedException('Token has been revoked');
     }
 
     // 3. Fetch role from DB — JWT payload alone is not trusted for role

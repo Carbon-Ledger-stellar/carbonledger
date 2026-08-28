@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { RedisService } from "../redis.service";
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
+import { CacheInvalidationService } from "../cache/cache.service";
 import {
   RegisterProjectDto,
   UpdateProjectStatusDto,
@@ -16,6 +17,7 @@ import { MailEvent } from "../mail/mail.constants";
 import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project-state-machine.service";
 import { randomUUID, randomBytes } from "crypto";
 import { sanitizeProjectPayload, sanitizeProjectForResponse } from "../common/sanitization.util";
+import { WebhookService } from "../webhook/webhook.service";
 
 /** Flat attestation fee, in stroops (1 XLM = 10,000,000 stroops). */
 const ATTESTATION_FEE_STROOPS = process.env.VERIFIER_ATTESTATION_FEE_STROOPS ?? "10000000";
@@ -52,15 +54,18 @@ export class ProjectsService {
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
+    @Optional() private readonly cacheInvalidation?: CacheInvalidationService,
+    @Optional() private readonly webhookService?: WebhookService,
   ) {}
 
   // ── Authenticated, role-scoped reads ─────────────────────────────────────
 
   async findAll(
-    filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number },
+    filters: { methodology?: string; country?: string; vintage?: number; cursor?: string; limit?: number; offset?: number },
     caller: CallerContext,
   ) {
     const take = Math.min(Math.max(filters.limit ?? 20, 1), 100);
+    const offset = typeof filters.offset === 'number' && filters.offset >= 0 ? filters.offset : 0;
     const where: any = scopeWhereForCaller(
       {
         deletedAt: null,
@@ -71,33 +76,49 @@ export class ProjectsService {
       caller,
     );
 
-    const [projects, total_count] = await Promise.all([
+    const [projects, total] = await Promise.all([
       this.prisma.carbonProject.findMany({
         where,
         orderBy: { createdAt: "desc" },
         take: take + 1,
         cursor: filters.cursor ? { id: filters.cursor } : undefined,
-        skip: filters.cursor ? 1 : 0,
+        skip: filters.cursor ? 1 : offset,
       }),
       this.prisma.carbonProject.count({ where }),
     ]);
 
     const hasMore = projects.length > take;
-    const next_cursor = hasMore ? projects[projects.length - 2].id : undefined;
+    const nextCursor = hasMore ? projects[take - 1].id : undefined;
     if (hasMore) projects.pop();
 
-    return { projects: projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>)), next_cursor, total_count };
+    const sanitized = projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      projects: sanitized,
+      total,
+      limit: take,
+      offset,
+      hasMore,
+      nextOffset: hasMore ? offset + take : null,
+      nextCursor,
+      next_cursor: nextCursor,
+      total_count: total,
+    };
   }
 
   async searchProjects(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
     const {
       search, methodology, country, status, vintageYear,
-      oracleFreshness, cursor, limit = 20, sortBy = 'createdAt', sortOrder = 'desc',
+      oracleFreshness, cursor, limit = 20, offset = 0, sortBy = 'createdAt', sortOrder = 'desc',
     } = searchDto;
 
     if (search) {
       return this.searchProjectsFullText(searchDto, caller);
     }
+
+    const take = Math.min(Math.max(limit, 1), 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
 
     const where: any = { deletedAt: null };
 
@@ -140,9 +161,9 @@ export class ProjectsService {
       this.prisma.carbonProject.findMany({
         where,
         orderBy,
-        take: limit + 1,
+        take: take + 1,
         cursor: cursor ? { id: cursor } : undefined,
-        skip: cursor ? 1 : 0,
+        skip: cursor ? 1 : safeOffset,
         select: {
           id: true, projectId: true, name: true, description: true,
           methodology: true, country: true, projectType: true, status: true,
@@ -155,13 +176,24 @@ export class ProjectsService {
       this.prisma.carbonProject.count({ where }),
     ]);
 
-    const hasMore = projects.length > limit;
-    const nextCursor = hasMore ? projects[projects.length - 2].id : undefined;
+    const hasMore = projects.length > take;
+    const nextCursor = hasMore ? projects[take - 1].id : undefined;
     if (hasMore) {
       projects.pop();
     }
 
-    return { projects: projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>)), nextCursor, hasMore, total };
+    const sanitized = projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
+    return {
+      data: sanitized,
+      projects: sanitized,
+      total,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      nextCursor,
+    };
   }
 
   /**
@@ -176,8 +208,9 @@ export class ProjectsService {
    * role so the scoping applied by the ORM path is consistent here.
    */
   private async searchProjectsFullText(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {
-    const { search, methodology, country, status, vintageYear, limit = 20, cursor } = searchDto;
-    const take = limit + 1;
+    const { search, methodology, country, status, vintageYear, limit = 20, offset = 0, cursor } = searchDto;
+    const take = Math.min(Math.max(limit, 1), 100);
+    const safeOffset = typeof offset === 'number' && offset >= 0 ? offset : 0;
 
     const where: any = {
       deletedAt: null,
@@ -199,12 +232,9 @@ export class ProjectsService {
     if (vintageYear && vintageYear.length > 0) {
       where.vintageYear = { in: vintageYear };
     }
-    // Ownership scoping: project_developer sees only their own projects
-    if (caller.role === 'project_developer') {
-      conditions.push(`"ownerAddress" = $${idx}`);
-      args.push(caller.publicKey);
-      idx++;
-    }
+
+    scopeWhereForCaller(where, caller);
+
     if (cursor) {
       where.id = { lt: cursor };
     }
@@ -212,7 +242,8 @@ export class ProjectsService {
     const [rows, total] = await Promise.all([
       this.prisma.carbonProject.findMany({
         where,
-        take,
+        take: take + 1,
+        skip: cursor ? 0 : safeOffset,
         orderBy: { createdAt: 'desc' },
         select: {
           id: true, projectId: true, name: true, description: true,
@@ -226,15 +257,21 @@ export class ProjectsService {
       this.prisma.carbonProject.count({ where }),
     ]);
 
-    const hasMore = rows.length > limit;
-    const nextCursor = hasMore ? rows[rows.length - 2].id : undefined;
+    const hasMore = rows.length > take;
+    const nextCursor = hasMore ? rows[take - 1].id : undefined;
     if (hasMore) rows.pop();
 
+    const sanitized = rows.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
+
     return {
-      projects: rows.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>)),
-      nextCursor,
-      hasMore,
+      data: sanitized,
+      projects: sanitized,
       total,
+      limit: take,
+      offset: safeOffset,
+      hasMore,
+      nextOffset: hasMore ? safeOffset + take : null,
+      nextCursor,
     };
   }
 
@@ -447,6 +484,26 @@ export class ProjectsService {
 
     const txHash = await this.recordAttestationFee(projectId, verifierPublicKey, 'Verified');
     await this.invalidateProjectCache(projectId);
+
+    // Dispatch webhook: project.verified
+    try {
+      if (this.webhookService) {
+        await this.webhookService.dispatch('project.verified', {
+          projectId: updated.projectId,
+          projectName: updated.name,
+          methodology: updated.methodology,
+          country: updated.country,
+          vintageYear: updated.vintageYear,
+          ownerAddress: updated.ownerAddress,
+          verifierAddress: verifierPublicKey,
+          txHash,
+          verifiedAt: new Date().toISOString(),
+        });
+      }
+    } catch (webhookError) {
+      this.logger.warn(`Failed to dispatch webhook: ${webhookError instanceof Error ? webhookError.message : String(webhookError)}`);
+    }
+
     return { ...updated, txHash };
   }
 
@@ -499,6 +556,30 @@ export class ProjectsService {
     return updated;
   }
 
+  /**
+   * Admin recovery (#964): un-hides a soft-deleted project by clearing
+   * deletedAt/deletionReason/retentionUntil.
+   *
+   * Note: softDeleteProject anonymizes name/description/metadataCid/
+   * verifierAddress/ownerAddress at delete time (GDPR-style scrub) — that
+   * data is gone for good, restoring only reverses the *visibility* of the
+   * row, not the redaction. This is intentional, not a bug.
+   */
+  async restoreProject(projectId: string) {
+    const project = await this.prisma.carbonProject.findFirst({
+      where: { projectId, deletedAt: { not: null } },
+    });
+    if (!project) throw new NotFoundException(`Deleted project ${projectId} not found`);
+
+    const restored = await this.prisma.carbonProject.update({
+      where: { id: project.id },
+      data: { deletedAt: null, deletionReason: null, retentionUntil: null },
+    });
+
+    await this.invalidateProjectCache(projectId);
+    return restored;
+  }
+
   private getRetentionDays(): number {
     const raw = Number(process.env.DATA_RETENTION_DAYS ?? process.env.RETENTION_DAYS ?? '90');
     return Number.isFinite(raw) && raw > 0 ? raw : 90;
@@ -507,5 +588,10 @@ export class ProjectsService {
   private async invalidateProjectCache(projectId: string): Promise<void> {
     const cacheKey = projectDetailCacheKey(projectId);
     await this.redisService.del(cacheKey);
+    // Also invalidate listings cache — a project status change (verify, reject,
+    // suspend) can make active listings stale.
+    if (this.cacheInvalidation) {
+      await this.cacheInvalidation.invalidateAllListings();
+    }
   }
 }

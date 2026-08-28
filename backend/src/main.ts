@@ -1,3 +1,4 @@
+import './telemetry/register';
 import { NestFactory } from '@nestjs/core';
 import { ConsoleLogger, ForbiddenException, LogLevel, ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -5,8 +6,12 @@ import { PrismaService } from './prisma.service';
 import { CorrelationIdContext } from './logger/correlation-id.context';
 import { validateEnv } from './env.validation';
 import * as express from 'express';
+import cookieParser from 'cookie-parser';
 import { StellarNetworkService } from './common/stellar-network.service';
 import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
+import { ValidationExceptionFilter } from './common/validation-exception.filter';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { LoggerService } from './logger/logger.service';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -16,12 +21,14 @@ import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.reg
 class JsonLogger extends ConsoleLogger {
   private write(level: string, message: unknown, context?: string): void {
     const correlationId = CorrelationIdContext.getCorrelationId();
+    const traceId = CorrelationIdContext.getTraceId();
     process.stdout.write(
       JSON.stringify({
         timestamp: new Date().toISOString(),
         level,
         service: 'backend',
         correlationId: correlationId || undefined,
+        traceId: traceId || undefined,
         context: context ?? this.context,
         message,
       }) + '\n',
@@ -48,17 +55,52 @@ async function bootstrap() {
   app.use(express.json({ limit: bodyLimit }));
   app.use(express.urlencoded({ extended: true, limit: bodyLimit }));
 
-  app.setGlobalPrefix('api/v1');
+  // Required so the HTTP-only refresh-token cookie set by AuthController
+  // can be read back from req.cookies on /auth/refresh and /auth/logout.
+  app.use(cookieParser());
 
-  // Header-based versioning: Accept-Version: 1
-  // All existing routes are VERSION_NEUTRAL (no @Version decorator needed).
+  // URI-based versioning: /api/v1/... and /api/v2/...
+  // - v1 controllers use @Controller('resource') with VERSION_NEUTRAL (global prefix api/v1)
+  // - v2 controllers use @Controller({ path: 'resource', version: '2' })
+  // The global prefix is set to 'api' and versioning adds /v{n}/ automatically.
+  app.setGlobalPrefix('api');
   app.enableVersioning({
-    type: VersioningType.HEADER,
-    header: 'Accept-Version',
+    type: VersioningType.URI,
+    defaultVersion: '1',   // Controllers without @Version() default to v1
+    prefix: 'v',
   });
 
-  // Fix mass assignment (API3): strip unknown fields globally
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  // Fix mass assignment (API3): strip unknown fields globally.
+  // exceptionFactory passes structured errors so ValidationExceptionFilter
+  // can map them to the CarbonLedger error catalog format.
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      exceptionFactory: (errors) => {
+        const { BadRequestException } = require('@nestjs/common');
+        return new BadRequestException({
+          message: errors
+            .map((e) => Object.values(e.constraints ?? {}).join(', '))
+            .filter(Boolean),
+          errors,
+        });
+      },
+    }),
+  );
+
+  // Maps class-validator errors to CarbonLedger validation error catalog format (400 + error codes).
+  app.useGlobalFilters(new ValidationExceptionFilter());
+
+  // Catch-all fallback (#966): standardizes every response NOT already handled by a
+  // more specific filter above (ThrottlerExceptionFilter, StellarUnavailableExceptionFilter,
+  // ValidationExceptionFilter) into the CarbonLedger error envelope, and collapses
+  // unexpected 5xx errors to a generic message so internals never leak to callers.
+  // Must be registered LAST — global filters are tried in registration order and this
+  // one's bare @Catch() matches every exception, so anything registered after it would
+  // never run.
+  app.useGlobalFilters(new AllExceptionsFilter(app.get(LoggerService)));
 
   // Fix API6: limit request body to 1 MB to prevent resource exhaustion
   app.use(require('express').json({ limit: '1mb' }));

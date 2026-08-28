@@ -1,5 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { BlockchainModule } from './blockchain/blockchain.module';
 import { WebhookModule } from "./webhook/webhook.module";
 import { GraphqlModule } from "./graphql/graphql.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
@@ -28,6 +29,7 @@ import { StellarNetworkService } from './common/stellar-network.service';
 import { StellarUnavailableExceptionFilter } from './common/stellar-unavailable.filter';
 import { LoggerModule } from "./logger/logger.module";
 import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
+import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
@@ -36,9 +38,11 @@ import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
 import { RedisModule } from "./redis.module";
 import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
+import { PortfolioModule } from "./portfolio/portfolio.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -145,6 +149,7 @@ class HealthController {
     AuthModule,
     ProjectsModule,
     CreditsModule,
+    BlockchainModule,
     RetirementsModule,
     MarketplaceModule,
     OracleModule,
@@ -161,6 +166,7 @@ class HealthController {
     IdempotencyModule,
     RetentionModule,
     ReconciliationModule,
+    PortfolioModule,
   ],
   controllers: [HealthController],
   providers: [
@@ -210,6 +216,10 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
     consumer.apply(RateLimitMiddleware).forRoutes('*');
+
+    // Adds RFC 8594 Deprecation + Sunset headers to all v1 responses.
+    // v2 routes only receive X-API-Version: 2 (no deprecation headers).
+    consumer.apply(DeprecationMiddleware).forRoutes('*');
 
     // Apply idempotency enforcement to the three critical mutating endpoints.
     // The Idempotency-Key header is optional; omitting it simply bypasses the check.

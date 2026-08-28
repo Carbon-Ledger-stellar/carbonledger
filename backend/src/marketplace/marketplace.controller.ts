@@ -8,12 +8,13 @@ import {
   Query,
   Request,
   ForbiddenException,
+  BadRequestException,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { MarketplaceService } from './marketplace.service';
 import { MarketplaceSearchService } from './marketplace-search.service';
-import { CreateListingDto, PurchaseDto, BulkPurchaseDto, ListingsQueryDto, SearchListingsDto } from './marketplace.dto';
+import { CreateListingDto, PurchaseDto, BulkPurchaseDto, ListingsQueryDto, SearchListingsDto, BatchCreateListingsDto } from './marketplace.dto';
 import { Public, Roles } from '../auth/decorators';
 import {
   CheckPolicies,
@@ -80,6 +81,20 @@ export class MarketplaceController {
     // Seller is always the authenticated user — prevents mass assignment
     return this.marketplaceService.createListing({ ...dto, seller: req.user.publicKey });
   }
+
+  @Post('listings/batch')
+  @Roles('project_developer', 'corporation', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('list', MarketListingSubject))
+  batchCreateListings(@Body() body: BatchCreateListingsDto | CreateListingDto[], @Request() req: any) {
+    const rawItems = Array.isArray(body) ? body : body?.items;
+    if (!rawItems || !Array.isArray(rawItems)) {
+      throw new BadRequestException('Request body must be an array of CreateListingDto or contain an items array');
+    }
+    const items = rawItems.map((dto) => ({ ...dto, seller: req.user.publicKey }));
+    return this.marketplaceService.batchCreateListings(items);
+  }
+
 
   /**
    * DELETE /marketplace/listings/:id

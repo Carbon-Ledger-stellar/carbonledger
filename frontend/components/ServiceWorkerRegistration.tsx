@@ -3,7 +3,8 @@
 /**
  * ServiceWorkerRegistration
  *
- * Registers the CarbonLedger audit service worker on first mount.
+ * Registers the CarbonLedger audit service worker on first mount
+ * and starts the auto-sync mechanism for offline draft reports.
  * Renders nothing — side-effect only.
  *
  * Placed in the root layout so the SW is available across all pages,
@@ -11,6 +12,7 @@
  */
 
 import { useEffect } from "react";
+import { startAutoSync } from "../../lib/offline-sync";
 
 export default function ServiceWorkerRegistration() {
   useEffect(() => {
@@ -55,6 +57,13 @@ export default function ServiceWorkerRegistration() {
     } else {
       window.addEventListener("load", register, { once: true });
     }
+
+    // Start the auto-sync mechanism for offline drafts
+    const stopSync = startAutoSync();
+
+    return () => {
+      stopSync();
+    };
   }, []);
 
   return null;
