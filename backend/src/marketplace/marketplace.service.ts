@@ -1,14 +1,40 @@
-import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
+import { RedisService } from "../redis/redis.service";
 import { CreateListingDto, PurchaseDto, BulkPurchaseDto } from "./marketplace.dto";
 import { randomBytes } from "crypto";
 
+const CACHE_TTL = 300; // 5 minutes
+const LIST_PATTERN = "marketplace:listings:*";
+
 @Injectable()
 export class MarketplaceService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(MarketplaceService.name);
 
-  async findAll(filters: { methodology?: string; vintage?: number; country?: string; minPrice?: string; maxPrice?: string }) {
-    return this.prisma.marketListing.findMany({
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
+
+  async findAll(filters: {
+    methodology?: string;
+    vintage?: number;
+    country?: string;
+    minPrice?: string;
+    maxPrice?: string;
+  }) {
+    const cacheKey = `marketplace:listings:${JSON.stringify(filters)}`;
+
+    // ── Cache read ─────────────────────────────────────────────────────────
+    const cached = await this.redis.get(cacheKey);
+    if (cached !== null) {
+      this.logger.debug(`Cache HIT — ${cacheKey}`);
+      return cached;
+    }
+
+    // ── DB fallback ────────────────────────────────────────────────────────
+    this.logger.debug(`Cache MISS — fetching from DB for key: ${cacheKey}`);
+    const results = await this.prisma.marketListing.findMany({
       where: {
         status: { in: ["Active", "PartiallyFilled"] },
         ...(filters.methodology && { methodology: filters.methodology }),
@@ -17,6 +43,9 @@ export class MarketplaceService {
       },
       orderBy: { createdAt: "desc" },
     });
+
+    await this.redis.set(cacheKey, results, CACHE_TTL);
+    return results;
   }
 
   async findOne(listingId: string) {
@@ -26,15 +55,21 @@ export class MarketplaceService {
   }
 
   async createListing(dto: CreateListingDto) {
-    return this.prisma.marketListing.create({ data: dto });
+    const result = await this.prisma.marketListing.create({ data: dto });
+    // New listing changes the collection — invalidate all listing caches
+    await this.redis.delPattern(LIST_PATTERN);
+    return result;
   }
 
   async delistListing(listingId: string) {
     await this.findOne(listingId);
-    return this.prisma.marketListing.update({
+    const result = await this.prisma.marketListing.update({
       where: { listingId },
       data:  { status: "Delisted" },
     });
+    // Listing removed from active set — invalidate
+    await this.redis.delPattern(LIST_PATTERN);
+    return result;
   }
 
   async purchase(dto: PurchaseDto) {
@@ -54,6 +89,9 @@ export class MarketplaceService {
       data:  { amountAvailable: newAmount, status: newStatus },
     });
 
+    // Amount/status changed — invalidate listing caches
+    await this.redis.delPattern(LIST_PATTERN);
+
     return {
       txHash:  randomBytes(32).toString("hex"),
       batchId: listing.batchId,
@@ -71,6 +109,7 @@ export class MarketplaceService {
       });
       results.push(result);
     }
+    // delPattern is called inside each purchase() call — no extra invalidation needed
     return results;
   }
 }

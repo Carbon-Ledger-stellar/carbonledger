@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, UseGuards } from "@nestjs/common";
+import { Controller, Get, Post, Param, Body, Query, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { OracleService, SubmitMonitoringDto, UpdatePriceDto, FlagProjectDto } from "./oracle.service";
 
@@ -12,10 +12,30 @@ export class OracleController {
     return this.oracleService.submitMonitoring(dto);
   }
 
+  /**
+   * POST /oracle/price
+   * Push a benchmark carbon credit price for a methodology + vintage year.
+   * Cached in Redis with 5-minute TTL.
+   * Requires oracle/admin JWT.
+   */
   @Post("price")
   @UseGuards(AuthGuard("jwt"))
-  updatePrice(@Body() dto: UpdatePriceDto) {
-    return { received: true, ...dto };
+  async updatePrice(@Body() dto: UpdatePriceDto) {
+    await this.oracleService.updateBenchmarkPrice(dto);
+    return { received: true, methodology: dto.methodology, vintageYear: dto.vintageYear };
+  }
+
+  /**
+   * GET /oracle/benchmark-price?methodology=VCS&vintage=2023
+   * Retrieve the current cached benchmark carbon credit price.
+   * Served from Redis (5-min TTL). Falls back to in-memory store if Redis unavailable.
+   */
+  @Get("benchmark-price")
+  getBenchmarkPrice(
+    @Query("methodology") methodology: string,
+    @Query("vintage")     vintage: string,
+  ) {
+    return this.oracleService.getBenchmarkPrice(methodology, Number(vintage));
   }
 
   @Get("status/:projectId")

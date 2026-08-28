@@ -7,9 +7,11 @@ import { MarketplaceModule } from "./marketplace/marketplace.module";
 import { OracleModule } from "./oracle/oracle.module";
 import { StatsModule } from "./stats/stats.module";
 import { PrismaService } from "./prisma.service";
+import { RedisModule } from "./redis/redis.module";
 
 @Module({
   imports: [
+    RedisModule,
     AuthModule,
     ProjectsModule,
     CreditsModule,
