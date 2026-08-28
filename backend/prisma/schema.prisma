@@ -32,6 +32,10 @@ model CarbonProject {
   deletedAt           DateTime?
   deletionReason      String?
   retentionUntil      DateTime?
+  /// Start of the current version in the temporal table
+  started_at          DateTime @default(now())
+  /// End of the current version in the temporal table (null if current)
+  ended_at            DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   ipfsFiles           IPFSFile[]
@@ -51,6 +55,7 @@ model CarbonProject {
   @@index([lastMonitoringAt])
   @@index([deletedAt])
   @@index([retentionUntil])
+  @@index([started_at, ended_at])
 }
 
 model CreditBatch {
@@ -65,6 +70,10 @@ model CreditBatch {
   metadataCid String
   issuedAt    DateTime @default(now()) @db.Timestamptz
   deletedAt   DateTime?
+  /// Start of the current version in the temporal table
+  started_at  DateTime @default(now())
+  /// End of the current version in the temporal table (null if current)
+  ended_at    DateTime?
 
   project     CarbonProject      @relation(fields: [projectId], references: [projectId])
   retirements RetirementRecord[]
@@ -73,6 +82,7 @@ model CreditBatch {
 
   @@index([projectId, vintageYear, status])
   @@index([deletedAt])
+  @@index([started_at, ended_at])
 }
 
 model RetirementRecord {
@@ -108,6 +118,10 @@ model RetirementRecord {
   validatedAt              DateTime?
   retiredAt                DateTime  @default(now())
   deletedAt                DateTime?
+  /// Start of the current version in the temporal table
+  started_at               DateTime @default(now())
+  /// End of the current version in the temporal table (null if current)
+  ended_at                 DateTime?
 
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
   project CarbonProject @relation(fields: [projectId], references: [projectId])
@@ -123,6 +137,7 @@ model RetirementRecord {
   @@index([legacyStatus])
   // Supports GET /certificates/:cid/verify lookups (#600)
   @@index([certificateContentCid])
+  @@index([started_at, ended_at])
 }
 
 model ZkRetirementProof {
@@ -520,6 +535,94 @@ model CreditEvent {
   @@index([timestamp])
   // Covering index for the provenance query: WHERE creditBatchId = $1 ORDER BY timestamp ASC
   @@index([creditBatchId, timestamp])
+}
+
+/// History table for CarbonProject — maintains complete audit trail of all project state changes.
+/// Each row represents a version of a project; ended_at is null for the current version.
+model CarbonProjectHistory {
+  id                  String   @id @default(cuid())
+  projectId           String   @db.VarChar(255)
+  name                String
+  description         String?  @db.Text
+  methodology         String
+  country             String
+  projectType         String
+  status              String
+  vintageYear         Int
+  methodologyScore    Int
+  totalCreditsIssued  Decimal  @db.Decimal(18, 2)
+  totalCreditsRetired Decimal  @db.Decimal(18, 2)
+  verifierAddress     String
+  ownerAddress        String
+  coordinates         Json?
+  migrationVersion    String?
+  lastMonitoringAt    DateTime?
+  /// Start of this version's validity period
+  started_at          DateTime
+  /// End of this version's validity period (null = current)
+  ended_at            DateTime?
+  createdAt           DateTime
+  updatedAt           DateTime
+  deletedAt           DateTime?
+  deletionReason      String?
+  retentionUntil      DateTime?
+
+  @@index([projectId, started_at])
+  @@index([started_at, ended_at])
+  @@index([ended_at])
+}
+
+/// History table for CreditBatch — maintains complete audit trail of all batch state changes.
+/// Each row represents a version of a batch; ended_at is null for the current version.
+model CreditBatchHistory {
+  id          String   @id @default(cuid())
+  batchId     String   @db.VarChar(255)
+  projectId   String   @db.VarChar(255)
+  vintageYear Int
+  amount      Decimal  @db.Decimal(18, 2)
+  serialStart String
+  serialEnd   String
+  status      String
+  metadataCid String
+  /// Start of this version's validity period
+  started_at  DateTime
+  /// End of this version's validity period (null = current)
+  ended_at    DateTime?
+  issuedAt    DateTime @db.Timestamptz
+  deletedAt   DateTime?
+
+  @@index([batchId, started_at])
+  @@index([projectId, started_at])
+  @@index([ended_at])
+}
+
+/// History table for RetirementRecord — maintains complete audit trail of all retirement state changes.
+/// Each row represents a version of a retirement; ended_at is null for the current version.
+model RetirementRecordHistory {
+  id                  String   @id @default(cuid())
+  retirementId        String   @db.VarChar(255)
+  batchId             String   @db.VarChar(255)
+  projectId           String   @db.VarChar(255)
+  amount              Decimal  @db.Decimal(18, 2)
+  retiredBy           String
+  beneficiary         String
+  retirementReason    String
+  vintageYear         Int
+  serialStart         String
+  serialEnd           String
+  status              String
+  txHash              String
+  /// Start of this version's validity period
+  started_at          DateTime
+  /// End of this version's validity period (null = current)
+  ended_at            DateTime?
+  createdAt           DateTime
+  updatedAt           DateTime
+  deletedAt           DateTime?
+
+  @@index([retirementId, started_at])
+  @@index([projectId, started_at])
+  @@index([ended_at])
 }
 
 model SatelliteWebhookProvider {
