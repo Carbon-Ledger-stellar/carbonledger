@@ -318,6 +318,45 @@ model SyncMetadata {
   updatedAt         DateTime @updatedAt
 }
 
+/// Compressed archive of AuditLog entries older than 6 months.
+/// The full audit log entry (including hash chain fields) is stored as
+/// gzip-compressed JSON in compressedData. Query the hot AuditLog table for
+/// recent entries and this table for historical entries.
+model ArchivedAuditLog {
+  id              String   @id @default(cuid())
+  /// The original AuditLog.id — kept for deduplication and cross-referencing
+  originalId      String   @unique
+  /// Indexed separately so queries by user still work without decompressing
+  userId          String?
+  /// Indexed separately so queries by action still work without decompressing
+  action          String
+  /// Indexed separately for fast lookups without decompression
+  resourceId      String?
+  /// Indexed separately for fast lookups without decompression
+  ipAddress       String?
+  /// Short outcome label copied from the original row for quick filtering
+  result          String?
+  /// gzip-compressed JSON of the full AuditLog row including hash chain fields
+  compressedData  Bytes
+  /// Original entry timestamp — preserved for time-range queries
+  timestamp       DateTime
+  /// When this row was archived
+  archivedAt      DateTime @default(now())
+  /// Always "gzip" — reserved for future algorithm changes
+  compressionType String   @default("gzip")
+  /// Uncompressed JSON byte size — used to compute compression ratio
+  sizeOriginal    Int
+  /// Compressed byte size (compressedData.length)
+  sizeCompressed  Int
+
+  @@index([originalId])
+  @@index([timestamp])
+  @@index([userId])
+  @@index([action])
+  @@index([resourceId])
+  @@index([archivedAt])
+}
+
 model Job {
   id          String    @id @default(cuid())
   queue       String
