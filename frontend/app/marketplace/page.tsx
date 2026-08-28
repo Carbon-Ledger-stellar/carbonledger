@@ -10,7 +10,9 @@ import { formatTonnes } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
 import { joinListingsWithProjects } from "../../lib/map-utils";
 import { colors } from "../../styles/design-system";
-import MarketplaceFilter, { FilterState, EMPTY_FILTERS, filtersFromParams } from "../../components/MarketplaceFilter";
+// Static imports for utility functions/types that must be available at module
+// evaluation time (used in useState initializers and pure logic, not rendering).
+import { type FilterState, EMPTY_FILTERS, filtersFromParams } from "../../components/MarketplaceFilter";
 import MarketplaceSortControls from "../../components/MarketplaceSortControls";
 import ComparisonTray, { MAX_COMPARISON_ITEMS } from "../../components/ComparisonTray";
 import VirtualizedList from "../../components/VirtualizedList";
@@ -19,7 +21,22 @@ import Toast, { useToast } from "../../components/Toast";
 import Highlight from "../../components/Highlight";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import MarketplaceError from "../../components/MarketplaceError";
-import OrderBookChart from "../../components/OrderBookChart";
+
+// Heavy components — loaded only when the page renders, not at initial bundle time.
+// OrderBookChart uses Recharts (chart library) — ssr: false because Recharts reads
+// window dimensions on mount.
+const OrderBookChart = dynamic(() => import("../../components/OrderBookChart"), {
+  loading: () => <LoadingSkeleton variant="MarketplaceItem" />,
+  ssr: false,
+});
+
+// MarketplaceFilter is a large multi-select form (16KB); defer its load until
+// the page is interactive. The default export (React component) is lazy-loaded;
+// the named utility exports (EMPTY_FILTERS, filtersFromParams, FilterState) are
+// imported statically above because they're used in non-render logic.
+const MarketplaceFilter = dynamic(() => import("../../components/MarketplaceFilter"), {
+  loading: () => <div style={{ height: "80px" }} aria-busy="true" />,
+});
 
 // Leaflet touches `window` at import time, so it must never be pulled into
 // the server bundle — ssr: false keeps it out entirely.
