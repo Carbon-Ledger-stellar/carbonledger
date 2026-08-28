@@ -38,14 +38,13 @@ export class WebhookProcessor extends WorkerHost {
     );
 
     const timestamp = Math.floor(Date.now() / 1000);
-    const signature = this.webhookService.computeSignature(
-      data.secret,
-      timestamp,
-      data.payload,
-    );
+    const body = JSON.stringify(data.payload);
+    const signature = this.webhookService.computeSignature(data.secret, body);
+    let statusCode: number | undefined;
+    let responseBody: string | undefined;
 
     try {
-      const response = await axios.post(data.url, data.payload, {
+      const response = await axios.post(data.url, body, {
         timeout: 10_000,
         headers: {
           'Content-Type': 'application/json',
@@ -58,20 +57,11 @@ export class WebhookProcessor extends WorkerHost {
       });
 
       const success = response.status >= 200 && response.status < 300;
-      const responseBody =
+      statusCode = response.status;
+      responseBody =
         typeof response.data === 'string'
           ? response.data
           : JSON.stringify(response.data);
-
-      await this.webhookService.recordDeliveryAttempt({
-        subscriptionId: data.subscriptionId,
-        eventType: data.eventType,
-        url: data.url,
-        statusCode: response.status,
-        responseBody,
-        success,
-        attempt,
-      });
 
       if (!success) {
         this.logger.warn(
@@ -79,6 +69,16 @@ export class WebhookProcessor extends WorkerHost {
         );
         throw new Error(`HTTP ${response.status}: ${responseBody.slice(0, 200)}`);
       }
+
+      await this.webhookService.recordDeliveryAttempt({
+        subscriptionId: data.subscriptionId,
+        eventType: data.eventType,
+        url: data.url,
+        statusCode: response.status,
+        responseBody,
+        success: true,
+        attempt,
+      });
 
       this.logger.log(
         `Successfully delivered ${data.eventType} to ${data.url} (attempt ${attempt})`,
@@ -92,16 +92,17 @@ export class WebhookProcessor extends WorkerHost {
         subscriptionId: data.subscriptionId,
         eventType: data.eventType,
         url: data.url,
+        statusCode,
+        responseBody,
         success: false,
         attempt,
         error: errorMessage,
       });
 
-      // If this was the last attempt, deactivate the subscription and notify
+      // If this was the last attempt, notify the owner. The subscription is
+      // marked degraded by recordDeliveryAttempt after six consecutive failures.
       const isLastAttempt = job.opts.attempts && attempt >= job.opts.attempts;
       if (isLastAttempt) {
-        await this.webhookService.deactivateSubscription(data.subscriptionId);
-
         // Try to send notification email
         const email = await this.webhookService.getSubscriptionOwnerEmail(
           data.subscriptionId,

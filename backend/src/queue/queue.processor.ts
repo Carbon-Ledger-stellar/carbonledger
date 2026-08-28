@@ -40,7 +40,7 @@ export class QueueProcessor extends WorkerHost {
         case JobType.BULK_RETIREMENT:
           return this.handleBulkRetirement(job.data);
         case JobType.BULK_MINT:
-          return this.handleBulkMint(job.data);
+          return this.handleBulkMint(job);
         default:
           throw new Error(`Unknown job type: ${job.name}`);
       }
@@ -112,8 +112,23 @@ export class QueueProcessor extends WorkerHost {
     });
   }
 
-  private async handleBulkMint(data: Record<string, unknown>) {
-    this.logger.log(`Processing bulk mint job with ${Array.isArray(data['items']) ? data['items'].length : 0} items`);
-    return this.creditsService.executeBulkMintJob(data['items'] as any);
+  private async handleBulkMint(job: Job) {
+    const data = job.data as Record<string, unknown>;
+    const items = data['items'];
+    if (!Array.isArray(items) || items.length === 0 || items.length > 100) {
+      throw new Error('Bulk mint job must contain between 1 and 100 items');
+    }
+
+    this.logger.log(`Processing bulk mint job with ${items.length} items`);
+    if (data['alreadyPersisted'] === true) {
+      await job.updateProgress(100);
+      return { status: 'completed', totalProcessed: items.length, chunks: 1 };
+    }
+
+    return this.creditsService.executeBulkMintJob(
+      items as any,
+      data['actor'] as string,
+      (progress) => job.updateProgress(progress),
+    );
   }
 }

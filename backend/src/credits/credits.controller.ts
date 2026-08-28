@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Param, Body, Request, UseGuards, BadRequestException } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { CreditsService } from './credits.service';
-import { MintCreditsDto, RetireCreditsDto, BatchMintCreditsDto, BatchRetireCreditsDto } from './credits.dto';
+import { MintCreditsDto, RetireCreditsDto, BatchMintCreditsDto, BatchRetireCreditsDto, BulkMintCreditsDto } from './credits.dto';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, CreditBatchSubject, RetirementSubject } from '../policies';
 
@@ -73,6 +73,14 @@ export class CreditsController {
       throw new BadRequestException('Request body must be an array of MintCreditsDto or contain an items array');
     }
     return this.creditsService.batchMintCredits(items, req.user?.publicKey);
+  }
+
+  @Post('bulk-mint')
+  @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('mint', CreditBatchSubject))
+  bulkMint(@Body() dto: BulkMintCreditsDto, @Request() req: any) {
+    return this.creditsService.queueBulkMint(dto.items, req.user?.publicKey);
   }
 
   // ── Corporation: retire credits ──────────────────────────────────────────

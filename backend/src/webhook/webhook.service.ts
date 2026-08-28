@@ -17,19 +17,17 @@ import {
   WEBHOOK_EVENTS,
 } from './webhook.dto';
 
-/** Failed deliveries retry up to this many times (acceptance criteria: 3 retries). */
-export const MAX_DELIVERY_ATTEMPTS = 3;
+/** Six total attempts allow five retries before a subscription is degraded. */
+export const MAX_DELIVERY_ATTEMPTS = 6;
 
 /**
- * Exponential backoff delay (ms) before retry attempt `attemptsMade + 1`,
- * doubling from 30s and capped at 30 minutes so 10 attempts spread the
- * retries out over roughly a day without ever waiting longer than 30m
- * between tries.
+ * Exponential backoff delay (ms) before retry attempt `attemptsMade + 1`.
+ * The first retries occur after 5s, 15s, and 45s.
  */
 export function webhookRetryDelayMs(attemptsMade: number): number {
-  const THIRTY_SECONDS = 30_000;
+  const INITIAL_DELAY = 5_000;
   const THIRTY_MINUTES = 1_800_000;
-  return Math.min(THIRTY_SECONDS * 2 ** (attemptsMade - 1), THIRTY_MINUTES);
+  return Math.min(INITIAL_DELAY * 3 ** Math.max(attemptsMade - 1, 0), THIRTY_MINUTES);
 }
 
 /**
@@ -94,6 +92,8 @@ export class WebhookService {
           active: true,
           secret: randomBytes(32).toString('hex'),
           events: dto.events,
+          degraded: false,
+          consecutiveFailures: 0,
         },
       });
       this.logger.log(`Reactivated webhook subscription ${updated.id} → ${dto.url}`);
@@ -284,15 +284,13 @@ export class WebhookService {
   // ── HMAC signing ────────────────────────────────────────────────────────
 
   /**
-   * Compute HMAC-SHA256 signature for a webhook payload.
+  * Compute HMAC-SHA256 signature for the exact request body.
    *
-   * Canonical format: timestamp + '.' + JSON.stringify(payload)
    * The signature is sent as the X-CarbonLedger-Signature header:
    *   sha256=<hex-digest>
    */
-  computeSignature(secret: string, timestamp: number, payload: Record<string, unknown>): string {
-    const body = `${timestamp}.${JSON.stringify(payload)}`;
-    return createHmac('sha256', secret).update(body).digest('hex');
+  computeSignature(secret: string, body: string): string {
+    return createHmac('sha256', secret).update(body, 'utf8').digest('hex');
   }
 
   // ── Processor helpers (called from WebhookProcessor) ───────────────────
@@ -310,7 +308,7 @@ export class WebhookService {
     attempt: number;
     error?: string;
   }) {
-    return this.logDb.create({
+    const log = await this.logDb.create({
       data: {
         subscriptionId: params.subscriptionId,
         eventType: params.eventType,
@@ -324,6 +322,30 @@ export class WebhookService {
         error: params.error ?? null,
       },
     });
+
+    if (params.success) {
+      await this.subDb.update({
+        where: { id: params.subscriptionId },
+        data: { consecutiveFailures: 0, degraded: false },
+      });
+    } else {
+      await this.subDb.update({
+        where: { id: params.subscriptionId },
+        data: { consecutiveFailures: { increment: 1 } },
+      });
+      const subscription = await this.subDb.findUnique({
+        where: { id: params.subscriptionId },
+        select: { consecutiveFailures: true },
+      });
+      if ((subscription?.consecutiveFailures ?? 0) > 5) {
+        await this.subDb.update({
+          where: { id: params.subscriptionId },
+          data: { degraded: true },
+        });
+      }
+    }
+
+    return log;
   }
 
   /**
