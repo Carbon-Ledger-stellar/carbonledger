@@ -1,0 +1,35 @@
+## Summary
+
+Implements admin-gated WASM upgrade strategy for all four CarbonLedger Soroban contracts.
+
+## Changes
+
+- **Add `upgrade()` to all contracts** — `carbon_registry`, `carbon_credit`, `carbon_marketplace`, `carbon_oracle`
+  - Admin-only via `require_admin()` auth check
+  - Calls `env.deployer().update_current_contract_wasm(new_wasm_hash)`
+- **Add `ContractVersion` and `UpgradeHistory` tracking** to all contracts
+  - `CURRENT_VERSION` starts at 1; increments on each upgrade
+  - `UpgradeRecord` stores `{from_version, to_version, timestamp, upgraded_by, wasm_hash}`
+- **Enforce retirement immutability** — no upgrade may alter retired credit records
+  - `carbon_registry`: `total_credits_retired` is append-only
+  - `carbon_credit`: `RetirementCertificate` and `BatchRetired` counters are immutable
+- **Add query functions** — `get_version()` and `get_upgrade_history()` on all contracts
+- **Fix compilation issues**
+  - `carbon_registry`: removed duplicate `methodology_score` field and duplicate checks
+  - `carbon_oracle`: removed duplicated contract/impl definitions
+- **Write comprehensive upgrade tests**
+  - Admin-only rejection for all 4 contracts
+  - State preservation: retired credits, listings, monitoring data survive upgrade
+  - Cross-contract version consistency test
+- **Add `contract-upgrade.md` runbook** to `docs/runbooks/` with pre-upgrade checklist, build/invoke steps, post-upgrade validation matrix, and rollback policy
+
+## Testing
+
+- Unit tests added in `tests/upgrade_path_test.rs`
+- All contracts include `test_upgrade_admin_only` and `test_version_tracking`
+
+## Security Notes
+
+- Only the stored `Admin` address may invoke `upgrade()`
+- WASM upgrades preserve all persistent/temporary storage (Soroban protocol guarantee)
+- Retirement records are protected by contract logic, not just storage immutability

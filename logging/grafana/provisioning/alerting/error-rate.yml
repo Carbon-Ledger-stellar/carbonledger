@@ -1,0 +1,81 @@
+apiVersion: 1
+
+groups:
+  - orgId:    1
+    name:     carbonledger-errors
+    folder:   CarbonLedger
+    interval: 1m
+    rules:
+      - uid:     carbonledger-error-rate
+        title:   High Error Rate (>10 errors/min)
+        condition: C
+
+        # A: count error-level log lines across all services in the last minute
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                sum(
+                  count_over_time(
+                    {service=~".+"} | json | level="error" [1m]
+                  )
+                )
+              queryType:    range
+              maxDataPoints: 1
+
+          # B: reduce to a single scalar (last value)
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to:   0
+            datasourceUid: __expr__
+            model:
+              type:       reduce
+              conditions:
+                - evaluator:
+                    params: []
+                    type:   gt
+                  operator:
+                    type: and
+                  query:
+                    params: [A]
+                  reducer:
+                    params: []
+                    type:   last
+              expression: A
+              reducer:    last
+
+          # C: threshold — fire when errors > 10
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to:   0
+            datasourceUid: __expr__
+            model:
+              type:       threshold
+              conditions:
+                - evaluator:
+                    params: [10]
+                    type:   gt
+                  operator:
+                    type: and
+                  query:
+                    params: [B]
+                  reducer:
+                    params: []
+                    type:   last
+              expression: B
+
+        noDataState:  NoData
+        execErrState: Error
+        for:          1m
+        annotations:
+          summary:     "Error rate spike detected"
+          description: "More than 10 error-level log lines in the last minute across all CarbonLedger services."
+        labels:
+          severity: warning
+          team:     carbonledger
