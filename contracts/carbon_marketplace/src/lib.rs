@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror,
-    Address, Env, String, Vec,
+    Address, Env, String, Vec, MuxedAddress,
     symbol_short, vec,
     token,
 };
@@ -31,6 +31,20 @@ pub enum CarbonError {
     ZeroAmountNotAllowed   = 16,
     ProjectAlreadyExists   = 17,
     InvalidSerialRange     = 18,
+    Unauthorized           = 19,
+}
+
+// ── Role Enum ─────────────────────────────────────────────────────────────────
+
+/// Multi-tiered roles for on-chain RBAC.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Role {
+    Admin    = 0,
+    Verifier = 1,
+    Oracle   = 2,
+    User     = 3,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -42,6 +56,8 @@ pub enum DataKey {
     AllListings,
     Admin,
     UsdcToken,
+    /// Maps an Address to its assigned Role.
+    RoleMap(Address),
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -80,13 +96,68 @@ pub struct CarbonMarketplaceContract;
 impl CarbonMarketplaceContract {
 
     /// Initialise marketplace with admin and USDC token contract address.
+    /// The deployer is bootstrapped with the Admin role.
     pub fn initialize(env: Env, admin: Address, usdc_token: Address) {
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().persistent().set(&DataKey::UsdcToken, &usdc_token);
+        // Bootstrap: grant the deploying admin the Admin role on-chain.
+        env.storage().persistent().set(&DataKey::RoleMap(admin.clone()), &Role::Admin);
         let listings: Vec<String> = vec![&env];
         env.storage().persistent().set(&DataKey::AllListings, &listings);
     }
+
+    // ── RBAC management ───────────────────────────────────────────────────────
+
+    /// Grant a role to any address. Only the Admin role may call this.
+    ///
+    /// # Errors
+    /// - [`CarbonError::Unauthorized`] if caller does not hold the Admin role.
+    pub fn grant_role(
+        env: Env,
+        admin: Address,
+        grantee: Address,
+        role: Role,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+        env.storage().persistent().set(&DataKey::RoleMap(grantee.clone()), &role);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("role_set")),
+            (admin, grantee, role as u32),
+        );
+        Ok(())
+    }
+
+    /// Revoke (remove) a role from an address, resetting it to `User`.
+    /// Only the Admin role may call this.
+    ///
+    /// # Errors
+    /// - [`CarbonError::Unauthorized`] if caller does not hold the Admin role.
+    pub fn revoke_role(
+        env: Env,
+        admin: Address,
+        grantee: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+        env.storage().persistent().set(&DataKey::RoleMap(grantee.clone()), &Role::User);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("role_rev")),
+            (admin, grantee),
+        );
+        Ok(())
+    }
+
+    /// Query the role of an address. Returns `Role::User` if no role has been assigned.
+    pub fn get_role(env: Env, addr: Address) -> Role {
+        env.storage()
+            .persistent()
+            .get(&DataKey::RoleMap(addr))
+            .unwrap_or(Role::User)
+    }
+
+    // ── Marketplace operations ────────────────────────────────────────────────
 
     /// List carbon credits for sale at a fixed USDC price per credit (in stroops).
     ///
@@ -104,14 +175,12 @@ impl CarbonMarketplaceContract {
         methodology: String,
         country: String,
     ) -> Result<(), CarbonError> {
-        // ── checks ────────────────────────────────────────────────────────────
         seller.require_auth();
 
         if amount <= 0 || price_per_credit_usdc <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        // ── effects ───────────────────────────────────────────────────────────
         let listing = MarketListing {
             listing_id:       listing_id.clone(),
             seller:           seller.clone(),
@@ -152,7 +221,6 @@ impl CarbonMarketplaceContract {
         seller: Address,
         listing_id: String,
     ) -> Result<(), CarbonError> {
-        // ── checks ────────────────────────────────────────────────────────────
         seller.require_auth();
 
         let mut listing = Self::load_listing(&env, &listing_id)?;
@@ -160,13 +228,36 @@ impl CarbonMarketplaceContract {
             return Err(CarbonError::UnauthorizedVerifier);
         }
 
-        // ── effects ───────────────────────────────────────────────────────────
         listing.status = ListingStatus::Delisted;
         env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("delisted")),
             (listing_id, seller),
+        );
+        Ok(())
+    }
+
+    /// Admin force-delist any listing regardless of seller. Requires the Admin role.
+    ///
+    /// # Errors
+    /// - [`CarbonError::Unauthorized`] if caller does not hold the Admin role.
+    /// - [`CarbonError::ListingNotFound`] if listing does not exist.
+    pub fn admin_delist(
+        env: Env,
+        admin: Address,
+        listing_id: String,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        let mut listing = Self::load_listing(&env, &listing_id)?;
+        listing.status = ListingStatus::Delisted;
+        env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("adm_dlist")),
+            (listing_id, admin),
         );
         Ok(())
     }
@@ -183,7 +274,6 @@ impl CarbonMarketplaceContract {
         listing_id: String,
         amount: i128,
     ) -> Result<(), CarbonError> {
-        // ── checks ────────────────────────────────────────────────────────────
         buyer.require_auth();
 
         if amount <= 0 {
@@ -199,7 +289,6 @@ impl CarbonMarketplaceContract {
             return Err(CarbonError::InsufficientLiquidity);
         }
 
-        // ── effects ───────────────────────────────────────────────────────────
         let total_cost = listing.price_per_credit * amount;
         let protocol_fee = total_cost / 100; // 1%
         let seller_proceeds = total_cost - protocol_fee;
@@ -212,13 +301,15 @@ impl CarbonMarketplaceContract {
         };
         env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
 
-        // ── interactions ──────────────────────────────────────────────────────
         let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
-        let usdc_client = token::Client::new(&env, &usdc);
-        usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
+        let usdc_client = token::TokenClient::new(&env, &usdc);
+        // In soroban-sdk 28 transfer's `to` param is MuxedAddress
+        let seller_muxed = MuxedAddress::from(listing.seller.clone());
+        usdc_client.transfer(&buyer, &seller_muxed, &seller_proceeds);
 
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        usdc_client.transfer(&buyer, &admin, &protocol_fee);
+        let admin_muxed = MuxedAddress::from(admin);
+        usdc_client.transfer(&buyer, &admin_muxed, &protocol_fee);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("purchase")),
@@ -230,7 +321,7 @@ impl CarbonMarketplaceContract {
     /// Bulk purchase from multiple listings in a single transaction.
     ///
     /// # Errors
-    /// - Any error from individual [`purchase_credits`] calls propagates immediately.
+    /// - Any error from individual purchase calls propagates immediately.
     pub fn bulk_purchase(
         env: Env,
         buyer: Address,
@@ -273,11 +364,13 @@ impl CarbonMarketplaceContract {
             env.storage().persistent().set(&DataKey::Listing(listing_id.clone()), &listing);
 
             let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
-            let usdc_client = token::Client::new(&env, &usdc);
-            usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
+            let usdc_client = token::TokenClient::new(&env, &usdc);
+            let seller_muxed = MuxedAddress::from(listing.seller.clone());
+            usdc_client.transfer(&buyer, &seller_muxed, &seller_proceeds);
 
             let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-            usdc_client.transfer(&buyer, &admin, &protocol_fee);
+            let admin_muxed = MuxedAddress::from(admin);
+            usdc_client.transfer(&buyer, &admin_muxed, &protocol_fee);
 
             env.events().publish(
                 (symbol_short!("c_ledger"), symbol_short!("bulk_buy")),
@@ -318,6 +411,19 @@ impl CarbonMarketplaceContract {
             .ok_or(CarbonError::ListingNotFound)
     }
 
+    /// Enforce that `caller` holds exactly `required` role.
+    fn require_role(env: &Env, caller: &Address, required: Role) -> Result<(), CarbonError> {
+        let role: Role = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RoleMap(caller.clone()))
+            .unwrap_or(Role::User);
+        if role != required {
+            return Err(CarbonError::Unauthorized);
+        }
+        Ok(())
+    }
+
     fn filter_listings<F: Fn(&MarketListing) -> bool>(env: &Env, predicate: F) -> Vec<MarketListing> {
         let all: Vec<String> = env
             .storage()
@@ -342,10 +448,7 @@ impl CarbonMarketplaceContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{
-        testutils::{Address as _, MockAuth, MockAuthInvoke},
-        vec, Env, IntoVal, String,
-    };
+    use soroban_sdk::{testutils::Address as _, vec, Env, String};
 
     fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
 
@@ -371,15 +474,17 @@ mod tests {
             &2023_u32,
             &s(env, "VCS"),
             &s(env, "Brazil"),
-        ).unwrap();
+        );
     }
+
+    // ── Original functional tests (preserved) ────────────────────────────
 
     #[test]
     fn test_list_credits_creates_active_listing() {
         let env = Env::default();
         let (client, _, seller, _) = setup(&env);
         add_listing(&env, &client, &seller);
-        let l = client.get_listing(&s(&env, "list-001")).unwrap();
+        let l = client.get_listing(&s(&env, "list-001"));
         assert_eq!(l.status, ListingStatus::Active);
         assert_eq!(l.amount_available, 100);
     }
@@ -389,8 +494,8 @@ mod tests {
         let env = Env::default();
         let (client, _, seller, _) = setup(&env);
         add_listing(&env, &client, &seller);
-        client.delist_credits(&seller, &s(&env, "list-001")).unwrap();
-        let l = client.get_listing(&s(&env, "list-001")).unwrap();
+        client.delist_credits(&seller, &s(&env, "list-001"));
+        let l = client.get_listing(&s(&env, "list-001"));
         assert_eq!(l.status, ListingStatus::Delisted);
     }
 
@@ -448,6 +553,136 @@ mod tests {
             &s(&env, "VCS"),
             &s(&env, "Brazil"),
         );
+        assert!(result.is_err());
+    }
+
+    // ── RBAC tests ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_admin_has_admin_role_after_initialize() {
+        let env = Env::default();
+        let (client, admin, _, _) = setup(&env);
+        assert_eq!(client.get_role(&admin), Role::Admin);
+    }
+
+    #[test]
+    fn test_get_role_returns_user_for_unknown_address() {
+        let env = Env::default();
+        let (client, _, _, _) = setup(&env);
+        let stranger = Address::generate(&env);
+        assert_eq!(client.get_role(&stranger), Role::User);
+    }
+
+    #[test]
+    fn test_grant_role_success() {
+        let env = Env::default();
+        let (client, admin, _, _) = setup(&env);
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        assert_eq!(client.get_role(&verifier), Role::Verifier);
+    }
+
+    #[test]
+    fn test_grant_role_unauthorized_non_admin_cannot_grant() {
+        let env = Env::default();
+        let (client, _, _, _) = setup(&env);
+        let attacker = Address::generate(&env);
+        let victim   = Address::generate(&env);
+        // attacker has default User role — must fail
+        let result = client.try_grant_role(&attacker, &victim, &Role::Admin);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_revoke_role_success() {
+        let env = Env::default();
+        let (client, admin, _, _) = setup(&env);
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        assert_eq!(client.get_role(&verifier), Role::Verifier);
+        client.revoke_role(&admin, &verifier);
+        assert_eq!(client.get_role(&verifier), Role::User);
+    }
+
+    #[test]
+    fn test_revoke_role_unauthorized() {
+        let env = Env::default();
+        let (client, admin, _, _) = setup(&env);
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        let attacker = Address::generate(&env);
+        let result = client.try_revoke_role(&attacker, &verifier);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_admin_delist_any_listing() {
+        let env = Env::default();
+        let (client, admin, seller, _) = setup(&env);
+        // Seller creates a listing
+        add_listing(&env, &client, &seller);
+        let l = client.get_listing(&s(&env, "list-001"));
+        assert_eq!(l.status, ListingStatus::Active);
+        // Admin force-delists it
+        client.admin_delist(&admin, &s(&env, "list-001"));
+        let after = client.get_listing(&s(&env, "list-001"));
+        assert_eq!(after.status, ListingStatus::Delisted);
+    }
+
+    #[test]
+    fn test_admin_delist_unauthorized_user_cannot_delist() {
+        let env = Env::default();
+        let (client, _, seller, _) = setup(&env);
+        add_listing(&env, &client, &seller);
+        let attacker = Address::generate(&env);
+        // attacker has no role (User) — must fail
+        let result = client.try_admin_delist(&attacker, &s(&env, "list-001"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_admin_delist_verifier_role_cannot_delist() {
+        let env = Env::default();
+        let (client, admin, seller, _) = setup(&env);
+        add_listing(&env, &client, &seller);
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        let result = client.try_admin_delist(&verifier, &s(&env, "list-001"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_grant_then_revoke_cannot_admin_delist() {
+        let env = Env::default();
+        let (client, admin, seller, _) = setup(&env);
+        add_listing(&env, &client, &seller);
+        // Promote a second admin
+        let second_admin = Address::generate(&env);
+        client.grant_role(&admin, &second_admin, &Role::Admin);
+        // second_admin can admin_delist
+        client.admin_delist(&second_admin, &s(&env, "list-001"));
+        let after = client.get_listing(&s(&env, "list-001"));
+        assert_eq!(after.status, ListingStatus::Delisted);
+
+        // Re-list with a different id
+        client.list_credits(
+            &seller,
+            &s(&env, "list-002"),
+            &s(&env, "batch-002"),
+            &s(&env, "proj-001"),
+            &50_i128,
+            &5_0000000_i128,
+            &2023_u32,
+            &s(&env, "VCS"),
+            &s(&env, "Brazil"),
+        );
+
+        // Revoke second_admin's role
+        client.revoke_role(&admin, &second_admin);
+        assert_eq!(client.get_role(&second_admin), Role::User);
+
+        // After revocation, admin_delist must fail
+        let result = client.try_admin_delist(&second_admin, &s(&env, "list-002"));
         assert!(result.is_err());
     }
 }

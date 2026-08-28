@@ -30,6 +30,20 @@ pub enum CarbonError {
     ZeroAmountNotAllowed   = 16,
     ProjectAlreadyExists   = 17,
     InvalidSerialRange     = 18,
+    Unauthorized           = 19,
+}
+
+// ── Role Enum ─────────────────────────────────────────────────────────────────
+
+/// Multi-tiered roles for on-chain RBAC.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Role {
+    Admin    = 0,
+    Verifier = 1,
+    Oracle   = 2,
+    User     = 3,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -43,6 +57,8 @@ pub enum DataKey {
     SerialRegistry,
     Admin,
     RegistryContract,
+    /// Maps an Address to its assigned Role.
+    RoleMap(Address),
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -109,19 +125,77 @@ pub struct CarbonCreditContract;
 #[contractimpl]
 impl CarbonCreditContract {
 
-    /// Initialise with admin address.
+    /// Initialise with admin address. The deployer is bootstrapped with the
+    /// Admin role so subsequent role-gated calls can proceed immediately.
     pub fn initialize(env: Env, admin: Address, registry_contract: Address) {
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage().persistent().set(&DataKey::RegistryContract, &registry_contract);
+        // Bootstrap: grant the deploying admin the Admin role on-chain.
+        env.storage().persistent().set(&DataKey::RoleMap(admin.clone()), &Role::Admin);
         let ranges: Vec<SerialRange> = vec![&env];
         env.storage().persistent().set(&DataKey::SerialRegistry, &ranges);
     }
 
+    // ── RBAC management ───────────────────────────────────────────────────────
+
+    /// Grant a role to any address. Only the Admin role may call this.
+    ///
+    /// # Errors
+    /// - [`CarbonError::Unauthorized`] if caller does not hold the Admin role.
+    pub fn grant_role(
+        env: Env,
+        admin: Address,
+        grantee: Address,
+        role: Role,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+        env.storage().persistent().set(&DataKey::RoleMap(grantee.clone()), &role);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("role_set")),
+            (admin, grantee, role as u32),
+        );
+        Ok(())
+    }
+
+    /// Revoke (remove) a role from an address, resetting it to `User`.
+    /// Only the Admin role may call this.
+    ///
+    /// # Errors
+    /// - [`CarbonError::Unauthorized`] if caller does not hold the Admin role.
+    pub fn revoke_role(
+        env: Env,
+        admin: Address,
+        grantee: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+        env.storage().persistent().set(&DataKey::RoleMap(grantee.clone()), &Role::User);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("role_rev")),
+            (admin, grantee),
+        );
+        Ok(())
+    }
+
+    /// Query the role of an address. Returns `Role::User` if no role has been assigned.
+    pub fn get_role(env: Env, addr: Address) -> Role {
+        env.storage()
+            .persistent()
+            .get(&DataKey::RoleMap(addr))
+            .unwrap_or(Role::User)
+    }
+
+    // ── Credit operations ─────────────────────────────────────────────────────
+
     /// Mint verified carbon credits for a verified project. Assigns unique serial
     /// numbers to each credit, preventing double-counting globally.
     ///
+    /// Requires the caller to hold the `Admin` role.
+    ///
     /// # Errors
+    /// - [`CarbonError::Unauthorized`] if caller does not hold the Admin role.
     /// - [`CarbonError::ZeroAmountNotAllowed`] if `amount` is zero.
     /// - [`CarbonError::InvalidSerialRange`] if `serial_end < serial_start`.
     /// - [`CarbonError::SerialNumberConflict`] if serial range overlaps an existing batch.
@@ -139,7 +213,8 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         // ── checks ────────────────────────────────────────────────────────────
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        // Role-based check: caller must hold Admin role
+        Self::require_role(&env, &admin, Role::Admin)?;
 
         if amount <= 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
@@ -160,7 +235,6 @@ impl CarbonCreditContract {
         }
 
         // ── effects ───────────────────────────────────────────────────────────
-        // Register serial range globally
         let mut ranges: Vec<SerialRange> = env
             .storage()
             .persistent()
@@ -182,7 +256,6 @@ impl CarbonCreditContract {
         };
         env.storage().persistent().set(&DataKey::Batch(batch_id.clone()), &batch);
 
-        // Append to project batch index
         let mut project_batches: Vec<String> = env
             .storage()
             .persistent()
@@ -238,7 +311,6 @@ impl CarbonCreditContract {
         }
 
         // ── effects ───────────────────────────────────────────────────────────
-        // Compute serial numbers for this retirement slice
         let already_retired: i128 = env
             .storage()
             .persistent()
@@ -255,7 +327,6 @@ impl CarbonCreditContract {
             s += 1;
         }
 
-        // Update batch status — track retired amount persistently
         let new_retired = already_retired + amount;
         env.storage().persistent().set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
 
@@ -282,7 +353,6 @@ impl CarbonCreditContract {
         };
         env.storage().persistent().set(&DataKey::Retirement(retirement_id.clone()), &cert);
 
-        // ── interactions ──────────────────────────────────────────────────────
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("retired")),
             (retirement_id, batch_id, batch.project_id, amount, holder, beneficiary),
@@ -302,7 +372,6 @@ impl CarbonCreditContract {
         batch_id: String,
         amount: i128,
     ) -> Result<(), CarbonError> {
-        // ── checks ────────────────────────────────────────────────────────────
         from.require_auth();
 
         if amount <= 0 {
@@ -323,7 +392,6 @@ impl CarbonCreditContract {
             return Err(CarbonError::InsufficientCredits);
         }
 
-        // ── effects ───────────────────────────────────────────────────────────
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("transfer")),
             (batch_id, from, to, amount),
@@ -379,14 +447,15 @@ impl CarbonCreditContract {
             .ok_or(CarbonError::ProjectNotFound)
     }
 
-    fn require_admin(env: &Env, caller: &Address) -> Result<(), CarbonError> {
-        let admin: Address = env
+    /// Enforce that `caller` holds exactly `required` role.
+    fn require_role(env: &Env, caller: &Address, required: Role) -> Result<(), CarbonError> {
+        let role: Role = env
             .storage()
             .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(CarbonError::UnauthorizedVerifier)?;
-        if &admin != caller {
-            return Err(CarbonError::UnauthorizedVerifier);
+            .get(&DataKey::RoleMap(caller.clone()))
+            .unwrap_or(Role::User);
+        if role != required {
+            return Err(CarbonError::Unauthorized);
         }
         Ok(())
     }
@@ -412,7 +481,6 @@ impl CarbonCreditContract {
             .unwrap_or_else(|| vec![env]);
 
         for r in ranges.iter() {
-            // Overlap check: two ranges overlap if start <= r.end && end >= r.start
             if start <= r.end && end >= r.start {
                 return false;
             }
@@ -426,44 +494,28 @@ impl CarbonCreditContract {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env, String, vec};
-
-    fn setup() -> (Env, CarbonCreditContractClient<'static>) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let client = CarbonCreditContractClient::new(&env, &id);
-        client.initialize(&admin, &registry);
-        (env, client)
-    }
+    use soroban_sdk::{testutils::Address as _, Env, String};
 
     fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
 
-    fn mint(env: &Env, client: &CarbonCreditContractClient, admin: &Address) {
-        let _ = client.mint_credits(
-            admin,
-            &s(env, "proj-001"),
-            &1000_i128,
-            &2023_u32,
-            &s(env, "batch-001"),
-            &1_u64,
-            &1000_u64,
-            &s(env, "QmCID"),
-        );
+    /// Create a fresh env + contract with a designated admin (Admin role bootstrapped).
+    fn setup() -> (Env, CarbonCreditContractClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin    = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id       = env.register_contract(None, CarbonCreditContract);
+        let client   = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+        (env, client, admin)
     }
+
+    // ── Original functional tests (preserved) ─────────────────────────────
 
     #[test]
     fn test_mint_credits_success() {
-        let (env, client) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(
+        let (env, client, admin) = setup();
+        client.mint_credits(
             &admin,
             &s(&env, "proj-001"),
             &500_i128,
@@ -472,57 +524,34 @@ mod tests {
             &1_u64,
             &500_u64,
             &s(&env, "QmCID"),
-        ).unwrap();
-
-        let b = c.get_credit_batch(&s(&env, "batch-A")).unwrap();
+        );
+        let b = client.get_credit_batch(&s(&env, "batch-A"));
         assert_eq!(b.amount, 500);
         assert_eq!(b.status, CreditStatus::Active);
     }
 
     #[test]
     fn test_serial_conflict_detection() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid")).unwrap();
-        // Overlapping range 50-150 should fail
-        let result = c.try_mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b2"), &50_u64, &150_u64, &s(&env, "cid"));
+        let (env, client, admin) = setup();
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
+        let result = client.try_mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b2"), &50_u64, &150_u64, &s(&env, "cid"));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_verify_serial_range_no_overlap() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid")).unwrap();
-        // Non-overlapping range should return true
-        assert!(c.verify_serial_range(&101_u64, &200_u64));
-        // Overlapping range should return false
-        assert!(!c.verify_serial_range(&50_u64, &150_u64));
+        let (env, client, admin) = setup();
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
+        assert!(client.verify_serial_range(&101_u64, &200_u64));
+        assert!(!client.verify_serial_range(&50_u64, &150_u64));
     }
 
     #[test]
     fn test_retire_credits_permanent() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid")).unwrap();
-
+        let (env, client, admin) = setup();
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
         let holder = Address::generate(&env);
-        let cert = c.retire_credits(
+        let cert = client.retire_credits(
             &holder,
             &s(&env, "b1"),
             &100_i128,
@@ -530,99 +559,243 @@ mod tests {
             &s(&env, "Acme Corp"),
             &s(&env, "ret-001"),
             &s(&env, "txhash123"),
-        ).unwrap();
-
+        );
         assert_eq!(cert.amount, 100);
         assert_eq!(cert.beneficiary, s(&env, "Acme Corp"));
-
-        let batch = c.get_credit_batch(&s(&env, "b1")).unwrap();
+        let batch = client.get_credit_batch(&s(&env, "b1"));
         assert_eq!(batch.status, CreditStatus::FullyRetired);
     }
 
     #[test]
     fn test_retired_credits_cannot_be_transferred() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid")).unwrap();
-
+        let (env, client, admin) = setup();
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
         let holder = Address::generate(&env);
-        c.retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx")).unwrap();
-
+        client.retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"));
         let to = Address::generate(&env);
-        let result = c.try_transfer_credits(&holder, &to, &s(&env, "b1"), &10_i128);
+        let result = client.try_transfer_credits(&holder, &to, &s(&env, "b1"), &10_i128);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_retired_credits_cannot_be_retired_again() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid")).unwrap();
-
+        let (env, client, admin) = setup();
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
         let holder = Address::generate(&env);
-        c.retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx")).unwrap();
-
-        let result = c.try_retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-002"), &s(&env, "tx2"));
+        client.retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"));
+        let result = client.try_retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-002"), &s(&env, "tx2"));
         assert!(result.is_err());
     }
 
     #[test]
     fn test_partial_retirement_updates_status() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid")).unwrap();
-
+        let (env, client, admin) = setup();
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
         let holder = Address::generate(&env);
-        c.retire_credits(&holder, &s(&env, "b1"), &40_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx")).unwrap();
-
-        let batch = c.get_credit_batch(&s(&env, "b1")).unwrap();
+        client.retire_credits(&holder, &s(&env, "b1"), &40_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"));
+        let batch = client.get_credit_batch(&s(&env, "b1"));
         assert_eq!(batch.status, CreditStatus::PartiallyRetired);
     }
 
     #[test]
     fn test_get_retirement_certificate() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        c.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid")).unwrap();
-
+        let (env, client, admin) = setup();
+        client.mint_credits(&admin, &s(&env, "p1"), &100_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
         let holder = Address::generate(&env);
-        c.retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx")).unwrap();
-
-        let cert = c.get_retirement_certificate(&s(&env, "ret-001")).unwrap();
+        client.retire_credits(&holder, &s(&env, "b1"), &100_i128, &s(&env, "reason"), &s(&env, "Corp"), &s(&env, "ret-001"), &s(&env, "tx"));
+        let cert = client.get_retirement_certificate(&s(&env, "ret-001"));
         assert_eq!(cert.amount, 100);
         assert_eq!(cert.retirement_id, s(&env, "ret-001"));
     }
 
     #[test]
     fn test_zero_amount_rejected() {
-        let (env, _) = setup();
-        let admin = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id = env.register_contract(None, CarbonCreditContract);
-        let c = CarbonCreditContractClient::new(&env, &id);
-        c.initialize(&admin, &registry);
-
-        let result = c.try_mint_credits(&admin, &s(&env, "p1"), &0_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
+        let (env, client, admin) = setup();
+        let result = client.try_mint_credits(&admin, &s(&env, "p1"), &0_i128, &2023_u32, &s(&env, "b1"), &1_u64, &100_u64, &s(&env, "cid"));
         assert!(result.is_err());
+    }
+
+    // ── RBAC tests ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_admin_has_admin_role_after_initialize() {
+        let (env, client, admin) = setup();
+        assert_eq!(client.get_role(&admin), Role::Admin);
+    }
+
+    #[test]
+    fn test_get_role_returns_user_for_unknown_address() {
+        let (env, client, _admin) = setup();
+        let stranger = Address::generate(&env);
+        assert_eq!(client.get_role(&stranger), Role::User);
+    }
+
+    #[test]
+    fn test_grant_role_success() {
+        let (env, client, admin) = setup();
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        assert_eq!(client.get_role(&verifier), Role::Verifier);
+    }
+
+    #[test]
+    fn test_grant_oracle_role_success() {
+        let (env, client, admin) = setup();
+        let oracle = Address::generate(&env);
+        client.grant_role(&admin, &oracle, &Role::Oracle);
+        assert_eq!(client.get_role(&oracle), Role::Oracle);
+    }
+
+    #[test]
+    fn test_grant_role_unauthorized_non_admin_cannot_grant() {
+        let (env, client, _admin) = setup();
+        let attacker = Address::generate(&env);
+        let victim   = Address::generate(&env);
+        // attacker has no role (defaults to User) — must fail
+        let result = client.try_grant_role(&attacker, &victim, &Role::Admin);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_grant_role_verifier_cannot_grant() {
+        let (env, client, admin) = setup();
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        let victim = Address::generate(&env);
+        // Verifier role cannot grant roles
+        let result = client.try_grant_role(&verifier, &victim, &Role::Admin);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_revoke_role_success() {
+        let (env, client, admin) = setup();
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        assert_eq!(client.get_role(&verifier), Role::Verifier);
+        client.revoke_role(&admin, &verifier);
+        // After revocation the address is reset to User
+        assert_eq!(client.get_role(&verifier), Role::User);
+    }
+
+    #[test]
+    fn test_revoke_role_unauthorized_non_admin_cannot_revoke() {
+        let (env, client, admin) = setup();
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        let attacker = Address::generate(&env);
+        let result = client.try_revoke_role(&attacker, &verifier);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mint_credits_unauthorized_user_role_fails() {
+        let (env, client, _admin) = setup();
+        let non_admin = Address::generate(&env);
+        // non_admin has default User role — mint must fail
+        let result = client.try_mint_credits(
+            &non_admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mint_credits_with_verifier_role_fails() {
+        let (env, client, admin) = setup();
+        let verifier = Address::generate(&env);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+        // Verifier role is not sufficient to mint — only Admin can
+        let result = client.try_mint_credits(
+            &verifier,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_mint_credits_with_oracle_role_fails() {
+        let (env, client, admin) = setup();
+        let oracle = Address::generate(&env);
+        client.grant_role(&admin, &oracle, &Role::Oracle);
+        let result = client.try_mint_credits(
+            &oracle,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_grant_then_revoke_cannot_mint() {
+        let (env, client, admin) = setup();
+        // Promote a second admin, then revoke their Admin role
+        let second_admin = Address::generate(&env);
+        client.grant_role(&admin, &second_admin, &Role::Admin);
+
+        // second_admin can mint while holding Admin role
+        client.mint_credits(
+            &second_admin,
+            &s(&env, "p1"),
+            &50_i128,
+            &2023_u32,
+            &s(&env, "b-before"),
+            &1_u64,
+            &50_u64,
+            &s(&env, "cid"),
+        );
+
+        // Now revoke second_admin's role
+        client.revoke_role(&admin, &second_admin);
+        assert_eq!(client.get_role(&second_admin), Role::User);
+
+        // After revocation, minting must fail
+        let result = client.try_mint_credits(
+            &second_admin,
+            &s(&env, "p1"),
+            &50_i128,
+            &2023_u32,
+            &s(&env, "b-after"),
+            &51_u64,
+            &100_u64,
+            &s(&env, "cid"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_grant_admin_role_allows_mint() {
+        let (env, client, admin) = setup();
+        let second_admin = Address::generate(&env);
+        client.grant_role(&admin, &second_admin, &Role::Admin);
+        // second_admin now holds Admin role and must be able to mint
+        client.mint_credits(
+            &second_admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+        );
+        assert_eq!(client.get_credit_batch(&s(&env, "b1")).amount, 100);
     }
 }
