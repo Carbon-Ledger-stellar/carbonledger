@@ -978,14 +978,15 @@ impl CarbonCreditContract {
         Ok(batch)
     }
 
-    fn require_admin(env: &Env, caller: &Address) -> Result<(), CarbonError> {
-        let admin: Address = env
+    /// Enforce that `caller` holds exactly `required` role.
+    fn require_role(env: &Env, caller: &Address, required: Role) -> Result<(), CarbonError> {
+        let role: Role = env
             .storage()
             .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(CarbonError::UnauthorizedVerifier)?;
-        if &admin != caller {
-            return Err(CarbonError::UnauthorizedVerifier);
+            .get(&DataKey::RoleMap(caller.clone()))
+            .unwrap_or(Role::User);
+        if role != required {
+            return Err(CarbonError::Unauthorized);
         }
         Ok(())
     }
@@ -1642,6 +1643,8 @@ mod tests {
         let result = client.try_upgrade_contract(&attacker, &fake_hash);
         assert!(result.is_err());
     }
+
+    // ── RBAC tests ────────────────────────────────────────────────────────
 
     #[test]
     fn test_version_tracking() {
@@ -2670,5 +2673,24 @@ mod serial_benchmark {
                 checkpoint_idx += 1;
             }
         }
+    }
+
+    #[test]
+    fn test_grant_admin_role_allows_mint() {
+        let (env, client, admin) = setup();
+        let second_admin = Address::generate(&env);
+        client.grant_role(&admin, &second_admin, &Role::Admin);
+        // second_admin now holds Admin role and must be able to mint
+        client.mint_credits(
+            &second_admin,
+            &s(&env, "p1"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "b1"),
+            &1_u64,
+            &100_u64,
+            &s(&env, "cid"),
+        );
+        assert_eq!(client.get_credit_batch(&s(&env, "b1")).amount, 100);
     }
 }

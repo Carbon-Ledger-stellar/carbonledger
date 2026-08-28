@@ -717,8 +717,10 @@ impl CarbonMarketplaceContract {
         Self::extend_listing_ttl(&env, &listing_id);
 
         let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
-        let usdc_client = token::Client::new(&env, &usdc);
-        usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
+        let usdc_client = token::TokenClient::new(&env, &usdc);
+        // In soroban-sdk 28 transfer's `to` param is MuxedAddress
+        let seller_muxed = MuxedAddress::from(listing.seller.clone());
+        usdc_client.transfer(&buyer, &seller_muxed, &seller_proceeds);
 
         let treasury: Address = env.storage().persistent().get(&DataKey::Treasury).unwrap();
         usdc_client.transfer(&buyer, &treasury, &protocol_fee);
@@ -1416,6 +1418,8 @@ mod tests {
             &s(env, "Brazil"),
         );
     }
+
+    // ── Original functional tests (preserved) ────────────────────────────
 
     #[test]
     fn test_list_credits_creates_active_listing() {
