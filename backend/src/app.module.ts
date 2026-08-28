@@ -39,6 +39,8 @@ import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
 import { RedisModule } from "./redis.module";
 import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
+// CSRF protection — double-submit cookie pattern (issue #xxx)
+import { CsrfMiddleware } from "./common/csrf.middleware";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -210,6 +212,9 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
     consumer.apply(RateLimitMiddleware).forRoutes('*');
+    // CSRF protection: double-submit cookie pattern.
+    // Exempt: GET/HEAD/OPTIONS (safe methods), requests with Authorization header (JWT API clients).
+    consumer.apply(CsrfMiddleware).forRoutes('*');
 
     // Apply idempotency enforcement to the three critical mutating endpoints.
     // The Idempotency-Key header is optional; omitting it simply bypasses the check.
