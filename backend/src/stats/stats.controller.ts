@@ -2,14 +2,11 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { StatsService } from './stats.service';
 import { Public } from '../auth/decorators';
-import { getCacheMetrics } from '../marketplace/listings-cache.service';
+import { getCacheMetrics as getListingsCacheMetrics } from '../marketplace/listings-cache.service';
+import { getAllCacheMetrics, getOverallCacheMetrics } from '../cache/api-cache.service';
 
 @Controller('stats')
 export class StatsController {
-  private cachedAggregateStats: any = null;
-  private cacheExpiry: number = 0;
-  private readonly CACHE_TTL = 60 * 1000; // 60 seconds
-
   constructor(private readonly statsService: StatsService) {}
 
   @Get()
@@ -22,27 +19,24 @@ export class StatsController {
   @Get("aggregate")
   @Public()
   @Throttle({ public: { ttl: 60_000, limit: 100 } })
-  async getAggregateStats() {
-    const now = Date.now();
-    
-    // Return cached data if still valid
-    if (this.cachedAggregateStats && now < this.cacheExpiry) {
-      return this.cachedAggregateStats;
-    }
-
-    // Fetch fresh data
-    const stats = await this.statsService.getAggregateStats();
-    
-    // Cache the result
-    this.cachedAggregateStats = stats;
-    this.cacheExpiry = now + this.CACHE_TTL;
-
-    return stats;
+  getAggregateStats() {
+    return this.statsService.getAggregateStats();
   }
 
+  /**
+   * GET /stats/cache
+   *
+   * Returns cache hit/miss metrics per endpoint plus overall summary.
+   * Includes both the API response cache (Redis-backed) and the listings
+   * in-process cache for completeness.
+   */
   @Get("cache")
   getCacheStats() {
-    return { listings: getCacheMetrics() };
+    return {
+      overall:   getOverallCacheMetrics(),
+      endpoints: getAllCacheMetrics(),
+      listings:  getListingsCacheMetrics(),
+    };
   }
 
   @Get("leaderboard")
