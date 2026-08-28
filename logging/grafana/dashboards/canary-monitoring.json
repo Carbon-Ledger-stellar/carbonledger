@@ -1,0 +1,281 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "canary-monitoring",
+    "title": "CarbonLedger — Synthetic Monitoring (Canaries)",
+    "tags": ["carbonledger", "canary", "synthetic-monitoring"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "1m",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Canary Check Status (last 5 min)",
+        "description": "Shows pass/fail for each of the three canary checks. Red = at least one failure in the window.",
+        "type": "stat",
+        "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "orientation": "horizontal",
+          "colorMode": "background",
+          "graphMode": "none"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "sum by (checkName) (count_over_time({service=\"carbonledger-canary\"} | json | success=\"true\" [5m]))",
+            "legendFormat": "{{checkName}} — passes"
+          },
+          {
+            "refId": "B",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "sum by (checkName) (count_over_time({service=\"carbonledger-canary\"} | json | success=\"false\" [5m]))",
+            "legendFormat": "{{checkName}} — failures"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 1 },
+                { "color": "red", "value": 2 }
+              ]
+            },
+            "mappings": [],
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Canary Latency — credit-lookup (ms)",
+        "description": "P50/P95/P99 latency for the credit lookup canary check over time.",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "none" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.50, {service=\"carbonledger-canary\"} | json | checkName=\"credit-lookup\" | unwrap latencyMs [5m])",
+            "legendFormat": "p50"
+          },
+          {
+            "refId": "B",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.95, {service=\"carbonledger-canary\"} | json | checkName=\"credit-lookup\" | unwrap latencyMs [5m])",
+            "legendFormat": "p95"
+          },
+          {
+            "refId": "C",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.99, {service=\"carbonledger-canary\"} | json | checkName=\"credit-lookup\" | unwrap latencyMs [5m])",
+            "legendFormat": "p99"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 1000 },
+                { "color": "red", "value": 5000 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Canary Latency — marketplace-listings (ms)",
+        "description": "P50/P95/P99 latency for the marketplace listings canary check.",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "none" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.50, {service=\"carbonledger-canary\"} | json | checkName=\"marketplace-listings\" | unwrap latencyMs [5m])",
+            "legendFormat": "p50"
+          },
+          {
+            "refId": "B",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.95, {service=\"carbonledger-canary\"} | json | checkName=\"marketplace-listings\" | unwrap latencyMs [5m])",
+            "legendFormat": "p95"
+          },
+          {
+            "refId": "C",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.99, {service=\"carbonledger-canary\"} | json | checkName=\"marketplace-listings\" | unwrap latencyMs [5m])",
+            "legendFormat": "p99"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 1000 },
+                { "color": "red", "value": 5000 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Canary Latency — simulate-transaction (ms)",
+        "description": "P50/P95/P99 latency for the Soroban RPC health check.",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "none" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.50, {service=\"carbonledger-canary\"} | json | checkName=\"simulate-transaction\" | unwrap latencyMs [5m])",
+            "legendFormat": "p50"
+          },
+          {
+            "refId": "B",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.95, {service=\"carbonledger-canary\"} | json | checkName=\"simulate-transaction\" | unwrap latencyMs [5m])",
+            "legendFormat": "p95"
+          },
+          {
+            "refId": "C",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "quantile_over_time(0.99, {service=\"carbonledger-canary\"} | json | checkName=\"simulate-transaction\" | unwrap latencyMs [5m])",
+            "legendFormat": "p99"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 2000 },
+                { "color": "red", "value": 8000 }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Consecutive Failures Heatmap",
+        "description": "Shows when any canary check has 2+ consecutive failures — triggers alert territory.",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+        "options": {
+          "tooltip": { "mode": "multi", "sort": "none" }
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "max by (checkName) (max_over_time({service=\"carbonledger-canary\"} | json | unwrap consecutiveFailures [5m]))",
+            "legendFormat": "{{checkName}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 1 },
+                { "color": "red", "value": 2 }
+              ]
+            },
+            "custom": {
+              "thresholdsStyle": { "mode": "area" }
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Canary Failure Log",
+        "description": "Raw log of failed canary executions with error messages.",
+        "type": "logs",
+        "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+        "options": {
+          "showTime": true,
+          "showLabels": true,
+          "wrapLogMessage": true,
+          "prettifyLogMessage": true,
+          "enableLogDetails": true,
+          "dedupStrategy": "none",
+          "sortOrder": "Descending"
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "{service=\"carbonledger-canary\"} | json | success=\"false\""
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Canary Availability (%) — last 24h",
+        "description": "Percentage of successful checks per canary type in the last 24 hours.",
+        "type": "gauge",
+        "gridPos": { "h": 6, "w": 24, "x": 0, "y": 32 },
+        "options": {
+          "reduceOptions": { "calcs": ["lastNotNull"] },
+          "orientation": "horizontal",
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true
+        },
+        "targets": [
+          {
+            "refId": "A",
+            "datasource": { "type": "loki", "uid": "loki" },
+            "expr": "sum by (checkName) (count_over_time({service=\"carbonledger-canary\"} | json | success=\"true\" [24h])) / sum by (checkName) (count_over_time({service=\"carbonledger-canary\"} | json [24h])) * 100",
+            "legendFormat": "{{checkName}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "red", "value": null },
+                { "color": "yellow", "value": 95 },
+                { "color": "green", "value": 99 }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,139 @@
+# Staging overrides — merged on top of docker-compose.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d
+# 
+# This configuration creates a complete staging environment that:
+# - Uses Stellar testnet but with separate database and contract instances
+# - Provides isolated testing without affecting shared testnet environment
+# - Includes enhanced logging and monitoring for staging validation
+
+version: "3.9"
+
+services:
+  # ── Staging Database (separate from testnet) ─────────────────────────────────
+  postgres:
+    environment:
+      POSTGRES_DB:       carbonledger_staging
+      POSTGRES_USER:     carbonledger_staging
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data
+    # Enhanced health check for staging reliability
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U carbonledger_staging -d carbonledger_staging"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Staging Redis (separate instance) ────────────────────────────────────────
+  redis-primary:
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-staging_redis_pass}
+    volumes:
+      - redis_staging_data:/data
+
+  # ── Staging Backend (separate contract addresses) ────────────────────────────
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/dev-fatima-24/carbonledger/backend:staging-latest}
+    environment:
+      DATABASE_URL:                    postgresql://carbonledger_staging:${POSTGRES_PASSWORD}@postgres:5432/carbonledger_staging
+      JWT_SECRET:                      ${JWT_SECRET}
+      STELLAR_NETWORK:                 testnet
+      STELLAR_RPC_URL:                 https://soroban-testnet.stellar.org
+      STELLAR_HORIZON_URL:             https://horizon-testnet.stellar.org
+      NETWORK_PASSPHRASE:              "Test SDF Network ; September 2015"
+      # Staging-specific contract addresses (separate from shared testnet)
+      CARBON_REGISTRY_CONTRACT_ID:     ${STAGING_REGISTRY_CONTRACT_ID}
+      CARBON_CREDIT_CONTRACT_ID:       ${STAGING_CREDIT_CONTRACT_ID}
+      CARBON_MARKETPLACE_CONTRACT_ID:  ${STAGING_MARKETPLACE_CONTRACT_ID}
+      CARBON_ORACLE_CONTRACT_ID:       ${STAGING_ORACLE_CONTRACT_ID}
+      USDC_CONTRACT_ID:                ${STAGING_USDC_CONTRACT_ID}
+      # Redis configuration
+      REDIS_SENTINELS:                 redis-sentinel:26379
+      REDIS_SENTINEL_NAME:             mymaster
+      REDIS_PASSWORD:                  ${REDIS_PASSWORD:-staging_redis_pass}
+      # Staging URLs and CORS
+      FRONTEND_URL:                    ${STAGING_URL:-https://staging.carbonledger.com}
+      ALLOWED_ORIGINS:                 ${ALLOWED_ORIGINS:-https://staging.carbonledger.com,https://staging-api.carbonledger.com}
+      PORT:                            3001
+      # Enhanced logging for staging
+      LOG_LEVEL:                       debug
+      # Staging-specific Oracle keys
+      ORACLE_SECRET_KEY:               ${ORACLE_SECRET_KEY}
+      ORACLE_PUBLIC_KEY:               ${ORACLE_PUBLIC_KEY}
+      ADMIN_SECRET_KEY:                ${ADMIN_SECRET_KEY}
+      ADMIN_PUBLIC_KEY:                ${ADMIN_PUBLIC_KEY}
+    # Enhanced health check with staging-specific validation
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001/health/ready && wget -q --spider http://localhost:3001/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
+  # ── Staging Frontend (staging-specific environment) ──────────────────────────
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/dev-fatima-24/carbonledger/frontend:staging-latest}
+    environment:
+      NEXT_PUBLIC_API_URL:              ${STAGING_API_URL:-https://staging-api.carbonledger.com/api/v1}
+      NEXT_PUBLIC_STELLAR_NETWORK:      testnet
+      NEXT_PUBLIC_HORIZON_URL:          https://horizon-testnet.stellar.org
+      NEXT_PUBLIC_SOROBAN_RPC_URL:      https://soroban-testnet.stellar.org
+      # Staging-specific contract addresses
+      NEXT_PUBLIC_REGISTRY_CONTRACT:    ${STAGING_REGISTRY_CONTRACT_ID}
+      NEXT_PUBLIC_CREDIT_CONTRACT:      ${STAGING_CREDIT_CONTRACT_ID}
+      NEXT_PUBLIC_MARKETPLACE_CONTRACT: ${STAGING_MARKETPLACE_CONTRACT_ID}
+      NEXT_PUBLIC_ORACLE_CONTRACT:      ${STAGING_ORACLE_CONTRACT_ID}
+      NEXT_PUBLIC_USDC_CONTRACT:        ${STAGING_USDC_CONTRACT_ID}
+
+  # ── Staging Oracle Services (separate contract instances) ────────────────────
+  oracle_verification:
+    environment:
+      ORACLE_SECRET_KEY:           ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID:   ${STAGING_ORACLE_CONTRACT_ID}
+      CARBON_REGISTRY_CONTRACT_ID: ${STAGING_REGISTRY_CONTRACT_ID}
+      STELLAR_RPC_URL:             https://soroban-testnet.stellar.org
+      DATABASE_URL:                postgresql://carbonledger_staging:${POSTGRES_PASSWORD}@postgres:5432/carbonledger_staging
+      BACKEND_API_URL:             http://backend:3001/api/v1
+      LOG_LEVEL:                   DEBUG
+
+  oracle_price:
+    environment:
+      ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID: ${STAGING_ORACLE_CONTRACT_ID}
+      STELLAR_RPC_URL:           https://soroban-testnet.stellar.org
+      LOG_LEVEL:                 DEBUG
+
+  oracle_satellite:
+    environment:
+      ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID: ${STAGING_ORACLE_CONTRACT_ID}
+      STELLAR_RPC_URL:           https://soroban-testnet.stellar.org
+      BACKEND_API_URL:           http://backend:3001/api/v1
+      LOG_LEVEL:                 DEBUG
+
+  # ── Enhanced Grafana for Staging Monitoring ──────────────────────────────────
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD:     ${GRAFANA_PASSWORD:-staging_admin}
+      GF_SERVER_ROOT_URL:             "https://grafana-staging.carbonledger.com"
+      GF_SECURITY_ALLOW_EMBEDDING:    "true"
+      # Enhanced alerting for staging
+      GF_ALERTING_ENABLED:            "true"
+      GF_UNIFIED_ALERTING_ENABLED:    "true"
+      GF_ALERTING_EXECUTE_ALERTS:     "true"
+    volumes:
+      - ./logging/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./logging/grafana/staging-dashboards:/etc/grafana/dashboards:ro
+      - grafana_staging_data:/var/lib/grafana
+
+  # ── Loki with Staging-Specific Retention ─────────────────────────────────────
+  loki:
+    volumes:
+      - ./logging/loki/loki-staging.yml:/etc/loki/loki.yml:ro
+      - loki_staging_data:/loki
+
+volumes:
+  postgres_staging_data:
+  redis_staging_data:
+  loki_staging_data:
+  grafana_staging_data:

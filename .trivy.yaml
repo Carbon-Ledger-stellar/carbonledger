@@ -1,0 +1,18 @@
+severity:
+  - CRITICAL
+  - HIGH
+  - MEDIUM
+
+exit-code: 1
+
+image-config-scanners:
+  - misconfig
+  - secret
+
+security-checks:
+  - vuln
+  - config
+  - secret
+
+skip-db-update: false
+ignorefile: .trivyignore

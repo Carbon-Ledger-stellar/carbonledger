@@ -1,0 +1,86 @@
+---
+# Prometheus alerting rules for canary contract deployment.
+#
+# These rules evaluate the contract_calls_total counter scraped from
+# the backend /metrics endpoint and fire when the canary error rate
+# exceeds 1.5× the primary error rate for 5 consecutive minutes.
+#
+# Mount this file into your Prometheus container:
+#   --web.config.file is not needed; add to prometheus.yml:
+#     rule_files:
+#       - /etc/prometheus/rules/canary.yml
+
+groups:
+  - name: canary_contract
+    interval: 30s
+    rules:
+      # ── Derived recording rules (pre-compute rates) ──────────────────────────
+
+      # Error rate for the primary contract over the last 5 minutes.
+      - record: job:contract_calls_error_rate:primary
+        expr: |
+          rate(contract_calls_total{contract="primary",status="error"}[5m])
+          /
+          (
+            rate(contract_calls_total{contract="primary",status="success"}[5m]) +
+            rate(contract_calls_total{contract="primary",status="error"}[5m])
+            + 0.0001
+          )
+
+      # Error rate for the canary contract over the last 5 minutes.
+      - record: job:contract_calls_error_rate:canary
+        expr: |
+          rate(contract_calls_total{contract="canary",status="error"}[5m])
+          /
+          (
+            rate(contract_calls_total{contract="canary",status="success"}[5m]) +
+            rate(contract_calls_total{contract="canary",status="error"}[5m])
+            + 0.0001
+          )
+
+      # ── Alert rules ──────────────────────────────────────────────────────────
+
+      # Fire when the canary error rate exceeds 1.5× the primary error rate
+      # AND at least 5 canary calls have been recorded in the window (to avoid
+      # spurious alerts before the canary warms up).
+      - alert: CanaryContractHighErrorRate
+        expr: |
+          (
+            job:contract_calls_error_rate:canary
+            > 1.5 * job:contract_calls_error_rate:primary
+          )
+          and
+          (
+            increase(contract_calls_total{contract="canary"}[5m]) > 5
+          )
+        for: 5m
+        labels:
+          severity: critical
+          team:     carbonledger
+          component: canary_deployment
+        annotations:
+          summary:     "Canary contract error rate exceeds 1.5× primary"
+          description: >
+            Canary contract error rate is {{ $value | humanizePercentage }}
+            vs primary rate {{ $labels.primary_rate | humanizePercentage }}.
+            Automatic rollback initiated via admin API (CANARY_TRAFFIC_PCT → 0).
+          runbook_url: "https://docs.carbonledger.com/runbooks/contract-upgrade"
+
+      # Secondary alert: absolute canary error rate > 10% even if primary is
+      # also healthy — catches cases where primary has near-zero traffic.
+      - alert: CanaryContractAbsoluteErrorRate
+        expr: |
+          job:contract_calls_error_rate:canary > 0.10
+          and
+          increase(contract_calls_total{contract="canary"}[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team:     carbonledger
+          component: canary_deployment
+        annotations:
+          summary:     "Canary contract absolute error rate exceeds 10%"
+          description: >
+            Canary contract error rate is {{ $value | humanizePercentage }}.
+            Consider rolling back via POST /api/v1/admin/canary { "trafficPct": 0 }.
+          runbook_url: "https://docs.carbonledger.com/runbooks/contract-upgrade"
