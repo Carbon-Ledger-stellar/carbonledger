@@ -1,10 +1,26 @@
 import { SorobanRpc, Contract, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { PrismaClient } from '@prisma/client';
+import Redis from 'ioredis';
 import { StructuredLogger } from './logger/structured-logger';
+import { projectDetailCacheKey } from './cache/cache.constants';
 
 const prisma = new PrismaClient();
 const logger = new StructuredLogger('carbonledger-indexer');
 const server = new SorobanRpc.Server(process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org');
+const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+  lazyConnect: true,
+  enableOfflineQueue: false,
+  maxRetriesPerRequest: 0,
+});
+redis.connect().catch(() => undefined);
+
+async function invalidateProjectCache(projectId: string) {
+  try {
+    await redis.del(projectDetailCacheKey(projectId));
+  } catch (err) {
+    logger.warn(`Redis invalidation failed for ${projectId}: ${(err as Error).message}`);
+  }
+}
 
 const contracts = {
   registry: process.env.CARBON_REGISTRY_CONTRACT_ID!,
@@ -126,6 +142,7 @@ async function handleVerifyProject(projectId: string) {
     where: { projectId },
     data: { status: 'Verified' },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleRejectProject(projectId: string) {
@@ -133,6 +150,7 @@ async function handleRejectProject(projectId: string) {
     where: { projectId },
     data: { status: 'Rejected' },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleStatusUpdate(projectId: string) {
@@ -141,6 +159,7 @@ async function handleStatusUpdate(projectId: string) {
     where: { projectId },
     data: { status: mapStatus(projectData.status) },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleSuspendProject(projectId: string) {
@@ -148,6 +167,7 @@ async function handleSuspendProject(projectId: string) {
     where: { projectId },
     data: { status: 'Suspended' },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleMinted(batchId: string) {

@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useSerialSingleLookup, useSerialRangeLookup, SerialLookupResult } from "../lib/api";
-import ProvenanceTrail from "./ProvenanceTrail";
+import ProvenanceTrail, { ProvenanceBatchDetail } from "./ProvenanceTrail";
+import SerialRangeBar from "./SerialRangeBar";
+import { buildBatchSerialSegments } from "../lib/serial-range-segments";
 import { colors } from "../styles/design-system";
 
 // ── Input mode toggle ─────────────────────────────────────────────────────────
@@ -101,15 +103,48 @@ function CreditDetails({ result }: { result: SerialLookupResult }) {
 }
 
 function ProvenanceSection({ result }: { result: SerialLookupResult }) {
-  if (!result.provenance?.length) return null;
+  const batchDetail: ProvenanceBatchDetail | null =
+    result.batchSerialStart && result.batchSerialEnd
+      ? {
+          batchSerialStart: result.batchSerialStart,
+          batchSerialEnd: result.batchSerialEnd,
+          segments:
+            result.rangeSegments ??
+            buildBatchSerialSegments(result.batchSerialStart, result.batchSerialEnd),
+        }
+      : null;
+
+  if (!result.provenance?.length && !batchDetail?.segments.length) return null;
   return (
     <div>
       <p style={{ fontSize: "0.75rem", fontWeight: 700, color: colors.neutral[600], textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 0.75rem" }}>
         Chain of Custody
       </p>
-      <ProvenanceTrail events={result.provenance} />
+      <ProvenanceTrail events={result.provenance} batchDetail={batchDetail} />
     </div>
   );
+}
+
+function batchDetailFromRangeResults(results: SerialLookupResult[]): ProvenanceBatchDetail | null {
+  if (results.length === 0) return null;
+  const sample = results[0];
+  const batchStart = sample.batchSerialStart ?? sample.serialNumber;
+  const batchEnd = sample.batchSerialEnd ?? sample.serialNumber;
+  const retirements = results
+    .filter(r => r.status === "retired")
+    .map(r => ({
+      serialStart: r.serialNumber,
+      serialEnd: r.serialNumber,
+      amount: 1,
+      retirementId: r.retirementId,
+      retirementDate: r.retiredAt,
+      beneficiary: r.beneficiary,
+    }));
+  return {
+    batchSerialStart: batchStart,
+    batchSerialEnd: batchEnd,
+    segments: buildBatchSerialSegments(batchStart, batchEnd, retirements),
+  };
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -260,6 +295,18 @@ export default function SerialNumberLookup() {
           <p style={{ fontSize: "0.8rem", color: colors.neutral[500], margin: "0 0 0.75rem" }}>
             {rangeResults.length} credit{rangeResults.length !== 1 ? "s" : ""} found
           </p>
+          {(() => {
+            const rangeBar = batchDetailFromRangeResults(rangeResults);
+            return rangeBar ? (
+              <div style={{ marginBottom: "1rem" }}>
+                <SerialRangeBar
+                  batchSerialStart={rangeBar.batchSerialStart}
+                  batchSerialEnd={rangeBar.batchSerialEnd}
+                  segments={rangeBar.segments}
+                />
+              </div>
+            ) : null;
+          })()}
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
             {rangeResults.map(r => (
               <CreditDetails key={r.serialNumber} result={r} />

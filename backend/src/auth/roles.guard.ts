@@ -8,6 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { IS_PUBLIC_KEY, ROLES_KEY, UserRole } from './decorators';
 
 @Injectable()
@@ -16,6 +17,7 @@ export class RolesGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
+    private readonly tokenBlacklist: TokenBlacklistService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -29,24 +31,33 @@ export class RolesGuard implements CanActivate {
     // 2. Extract and verify JWT
     const request = context.switchToHttp().getRequest();
     const token = this.extractToken(request);
-    if (!token) throw new ForbiddenException('Authentication required');
+    if (!token) throw new UnauthorizedException('Authorization header missing or malformed');
 
-    let payload: { sub: string; type: string };
+    let payload: { sub: string; type: string; jti?: string };
     try {
       payload = this.jwt.verify(token, {
         secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
+        issuer: process.env.JWT_ISSUER || 'carbonledger',
       });
-    } catch {
-      throw new ForbiddenException('Invalid or expired token');
+    } catch (error: any) {
+      if (error?.name === 'TokenExpiredError') {
+        throw new UnauthorizedException('Token expired');
+      }
+      throw new UnauthorizedException('Invalid or expired token');
     }
 
     if (payload.type !== 'access') {
-      throw new ForbiddenException('Invalid token type');
+      throw new UnauthorizedException('Invalid token type');
+    }
+
+    // Reject tokens revoked via /auth/logout for their remaining lifetime
+    if (payload.jti && (await this.tokenBlacklist.isRevoked(payload.jti))) {
+      throw new UnauthorizedException('Token has been revoked');
     }
 
     // 3. Fetch role from DB — JWT payload alone is not trusted for role
-    const user = await this.prisma.user.findUnique({ where: { publicKey: payload.sub } });
-    if (!user) throw new ForbiddenException('User not found');
+    const user = await this.prisma.user.findFirst({ where: { publicKey: payload.sub, deletedAt: null } });
+    if (!user) throw new UnauthorizedException('User not found');
 
     // Attach DB-sourced user to request for downstream use
     request.user = { publicKey: user.publicKey, role: user.role };
@@ -59,7 +70,10 @@ export class RolesGuard implements CanActivate {
     if (!requiredRoles || requiredRoles.length === 0) return true;
 
     if (!requiredRoles.includes(user.role as UserRole)) {
-      throw new ForbiddenException('Insufficient permissions');
+      const message = requiredRoles.includes('verifier')
+        ? 'Verifier role required'
+        : 'Insufficient permissions';
+      throw new ForbiddenException(message);
     }
 
     return true;

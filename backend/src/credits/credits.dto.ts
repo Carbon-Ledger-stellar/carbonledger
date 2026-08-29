@@ -1,93 +1,132 @@
+import { IsString, Length, Validate, IsArray, ArrayMinSize, ArrayMaxSize, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import {
-  IsString, IsInt, IsNumber, IsPositive, Min, Max,
-  Matches, Length, MaxLength, ValidatorConstraint,
-  ValidatorConstraintInterface, ValidationArguments,
-  Validate,
-} from "class-validator";
-import { Type } from "class-transformer";
-
-const CID_REGEX = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/;
-
-/** u64::MAX — the maximum serial number representable in the Soroban contract. */
-const U64_MAX = BigInt("18446744073709551615");
+  IsStellarAddress,
+  IsSerialNumber,
+  ValidateSerialRange,
+  IsVintageYear,
+  IsCreditAmount,
+  IsIpfsCid,
+} from '../common/validators';
 
 /**
- * Cross-field validator that enforces:
- *   1. serialStart and serialEnd are pure decimal integer strings (no leading zeros on multi-digit values).
- *   2. serialStart >= 1   (zero is invalid; the contract rejects serial_start == 0)
- *   3. serialEnd   > serialStart  (range must span at least 2 values)
- *   4. serialEnd  <= u64::MAX     (prevents Soroban u64 overflow)
+ * DTO for minting a new batch of carbon credits.
  *
- * BigInt arithmetic is used throughout so that large 64-bit values are compared
- * correctly without floating-point precision loss.
+ * Validation:
+ *  - batchId / projectId: non-empty strings, max 64 chars
+ *  - vintageYear: integer 1990 – (current year + 1) via @IsVintageYear
+ *  - amount: positive, min 0.01, max 2 decimal places via @IsCreditAmount
+ *  - serialStart / serialEnd: non-negative integer strings via @IsSerialNumber
+ *  - Class-level: serialEnd >= serialStart via @ValidateSerialRange
+ *  - metadataCid: valid IPFS CID (v0 or v1) via @IsIpfsCid
  */
-@ValidatorConstraint({ name: "IsSerialRangeValid", async: false })
-export class IsSerialRangeValid implements ValidatorConstraintInterface {
-  validate(_value: unknown, args: ValidationArguments): boolean {
-    const obj = args.object as MintCreditsDto;
-    const { serialStart, serialEnd } = obj;
-
-    // Guard: both fields must already be present and decimal strings
-    // (the @Matches decorators on each field handle format, but we double-check here)
-    if (typeof serialStart !== "string" || typeof serialEnd !== "string") return false;
-    if (!/^[0-9]+$/.test(serialStart) || !/^[0-9]+$/.test(serialEnd)) return false;
-
-    try {
-      const start = BigInt(serialStart);
-      const end   = BigInt(serialEnd);
-
-      if (start < 1n)       return false; // zero or negative start
-      if (end <= start)     return false; // end must be strictly greater than start
-      if (end > U64_MAX)    return false; // would overflow u64 in the contract
-    } catch {
-      return false;
-    }
-
-    return true;
-  }
-
-  defaultMessage(_args: ValidationArguments): string {
-    return (
-      "Invalid serial range: serialEnd must be greater than serialStart, " +
-      "serialStart must be >= 1, and serialEnd must not exceed the u64 maximum " +
-      "(18446744073709551615). Both values must be positive integer strings."
-    );
-  }
-}
-
+@ValidateSerialRange()
 export class MintCreditsDto {
-  @IsString() @Length(1, 64) batchId: string;
-  @IsString() @Length(1, 64) projectId: string;
-  @IsInt() @IsPositive() @Min(1990) @Max(new Date().getFullYear() + 1) @Type(() => Number) vintageYear: number;
-  /** Supports fractional tonnes, e.g. 0.5. Minimum 0.01 tCO₂e. */
-  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Type(() => Number) amount: number;
   @IsString()
-  @Matches(/^[0-9]+$/, { message: "serialStart must be a positive integer string" })
-  @Length(1, 32)
-  serialStart: string;
+  @Length(1, 64)
+  batchId: string;
+
   @IsString()
-  @Matches(/^[0-9]+$/, { message: "serialEnd must be a positive integer string" })
-  @Length(1, 32)
-  serialEnd: string;
-  @IsString() @Matches(CID_REGEX, { message: "metadataCid must be a valid IPFS CID (CIDv0 or CIDv1)" }) metadataCid: string;
+  @Length(1, 64)
+  projectId: string;
+
+  /** Vintage year of the carbon credit. Must be between 1990 and current year + 1. */
+  @IsVintageYear()
+  @Type(() => Number)
+  vintageYear: number;
 
   /**
-   * Cross-field validation: enforces serialEnd > serialStart and u64 overflow protection.
-   * Placed on the class so class-validator runs it after individual field validators.
+   * Credit amount in tCO₂e.
+   * Must be ≥ 0.01, ≤ 1,000,000,000, with at most 2 decimal places.
    */
-  @Validate(IsSerialRangeValid)
-  get _serialRangeGuard(): string {
-    // The @Validate decorator requires a decorated property; this getter exists solely
-    // to host the cross-field validator.  The value is irrelevant.
-    return this.serialStart;
-  }
+  @IsCreditAmount()
+  @Type(() => Number)
+  amount: number;
+
+  /** First serial number in the batch range (non-negative integer string). */
+  @IsSerialNumber()
+  @IsString()
+  @Length(1, 16)
+  serialStart: string;
+
+  /** Last serial number in the batch range (must be ≥ serialStart). */
+  @IsSerialNumber()
+  @IsString()
+  @Length(1, 16)
+  serialEnd: string;
+
+  /** IPFS CID (v0 or v1) of the credit batch metadata document. */
+  @IsIpfsCid()
+  metadataCid: string;
 }
 
+/**
+ * DTO for retiring carbon credits permanently.
+ *
+ * Validation:
+ *  - batchId: non-empty string, max 64 chars
+ *  - amount: positive, min 0.01, max 2 decimal places via @IsCreditAmount
+ *  - beneficiary: non-empty string, max 100 chars
+ *  - retirementReason: non-empty string, max 500 chars
+ *  - holderPublicKey: valid Stellar G... address via @IsStellarAddress
+ */
 export class RetireCreditsDto {
-  @IsString() @Length(1, 64) batchId: string;
-  /** Supports fractional tonnes, e.g. 0.5. Minimum 0.01 tCO₂e. */
-  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Type(() => Number) amount: number;
-  @IsString() @Length(1, 64) beneficiary: string;
-  @IsString() @MaxLength(256) retirementReason: string;
-  @IsString() @Length(1, 64) holderPublicKey: string;
+  @IsString()
+  @Length(1, 64)
+  batchId: string;
+
+  /**
+   * Credit amount in tCO₂e to retire.
+   * Must be ≥ 0.01, ≤ 1,000,000,000, with at most 2 decimal places.
+   */
+  @IsCreditAmount()
+  @Type(() => Number)
+  amount: number;
+
+  @IsString()
+  @Length(1, 100)
+  beneficiary: string;
+
+  @IsString()
+  @Length(1, 500)
+  retirementReason: string;
+
+  /** Stellar public key of the account holding the credits being retired. */
+  @IsStellarAddress()
+  holderPublicKey: string;
 }
+
+export class BatchMintCreditsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MintCreditsDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: MintCreditsDto[];
+}
+
+export class BatchRetireCreditsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RetireCreditsDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: RetireCreditsDto[];
+}
+
+export interface BatchItemStatus<T = any> {
+  index: number;
+  status: 'success' | 'error';
+  itemIdentifier?: string;
+  data?: T;
+  error?: string;
+}
+
+export interface BatchOperationResult<T = any> {
+  success: boolean;
+  totalProcessed: number;
+  successCount: number;
+  errorCount: number;
+  results: BatchItemStatus<T>[];
+}
+
