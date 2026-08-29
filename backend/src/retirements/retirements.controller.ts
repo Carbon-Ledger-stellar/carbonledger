@@ -15,6 +15,8 @@ import { IsString } from 'class-validator';
 import { RetirementsService } from './retirements.service';
 import { ExportRetirementsDto } from './retirements.dto';
 import { Public, Roles } from '../auth/decorators';
+import { MailService } from '../mail/mail.service';
+import { MailEvent } from '../mail/mail.constants';
 
 class VerifyCertificateDto {
   @IsString() retirementId: string;
@@ -23,7 +25,10 @@ class VerifyCertificateDto {
 
 @Controller('retirements')
 export class RetirementsController {
-  constructor(private readonly retirementsService: RetirementsService) {}
+  constructor(
+    private readonly retirementsService: RetirementsService,
+    private readonly mailService: MailService,
+  ) {}
 
   // Fix IDOR: require auth; scope list to the caller's own retirements
   @Get()
@@ -42,6 +47,14 @@ export class RetirementsController {
     if (retirement.retiredBy !== req.user.publicKey && req.user.role !== 'admin') {
       throw new ForbiddenException('Access denied');
     }
+
+    // Fire-and-forget: email the retirement certificate to the retiring user
+    this.mailService.sendIfEnabled(retirement.retiredBy, MailEvent.RETIREMENT_CONFIRMED, {
+      retirementId: retirement.retirementId,
+      beneficiary:  retirement.beneficiary,
+      amount:       retirement.amount.toString(),
+    }).catch(() => { /* email failure must never break the API response */ });
+
     return retirement;
   }
 

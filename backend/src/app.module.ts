@@ -23,6 +23,8 @@ import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
 import { LoggerModule } from "./logger/logger.module";
 import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
+import { MailModule } from "./mail/mail.module";
+import { NotificationsModule } from "./notifications/notifications.module";
 
 @Controller("health")
 class HealthController {
@@ -80,6 +82,8 @@ class HealthController {
     VerifiersModule,
     AdminModule,
     PublicApiModule,
+    MailModule,
+    NotificationsModule,
   ],
   controllers: [HealthController],
   providers: [

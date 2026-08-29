@@ -9,9 +9,10 @@ import { IpfsService } from "../common/ipfs.service";
 import { CertificatesModule } from "./certificates.module";
 import { UploadsModule } from "../uploads/uploads.module";
 import { QueueModule } from "../queue/queue.module";
+import { MailModule } from "../mail/mail.module";
 
 @Module({
-  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule],
+  imports: [AuthModule, QueueModule, UploadsModule, CertificatesModule, MailModule],
   controllers: [RetirementsController, CertificatesController],
   providers: [
     RetirementsService,

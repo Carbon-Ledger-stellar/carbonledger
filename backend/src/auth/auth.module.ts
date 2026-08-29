@@ -10,6 +10,7 @@ import { JWTRotationStrategy } from './jwt-rotation.strategy';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import { RolesGuard } from './roles.guard';
 import { PrismaService } from '../prisma.service';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { PrismaService } from '../prisma.service';
       signOptions: { expiresIn: process.env.JWT_EXPIRY || '15m' },
     }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 20 }]),
+    MailModule,
   ],
   providers: [
     AuthService,

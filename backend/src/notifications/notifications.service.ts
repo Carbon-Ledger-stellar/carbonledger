@@ -38,4 +38,15 @@ export class NotificationsService {
       },
     });
   }
+
+  /** Set isSubscribed = false to opt out of all non-critical emails. */
+  async unsubscribe(publicKey: string) {
+    const user = await this.prisma.user.findUnique({ where: { publicKey } });
+    if (!user) throw new NotFoundException('User not found');
+    return this.prisma.user.update({
+      where: { publicKey },
+      data: { isSubscribed: false },
+      select: { publicKey: true, isSubscribed: true },
+    });
+  }
 }

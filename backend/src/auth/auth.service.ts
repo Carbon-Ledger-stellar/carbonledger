@@ -8,6 +8,8 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
+import { MailService } from '../mail/mail.service';
+import { MailEvent } from '../mail/mail.constants';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
 
@@ -21,6 +23,7 @@ export class AuthService {
   constructor(
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
+    private readonly mailService: MailService,
   ) {}
 
   /** Issue a one-time challenge nonce for the given Stellar public key. */
@@ -70,6 +73,17 @@ export class AuthService {
         update: {},
         create: { publicKey, role },
       });
+
+      // Send welcome email only for genuinely new accounts
+      // (createdAt and updatedAt are equal on freshly created rows)
+      const isNewUser = user.createdAt.getTime() === user.updatedAt.getTime();
+      if (isNewUser) {
+        this.mailService.sendIfEnabled(user.publicKey, MailEvent.WELCOME, {
+          publicKey: user.publicKey,
+          dashboardLink: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard`,
+        }).catch(() => { /* welcome email failure must never block login */ });
+      }
+
       return this.issueTokenPair(user.publicKey, user.role as UserRole);
     } catch (error: any) {
       if (error?.code === 'P2024') {
