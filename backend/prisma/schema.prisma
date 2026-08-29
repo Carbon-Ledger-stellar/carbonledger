@@ -48,6 +48,10 @@ model CarbonProject {
   @@index([createdAt])
   @@index([methodology, country, status])
   @@index([migrationVersion])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing queries with ordering
+  @@index([country, status])     // Regional filtering support
+
   @@index([lastMonitoringAt])
   @@index([deletedAt])
   @@index([retentionUntil])
@@ -73,6 +77,8 @@ model CreditBatch {
 
   @@index([projectId, vintageYear, status])
   @@index([deletedAt])
+  // Performance optimization index for batch lookups
+  @@index([projectId, status])  // Optimize batch queries by project and status
 }
 
 model RetirementRecord {
@@ -195,6 +201,8 @@ model MarketListing {
   @@index([deletedAt])
   // Supports ORDER BY status, createdAt DESC on the listings browse page
   @@index([status, createdAt])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing browsing with pagination
 }
 
 model MonitoringData {
