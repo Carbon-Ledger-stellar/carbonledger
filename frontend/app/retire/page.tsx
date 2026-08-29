@@ -1,17 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { retireCredits } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
-import { connectFreighter } from "../../lib/freighter";
-import { getWalletErrorMessage } from "../../lib/wallet-errors";
+import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionPreview from "../../components/TransactionPreview";
+import { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
 import ErrorBoundary from "../../components/ErrorBoundary";
+import RetireConfirmModal from "../../components/RetireConfirmModal";
+import {
+  useTransactionPoller,
+  TRANSACTION_MAX_POLLS,
+} from "../../hooks/useTransactionPoller";
+import { simulateRetirementPreview } from "../../lib/soroban";
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface RetireFormState {
@@ -21,7 +30,68 @@ interface RetireFormState {
   reason: string;
 }
 
-type Step = 1 | 2 | 3 | 4 | 5;
+interface ValidationErrors {
+  beneficiary?: string;
+  reason?: string;
+  amount?: string;
+}
+
+// ── Validation Constants ──────────────────────────────────────────────────────
+
+const VALIDATION_LIMITS = {
+  beneficiary: { min: 1, max: 100 },
+  reason: { min: 1, max: 500 },
+  amount: { min: 0.01, max: Number.MAX_SAFE_INTEGER },
+} as const;
+
+// ── Validation helpers ────────────────────────────────────────────────────────
+
+type Translator = (key: string, values?: Record<string, string | number>) => string;
+
+function validateBeneficiary(value: string, t: Translator): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return t("beneficiaryRequired");
+  if (trimmed.length > VALIDATION_LIMITS.beneficiary.max)
+    return t("beneficiaryTooLong", { max: VALIDATION_LIMITS.beneficiary.max });
+  return undefined;
+}
+
+function validateReason(value: string, t: Translator): string | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return t("reasonRequired");
+  if (trimmed.length > VALIDATION_LIMITS.reason.max)
+    return t("reasonTooLong", { max: VALIDATION_LIMITS.reason.max });
+  return undefined;
+}
+
+function validateAmount(
+  value: number,
+  t: Translator,
+  userBalance?: number,
+): string | undefined {
+  if (value < VALIDATION_LIMITS.amount.min)
+    return t("amountTooSmall", { min: VALIDATION_LIMITS.amount.min });
+  if (!Number.isInteger(value * 100)) return t("amountTooPrecise");
+  if (userBalance !== undefined && value > userBalance)
+    return t("amountExceedsBalance", { balance: userBalance });
+  return undefined;
+}
+
+function validateForm(
+  form: RetireFormState,
+  t: Translator,
+  userBalance?: number,
+): ValidationErrors {
+  return {
+    beneficiary: validateBeneficiary(form.beneficiary, t),
+    reason: validateReason(form.reason, t),
+    amount: validateAmount(form.amount, t, userBalance),
+  };
+}
+
+function hasErrors(errors: ValidationErrors): boolean {
+  return Object.values(errors).some((error) => error !== undefined);
+}
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
@@ -35,533 +105,586 @@ const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
-const labelStyle: React.CSSProperties = {
-  fontSize: "0.875rem",
-  fontWeight: 600,
-  color: colors.neutral[700],
-  display: "block",
-  marginBottom: "0.4rem",
+const inputErrorStyle: React.CSSProperties = {
+  ...inputStyle,
+  border: "1px solid #dc2626",
 };
 
-function primaryBtn(disabled: boolean): React.CSSProperties {
-  return {
-    background: disabled ? colors.neutral[300] : colors.primary[600],
-    color: "#fff",
-    border: "none",
-    borderRadius: "0.5rem",
-    padding: "0.875rem",
-    fontSize: "1rem",
-    fontWeight: 700,
-    cursor: disabled ? "not-allowed" : "pointer",
-    width: "100%",
-  };
-}
-
-const secondaryBtn: React.CSSProperties = {
-  background: "transparent",
-  color: colors.neutral[600],
-  border: `1px solid ${colors.neutral[300]}`,
-  borderRadius: "0.5rem",
-  padding: "0.875rem 1.25rem",
-  fontSize: "0.9rem",
-  fontWeight: 600,
-  cursor: "pointer",
+const errorTextStyle: React.CSSProperties = {
+  fontSize: "0.75rem",
+  color: "#dc2626",
+  margin: "0.3rem 0 0",
 };
 
-// ── Step indicator ────────────────────────────────────────────────────────────
+// ── Inner page component ──────────────────────────────────────────────────────
 
-const STEPS = ["Select Credits", "Details", "Review", "Sign", "Done"];
-
-function StepIndicator({ current }: { current: Step }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", marginBottom: "2rem" }}>
-      {STEPS.map((label, i) => {
-        const n = (i + 1) as Step;
-        const done   = n < current;
-        const active = n === current;
-        return (
-          <div key={n} style={{ display: "flex", alignItems: "center", flex: i < STEPS.length - 1 ? 1 : undefined }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.25rem" }}>
-              <div style={{
-                width: "2rem", height: "2rem", borderRadius: "50%",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: "0.8rem", fontWeight: 700,
-                background: done || active ? colors.primary[600] : colors.neutral[200],
-                color: done || active ? "#fff" : colors.neutral[500],
-              }}>
-                {done ? "✓" : n}
-              </div>
-              <span style={{
-                fontSize: "0.65rem", fontWeight: active ? 700 : 400,
-                color: active ? colors.primary[700] : colors.neutral[400],
-                whiteSpace: "nowrap",
-              }}>
-                {label}
-              </span>
-            </div>
-            {i < STEPS.length - 1 && (
-              <div style={{
-                flex: 1, height: "2px", margin: "0 0.25rem",
-                marginBottom: "1.25rem",
-                background: done ? colors.primary[400] : colors.neutral[200],
-              }} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ── Step 1: Select credits ────────────────────────────────────────────────────
-
-function Step1({
-  form, onChange, onNext,
-}: {
-  form: RetireFormState;
-  onChange: (k: keyof RetireFormState, v: string | number) => void;
-  onNext: () => void;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-      <div>
-        <label style={labelStyle}>Batch ID</label>
-        <input
-          type="text"
-          placeholder="e.g. batch-proj-2023-0001"
-          value={form.batchId}
-          onChange={e => onChange("batchId", e.target.value)}
-          style={inputStyle}
-        />
-        <p style={{ fontSize: "0.75rem", color: colors.neutral[400], margin: "0.3rem 0 0" }}>
-          Find your batch ID in your dashboard or from a marketplace purchase.
-        </p>
-      </div>
-      <div>
-        <label style={labelStyle}>Amount to Retire (tCO₂e) — minimum 0.01</label>
-        <input
-          type="number"
-          min={0.01}
-          step={0.01}
-          value={form.amount}
-          onChange={e => {
-            const v = parseFloat(parseFloat(e.target.value).toFixed(2));
-            onChange("amount", Math.max(0.01, v || 0.01));
-          }}
-          style={inputStyle}
-        />
-      </div>
-      <button onClick={onNext} disabled={!form.batchId} style={primaryBtn(!form.batchId)}>
-        Continue →
-      </button>
-    </div>
-  );
-}
-
-// ── Step 2: Beneficiary + reason ──────────────────────────────────────────────
-
-function Step2({
-  form, onChange, onBack, onNext,
-}: {
-  form: RetireFormState;
-  onChange: (k: keyof RetireFormState, v: string | number) => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  const canProceed = form.beneficiary.trim().length > 0 && form.reason.trim().length > 0;
-  const showError  = !canProceed && (form.beneficiary.length > 0 || form.reason.length > 0);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-      <div>
-        <label style={labelStyle}>
-          Beneficiary Name <span style={{ color: "#dc2626" }}>*</span>
-        </label>
-        <input
-          type="text"
-          placeholder="e.g. Acme Corporation"
-          value={form.beneficiary}
-          onChange={e => onChange("beneficiary", e.target.value)}
-          style={inputStyle}
-        />
-        <p style={{ fontSize: "0.75rem", color: colors.neutral[400], margin: "0.3rem 0 0" }}>
-          This name appears on the retirement certificate.
-        </p>
-      </div>
-      <div>
-        <label style={labelStyle}>
-          Retirement Reason <span style={{ color: "#dc2626" }}>*</span>
-        </label>
-        <textarea
-          placeholder="e.g. Offsetting 2023 Scope 1 and 2 emissions"
-          value={form.reason}
-          onChange={e => onChange("reason", e.target.value)}
-          rows={3}
-          style={{ ...inputStyle, resize: "vertical" }}
-        />
-      </div>
-      {showError && (
-        <p style={{ fontSize: "0.8rem", color: "#dc2626", margin: 0 }}>
-          Both beneficiary name and retirement reason are required to proceed.
-        </p>
-      )}
-      <div style={{ display: "flex", gap: "0.75rem" }}>
-        <button onClick={onBack} style={secondaryBtn}>← Back</button>
-        <button onClick={onNext} disabled={!canProceed} style={{ ...primaryBtn(!canProceed), flex: 1 }}>
-          Review →
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Step 3: Review ────────────────────────────────────────────────────────────
-
-function Step3({
-  form, walletKey, onConnect, onBack, onNext,
-}: {
-  form: RetireFormState;
-  walletKey: string | null;
-  onConnect: () => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  const serialStart = `${form.batchId}-0001`;
-  const serialEnd   = `${form.batchId}-${String(Math.ceil(form.amount)).padStart(4, "0")}`;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-      {/* Summary card */}
-      <div style={{
-        background: colors.primary[50],
-        border: `1px solid ${colors.primary[200]}`,
-        borderRadius: "0.75rem",
-        padding: "1.25rem",
-        display: "flex",
-        flexDirection: "column",
-        gap: "0.75rem",
-      }}>
-        <h3 style={{ margin: 0, fontSize: "0.9rem", fontWeight: 700, color: colors.primary[800] }}>
-          Retirement Summary
-        </h3>
-        {([
-          ["Batch ID",     form.batchId],
-          ["Amount",       formatTonnes(form.amount)],
-          ["Beneficiary",  form.beneficiary],
-          ["Reason",       form.reason],
-          ["Serial Range", `${serialStart} – ${serialEnd}`],
-        ] as [string, string][]).map(([label, value]) => (
-          <div key={label} style={{ display: "flex", justifyContent: "space-between", gap: "1rem" }}>
-            <span style={{ fontSize: "0.8rem", color: colors.neutral[500], flexShrink: 0 }}>{label}</span>
-            <span style={{ fontSize: "0.8rem", fontWeight: 600, color: colors.neutral[800], textAlign: "right", wordBreak: "break-all" }}>
-              {value}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* Irreversibility warning */}
-      <div style={{
-        background: "#fef9c3", border: "1px solid #fde047",
-        borderRadius: "0.5rem", padding: "0.875rem 1rem",
-        display: "flex", gap: "0.75rem",
-      }}>
-        <span>⚠️</span>
-        <p style={{ fontSize: "0.8rem", color: "#854d0e", margin: 0 }}>
-          Retirement is <strong>permanent and irreversible</strong>. Once retired, these credits cannot be transferred, resold, or retired again.
-        </p>
-      </div>
-
-      <div style={{ display: "flex", gap: "0.75rem" }}>
-        <button onClick={onBack} style={secondaryBtn}>← Back</button>
-        {!walletKey ? (
-          <button onClick={onConnect} style={{ ...primaryBtn(false), flex: 1 }}>
-            Connect Wallet to Sign
-          </button>
-        ) : (
-          <button onClick={onNext} style={{ ...primaryBtn(false), flex: 1, background: "#dc2626" }}>
-            Sign &amp; Retire Permanently
-          </button>
-        )}
-      </div>
-
-      {walletKey && (
-        <p style={{ fontSize: "0.75rem", color: colors.neutral[400], textAlign: "center", margin: 0 }}>
-          Signing as {walletKey.slice(0, 8)}…{walletKey.slice(-8)}
-        </p>
-      )}
-    </div>
-  );
-}
-
-// ── Step 4: Signing / submitting ──────────────────────────────────────────────
-
-function Step4({ txStatus, txHash }: { txStatus: TxStatus | null; txHash: string | null }) {
-  const icon =
-    txStatus === "confirmed" ? "✅" :
-    txStatus === "failed"    ? "❌" : "⏳";
-
-  const message =
-    txStatus === "pending"   ? "Preparing transaction…"       :
-    txStatus === "submitted" ? "Waiting for confirmation…"    :
-    txStatus === "confirmed" ? "Credits retired successfully!" :
-    txStatus === "failed"    ? "Transaction failed"           : "";
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem", alignItems: "center", padding: "1rem 0" }}>
-      <div style={{ fontSize: "3rem" }}>{icon}</div>
-      <p style={{ fontWeight: 700, fontSize: "1.1rem", color: colors.neutral[800], margin: 0, textAlign: "center" }}>
-        {message}
-      </p>
-      {txStatus && <TransactionStatus status={txStatus} txHash={txHash ?? undefined} />}
-    </div>
-  );
-}
-
-// ── Step 5: Confirmation ──────────────────────────────────────────────────────
-
-function Step5({
-  retirementId, txHash, beneficiary, amount,
-}: {
-  retirementId: string;
-  txHash: string;
-  beneficiary: string;
-  amount: number;
-}) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem", alignItems: "center", textAlign: "center" }}>
-      <div style={{ fontSize: "4rem" }}>🌿</div>
-      <div>
-        <h2 style={{ fontSize: "1.5rem", fontWeight: 800, color: colors.primary[800], margin: "0 0 0.5rem" }}>
-          {formatTonnes(amount)} Permanently Retired
-        </h2>
-        <p style={{ color: colors.neutral[500], margin: 0 }}>
-          On behalf of <strong>{beneficiary}</strong>. A verifiable certificate has been issued.
-        </p>
-      </div>
-
-      {/* Certificate link — prominent per AC */}
-      <a
-        href={`/retire/${retirementId}`}
-        style={{
-          display: "block", width: "100%",
-          background: colors.primary[600], color: "#fff",
-          borderRadius: "0.75rem", padding: "1rem",
-          fontSize: "1rem", fontWeight: 700, textDecoration: "none",
-          boxShadow: "0 4px 12px rgb(22 163 74 / 0.3)",
-        }}
-      >
-        🏆 View &amp; Download Certificate →
-      </a>
-
-      <div style={{ display: "flex", gap: "0.75rem", width: "100%" }}>
-        <a
-          href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            flex: 1, textAlign: "center",
-            color: colors.primary[700],
-            border: `1px solid ${colors.primary[300]}`,
-            borderRadius: "0.5rem", padding: "0.75rem",
-            fontSize: "0.875rem", fontWeight: 600, textDecoration: "none",
-          }}
-        >
-          View on Stellar →
-        </a>
-        <a
-          href="/dashboard"
-          style={{
-            flex: 1, textAlign: "center",
-            color: colors.neutral[600],
-            border: `1px solid ${colors.neutral[300]}`,
-            borderRadius: "0.5rem", padding: "0.75rem",
-            fontSize: "0.875rem", fontWeight: 600, textDecoration: "none",
-          }}
-        >
-          Back to Dashboard
-        </a>
-      </div>
-
-      <p style={{ fontSize: "0.75rem", color: colors.neutral[400], margin: 0 }}>
-        Retirement ID: <code style={{ fontFamily: "monospace" }}>{retirementId}</code>
-      </p>
-    </div>
-  );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
-
-export default function RetirePage() {
+function RetirePageContent() {
+  const t = useTranslations("retirePage");
   const searchParams = useSearchParams();
-  const batchId      = searchParams.get("batch") ?? "";
+  const batchId = searchParams.get("batch") ?? "";
 
-  const [amount, setAmount]         = useState(1);
+  const [amount, setAmount] = useState(1);
   const [beneficiary, setBeneficiary] = useState("");
-  const [reason, setReason]         = useState("");
-  const [txStatus, setTxStatus]     = useState<TxStatus | null>(null);
-  const [txHash, setTxHash]         = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [pollHash, setPollHash] = useState<string | null>(null);
+  const {
+    pollCount,
+    state: pollState,
+    errorMessage: pollError,
+  } = useTransactionPoller({ txHash: pollHash });
   const [retirementId, setRetirementId] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
+  const [touched, setTouched] = useState({
+    beneficiary: false,
+    reason: false,
+    amount: false,
+  });
   const { toasts, addToast, dismiss } = useToast();
-  const { status: walletStatus, address: walletKey, refresh: refreshWallet } = useWalletStatus();
+  const { status: walletStatus, address: walletKey, refresh: refreshWallet } =
+    useWalletStatus();
 
-  async function handleConnect(key: string) {
-    addToast({ type: "success", title: "Wallet connected", message: key.slice(0, 8) + "…" });
+  // ── Simulation state ─────────────────────────────────────────────────────────
+  const [preview, setPreview] = useState<PreviewState>({
+    loading: false,
+    ready: false,
+    effects: [],
+  });
+  const [showPreview, setShowPreview] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  // ── Simulation ────────────────────────────────────────────────────────────────
+
+  const runSimulation = useCallback(async () => {
+    if (!walletKey || !batchId) return;
+
+    const contractId = process.env.NEXT_PUBLIC_CREDIT_CONTRACT_ID;
+    if (!contractId) {
+      // No contract configured; skip simulation and allow retirement directly
+      setPreview({ loading: false, ready: true, effects: [] });
+      return;
+    }
+
+    setPreview({ loading: true, ready: false, effects: [] });
+    const result = await simulateRetirementPreview({
+      contractId,
+      sourcePublicKey: walletKey,
+      batchId,
+      amount,
+      beneficiary: beneficiary || "preview",
+      reason: reason || "preview",
+    });
+    setPreview(result);
+  }, [walletKey, batchId, amount, beneficiary, reason]);
+
+  // Run simulation when preview step becomes visible
+  useEffect(() => {
+    if (showPreview) {
+      runSimulation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPreview]);
+
+  // ── Wallet connection handler ─────────────────────────────────────────────────
+
+  function handleConnect(key: string) {
+    addToast({
+      type: "success",
+      title: t("walletConnectedTitle"),
+      message: key.slice(0, 8) + "…",
+    });
   }
+
+  // ── Field change / validation handlers ───────────────────────────────────────
+
+  const handleBlur = (field: "beneficiary" | "reason" | "amount") => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    if (field === "beneficiary") {
+      setValidationErrors((prev) => ({
+        ...prev,
+        beneficiary: validateBeneficiary(beneficiary, t),
+      }));
+    } else if (field === "reason") {
+      setValidationErrors((prev) => ({
+        ...prev,
+        reason: validateReason(reason, t),
+      }));
+    } else if (field === "amount") {
+      setValidationErrors((prev) => ({
+        ...prev,
+        amount: validateAmount(amount, t),
+      }));
+    }
+  };
+
+  const handleFieldChange = (field: "beneficiary" | "reason", value: string) => {
+    if (field === "beneficiary") setBeneficiary(value);
+    else setReason(value);
+    if (touched[field]) {
+      setValidationErrors((prev) => ({ ...prev, [field]: undefined }));
+    }
+  };
+
+  const handleAmountChange = (value: number) => {
+    setAmount(value);
+    if (touched.amount) {
+      setValidationErrors((prev) => ({ ...prev, amount: undefined }));
+    }
+  };
+
+  // ── Show preview (validate first) ────────────────────────────────────────────
+
+  const handleShowPreview = () => {
+    const errors = validateForm({ batchId, amount, beneficiary, reason }, t);
+    setValidationErrors(errors);
+    setTouched({ beneficiary: true, reason: true, amount: true });
+    if (!hasErrors(errors)) {
+      setShowPreview(true);
+    }
+  };
+
+  const handlePreviewCancel = () => {
+    setShowPreview(false);
+    setPreview({ loading: false, ready: false, effects: [] });
+  };
+
+  // ── Confirm (opens the safety modal, then retires) ────────────────────────────
+
+  const handlePreviewConfirm = () => {
+    setShowModal(true);
+  };
 
   async function handleRetire() {
     if (!walletKey || !batchId || !beneficiary || !reason) return;
+
+    const errors = validateForm({ batchId, amount, beneficiary, reason }, t);
+    if (hasErrors(errors)) {
+      addToast({
+        type: "error",
+        title: t("validationFailedTitle"),
+        message: t("validationFailedMessage"),
+      });
+      return;
+    }
+
+    setConfirming(true);
     setTxStatus("building");
     try {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
       setTxStatus("signing");
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 1000));
       setTxStatus("submitting");
       const result = await retireCredits({
         batchId,
         amount,
         beneficiary,
         retirementReason: reason,
-        holderPublicKey:  walletKey,
+        holderPublicKey: walletKey,
       });
       setTxStatus("polling");
-      await new Promise(r => setTimeout(r, 2000));
       setTxHash(result.txHash);
       setRetirementId(result.retirementId);
-      setTxStatus("confirmed");
-      addToast({
-        type:    "success",
-        title:   "Credits permanently retired",
-        message: `${formatTonnes(amount)} retired on behalf of ${beneficiary}`,
-        txHash:  result.txHash,
-      });
+      setPollHash(result.txHash);
     } catch (e: any) {
       setTxStatus("failed");
-      addToast({ type: "error", title: "Retirement failed", message: e.message });
+      setPollHash(null);
+      addToast({
+        type: "error",
+        title: t("retirementFailedTitle"),
+        message: getContractErrorMessage(e),
+      });
+    } finally {
+      setConfirming(false);
     }
   }
 
-  const inputStyle: React.CSSProperties = {
-    width: "100%", border: `1px solid ${colors.neutral[300]}`,
-    borderRadius: "0.5rem", padding: "0.75rem 1rem",
-    fontSize: "0.9rem", color: colors.neutral[900],
-    boxSizing: "border-box",
-  };
+  // ── Poll state effect ─────────────────────────────────────────────────────────
 
-  const busy = txStatus && !["confirmed", "failed"].includes(txStatus);
-  const isDisabled = !beneficiary || !reason || !!busy || txStatus === "confirmed";
+  useEffect(() => {
+    if (!pollHash || pollState === "idle" || pollState === "polling") return;
+    if (pollState === "SUCCESS") {
+      setTxStatus("confirmed");
+      addToast({
+        type: "success",
+        title: t("retiredSuccessTitle"),
+        message: t("retiredSuccessMessage", {
+          tonnes: formatTonnes(amount),
+          beneficiary,
+        }),
+        txHash: pollHash,
+      });
+      setPollHash(null);
+    } else if (pollState === "FAILED") {
+      setTxStatus("failed");
+      addToast({
+        type: "error",
+        title: t("retirementFailedTitle"),
+        message: pollError ?? t("transactionFailedOnChain"),
+      });
+      setPollHash(null);
+    } else if (pollState === "TIMED_OUT") {
+      setTxStatus("timed_out");
+      setPollHash(null);
+    }
+  }, [pollState, pollHash, pollError, addToast, amount, beneficiary, t]);
+
+  // ── Derived state ─────────────────────────────────────────────────────────────
+
+  const busy =
+    txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
+  const hasValidationErrors = hasErrors(validationErrors);
+  const isDisabled = hasValidationErrors || !!busy || txStatus === "confirmed";
+
+  const beneficiaryLength = beneficiary.length;
+  const reasonLength = reason.length;
+  const showBeneficiaryError = touched.beneficiary && validationErrors.beneficiary;
+  const showReasonError = touched.reason && validationErrors.reason;
+  const showAmountError = touched.amount && validationErrors.amount;
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <ErrorBoundary>
-    <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 2rem" }}>
-      <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
-        Retire Carbon Credits
-      </h1>
-      <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
-        Retirement is permanent and irreversible. A verifiable certificate will be issued for ESG reporting.
-      </p>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-        <div>
-          <label style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Amount to Retire (tonnes CO₂e) — minimum 0.01 tCO₂e
-          </label>
-          <input
-            type="number" min={0.01} step={0.01} value={amount}
-            onChange={e => {
-              const v = parseFloat(parseFloat(e.target.value).toFixed(2));
-              setAmount(Math.max(0.01, v || 0.01));
-            }}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="retire-beneficiary" style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Beneficiary Name (appears on certificate)
-          </label>
-          <input
-            id="retire-beneficiary"
-            type="text"
-            placeholder="e.g. Acme Corporation"
-            value={beneficiary}
-            onChange={e => setBeneficiary(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="retire-reason" style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Retirement Reason
-          </label>
-          <textarea
-            id="retire-reason"
-            placeholder="e.g. Offsetting 2023 Scope 1 and 2 emissions"
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-            rows={3}
-            style={{ ...inputStyle, resize: "vertical" }}
-          />
-        </div>
-
-        {/* Warning */}
-        <div
-          id="retire-warning"
-          role="note"
+      <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+        <h1
           style={{
-            background: "#fef9c3", border: "1px solid #fde047",
-            borderRadius: "0.5rem", padding: "0.875rem 1rem",
-            display: "flex", gap: "0.75rem",
+            fontSize: "2rem",
+            fontWeight: 800,
+            color: colors.neutral[900],
+            margin: "0 0 0.5rem",
           }}
         >
-          <span aria-hidden="true">⚠️</span>
-          <p style={{ fontSize: "0.8rem", color: "#854d0e", margin: 0 }}>
-            Retirement is <strong>permanent and irreversible</strong>. Once retired, these credits cannot be transferred, resold, or retired again.
-          </p>
+          {t("title")}
+        </h1>
+        <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
+          {t("subtitle")}
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          {/* Form fields — hidden once preview step is active */}
+          {!showPreview && (
+            <>
+              {/* Amount */}
+              <div>
+                <label
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: colors.neutral[700],
+                    display: "block",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  {t("amountLabel")}
+                </label>
+                <input
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  value={amount}
+                  onChange={(e) => {
+                    const v = parseFloat(
+                      parseFloat(e.target.value).toFixed(2),
+                    );
+                    handleAmountChange(Math.max(0.01, v || 0.01));
+                  }}
+                  onBlur={() => handleBlur("amount")}
+                  style={showAmountError ? inputErrorStyle : inputStyle}
+                  aria-invalid={showAmountError ? "true" : "false"}
+                  aria-describedby={showAmountError ? "amount-error" : undefined}
+                />
+                {showAmountError && (
+                  <p id="amount-error" style={errorTextStyle}>
+                    {validationErrors.amount}
+                  </p>
+                )}
+              </div>
+
+              {/* Beneficiary */}
+              <div>
+                <label
+                  htmlFor="retire-beneficiary"
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: colors.neutral[700],
+                    display: "block",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  {t("beneficiaryLabel")}{" "}
+                  <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  id="retire-beneficiary"
+                  type="text"
+                  placeholder={t("beneficiaryPlaceholder")}
+                  value={beneficiary}
+                  onChange={(e) =>
+                    handleFieldChange("beneficiary", e.target.value)
+                  }
+                  onBlur={() => handleBlur("beneficiary")}
+                  maxLength={VALIDATION_LIMITS.beneficiary.max}
+                  style={showBeneficiaryError ? inputErrorStyle : inputStyle}
+                  aria-invalid={showBeneficiaryError ? "true" : "false"}
+                  aria-describedby={
+                    showBeneficiaryError
+                      ? "beneficiary-error-main"
+                      : undefined
+                  }
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  {showBeneficiaryError ? (
+                    <p id="beneficiary-error-main" style={errorTextStyle}>
+                      {validationErrors.beneficiary}
+                    </p>
+                  ) : (
+                    <p
+                      style={{
+                        fontSize: "0.75rem",
+                        color: colors.neutral[400],
+                        margin: "0.3rem 0 0",
+                      }}
+                    >
+                      {t("appearsOnCertificate")}
+                    </p>
+                  )}
+                  <p
+                    style={{
+                      fontSize: "0.75rem",
+                      color:
+                        beneficiaryLength >
+                        VALIDATION_LIMITS.beneficiary.max * 0.9
+                          ? "#dc2626"
+                          : colors.neutral[400],
+                      margin: "0.3rem 0 0",
+                      fontWeight:
+                        beneficiaryLength >
+                        VALIDATION_LIMITS.beneficiary.max * 0.9
+                          ? 600
+                          : 400,
+                    }}
+                  >
+                    {beneficiaryLength}/{VALIDATION_LIMITS.beneficiary.max}
+                  </p>
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div>
+                <label
+                  htmlFor="retire-reason"
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: colors.neutral[700],
+                    display: "block",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  {t("reasonLabel")}{" "}
+                  <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <textarea
+                  id="retire-reason"
+                  placeholder={t("reasonPlaceholder")}
+                  value={reason}
+                  onChange={(e) => handleFieldChange("reason", e.target.value)}
+                  onBlur={() => handleBlur("reason")}
+                  maxLength={VALIDATION_LIMITS.reason.max}
+                  rows={3}
+                  style={{
+                    ...(showReasonError ? inputErrorStyle : inputStyle),
+                    resize: "vertical",
+                  }}
+                  aria-invalid={showReasonError ? "true" : "false"}
+                  aria-describedby={
+                    showReasonError ? "reason-error-main" : undefined
+                  }
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  {showReasonError && (
+                    <p id="reason-error-main" style={errorTextStyle}>
+                      {validationErrors.reason}
+                    </p>
+                  )}
+                  <p
+                    style={{
+                      fontSize: "0.75rem",
+                      color:
+                        reasonLength > VALIDATION_LIMITS.reason.max * 0.9
+                          ? "#dc2626"
+                          : colors.neutral[400],
+                      margin: "0.3rem 0 0",
+                      marginLeft: "auto",
+                      fontWeight:
+                        reasonLength > VALIDATION_LIMITS.reason.max * 0.9
+                          ? 600
+                          : 400,
+                    }}
+                  >
+                    {reasonLength}/{VALIDATION_LIMITS.reason.max}
+                  </p>
+                </div>
+              </div>
+
+              {/* Irreversibility warning */}
+              <div
+                id="retire-warning"
+                role="note"
+                style={{
+                  background: "#fef9c3",
+                  border: "1px solid #fde047",
+                  borderRadius: "0.5rem",
+                  padding: "0.875rem 1rem",
+                  display: "flex",
+                  gap: "0.75rem",
+                }}
+              >
+                <span aria-hidden="true">⚠️</span>
+                <p style={{ fontSize: "0.8rem", color: "#854d0e", margin: 0 }}>
+                  {t("irreversibleWarningPrefix")}{" "}
+                  <strong>{t("irreversibleWarningEmphasis")}</strong>{" "}
+                  {t("irreversibleWarningSuffix")}
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* ── Preview step ────────────────────────────────────────────────── */}
+          {showPreview && (
+            <TransactionPreview
+              title="Retirement preview"
+              description="Review the effects below before permanently retiring these credits."
+              preview={preview}
+              onConfirm={
+                walletStatus === "ready" ? handlePreviewConfirm : undefined
+              }
+              onCancel={handlePreviewCancel}
+              confirmLabel={t("permanentlyRetire", {
+                tonnes: formatTonnes(amount),
+              })}
+              confirming={confirming}
+            />
+          )}
+
+          {/* Transaction status */}
+          {txStatus && (
+            <TransactionStatus
+              status={txStatus}
+              txHash={txHash ?? undefined}
+              pollProgress={
+                txStatus === "polling"
+                  ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                  : undefined
+              }
+              message={
+                txStatus === "failed" ? pollError ?? undefined : undefined
+              }
+              onRetry={txStatus === "failed" ? handleRetire : undefined}
+            />
+          )}
+
+          {/* View certificate link after success */}
+          {retirementId && txStatus === "confirmed" && (
+            <a
+              href={`/retire/${retirementId}`}
+              style={{
+                display: "block",
+                textAlign: "center",
+                background: colors.primary[50],
+                color: colors.primary[700],
+                border: `1px solid ${colors.primary[200]}`,
+                borderRadius: "0.5rem",
+                padding: "0.875rem",
+                fontSize: "0.9rem",
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              {t("viewCertificate")}
+            </a>
+          )}
+
+          {/* Wallet prompt or CTA */}
+          {walletStatus !== "ready" ? (
+            <WalletPrompt
+              status={walletStatus}
+              onConnect={handleConnect}
+              refresh={refreshWallet}
+            />
+          ) : !showPreview ? (
+            /* Before preview: "Review & Preview" CTA */
+            <button
+              type="button"
+              onClick={handleShowPreview}
+              disabled={isDisabled}
+              aria-disabled={isDisabled}
+              aria-describedby="retire-warning"
+              style={{
+                background: isDisabled ? colors.neutral[300] : "#dc2626",
+                color: "#fff",
+                border: "none",
+                borderRadius: "0.5rem",
+                padding: "0.875rem",
+                fontSize: "1rem",
+                fontWeight: 700,
+                cursor: isDisabled ? "not-allowed" : "pointer",
+              }}
+            >
+              {txStatus === "confirmed"
+                ? t("retiredCheck")
+                : busy
+                  ? t("processing")
+                  : "Review retirement →"}
+            </button>
+          ) : null}
         </div>
 
-        {txStatus && <TransactionStatus status={txStatus} txHash={txHash ?? undefined} onRetry={txStatus === "failed" ? handleRetire : undefined} />}
-
-        {retirementId && txStatus === "confirmed" && (
-          <a
-            href={`/retire/${retirementId}`}
-            style={{
-              display: "block", textAlign: "center",
-              background: colors.primary[50], color: colors.primary[700],
-              border: `1px solid ${colors.primary[200]}`,
-              borderRadius: "0.5rem", padding: "0.875rem",
-              fontSize: "0.9rem", fontWeight: 700, textDecoration: "none",
+        {/* Safety confirmation modal (shown after Confirm in preview) */}
+        {showModal && (
+          <RetireConfirmModal
+            amount={amount}
+            beneficiary={beneficiary}
+            reason={reason}
+            onConfirm={() => {
+              setShowModal(false);
+              handleRetire();
             }}
-          >
-            View & Download Certificate →
-          </a>
+            onCancel={() => setShowModal(false)}
+          />
         )}
 
-        {walletStatus !== "ready" ? (
-          <WalletPrompt status={walletStatus} onConnect={handleConnect} refresh={refreshWallet} />
-        ) : (
-          <button
-            type="button"
-            onClick={handleRetire}
-            disabled={isDisabled}
-            aria-disabled={isDisabled}
-            aria-describedby="retire-warning"
-            style={{
-              background: isDisabled ? colors.neutral[300] : "#dc2626",
-              color: "#fff", border: "none", borderRadius: "0.5rem",
-              padding: "0.875rem", fontSize: "1rem", fontWeight: 700,
-              cursor: isDisabled ? "not-allowed" : "pointer",
-            }}
-          >
-            {txStatus === "confirmed" ? "Retired ✓" :
-             busy ? "Processing…" :
-             `Permanently Retire ${formatTonnes(amount)}`}
-          </button>
-        )}
+        <Toast toasts={toasts} onDismiss={dismiss} />
       </div>
-
-      <Toast toasts={toasts} onDismiss={dismiss} />
-    </div>
     </ErrorBoundary>
+  );
+}
+
+// ── Page export ────────────────────────────────────────────────────────────────
+
+export default function RetirePage() {
+  return (
+    <Suspense
+      fallback={
+        <div style={{ padding: "2rem" }}>Loading retirement flow…</div>
+      }
+    >
+      <RetirePageContent />
+    </Suspense>
   );
 }

@@ -19,6 +19,14 @@ Describe the tests you ran and how to reproduce them:
 - [ ] E2E tests pass (if applicable)
 - [ ] Manual testing completed
 
+## Translation review checklist (i18n PRs)
+- [ ] All new or changed user-facing strings have keys in `frontend/public/locales/en/common.json`
+- [ ] Matching entries added or updated in `es/common.json` and `pt/common.json`
+- [ ] Carbon-market terms (vintage, retirement, tonne, methodology) reviewed for accuracy in es/pt
+- [ ] Pluralization and ICU placeholders (`{name}`, `{count}`) work in all locales
+- [ ] Language switcher / locale persistence tested manually if UI locale behavior changed
+- [ ] Jest i18n or component locale tests pass (`npm test -- --testPathPattern=i18n`)
+
 ## Checklist
 - [ ] My code follows the project's style guidelines
 - [ ] I have performed a self-review of my own code
@@ -28,6 +36,7 @@ Describe the tests you ran and how to reproduce them:
 - [ ] I have added tests that prove my fix is effective or that my feature works
 - [ ] New and existing unit tests passed locally with my changes
 - [ ] Any dependent changes have been merged and published
+- [ ] If I added a new top-level directory, I have updated `docs/folder-structure.md` and the README "Project Structure" section to include it
 
 ## Screenshots (if applicable)
 Add screenshots for UI changes.

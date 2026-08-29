@@ -6,15 +6,7 @@ import { PdfService } from './pdf.service';
 import { LoggerService } from '../logger/logger.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as nodemailer from 'nodemailer';
-import axios from 'axios';
-
-interface EmailAttachment {
-  content: string;
-  filename: string;
-  type: string;
-  disposition: string;
-}
+import { processWithTrace } from '../telemetry/tracing';
 
 @Processor(MAIL_QUEUE)
 export class MailProcessor extends WorkerHost {
@@ -27,10 +19,10 @@ export class MailProcessor extends WorkerHost {
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
-    const { logId, to, payload } = job.data;
     const event = job.name as MailEvent;
-
-    try {
+    return processWithTrace(MAIL_QUEUE, event, job.data, async () => {
+      const { logId, to, payload } = job.data;
+      try {
       // 1. Generate HTML from template
       const html = await this.renderTemplate(event, payload);
 
@@ -60,18 +52,20 @@ export class MailProcessor extends WorkerHost {
         data: { status: 'Sent', sentAt: new Date() },
       });
 
-    } catch (error) {
-      this.logger.error(
-        `Failed to send email ${logId}`,
-        error instanceof Error ? error.stack : String(error),
-        { logId, to, event, error: error instanceof Error ? error.message : String(error) },
-      );
+      } catch (error) {
+      this.logger.error(`Failed to send email ${logId}`, error instanceof Error ? error.stack : String(error), {
+        logId,
+        to,
+        event,
+        error: error instanceof Error ? error.message : String(error),
+      });
       await this.prisma.emailLog.update({
         where: { id: logId },
         data: { status: 'Failed', error: error instanceof Error ? error.message : String(error) },
       });
-      throw error;
-    }
+        throw error;
+      }
+    });
   }
 
   // ── Provider routing ───────────────────────────────────────────────────────

@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useProjects } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { colors, statusBadge } from "../../styles/design-system";
 import LoadingSkeleton from "../../components/LoadingSkeleton";
+import SearchAutocomplete from "../../components/SearchAutocomplete";
+import LazyImage from "../../components/LazyImage";
+import { projectTypeIconUrl } from "../../lib/project-type-icons";
 
 const METHODOLOGIES = ["", "VCS", "Gold Standard", "ACR", "CAR"];
 const COUNTRIES     = ["", "Brazil", "Indonesia", "Kenya", "India", "Colombia"];
@@ -13,12 +16,37 @@ export default function ProjectsPage() {
   const [methodology, setMethodology] = useState("");
   const [country, setCountry]         = useState("");
   const [vintage, setVintage]         = useState("");
+  const [search, setSearch]           = useState("");
 
   const { data: projects, isLoading } = useProjects({
     methodology: methodology || undefined,
     country:     country     || undefined,
     vintage:     vintage ? Number(vintage) : undefined,
   });
+
+  // Search suggestions drawn from the currently loaded projects — filtering
+  // itself happens client-side below, so this stays fast even with 1000+ projects.
+  const searchSuggestions = useMemo(() => {
+    const terms = new Set<string>();
+    for (const p of projects ?? []) {
+      terms.add(p.name);
+      terms.add(p.country);
+      terms.add(p.methodology);
+      terms.add(p.projectType);
+    }
+    return Array.from(terms);
+  }, [projects]);
+
+  const visibleProjects = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return projects ?? [];
+    return (projects ?? []).filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      p.country.toLowerCase().includes(q) ||
+      p.methodology.toLowerCase().includes(q) ||
+      p.projectType.toLowerCase().includes(q)
+    );
+  }, [projects, search]);
 
   const selectStyle: React.CSSProperties = {
     border: `1px solid ${colors.neutral[300]}`,
@@ -37,6 +65,29 @@ export default function ProjectsPage() {
       <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
         Every project has been independently verified and is monitored by satellite data.
       </p>
+
+      {/* Search */}
+      <div style={{ marginBottom: "1.25rem", maxWidth: "420px" }}>
+        <label htmlFor="project-search" className="sr-only">Search projects</label>
+        <SearchAutocomplete
+          id="project-search"
+          data-shortcut-target="search"
+          value={search}
+          onChange={setSearch}
+          suggestions={searchSuggestions}
+          placeholder="Search by project name, country, or methodology…"
+          ariaLabel="Search projects"
+          inputStyle={{
+            ...selectStyle,
+            width: "100%",
+            padding: "0.6rem 0.9rem 0.6rem 2.3rem",
+            fontSize: "0.9rem",
+          }}
+          leadingIcon={
+            <span aria-hidden="true" style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)", color: colors.neutral[400], zIndex: 1 }}>🔍</span>
+          }
+        />
+      </div>
 
       {/* Filters */}
       <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
@@ -57,9 +108,18 @@ export default function ProjectsPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
           {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="ProjectCard" />)}
         </div>
+      ) : visibleProjects.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "4rem 2rem", background: colors.surfaceAlt, borderRadius: "1rem" }}>
+          <p style={{ color: colors.neutral[900], fontWeight: 700, fontSize: "1.125rem", margin: "0 0 0.5rem" }}>
+            No projects match your search
+          </p>
+          <p style={{ color: colors.neutral[500], fontSize: "0.875rem", margin: 0 }}>
+            Try a different project name, country, or methodology.
+          </p>
+        </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
-          {(projects ?? []).map(p => {
+          {visibleProjects.map(p => {
             const badge = statusBadge(p.status);
             return (
               <a key={p.projectId} href={`/projects/${p.projectId}`} style={{ textDecoration: "none" }}>
@@ -83,9 +143,18 @@ export default function ProjectsPage() {
                       {p.status}
                     </span>
                   </div>
-                  <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
-                    {p.name}
-                  </h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
+                    <LazyImage
+                      src={projectTypeIconUrl(p.projectType)}
+                      alt=""
+                      width={40}
+                      height={40}
+                      borderRadius="9999px"
+                    />
+                    <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: 0 }}>
+                      {p.name}
+                    </h3>
+                  </div>
                   <p style={{ fontSize: "0.8rem", color: colors.neutral[500], margin: "0 0 1rem" }}>
                     {p.methodology} · {p.projectType}
                   </p>

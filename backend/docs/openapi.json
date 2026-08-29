@@ -9,6 +9,14 @@
           "200": {
             "description": ""
           }
+        },
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/health"
         }
       }
     },
@@ -46,7 +54,15 @@
         },
         "tags": [
           "Auth"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/auth/login"
+        }
       }
     },
     "/api/v1/projects": {
@@ -90,7 +106,15 @@
         },
         "tags": [
           "Projects"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/projects"
+        }
       }
     },
     "/api/v1/projects/search": {
@@ -240,7 +264,15 @@
         },
         "tags": [
           "Projects"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/projects/search"
+        }
       }
     },
     "/api/v1/projects/{id}": {
@@ -268,7 +300,15 @@
         },
         "tags": [
           "Projects"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/projects/{id}"
+        }
       }
     },
     "/api/v1/projects/register": {
@@ -304,7 +344,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/projects/register"
+        }
       }
     },
     "/api/v1/projects/{id}/status": {
@@ -350,7 +398,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/projects/{id}/status"
+        }
       }
     },
     "/api/v1/projects/{id}/verify": {
@@ -396,7 +452,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/projects/{id}/verify"
+        }
       }
     },
     "/api/v1/projects/{id}/reject": {
@@ -442,7 +506,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/projects/{id}/reject"
+        }
       }
     },
     "/api/v1/credits/mint": {
@@ -478,7 +550,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/credits/mint"
+        }
       }
     },
     "/api/v1/credits/batch/{id}": {
@@ -506,7 +586,15 @@
         },
         "tags": [
           "Credits"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/credits/batch/{id}"
+        }
       }
     },
     "/api/v1/credits/retire": {
@@ -542,7 +630,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/credits/retire"
+        }
       }
     },
     "/api/v1/credits/retirement/{id}": {
@@ -570,7 +666,15 @@
         },
         "tags": [
           "Credits"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/credits/retirement/{id}"
+        }
       }
     },
     "/api/v1/credits/lookup/{serial}": {
@@ -598,7 +702,15 @@
         },
         "tags": [
           "Credits"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/credits/lookup/{serial}"
+        }
       }
     },
     "/api/v1/retirements": {
@@ -623,7 +735,15 @@
         },
         "tags": [
           "Retirements"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/retirements"
+        }
       }
     },
     "/api/v1/retirements/{id}": {
@@ -651,7 +771,15 @@
         },
         "tags": [
           "Retirements"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/retirements/{id}"
+        }
       }
     },
     "/api/v1/retirements/certificate/{id}": {
@@ -679,7 +807,15 @@
         },
         "tags": [
           "Retirements"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/retirements/certificate/{id}"
+        }
       }
     },
     "/api/v1/retirements/generate-pdf": {
@@ -707,7 +843,15 @@
         },
         "tags": [
           "Retirements"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/retirements/generate-pdf"
+        }
       }
     },
     "/api/v1/marketplace/listings": {
@@ -769,7 +913,15 @@
         },
         "tags": [
           "Marketplace"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/marketplace/listings"
+        }
       }
     },
     "/api/v1/marketplace/listings/{id}": {
@@ -797,7 +949,15 @@
         },
         "tags": [
           "Marketplace"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/marketplace/listings/{id}"
+        }
       }
     },
     "/api/v1/marketplace/list": {
@@ -830,7 +990,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/marketplace/list"
+        }
       }
     },
     "/api/v1/marketplace/{id}": {
@@ -866,7 +1034,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/marketplace/{id}"
+        }
       }
     },
     "/api/v1/marketplace/purchase": {
@@ -902,7 +1078,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/marketplace/purchase"
+        }
       }
     },
     "/api/v1/marketplace/bulk-purchase": {
@@ -938,7 +1122,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/marketplace/bulk-purchase"
+        }
       }
     },
     "/api/v1/oracle/monitoring": {
@@ -974,7 +1166,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/oracle/monitoring"
+        }
       }
     },
     "/api/v1/oracle/price": {
@@ -1010,7 +1210,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/oracle/price"
+        }
       }
     },
     "/api/v1/oracle/status/{projectId}": {
@@ -1035,7 +1243,15 @@
         },
         "tags": [
           "Oracle"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/oracle/status/{projectId}"
+        }
       }
     },
     "/api/v1/oracle/flag": {
@@ -1071,7 +1287,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/oracle/flag"
+        }
       }
     },
     "/api/v1/stats": {
@@ -1087,7 +1311,15 @@
         },
         "tags": [
           "Stats"
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/stats"
+        }
       }
     },
     "/api/v1/queue/jobs": {
@@ -1120,7 +1352,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/queue/jobs"
+        }
       }
     },
     "/api/v1/queue/jobs/{id}": {
@@ -1156,7 +1396,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/queue/jobs/{id}"
+        }
       }
     },
     "/api/v1/queue/stats": {
@@ -1179,7 +1427,15 @@
           {
             "bearer": []
           }
-        ]
+        ],
+        "deprecated": true,
+        "x-deprecation": {
+          "version": "1",
+          "sunsetDate": "2027-01-01",
+          "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+          "successorVersion": "2",
+          "successorPath": "/api/v2/queue/stats"
+        }
       }
     }
   },
@@ -1632,6 +1888,25 @@
           "type",
           "payload"
         ]
+      }
+    }
+  },
+  "x-api-versions": {
+    "current": "2",
+    "supported": [
+      "1",
+      "2"
+    ],
+    "deprecated": [
+      "1"
+    ],
+    "deprecationPolicy": {
+      "v1": {
+        "deprecated": true,
+        "deprecatedOn": "2026-07-30",
+        "sunsetOn": "2027-01-01",
+        "migrationGuide": "https://api.carbonledger.io/docs/migration/v1-to-v2",
+        "successorVersion": "2"
       }
     }
   }
