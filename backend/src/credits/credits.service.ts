@@ -3,6 +3,9 @@ import { PrismaService } from "../prisma.service";
 import { MintCreditsDto, RetireCreditsDto } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
+import { IpfsService } from "../common/ipfs.service";
+import { AnalyticsService } from "../analytics/analytics.service";
+import { AnalyticsEvent } from "../analytics/analytics.constants";
 import { randomBytes } from "crypto";
 
 /**
@@ -22,6 +25,7 @@ export class CreditsService {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
     private readonly ipfsService: IpfsService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async mintCredits(dto: MintCreditsDto) {
@@ -120,6 +124,16 @@ export class CreditsService {
       retirementId: retirement.retirementId,
       beneficiary: retirement.beneficiary,
       amount: retirement.amount,
+    });
+
+    // Track retirement event
+    this.analytics.track(dto.holderPublicKey, AnalyticsEvent.RETIREMENT_COMPLETED, {
+      retirementId: retirement.retirementId,
+      batchId: dto.batchId,
+      projectId: batch.projectId,
+      amount: dto.amount,
+      vintageYear: batch.vintageYear,
+      beneficiary: dto.beneficiary,
     });
 
     return {

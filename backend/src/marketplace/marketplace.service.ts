@@ -4,6 +4,8 @@ import { CreateListingDto, PurchaseDto, BulkPurchaseDto, ListingsQueryDto, Pagin
 import { randomBytes } from "crypto";
 import { ListingsCacheService } from "./listings-cache.service";
 import { MarketplaceContractService } from "./marketplace-contract.service";
+import { AnalyticsService } from "../analytics/analytics.service";
+import { AnalyticsEvent } from "../analytics/analytics.constants";
 
 @Injectable()
 export class MarketplaceService {
@@ -11,6 +13,7 @@ export class MarketplaceService {
     private readonly prisma: PrismaService,
     private readonly cache: ListingsCacheService,
     private readonly contractService: MarketplaceContractService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async findAll(query: ListingsQueryDto): Promise<PaginatedListingsResponse> {
@@ -134,6 +137,15 @@ export class MarketplaceService {
       data:  { amountAvailable: newAmount, status: newStatus },
     });
 
+    // Track purchase event (fire-and-forget)
+    this.analytics.track(dto.buyerPublicKey, AnalyticsEvent.PURCHASE_COMPLETED, {
+      listingId:  dto.listingId,
+      batchId:    listing.batchId,
+      amount:     dto.amount,
+      methodology: listing.methodology,
+      vintageYear: listing.vintageYear,
+    });
+
     return {
       txHash:  randomBytes(32).toString("hex"),
       batchId: listing.batchId,
@@ -155,6 +167,13 @@ export class MarketplaceService {
       });
       results.push(result);
     }
+
+    // Track bulk purchase as a single aggregated event
+    this.analytics.track(dto.buyerPublicKey, AnalyticsEvent.BULK_PURCHASE_COMPLETED, {
+      listingCount: dto.listingIds.length,
+      totalAmount: dto.amounts.reduce((sum, n) => sum + n, 0),
+    });
+
     return results;
   }
 }
