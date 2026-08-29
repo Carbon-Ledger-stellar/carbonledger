@@ -55,11 +55,13 @@ export default function ProjectsPage() {
     fontSize: "0.875rem",
     color: colors.neutral[700],
     background: colors.surface,
+    minHeight: "48px",
   };
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 2rem" }}>
-      <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
+    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 1rem" }}>
+      <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}
+          className="hero-title">
         Verified Carbon Projects
       </h1>
       <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
@@ -67,7 +69,7 @@ export default function ProjectsPage() {
       </p>
 
       {/* Search */}
-      <div style={{ marginBottom: "1.25rem", maxWidth: "420px" }}>
+      <div style={{ marginBottom: "1.25rem" }}>
         <label htmlFor="project-search" className="sr-only">Search projects</label>
         <SearchAutocomplete
           id="project-search"
@@ -89,27 +91,42 @@ export default function ProjectsPage() {
         />
       </div>
 
-      {/* Filters */}
-      <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
-        <select style={selectStyle} value={methodology} onChange={e => setMethodology(e.target.value)}>
+      {/* Filters — stacks to single column on mobile */}
+      <div className="projects-filter-row" style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
+        <select
+          style={{ ...selectStyle, flex: "1 1 160px" }}
+          value={methodology}
+          onChange={e => setMethodology(e.target.value)}
+          aria-label="Filter by methodology"
+        >
           {METHODOLOGIES.map(m => <option key={m} value={m}>{m || "All Methodologies"}</option>)}
         </select>
-        <select style={selectStyle} value={country} onChange={e => setCountry(e.target.value)}>
+        <select
+          style={{ ...selectStyle, flex: "1 1 160px" }}
+          value={country}
+          onChange={e => setCountry(e.target.value)}
+          aria-label="Filter by country"
+        >
           {COUNTRIES.map(c => <option key={c} value={c}>{c || "All Countries"}</option>)}
         </select>
-        <select style={selectStyle} value={vintage} onChange={e => setVintage(e.target.value)}>
+        <select
+          style={{ ...selectStyle, flex: "1 1 160px" }}
+          value={vintage}
+          onChange={e => setVintage(e.target.value)}
+          aria-label="Filter by vintage year"
+        >
           <option value="">All Vintages</option>
           {["2020","2021","2022","2023","2024"].map(v => <option key={v} value={v}>{v}</option>)}
         </select>
       </div>
 
-      {/* Grid */}
+      {/* Grid — responsive: 1 col mobile, 2 col tablet, 3+ col desktop */}
       {isLoading ? (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
+        <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))", gap: "1.5rem" }}>
           {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="ProjectCard" />)}
         </div>
       ) : visibleProjects.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "4rem 2rem", background: colors.surfaceAlt, borderRadius: "1rem" }}>
+        <div style={{ textAlign: "center", padding: "4rem 1rem", background: colors.surfaceAlt, borderRadius: "1rem" }}>
           <p style={{ color: colors.neutral[900], fontWeight: 700, fontSize: "1.125rem", margin: "0 0 0.5rem" }}>
             No projects match your search
           </p>
@@ -118,7 +135,7 @@ export default function ProjectsPage() {
           </p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
+        <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))", gap: "1.5rem" }}>
           {visibleProjects.map(p => {
             const badge = statusBadge(p.status);
             return (
@@ -139,6 +156,7 @@ export default function ProjectsPage() {
                     <span style={{
                       background: badge.bg, color: badge.text, border: `1px solid ${badge.border}`,
                       borderRadius: "9999px", padding: "0.15rem 0.5rem", fontSize: "0.7rem", fontWeight: 600,
+                      whiteSpace: "nowrap",
                     }}>
                       {p.status}
                     </span>
@@ -184,6 +202,17 @@ export default function ProjectsPage() {
           })}
         </div>
       )}
+
+      <style>{`
+        @media (max-width: 639px) {
+          .projects-filter-row {
+            flex-direction: column;
+          }
+          .projects-filter-row select {
+            width: 100%;
+          }
+        }
+      `}</style>
     </div>
   );
 }

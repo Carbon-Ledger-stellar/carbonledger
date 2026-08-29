@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
   title: 'Carbon Ledger',
   description: 'Carbon credit marketplace and tracking platform',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes',
+  viewport: 'width=device-width, initial-scale=1',
   openGraph: {
     siteName: 'Carbon Ledger',
     type: 'website',
@@ -29,7 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="manifest" href="/manifest.json" />
         <meta name="theme-color" content="#7C3AED" />
         <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
