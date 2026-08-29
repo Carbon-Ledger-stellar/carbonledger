@@ -3,6 +3,7 @@ import { PublicApiModule } from "./public-api/public-api.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule } from "@nestjs/common";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
+import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { AuthModule } from "./auth/auth.module";
 import { ProjectsModule } from "./projects/projects.module";
@@ -50,6 +51,7 @@ class HealthController {
       { name: "auth",    ttl: 60_000, limit: 5 },    // 5 req/min for login (brute-force protection)
       { name: "retire",  ttl: 60_000, limit: 10 },   // 10 req/min for retire (business flow protection)
     ]),
+    ScheduleModule.forRoot(),
     BullModule.forRoot({
       connection: process.env.REDIS_SENTINELS
         ? {
