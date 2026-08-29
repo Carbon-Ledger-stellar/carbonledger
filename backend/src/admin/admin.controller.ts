@@ -66,4 +66,28 @@ export class AdminController {
   ) {
     return this.admin.getAuditLogs({ limit, offset, action });
   }
+
+  // ── Account lockout management ──────────────────────────────────────────────
+
+  /**
+   * Manually unlock an account that was locked due to too many failed login
+   * attempts.  Resets the failed-attempt counter immediately.
+   *
+   * POST /api/admin/accounts/:publicKey/unlock
+   */
+  @Post('accounts/:publicKey/unlock')
+  unlockAccount(@Param('publicKey') publicKey: string) {
+    return this.admin.unlockAccount(publicKey);
+  }
+
+  /**
+   * Return the current lockout state for a given public key.
+   * Useful for auditing brute-force attempts.
+   *
+   * GET /api/admin/accounts/:publicKey/lockout-info
+   */
+  @Get('accounts/:publicKey/lockout-info')
+  getLockoutInfo(@Param('publicKey') publicKey: string) {
+    return this.admin.getAccountLockoutInfo(publicKey);
+  }
 }

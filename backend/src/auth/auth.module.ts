@@ -8,6 +8,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { JWTRotationStrategy } from './jwt-rotation.strategy';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
+import { AccountLockoutService } from './account-lockout.service';
 import { RolesGuard } from './roles.guard';
 import { PrismaService } from '../prisma.service';
 
@@ -22,6 +23,7 @@ import { PrismaService } from '../prisma.service';
   ],
   providers: [
     AuthService,
+    AccountLockoutService,
     JwtStrategy,
     JWTRotationStrategy,
     LoginRateLimitGuard,
@@ -30,6 +32,6 @@ import { PrismaService } from '../prisma.service';
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
   controllers: [AuthController],
-  exports: [AuthService, JwtModule, RolesGuard],
+  exports: [AuthService, AccountLockoutService, JwtModule, RolesGuard],
 })
 export class AuthModule {}

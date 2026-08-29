@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
+import { AccountLockoutService, LockoutInfo } from '../auth/account-lockout.service';
 
 @Injectable()
 export class AdminService {
@@ -9,6 +10,7 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly indexer: IndexerService,
     private readonly oracle: OracleService,
+    private readonly lockout: AccountLockoutService,
   ) {}
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
@@ -88,5 +90,24 @@ export class AdminService {
       skip:    Number(query.offset) || 0,
       orderBy: { timestamp: 'desc' },
     });
+  }
+
+  // ── Account lockout management ──────────────────────────────────────────────
+
+  /**
+   * Manually unlock an account that was locked due to too many failed attempts.
+   * Resets the failed-attempt counter and removes any active lockout.
+   */
+  unlockAccount(publicKey: string): { unlocked: true; publicKey: string } {
+    this.lockout.unlock(publicKey);
+    return { unlocked: true, publicKey };
+  }
+
+  /**
+   * Return current lockout state for the given public key.
+   * Useful for auditing and investigating brute-force attempts.
+   */
+  getAccountLockoutInfo(publicKey: string): LockoutInfo {
+    return this.lockout.getLockoutInfo(publicKey);
   }
 }

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
+import { AccountLockoutService } from './account-lockout.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 
@@ -21,6 +22,7 @@ export class AuthService {
   constructor(
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
+    private readonly lockout: AccountLockoutService,
   ) {}
 
   /** Issue a one-time challenge nonce for the given Stellar public key. */
@@ -37,6 +39,13 @@ export class AuthService {
    * The client must sign the exact string: `carbonledger:${nonce}`
    * Role is NEVER accepted from the request body for existing users —
    * new users default to "corporation"; existing users keep their DB role.
+   *
+   * Account lockout:
+   *   - If the account is locked (≥10 consecutive failures) the request is
+   *     rejected immediately without touching the nonce store.
+   *   - A failed signature check records a failed attempt, potentially locking
+   *     the account on the 10th failure.
+   *   - A successful login clears the failure counter.
    */
   async verifySignatureAndLogin(
     publicKey: string,
@@ -46,13 +55,22 @@ export class AuthService {
   ): Promise<{ access_token: string; refresh_token: string }> {
     this.validatePublicKey(publicKey);
 
+    // 0. Check account lockout before doing anything else
+    if (this.lockout.isLockedOut(publicKey)) {
+      throw new UnauthorizedException(
+        'Account temporarily locked. Too many failed attempts.',
+      );
+    }
+
     // 1. Validate nonce
     const stored = nonceStore.get(publicKey);
     if (!stored || stored.nonce !== nonce) {
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Invalid or expired challenge');
     }
     if (Date.now() > stored.expiresAt) {
       nonceStore.delete(publicKey);
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Challenge expired');
     }
     nonceStore.delete(publicKey); // single-use
@@ -60,6 +78,7 @@ export class AuthService {
     // 2. Verify signature
     const message = `carbonledger:${nonce}`;
     if (!this.verifySignature(publicKey, message, signature)) {
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Signature verification failed');
     }
 
@@ -70,6 +89,10 @@ export class AuthService {
         update: {},
         create: { publicKey, role },
       });
+
+      // Successful login — clear any previous failure history
+      this.lockout.unlock(publicKey);
+
       return this.issueTokenPair(user.publicKey, user.role as UserRole);
     } catch (error: any) {
       if (error?.code === 'P2024') {
