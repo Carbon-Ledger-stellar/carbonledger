@@ -1014,5 +1014,123 @@ mod tests {
         let final_batch = client.get_credit_batch(&s(&env, "b1")).unwrap();
         assert_eq!(final_batch.status, CreditStatus::FullyRetired);
     }
+
+    // ── Serial number overflow / boundary tests ───────────────────────────────
+
+    /// serial_end == serial_start must be rejected (range spans zero credits).
+    #[test]
+    fn test_serial_end_equal_to_start_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        let result = client.try_mint_credits(
+            &admin, &s(&env, "p1"), &1_i128, &2023_u32,
+            &s(&env, "b1"), &100_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidSerialRange));
+    }
+
+    /// serial_end < serial_start must be rejected.
+    #[test]
+    fn test_serial_end_less_than_start_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        let result = client.try_mint_credits(
+            &admin, &s(&env, "p1"), &1_i128, &2023_u32,
+            &s(&env, "b1"), &500_u64, &100_u64, &s(&env, "cid"), &owner,
+        );
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidSerialRange));
+    }
+
+    /// serial_start = 0 must be rejected regardless of serial_end.
+    #[test]
+    fn test_serial_start_zero_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        let result = client.try_mint_credits(
+            &admin, &s(&env, "p1"), &1_i128, &2023_u32,
+            &s(&env, "b1"), &0_u64, &1_u64, &s(&env, "cid"), &owner,
+        );
+        assert_eq!(result.unwrap_err(), Ok(CarbonError::InvalidSerialRange));
+    }
+
+    /// A range ending at u64::MAX with start one less should succeed.
+    /// This validates that the contract handles the upper u64 boundary without panicking.
+    #[test]
+    fn test_u64_max_serial_end_succeeds() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        // u64::MAX = 18446744073709551615
+        let result = client.try_mint_credits(
+            &admin, &s(&env, "p1"), &1_i128, &2023_u32,
+            &s(&env, "b1"), &(u64::MAX - 1), &u64::MAX, &s(&env, "cid"), &owner,
+        );
+        assert!(result.is_ok(), "minting with serial_end = u64::MAX should succeed");
+    }
+
+    /// A 1000-credit batch pinned right at the top of the u64 range must succeed.
+    #[test]
+    fn test_serial_range_near_u64_max_boundary() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        let result = client.try_mint_credits(
+            &admin, &s(&env, "p1"), &1000_i128, &2023_u32,
+            &s(&env, "b1"), &(u64::MAX - 999), &u64::MAX, &s(&env, "cid"), &owner,
+        );
+        assert!(result.is_ok(), "1000-credit batch at u64::MAX boundary should succeed");
+    }
+
+    /// Two batches that overlap near u64::MAX boundary must trigger double-counting detection.
+    #[test]
+    fn test_serial_overlap_near_u64_max_detected() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        // First batch occupies [u64::MAX-200 .. u64::MAX-101]
+        client.mint_credits(
+            &admin, &s(&env, "p1"), &100_i128, &2023_u32,
+            &s(&env, "b1"), &(u64::MAX - 200), &(u64::MAX - 101), &s(&env, "cid"), &owner,
+        );
+
+        // Second batch overlaps: [u64::MAX-150 .. u64::MAX]
+        let result = client.try_mint_credits(
+            &admin, &s(&env, "p1"), &151_i128, &2023_u32,
+            &s(&env, "b2"), &(u64::MAX - 150), &u64::MAX, &s(&env, "cid2"), &owner,
+        );
+        assert!(result.is_err(), "overlapping serial range near u64::MAX should be rejected");
+    }
+
+    /// Arithmetic overflow in retirement serial assignment must not panic.
+    /// Retires the last possible serial and verifies the certificate is correct.
+    #[test]
+    fn test_retirement_serial_arithmetic_at_u64_max() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        // Mint a single-credit batch at u64::MAX - 1 to u64::MAX
+        client.mint_credits(
+            &admin, &s(&env, "p1"), &1_i128, &2023_u32,
+            &s(&env, "b1"), &(u64::MAX - 1), &u64::MAX, &s(&env, "cid"), &owner,
+        );
+
+        let cert = client.retire_credits(
+            &owner, &s(&env, "b1"), &1_i128,
+            &s(&env, "offset"), &s(&env, "Corp"),
+            &s(&env, "ret-001"), &s(&env, "tx"), &s(&env, "QmCID"),
+        );
+        assert!(cert.is_ok(), "retirement at u64::MAX boundary should not overflow");
+        assert_eq!(cert.unwrap().amount, 1);
+    }
 }
 
