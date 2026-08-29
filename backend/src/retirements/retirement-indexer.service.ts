@@ -23,6 +23,7 @@ export class RetirementIndexerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RetirementIndexerService.name);
   private pollInterval: NodeJS.Timeout | null = null;
   private readonly POLL_MS = 20_000; // poll every 20s → index within 30s of confirmation
+  private lastCachedEvents: RetirementEvent[] = [];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -77,19 +78,33 @@ export class RetirementIndexerService implements OnModuleInit, OnModuleDestroy {
     const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
     const url = `${horizonUrl}/contracts/${contractId}/events?limit=200&order=asc`;
 
-    const res = await fetch(url);
-    if (!res.ok) {
-      this.logger.warn(`Horizon returned ${res.status} for contract events`);
-      return [];
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        this.logger.warn(`Horizon returned ${res.status} for contract events`);
+        return this.lastCachedEvents;
+      }
+
+      const json = (await res.json()) as { _embedded?: { records?: HorizonEvent[] } };
+      const records = json._embedded?.records ?? [];
+      const parsedEvents = records
+        .filter((r) => r.type === 'contract' && r.topic?.includes('retire'))
+        .map((r) => this.parseHorizonEvent(r))
+        .filter((e): e is RetirementEvent => e !== null);
+
+      if (parsedEvents.length > 0) {
+        this.lastCachedEvents = parsedEvents;
+      }
+
+      return parsedEvents;
+    } catch (error) {
+      const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
+      this.logger.error(`Failed to fetch retirement events from Horizon: ${errorDetails}`);
+      if (this.lastCachedEvents.length > 0) {
+        this.logger.warn(`Serving ${this.lastCachedEvents.length} cached retirement events due to Horizon outage`);
+      }
+      return this.lastCachedEvents;
     }
-
-    const json = (await res.json()) as { _embedded?: { records?: HorizonEvent[] } };
-    const records = json._embedded?.records ?? [];
-
-    return records
-      .filter((r) => r.type === "contract" && r.topic?.includes("retire"))
-      .map((r) => this.parseHorizonEvent(r))
-      .filter((e): e is RetirementEvent => e !== null);
   }
 
   private parseHorizonEvent(record: HorizonEvent): RetirementEvent | null {

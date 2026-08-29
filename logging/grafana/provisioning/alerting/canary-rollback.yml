@@ -1,0 +1,172 @@
+apiVersion: 1
+
+# ── Contact points ────────────────────────────────────────────────────────────
+# The canary-rollback contact point calls the backend admin API to zero out
+# CANARY_TRAFFIC_PCT automatically when the alert fires.
+# Replace <ADMIN_JWT> with a long-lived service-account token for the admin role.
+contactPoints:
+  - orgId: 1
+    name:   canary-auto-rollback
+    receivers:
+      - uid:  canary-rollback-webhook
+        type: webhook
+        settings:
+          url:        "${BACKEND_API_URL:-http://backend:3001}/api/v1/admin/canary"
+          httpMethod: POST
+          # Body sent to the backend admin endpoint to zero out canary traffic.
+          message: '{"trafficPct":0}'
+          # Add Authorization header via Grafana's header auth feature.
+          # Requires Grafana >= 9.4 with the 'extraHeaders' setting.
+          authorization:
+            type:        Bearer
+            credentials: "${GRAFANA_ADMIN_JWT}"
+        disableResolveMessage: true
+
+# ── Notification policies ─────────────────────────────────────────────────────
+policies:
+  - orgId: 1
+    receiver: canary-auto-rollback
+    group_by:
+      - alertname
+      - component
+    matchers:
+      - component = canary_deployment
+        severity  = critical
+    group_wait:      10s
+    group_interval:  1m
+    repeat_interval: 15m
+
+# ── Alert rules (Grafana-native, scraping the /metrics endpoint) ──────────────
+groups:
+  - orgId:    1
+    name:     canary-contract-deployment
+    folder:   CarbonLedger
+    interval: 30s
+    rules:
+      # ── Primary rule: canary error rate > 1.5× primary for 5 minutes ─────────
+      - uid:       carbonledger-canary-high-error-rate
+        title:     "Canary Contract: Error Rate > 1.5× Primary (5 min)"
+        condition: D
+
+        data:
+          # A: canary errors per second (rate over 5 min)
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to:   0
+            datasourceUid: prometheus
+            model:
+              expr: >
+                rate(contract_calls_total{contract="canary",status="error"}[5m])
+              instant: true
+
+          # B: primary errors per second (rate over 5 min)
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to:   0
+            datasourceUid: prometheus
+            model:
+              expr: >
+                rate(contract_calls_total{contract="primary",status="error"}[5m])
+                + 0.0001
+              instant: true
+
+          # C: ratio = canary_error_rate / primary_error_rate
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type:       math
+              expression: "$A / $B"
+
+          # D: threshold — fire when ratio > 1.5
+          - refId: D
+            datasourceUid: __expr__
+            model:
+              type:       threshold
+              expression: C
+              conditions:
+                - evaluator:
+                    params: [1.5]
+                    type:   gt
+                  operator:
+                    type: and
+                  query:
+                    params: [C]
+                  reducer:
+                    params: []
+                    type:   last
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          5m
+
+        annotations:
+          summary:     "Canary contract error rate exceeds 1.5× primary"
+          description: >
+            Canary error rate ratio is {{ $value }}× the primary rate.
+            Automatic rollback triggered: POST /api/v1/admin/canary {"trafficPct":0}.
+          runbook_url: "https://docs.carbonledger.com/runbooks/contract-upgrade"
+
+        labels:
+          severity:  critical
+          team:      carbonledger
+          component: canary_deployment
+
+      # ── Secondary rule: absolute canary error rate > 10% ─────────────────────
+      - uid:       carbonledger-canary-absolute-error-rate
+        title:     "Canary Contract: Absolute Error Rate > 10%"
+        condition: C
+
+        data:
+          # A: canary error rate (0–1 fraction)
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to:   0
+            datasourceUid: prometheus
+            model:
+              expr: >
+                rate(contract_calls_total{contract="canary",status="error"}[5m])
+                /
+                (
+                  rate(contract_calls_total{contract="canary",status="success"}[5m]) +
+                  rate(contract_calls_total{contract="canary",status="error"}[5m])
+                  + 0.0001
+                )
+              instant: true
+
+          # B: reduce to scalar
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type:       reduce
+              expression: A
+              reducer:    last
+
+          # C: threshold 0.10 (= 10%)
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type:       threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [0.10]
+                    type:   gt
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          5m
+
+        annotations:
+          summary:     "Canary contract absolute error rate exceeds 10%"
+          description: >
+            Canary error rate is {{ $value | humanizePercentage }}.
+            Consider manual rollback via POST /api/v1/admin/canary {"trafficPct":0}.
+          runbook_url: "https://docs.carbonledger.com/runbooks/contract-upgrade"
+
+        labels:
+          severity:  warning
+          team:      carbonledger
+          component: canary_deployment

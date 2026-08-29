@@ -6,6 +6,46 @@ use carbon_oracle::{CarbonOracleContract, CarbonOracleContractClient};
 
 fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
 
+// Built by tests/build.rs from the same reviewed contract source used for the
+// release artifact. Keeping this as a compiled WASM fixture ensures this test
+// invokes Soroban's real executable-replacement path instead of a mock hash.
+const CARBON_CREDIT_WASM: &[u8] = include_bytes!(env!("CARBON_CREDIT_WASM"));
+
+#[test]
+fn test_credit_wasm_upgrade_preserves_active_credit_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let contract_id = env.register_contract(None, CarbonCreditContract);
+    let client = CarbonCreditContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &registry).unwrap();
+    client.mint_credits(
+        &admin,
+        &s(&env, "project-upgrade"),
+        &1_000_i128,
+        &2023_u32,
+        &s(&env, "batch-upgrade"),
+        &1_u64,
+        &1_000_u64,
+        &s(&env, "QmUpgradeFixture"),
+        &owner,
+    ).unwrap();
+
+    let before = client.get_credit_batch(&s(&env, "batch-upgrade")).unwrap();
+    let wasm_hash = env.deployer().upload_contract_wasm(CARBON_CREDIT_WASM);
+    client.upgrade_contract(&admin, &wasm_hash).unwrap();
+
+    // This invocation is dispatched to the uploaded WASM, not the native test
+    // contract used for setup. The existing ledger entry must decode unchanged.
+    let after = client.get_credit_batch(&s(&env, "batch-upgrade")).unwrap();
+    assert_eq!(after.owner, before.owner);
+    assert_eq!(after.amount, before.amount);
+    assert_eq!(after.status, before.status);
+    assert_eq!(client.get_version(), 2);
+}
+
 // -- carbon_registry upgrade tests --------------------------------------------
 
 #[test]
@@ -21,11 +61,11 @@ fn test_registry_upgrade_admin_only() {
 
     let attacker = Address::generate(&env);
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    let result = client.try_upgrade(&attacker, &fake_hash);
+    let result = client.try_upgrade_contract(&attacker, &fake_hash);
     assert!(result.is_err());
 
     // Admin upgrade succeeds
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
     assert_eq!(client.get_version(), 2);
     let history = client.get_upgrade_history().unwrap();
     assert_eq!(history.from_version, 1);
@@ -68,7 +108,7 @@ fn test_registry_retired_credits_preserved_after_upgrade() {
 
     // Upgrade
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
 
     // Verify post-upgrade state is preserved
     let post = client.get_project(&s(&env, "proj-001")).unwrap();
@@ -94,10 +134,10 @@ fn test_credit_upgrade_admin_only() {
 
     let attacker = Address::generate(&env);
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    let result = client.try_upgrade(&attacker, &fake_hash);
+    let result = client.try_upgrade_contract(&attacker, &fake_hash);
     assert!(result.is_err());
 
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
     assert_eq!(client.get_version(), 2);
 }
 
@@ -141,7 +181,7 @@ fn test_credit_retired_records_preserved_after_upgrade() {
 
     // Upgrade
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
 
     // Verify post-upgrade retirement is preserved
     let batch_post = client.get_credit_batch(&s(&env, "batch-001")).unwrap();
@@ -180,10 +220,10 @@ fn test_marketplace_upgrade_admin_only() {
 
     let attacker = Address::generate(&env);
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    let result = client.try_upgrade(&attacker, &fake_hash);
+    let result = client.try_upgrade_contract(&attacker, &fake_hash);
     assert!(result.is_err());
 
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
     assert_eq!(client.get_version(), 2);
 }
 
@@ -216,7 +256,7 @@ fn test_marketplace_listings_preserved_after_upgrade() {
     assert_eq!(pre.amount_available, 100);
 
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
 
     let post = client.get_listing(&s(&env, "list-001")).unwrap();
     assert_eq!(post.amount_available, 100);
@@ -237,10 +277,10 @@ fn test_oracle_upgrade_admin_only() {
 
     let attacker = Address::generate(&env);
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    let result = client.try_upgrade(&attacker, &fake_hash);
+    let result = client.try_upgrade_contract(&attacker, &fake_hash);
     assert!(result.is_err());
 
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
     assert_eq!(client.get_version(), 2);
 }
 
@@ -267,7 +307,7 @@ fn test_oracle_monitoring_preserved_after_upgrade() {
     assert_eq!(pre.tonnes_verified, 5000);
 
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    client.upgrade(&admin, &fake_hash).unwrap();
+    client.upgrade_contract(&admin, &fake_hash).unwrap();
 
     let post = client.get_monitoring_data(&s(&env, "proj-001"), &s(&env, "2023-Q1")).unwrap();
     assert_eq!(post.tonnes_verified, 5000);
@@ -313,10 +353,10 @@ fn test_all_contracts_version_consistency() {
 
     // Upgrade all
     let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
-    reg_client.upgrade(&admin, &fake_hash).unwrap();
-    cred_client.upgrade(&admin, &fake_hash).unwrap();
-    mkt_client.upgrade(&admin, &fake_hash).unwrap();
-    ora_client.upgrade(&admin, &fake_hash).unwrap();
+    reg_client.upgrade_contract(&admin, &fake_hash).unwrap();
+    cred_client.upgrade_contract(&admin, &fake_hash).unwrap();
+    mkt_client.upgrade_contract(&admin, &fake_hash).unwrap();
+    ora_client.upgrade_contract(&admin, &fake_hash).unwrap();
 
     // All now at version 2
     assert_eq!(reg_client.get_version(), 2);

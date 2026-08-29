@@ -14,6 +14,18 @@ export class VerifyDto {
   role?: UserRole;
 }
 
+/**
+ * The refresh token may arrive either as an HTTP-only cookie (#892) or in
+ * the body for API clients that do not use cookies.
+ */
 export class RefreshDto {
-  @IsString() refreshToken: string;
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
+}
+
+export class LogoutDto {
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
 }

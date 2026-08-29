@@ -6,6 +6,7 @@ import { PdfService } from './pdf.service';
 import { LoggerService } from '../logger/logger.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { processWithTrace } from '../telemetry/tracing';
 
 @Processor(MAIL_QUEUE)
 export class MailProcessor extends WorkerHost {
@@ -18,10 +19,10 @@ export class MailProcessor extends WorkerHost {
   }
 
   async process(job: Job<any, any, string>): Promise<any> {
-    const { logId, to, payload } = job.data;
     const event = job.name as MailEvent;
-
-    try {
+    return processWithTrace(MAIL_QUEUE, event, job.data, async () => {
+      const { logId, to, payload } = job.data;
+      try {
       // 1. Generate HTML from template
       const html = await this.renderTemplate(event, payload);
 
@@ -51,7 +52,7 @@ export class MailProcessor extends WorkerHost {
         data: { status: 'Sent', sentAt: new Date() },
       });
 
-    } catch (error) {
+      } catch (error) {
       this.logger.error(`Failed to send email ${logId}`, error instanceof Error ? error.stack : String(error), {
         logId,
         to,
@@ -62,8 +63,9 @@ export class MailProcessor extends WorkerHost {
         where: { id: logId },
         data: { status: 'Failed', error: error instanceof Error ? error.message : String(error) },
       });
-      throw error;
-    }
+        throw error;
+      }
+    });
   }
 
   private async renderTemplate(event: MailEvent, payload: any): Promise<string> {

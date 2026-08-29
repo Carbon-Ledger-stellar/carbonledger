@@ -300,7 +300,7 @@ Create Pull Request on GitHub
 ### Architecture
 
 - [Architecture Decision Records](adr/) - Why we made key decisions
-- [API Documentation](../backend/docs/PROJECTS_API.md) - Backend API reference
+- [API Documentation](../backend/docs/API_REFERENCE.md) - Backend API reference
 - [Smart Contracts](../README.md#-smart-contracts) - Contract functions
 
 ### Stellar/Soroban

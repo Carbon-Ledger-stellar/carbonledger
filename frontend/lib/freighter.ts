@@ -1,41 +1,80 @@
+import {
+  isConnected,
+  isAllowed,
+  setAllowed,
+  getAddress,
+  signTransaction as freighterSignTransaction,
   getNetworkDetails,
   WatchWalletChanges,
 } from "@stellar/freighter-api";
 
 export type FreighterNetwork = "TESTNET" | "PUBLIC" | "FUTURENET";
 
+const TESTNET_PASSPHRASE =
+  "Test SDF Network ; September 2015";
+const PUBLIC_PASSPHRASE =
+  "Public Global Stellar Network ; September 2015";
+
+function passphraseFor(network: FreighterNetwork): string {
+  return network === "PUBLIC" ? PUBLIC_PASSPHRASE : TESTNET_PASSPHRASE;
+}
+
+/** Freighter surfaces a locked wallet as an error string on getAddress(), not as a distinct API flag. */
+function isLockedError(message: string | undefined | null): boolean {
+  if (!message) return false;
+  return /locked|unlock/i.test(message);
+}
+
 export async function connectFreighter(): Promise<string> {
   const connected = await isConnected();
-  if (!connected.isConnected) {
+  const connectedFlag = typeof connected === "boolean" ? connected : (connected as { isConnected?: boolean }).isConnected;
+  if (!connectedFlag) {
     throw new Error("WALLET_NOT_INSTALLED");
   }
   const allowed = await isAllowed();
-  if (!allowed.isAllowed) {
+  const allowedFlag = typeof allowed === "boolean" ? allowed : (allowed as { isAllowed?: boolean }).isAllowed;
+  if (!allowedFlag) {
     const result = await setAllowed();
-    if (!result.isAllowed) throw new Error("WALLET_PERMISSION_DENIED");
+    const resultFlag = typeof result === "boolean" ? result : (result as { isAllowed?: boolean }).isAllowed;
+    if (!resultFlag) throw new Error("WALLET_PERMISSION_DENIED");
   }
   return getPublicKey();
 }
 
 export async function getPublicKey(): Promise<string> {
-  const result = await freighterGetPublicKey();
-  if (result.error) throw new Error(result.error);
-  return result.publicKey;
+  const result = await getAddress();
+  if (result.error) {
+    const message = typeof result.error === "string" ? result.error : String(result.error);
+    if (isLockedError(message)) throw new Error("WALLET_LOCKED");
+    throw new Error(message);
+  }
+  return result.address;
 }
+
+const SIGNING_DECLINED_PATTERNS = [/declin/i, /reject/i, /denied/i, /closed/i, /cancel/i];
 
 export async function signTransaction(
   xdr: string,
   network: FreighterNetwork = "TESTNET",
 ): Promise<string> {
-  const result = await freighterSignTransaction(xdr, { network });
-  if (result.error) throw new Error(result.error);
+  const result = await freighterSignTransaction(xdr, {
+    networkPassphrase: passphraseFor(network),
+  });
+  if (result.error) {
+    const message = typeof result.error === "string" ? result.error : String(result.error);
+    if (SIGNING_DECLINED_PATTERNS.some((p) => p.test(message))) {
+      throw new Error("SIGNING_CANCELLED");
+    }
+    throw new Error(message);
+  }
   return result.signedTxXdr;
 }
 
 export async function checkNetwork(): Promise<FreighterNetwork> {
   const details = await getNetworkDetails();
-  if (details.error) throw new Error(details.error);
-  return details.networkPassphrase.includes("Test SDF") ? "TESTNET" : "PUBLIC";
+  const networkDetails = details as { error?: string; networkPassphrase?: string };
+  if (networkDetails.error) throw new Error(networkDetails.error);
+  return networkDetails.networkPassphrase?.includes("Test SDF") ? "TESTNET" : "PUBLIC";
 }
 
 export async function switchToTestnet(): Promise<void> {

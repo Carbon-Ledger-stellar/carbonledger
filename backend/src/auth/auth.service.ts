@@ -3,14 +3,36 @@ import {
   UnauthorizedException,
   BadRequestException,
   ServiceUnavailableException,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
 import { AccountLockoutService } from './account-lockout.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
+import * as jwt from 'jsonwebtoken';
+import { TokenFamilyService } from './token-family.service';
+import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
+
+/**
+ * Access tokens are capped at 15 minutes regardless of any (mis)configured
+ * JWT_EXPIRY — issue #892 requires short-lived tokens so a stolen token has
+ * a strictly bounded window and the logout blacklist only needs to live for
+ * at most 15 minutes.
+ */
+export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+
+/** Parse a jwt-style expiry string ('900s' | '15m' | '1h') into seconds. Unknown → 15m. */
+export function parseExpirySeconds(raw: string): number {
+  const match = /^(\d+)\s*(s|m|h|d)?$/.exec(raw.trim());
+  if (!match) return ACCESS_TOKEN_TTL_SECONDS;
+  const value = Number(match[1]);
+  const unit = match[2] ?? 's';
+  const factor = { s: 1, m: 60, h: 3600, d: 86400 }[unit] ?? 1;
+  return value * factor;
+}
 
 // In-memory nonce store: publicKey → { nonce, expiresAt }
 // A Redis store would be preferable in multi-instance deployments.
@@ -22,8 +44,9 @@ export class AuthService {
   constructor(
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
-    private readonly lockout: AccountLockoutService,
-  ) {}
+    private readonly tokenFamily: TokenFamilyService,
+    private readonly secretsRefresh: SecretsRefreshService,
+  ) { }
 
   /** Issue a one-time challenge nonce for the given Stellar public key. */
   generateChallenge(publicKey: string): { nonce: string; expiresAt: number } {
@@ -40,12 +63,8 @@ export class AuthService {
    * Role is NEVER accepted from the request body for existing users —
    * new users default to "corporation"; existing users keep their DB role.
    *
-   * Account lockout:
-   *   - If the account is locked (≥10 consecutive failures) the request is
-   *     rejected immediately without touching the nonce store.
-   *   - A failed signature check records a failed attempt, potentially locking
-   *     the account on the 10th failure.
-   *   - A successful login clears the failure counter.
+   * On success a new token family is created in Redis and a raw (opaque)
+   * refresh token is returned instead of a signed JWT refresh token.
    */
   async verifySignatureAndLogin(
     publicKey: string,
@@ -84,16 +103,22 @@ export class AuthService {
 
     // 3. Upsert user — role only applied on first creation
     try {
+      const existingUser = await this.prisma.user.findUnique({ where: { publicKey } });
+      if (existingUser?.deletedAt) {
+        throw new UnauthorizedException('Account has been deleted');
+      }
+
       const user = await this.prisma.user.upsert({
         where: { publicKey },
         update: {},
-        create: { publicKey, role },
+        create: { publicKey, role: 'corporation' },
       });
 
-      // Successful login — clear any previous failure history
-      this.lockout.unlock(publicKey);
+      // 4. Create a fresh token family in Redis
+      const { rawToken } = await this.tokenFamily.createFamily(user.publicKey);
+      const access_token = this.signAccessToken(user.publicKey, user.role as UserRole);
 
-      return this.issueTokenPair(user.publicKey, user.role as UserRole);
+      return { access_token, refresh_token: rawToken };
     } catch (error: any) {
       if (error?.code === 'P2024') {
         throw new ServiceUnavailableException('Service temporarily unavailable — please retry');
@@ -102,28 +127,27 @@ export class AuthService {
     }
   }
 
-  /** Rotate refresh token. */
+  /**
+   * Rotate refresh token using token family tracking.
+   *
+   * Validates the incoming opaque refresh token against the Redis family store,
+   * issues a new access + refresh token pair and retires the old refresh token.
+   * If the same token is presented twice (reuse detection), the entire family
+   * is invalidated and an error is thrown.
+   */
   async refresh(
     refreshToken: string,
   ): Promise<{ access_token: string; refresh_token: string }> {
-    let payload: { sub: string; role: string; type: string };
     try {
-      payload = this.jwt.verify(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'dev-refresh-secret',
-      });
-    } catch {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
+      const { newRawToken, userId } = await this.tokenFamily.rotateToken(refreshToken);
 
-    if (payload.type !== 'refresh') {
-      throw new UnauthorizedException('Not a refresh token');
-    }
-
-    try {
-      const user = await this.prisma.user.findUnique({ where: { publicKey: payload.sub } });
+      const user = await this.prisma.user.findFirst({ where: { publicKey: userId, deletedAt: null } });
       if (!user) throw new UnauthorizedException('User not found');
-      return this.issueTokenPair(user.publicKey, user.role as UserRole);
+
+      const access_token = this.signAccessToken(user.publicKey, user.role as UserRole);
+      return { access_token, refresh_token: newRawToken };
     } catch (error: any) {
+      if (error instanceof UnauthorizedException) throw error;
       if (error?.code === 'P2024') {
         throw new ServiceUnavailableException('Service temporarily unavailable — please retry');
       }
@@ -131,32 +155,95 @@ export class AuthService {
     }
   }
 
+  /**
+   * Logout — invalidate the full token family AND blacklist the current
+   * access token's `jti` in Redis so it is rejected by route guards
+   * immediately, not just when its (≤15 min) natural expiry arrives.
+   */
+  async logout(refreshToken: string, accessToken?: string): Promise<{ message: string }> {
+    await this.tokenFamily.invalidateFamilyByToken(refreshToken);
+
+    if (accessToken) {
+      try {
+        const issuer = process.env.JWT_ISSUER || 'carbonledger';
+        const candidates = this.secretsRefresh.getJwtVerificationSecrets();
+        for (const secret of candidates) {
+          try {
+            const decoded = jwt.verify(accessToken, secret, { issuer }) as {
+              jti?: string;
+              exp?: number;
+            };
+            if (decoded.jti && typeof decoded.exp === 'number') {
+              const remainingSec = decoded.exp - Math.floor(Date.now() / 1000);
+              if (remainingSec > 0) {
+                await this.tokenBlacklist.revoke(decoded.jti, remainingSec);
+              }
+            }
+            break;
+          } catch {
+            // try the next candidate secret (rotation overlap window)
+          }
+        }
+      } catch {
+        // best-effort: the refresh family is already invalidated; never fail logout here
+      }
+    }
+
+    return { message: 'Logged out successfully' };
+  }
+
   async validateUser(publicKey: string): Promise<{ publicKey: string; role: string } | null> {
-    const user = await this.prisma.user.findUnique({ where: { publicKey } });
+    const user = await this.prisma.user.findFirst({ where: { publicKey, deletedAt: null } });
     return user ? { publicKey: user.publicKey, role: user.role } : null;
+  }
+
+  async softDeleteUser(publicKey: string, reason: string) {
+    const user = await this.prisma.user.findUnique({ where: { publicKey } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const retentionDays = this.getRetentionDays();
+    const retentionUntil = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+
+    return this.prisma.user.update({
+      where: { publicKey },
+      data: {
+        deletedAt: new Date(),
+        deletionReason: reason,
+        retentionUntil,
+        email: null,
+        isSubscribed: false,
+      },
+    });
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────
 
-  private issueTokenPair(
-    publicKey: string,
-    role: UserRole,
-  ): { access_token: string; refresh_token: string } {
-    const access_token = this.jwt.sign(
+  /**
+   * Sign a short-lived JWT access token.
+   * Refresh tokens are now opaque strings managed by TokenFamilyService.
+   *
+   * Previously signed with the static process.env.JWT_SECRET, which meant
+   * a rotated secret only took effect after a restart. Now signs with
+   * whatever SecretsRefreshService currently holds as `current` — kept up
+   * to date by the rotate-jwt-secret Lambda via SIGHUP, no restart needed.
+   */
+  private signAccessToken(publicKey: string, role: UserRole): string {
+    const issuer = process.env.JWT_ISSUER || 'carbonledger';
+    // Strictly enforce the 15-minute maximum lifetime (#892): a longer
+    // JWT_EXPIRY is clamped down rather than honoured.
+    const requested = parseExpirySeconds(process.env.JWT_EXPIRY || '15m');
+    const expiresIn = Math.min(requested, ACCESS_TOKEN_TTL_SECONDS);
+
+    return jwt.sign(
       { sub: publicKey, role, type: 'access' },
-      {
-        secret: process.env.JWT_SECRET || 'dev-secret-change-in-production',
-        expiresIn: process.env.JWT_EXPIRY || '15m',
-      },
+      this.secretsRefresh.getJwtSigningSecret(),
+      { expiresIn, issuer },
     );
-    const refresh_token = this.jwt.sign(
-      { sub: publicKey, role, type: 'refresh' },
-      {
-        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET || 'dev-refresh-secret',
-        expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d',
-      },
-    );
-    return { access_token, refresh_token };
+  }
+
+  private getRetentionDays(): number {
+    const raw = Number(process.env.DATA_RETENTION_DAYS ?? process.env.RETENTION_DAYS ?? '90');
+    return Number.isFinite(raw) && raw > 0 ? raw : 90;
   }
 
   private validatePublicKey(publicKey: string): void {

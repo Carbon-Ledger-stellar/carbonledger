@@ -125,7 +125,14 @@ test.describe('Carbon Credit Lifecycle E2E', () => {
     await page.getByLabel('Beneficiary').fill('Green Corp Inc.');
     await page.getByLabel('Retirement Reason').fill('Corporate ESG Initiative');
 
-    await page.getByRole('button', { name: /retire/i }).click();
+    // Click the retire button — this opens the confirmation modal
+    await page.getByRole('button', { name: /permanently retire/i }).click();
+
+    // Confirm in the modal
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByText('Green Corp Inc.')).toBeVisible();
+    await page.getByTestId('confirm-retire-btn').click();
+
     await expect(page.getByText('Retirement confirmed')).toBeVisible();
 
     // Store retirement ID for later
@@ -146,7 +153,11 @@ test.describe('Carbon Credit Lifecycle E2E', () => {
     await page.getByLabel('Beneficiary').fill('Test Corp');
     await page.getByLabel('Retirement Reason').fill('Test');
 
-    await page.getByRole('button', { name: /retire/i }).click();
+    // Click retire → confirm in modal → expect contract error
+    await page.getByRole('button', { name: /permanently retire/i }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByTestId('confirm-retire-btn').click();
+
     await expect(page.getByText('Retirement failed')).toBeVisible();
     await expect(page.getByText(/insufficient credits/i)).toBeVisible();
   });
