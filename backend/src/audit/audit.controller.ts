@@ -7,12 +7,16 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AuditService } from './audit.service';
+import { AuditArchiveService } from './audit-archive.service';
 import { Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, AuditLogSubject } from '../policies';
 
 @Controller('audit')
 export class AuditController {
-  constructor(private readonly auditService: AuditService) {}
+  constructor(
+    private readonly auditService: AuditService,
+    private readonly auditArchiveService: AuditArchiveService,
+  ) {}
 
   /**
    * GET /audit
