@@ -218,6 +218,9 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
     consumer.apply(RateLimitMiddleware).forRoutes('*');
+    // CSRF protection: double-submit cookie pattern.
+    // Exempt: GET/HEAD/OPTIONS (safe methods), requests with Authorization header (JWT API clients).
+    consumer.apply(CsrfMiddleware).forRoutes('*');
 
     // Adds RFC 8594 Deprecation + Sunset headers to all v1 responses.
     // v2 routes only receive X-API-Version: 2 (no deprecation headers).
