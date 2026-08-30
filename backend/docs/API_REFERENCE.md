@@ -37,7 +37,7 @@ The flow is:
 - Auth: public
 - Rate limit: 10 requests / 60 seconds per IP
 - Query parameters:
-  - `publicKey` (string, required)
+  - `publicKey` (string, required, Stellar public key format)
 
 **Response schema**:
 ```json
@@ -47,7 +47,945 @@ The flow is:
 }
 ```
 
+**Example cURL**:
+```bash
+curl -X GET "https://api.carbonledger.io/api/v1/auth/challenge?publicKey=GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE" \
+  -H "Accept: application/json"
+```
+
 **Errors**:
+- `400 Bad Request` - Invalid or missing publicKey
+- `429 Too Many Requests` - Rate limit exceeded
+
+#### `POST /api/v1/auth/verify`
+
+- Auth: public
+- Rate limit: 5 requests / 60 seconds per IP
+- Body:
+  - `publicKey` (string, required)
+  - `signature` (string, required, signed challenge)
+
+**Request schema**:
+```json
+{
+  "publicKey": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE",
+  "signature": "abcdef1234567890..."
+}
+```
+
+**Response schema**:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expiresIn": 3600,
+  "tokenType": "Bearer"
+}
+```
+
+**Example cURL**:
+```bash
+curl -X POST "https://api.carbonledger.io/api/v1/auth/verify" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "publicKey": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE",
+    "signature": "abcdef1234567890..."
+  }'
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid challenge or signature
+- `401 Unauthorized` - Challenge expired or signature verification failed
+- `429 Too Many Requests` - Rate limit exceeded
+
+#### `POST /api/v1/auth/refresh`
+
+- Auth: bearer token (refresh token)
+- Rate limit: 10 requests / 60 seconds per account
+
+**Request schema**:
+```json
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Response schema**:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expiresIn": 3600,
+  "tokenType": "Bearer"
+}
+```
+
+**Example cURL**:
+```bash
+curl -X POST "https://api.carbonledger.io/api/v1/auth/refresh" \
+  -H "Authorization: Bearer <refresh_token>" \
+  -H "Content-Type: application/json"
+```
+
+**Errors**:
+- `401 Unauthorized` - Invalid or expired refresh token
+- `429 Too Many Requests` - Rate limit exceeded
+
+---
+
+## Credits API
+
+### `GET /api/v1/credits`
+
+List carbon credits with pagination and filtering.
+
+- Auth: required (bearer token)
+- Rate limit: 60 requests / 60 seconds
+- Query parameters:
+  - `page` (integer, optional, default: 1)
+  - `limit` (integer, optional, default: 20, max: 100)
+  - `projectId` (string, optional)
+  - `status` (enum, optional): `issued`, `retired`, `listed`
+  - `vintageYearMin` (integer, optional)
+  - `vintageYearMax` (integer, optional)
+  - `sortBy` (enum, optional): `createdAt`, `vintageYear`, `amount` (default: `createdAt`)
+  - `sortOrder` (enum, optional): `asc`, `desc` (default: `desc`)
+
+**Response schema**:
+```json
+{
+  "data": [
+    {
+      "id": "batch-uuid",
+      "projectId": 1,
+      "serialStart": 1000,
+      "serialEnd": 1999,
+      "amount": 1000,
+      "vintageYear": 2024,
+      "status": "issued",
+      "createdAt": "2026-06-01T12:34:56.000Z",
+      "txHash": "abcdef1234567890...",
+      "metadata": {
+        "issuer": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE",
+        "beneficialOwner": "Acme Corp"
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 150,
+    "totalPages": 8
+  }
+}
+```
+
+**Example cURL**:
+```bash
+curl -X GET "https://api.carbonledger.io/api/v1/credits?page=1&limit=20&status=issued" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Accept: application/json"
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid query parameters
+- `401 Unauthorized` - Missing or invalid bearer token
+- `429 Too Many Requests` - Rate limit exceeded
+
+### `POST /api/v1/credits/mint`
+
+Issue new carbon credits for a project.
+
+- Auth: required (must be project issuer)
+- Rate limit: 30 requests / 60 seconds
+- Body:
+  - `projectId` (integer, required)
+  - `serialStart` (integer, required, must be > 0)
+  - `serialEnd` (integer, required, must be >= serialStart)
+  - `vintageYear` (integer, required, 1990-current year)
+  - `beneficialOwner` (string, optional, max 255 chars)
+
+**Request schema**:
+```json
+{
+  "projectId": 1,
+  "serialStart": 2000,
+  "serialEnd": 2999,
+  "vintageYear": 2024,
+  "beneficialOwner": "Acme Corp Sustainability Unit"
+}
+```
+
+**Response schema**:
+```json
+{
+  "id": "batch-uuid",
+  "projectId": 1,
+  "serialStart": 2000,
+  "serialEnd": 2999,
+  "amount": 1000,
+  "vintageYear": 2024,
+  "status": "pending",
+  "txHash": "abc123def456...",
+  "metadata": {
+    "issuer": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE",
+    "beneficialOwner": "Acme Corp Sustainability Unit"
+  },
+  "createdAt": "2026-06-01T12:34:56.000Z"
+}
+```
+
+**Example cURL**:
+```bash
+curl -X POST "https://api.carbonledger.io/api/v1/credits/mint" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectId": 1,
+    "serialStart": 2000,
+    "serialEnd": 2999,
+    "vintageYear": 2024,
+    "beneficialOwner": "Acme Corp Sustainability Unit"
+  }'
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid input (see validation below)
+- `401 Unauthorized` - Not authorized to mint for this project
+- `409 Conflict` - Serial range overlaps with existing range
+- `422 Unprocessable Entity` - Project not verified or suspended
+- `429 Too Many Requests` - Rate limit exceeded
+
+**Input Validation**:
+- `projectId`: Must be positive integer
+- `serialStart`: Must be > 0
+- `serialEnd`: Must be >= serialStart
+- `serialEnd - serialStart + 1`: Must be <= 1,000,000,000 (MAX_BATCH_SIZE)
+- `vintageYear`: Must be in range [1990, current_year]
+- `beneficialOwner`: Must not contain SQL injection patterns or HTML tags
+
+### `POST /api/v1/credits/retire`
+
+Retire carbon credits (permanent removal from circulation).
+
+- Auth: required (must own credits)
+- Rate limit: 20 requests / 60 seconds
+- Body:
+  - `creditIds` (array of strings, required, min 1, max 100)
+  - `reason` (string, optional, max 500 chars)
+
+**Request schema**:
+```json
+{
+  "creditIds": ["batch-uuid-1", "batch-uuid-2"],
+  "reason": "Carbon offset for 2024 operations"
+}
+```
+
+**Response schema**:
+```json
+{
+  "retirementId": "retirement-uuid",
+  "creditIds": ["batch-uuid-1", "batch-uuid-2"],
+  "totalRetired": 2000,
+  "status": "confirmed",
+  "txHash": "abc123def456...",
+  "createdAt": "2026-06-01T12:34:56.000Z",
+  "certificateUrl": "https://cdn.carbonledger.io/certificates/retirement-uuid.pdf"
+}
+```
+
+**Example cURL**:
+```bash
+curl -X POST "https://api.carbonledger.io/api/v1/credits/retire" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "creditIds": ["batch-uuid-1", "batch-uuid-2"],
+    "reason": "Carbon offset for 2024 operations"
+  }'
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid creditIds or reason
+- `401 Unauthorized` - Not owner of credits
+- `404 Not Found` - Credit batch not found
+- `409 Conflict` - Credits already retired
+- `422 Unprocessable Entity` - Invalid state for retirement
+- `429 Too Many Requests` - Rate limit exceeded
+
+### `POST /api/v1/credits/transfer`
+
+Transfer credits to another Stellar account.
+
+- Auth: required (must own credits)
+- Rate limit: 20 requests / 60 seconds
+- Body:
+  - `creditIds` (array of strings, required)
+  - `recipientAddress` (string, required, Stellar public key)
+
+**Request schema**:
+```json
+{
+  "creditIds": ["batch-uuid"],
+  "recipientAddress": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE"
+}
+```
+
+**Response schema**:
+```json
+{
+  "transferId": "transfer-uuid",
+  "creditIds": ["batch-uuid"],
+  "totalAmount": 1000,
+  "recipientAddress": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE",
+  "status": "confirmed",
+  "txHash": "abc123def456...",
+  "createdAt": "2026-06-01T12:34:56.000Z"
+}
+```
+
+**Example cURL**:
+```bash
+curl -X POST "https://api.carbonledger.io/api/v1/credits/transfer" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "creditIds": ["batch-uuid"],
+    "recipientAddress": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE"
+  }'
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid input
+- `401 Unauthorized` - Not owner
+- `404 Not Found` - Credit not found
+- `422 Unprocessable Entity` - Invalid transfer state
+- `429 Too Many Requests` - Rate limit exceeded
+
+---
+
+## Webhooks API
+
+CarbonLedger sends real-time events to your application via webhooks. Subscribe to carbon credit lifecycle events including issuance, retirement, transfers, and certificate generation.
+
+### Webhook Events
+
+The following events are available:
+
+- `credit.minted` - New credits issued for a project
+- `credit.retired` - Credits permanently removed
+- `credit.transferred` - Credits transferred between accounts
+- `certificate.ready` - Retirement certificate generated and available
+- `marketplace.listed` - Credits listed on marketplace
+- `marketplace.delisted` - Credits removed from marketplace
+
+### Event Payload Structure
+
+All webhook events follow this structure:
+
+```json
+{
+  "id": "event-uuid",
+  "event": "credit.minted",
+  "timestamp": "2026-06-01T12:34:56.000Z",
+  "data": {
+    "batchId": "batch-uuid",
+    "projectId": 1,
+    "amount": 1000,
+    "vintageYear": 2024,
+    "serialStart": 1000,
+    "serialEnd": 1999,
+    "issuer": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE",
+    "txHash": "abc123def456..."
+  }
+}
+```
+
+### `POST /api/v1/webhooks/subscribe`
+
+Register a new webhook subscription.
+
+- Auth: required (bearer token)
+- Rate limit: 10 requests / 60 seconds
+- Body:
+  - `url` (string, required, valid HTTPS URL)
+  - `events` (array of strings, required, min 1)
+  - `description` (string, optional, max 255 chars)
+
+**Request schema**:
+```json
+{
+  "url": "https://esg.example.com/webhooks/carbon-ledger",
+  "events": ["credit.minted", "credit.retired", "certificate.ready"],
+  "description": "ESG reporting system webhook"
+}
+```
+
+**Response schema**:
+```json
+{
+  "id": "webhook-sub-uuid",
+  "url": "https://esg.example.com/webhooks/carbon-ledger",
+  "events": ["credit.minted", "credit.retired", "certificate.ready"],
+  "description": "ESG reporting system webhook",
+  "secret": "whsec_1234567890abcdef...",
+  "status": "active",
+  "createdAt": "2026-06-01T12:34:56.000Z",
+  "lastDeliveryAt": null,
+  "failedDeliveryCount": 0
+}
+```
+
+**Example cURL**:
+```bash
+curl -X POST "https://api.carbonledger.io/api/v1/webhooks/subscribe" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://esg.example.com/webhooks/carbon-ledger",
+    "events": ["credit.minted", "credit.retired", "certificate.ready"],
+    "description": "ESG reporting system webhook"
+  }'
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid URL or event type
+- `401 Unauthorized` - Missing or invalid bearer token
+- `409 Conflict` - URL already subscribed to same events
+- `429 Too Many Requests` - Rate limit exceeded
+
+**Security**:
+- URL must use HTTPS (TLS 1.2+)
+- URL must resolve to a public IP (no private ranges)
+- Timeout: 30 seconds per delivery attempt
+
+### `GET /api/v1/webhooks/subscriptions`
+
+List all active webhook subscriptions for authenticated user.
+
+- Auth: required (bearer token)
+- Rate limit: 60 requests / 60 seconds
+- Query parameters:
+  - `page` (integer, optional, default: 1)
+  - `limit` (integer, optional, default: 20, max: 100)
+
+**Response schema**:
+```json
+{
+  "data": [
+    {
+      "id": "webhook-sub-uuid",
+      "url": "https://esg.example.com/webhooks/carbon-ledger",
+      "events": ["credit.minted", "credit.retired"],
+      "description": "ESG reporting system",
+      "status": "active",
+      "failedDeliveryCount": 0,
+      "createdAt": "2026-06-01T12:34:56.000Z",
+      "lastDeliveryAt": "2026-06-02T10:15:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 5,
+    "totalPages": 1
+  }
+}
+```
+
+**Example cURL**:
+```bash
+curl -X GET "https://api.carbonledger.io/api/v1/webhooks/subscriptions?page=1&limit=20" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Accept: application/json"
+```
+
+**Errors**:
+- `401 Unauthorized` - Missing or invalid bearer token
+- `429 Too Many Requests` - Rate limit exceeded
+
+### `DELETE /api/v1/webhooks/subscriptions/{subscriptionId}`
+
+Deactivate a webhook subscription (reversible).
+
+- Auth: required (must own subscription)
+- Rate limit: 20 requests / 60 seconds
+- Path parameters:
+  - `subscriptionId` (string, required)
+
+**Response schema**:
+```json
+{
+  "id": "webhook-sub-uuid",
+  "status": "inactive",
+  "deactivatedAt": "2026-06-02T12:34:56.000Z",
+  "message": "Subscription deactivated successfully"
+}
+```
+
+**Example cURL**:
+```bash
+curl -X DELETE "https://api.carbonledger.io/api/v1/webhooks/subscriptions/webhook-sub-uuid" \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Errors**:
+- `401 Unauthorized` - Not owner of subscription
+- `404 Not Found` - Subscription not found
+- `429 Too Many Requests` - Rate limit exceeded
+
+### `GET /api/v1/webhooks/subscriptions/{subscriptionId}/deliveries`
+
+View delivery attempt history for a subscription.
+
+- Auth: required (must own subscription)
+- Rate limit: 60 requests / 60 seconds
+- Path parameters:
+  - `subscriptionId` (string, required)
+- Query parameters:
+  - `page` (integer, optional, default: 1)
+  - `limit` (integer, optional, default: 50, max: 100)
+  - `status` (enum, optional): `success`, `failed`, `pending`
+
+**Response schema**:
+```json
+{
+  "data": [
+    {
+      "id": "delivery-uuid",
+      "eventId": "event-uuid",
+      "event": "credit.minted",
+      "status": "success",
+      "httpStatus": 200,
+      "attempt": 1,
+      "error": null,
+      "deliveredAt": "2026-06-02T10:15:00.000Z"
+    },
+    {
+      "id": "delivery-uuid-2",
+      "eventId": "event-uuid-2",
+      "event": "credit.retired",
+      "status": "failed",
+      "httpStatus": 500,
+      "attempt": 3,
+      "error": "Timeout after 30s",
+      "deliveredAt": "2026-06-02T10:20:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 50,
+    "total": 237,
+    "totalPages": 5
+  }
+}
+```
+
+**Example cURL**:
+```bash
+curl -X GET "https://api.carbonledger.io/api/v1/webhooks/subscriptions/webhook-sub-uuid/deliveries?page=1&status=failed" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Accept: application/json"
+```
+
+**Errors**:
+- `401 Unauthorized` - Not owner of subscription
+- `404 Not Found` - Subscription not found
+- `429 Too Many Requests` - Rate limit exceeded
+
+### Webhook Delivery & Signature Verification
+
+#### Delivery Guarantees
+
+- **At-least-once delivery**: Events are retried up to 5 times over 24 hours
+- **Exponential backoff**: 1m → 5m → 30m → 2h → 8h delays between retries
+- **Dead-letter queue**: Failed events after final retry are stored (viewable via admin API)
+
+#### HMAC Signature Verification
+
+Every webhook request includes an HMAC-SHA256 signature for authentication:
+
+**Headers**:
+```
+X-CarbonLedger-Signature: t=1623038400,v1=deadbeef1234567890abcdef
+X-CarbonLedger-Event: credit.minted
+X-CarbonLedger-Delivery-Timestamp: 1623038400
+User-Agent: CarbonLedger-Webhook/1.0
+```
+
+**Verification algorithm**:
+```typescript
+import * as crypto from 'crypto';
+
+function verifyWebhookSignature(
+  payload: string,  // raw request body (before JSON parsing)
+  signature: string,
+  secret: string,
+  timestamp: number,
+  toleranceSeconds: number = 300
+): boolean {
+  // 1. Verify timestamp is recent (prevent replay attacks)
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestamp) > toleranceSeconds) {
+    return false;
+  }
+
+  // 2. Create HMAC message: "{timestamp}.{payload}"
+  const hmacMessage = `${timestamp}.${payload}`;
+
+  // 3. Compute expected signature
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(hmacMessage)
+    .digest('hex');
+
+  // 4. Compare signatures (constant-time to prevent timing attacks)
+  return crypto.timingSafeEqual(
+    Buffer.from(expectedSignature),
+    Buffer.from(signature)
+  );
+}
+```
+
+**Example webhook handler (Node.js/Express)**:
+```javascript
+const express = require('express');
+const crypto = require('crypto');
+const app = express();
+
+app.post('/webhooks/carbon-ledger', express.raw({ type: 'application/json' }), (req, res) => {
+  // Extract headers
+  const signature = req.headers['x-carbonledger-signature'];
+  const timestamp = parseInt(req.headers['x-carbonledger-delivery-timestamp'], 10);
+  const event = req.headers['x-carbonledger-event'];
+
+  // Verify signature
+  const secret = process.env.WEBHOOK_SECRET;
+  const payload = req.body.toString('utf-8');
+  
+  const [timestampStr, sig] = signature.split(',v1=');
+  const expectedSig = crypto
+    .createHmac('sha256', secret)
+    .update(`${timestamp}.${payload}`)
+    .digest('hex');
+
+  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  // Verify timestamp (max 5 min old)
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestamp) > 300) {
+    return res.status(401).json({ error: 'Request too old' });
+  }
+
+  // Process webhook
+  const webhookData = JSON.parse(payload);
+  console.log(`Received ${event} event:`, webhookData);
+
+  // Respond quickly (2xx status code) to acknowledge receipt
+  res.status(202).json({ received: true });
+
+  // Process asynchronously (do not wait for completion)
+  processWebhookEvent(event, webhookData).catch(err => {
+    console.error('Webhook processing failed:', err);
+  });
+});
+
+async function processWebhookEvent(event, data) {
+  // Handle event...
+}
+
+app.listen(3000);
+```
+
+### Webhook Retry Policy
+
+Failed deliveries are retried with exponential backoff:
+
+| Attempt | Delay | Cumulative |
+|---------|-------|-----------|
+| 1 | Immediate | 0m |
+| 2 | 1 minute | 1m |
+| 3 | 5 minutes | 6m |
+| 4 | 30 minutes | 36m |
+| 5 | 2 hours | 2h 36m |
+| Final | 8 hours | 10h 36m |
+
+After the final retry fails, the event is moved to the dead-letter queue. Admin APIs provide access to review and manually retry failed events.
+
+---
+
+## Projects API
+
+### `GET /api/v1/projects`
+
+List verified carbon projects.
+
+- Auth: optional (bearer token for extended info)
+- Rate limit: 100 requests / 60 seconds
+- Query parameters:
+  - `page` (integer, optional, default: 1)
+  - `limit` (integer, optional, default: 20, max: 100)
+  - `status` (enum, optional): `verified`, `pending`, `suspended`
+  - `search` (string, optional, fulltext search on name/description)
+
+**Response schema**:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Forest Conservation Initiative",
+      "description": "Reforestation project in Amazon",
+      "verifiedTonnes": 50000,
+      "issuedCredits": 45000,
+      "retiredCredits": 15000,
+      "status": "verified",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "issuer": "GBRPYHIL2CI3WHZDTOOQFC6EB4KJJGUJEANS7Y42VEJUCNHALX4U63ZE"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 45,
+    "totalPages": 3
+  }
+}
+```
+
+**Example cURL**:
+```bash
+curl -X GET "https://api.carbonledger.io/api/v1/projects?status=verified" \
+  -H "Accept: application/json"
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid query parameters
+- `429 Too Many Requests` - Rate limit exceeded
+
+### `POST /api/v1/projects`
+
+Create a new carbon project (requires admin approval).
+
+- Auth: required (bearer token)
+- Rate limit: 5 requests / 60 seconds
+- Body:
+  - `name` (string, required, 3-200 chars)
+  - `description` (string, required, 20-2000 chars)
+  - `location` (string, required)
+  - `methodology` (string, required)
+
+**Request schema**:
+```json
+{
+  "name": "Forest Conservation Initiative",
+  "description": "Large-scale reforestation project in Brazilian Amazon",
+  "location": "Amazon Basin, Brazil",
+  "methodology": "VCS Carbon Credits Standard v4.3"
+}
+```
+
+**Response schema**:
+```json
+{
+  "id": 1,
+  "name": "Forest Conservation Initiative",
+  "status": "pending_review",
+  "createdAt": "2026-06-01T12:34:56.000Z"
+}
+```
+
+**Example cURL**:
+```bash
+curl -X POST "https://api.carbonledger.io/api/v1/projects" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Forest Conservation Initiative",
+    "description": "Large-scale reforestation project in Brazilian Amazon",
+    "location": "Amazon Basin, Brazil",
+    "methodology": "VCS Carbon Credits Standard v4.3"
+  }'
+```
+
+**Errors**:
+- `400 Bad Request` - Invalid input
+- `401 Unauthorized` - Missing bearer token
+- `422 Unprocessable Entity` - Validation failed
+- `429 Too Many Requests` - Rate limit exceeded
+
+---
+
+## Error Codes Reference
+
+| Code | HTTP Status | Description | Recovery |
+|------|------------|-------------|----------|
+| `INVALID_INPUT` | 400 | Request validation failed (see details) | Fix input and retry |
+| `UNAUTHORIZED` | 401 | Missing or invalid credentials | Obtain valid token via auth endpoints |
+| `FORBIDDEN` | 403 | Insufficient permissions for action | Use authorized account |
+| `NOT_FOUND` | 404 | Resource does not exist | Verify resource ID |
+| `CONFLICT` | 409 | Serial range overlap or duplicate subscription | Check existing ranges/subscriptions |
+| `RATE_LIMITED` | 429 | Rate limit exceeded | Wait and retry (see retry-after header) |
+| `UNPROCESSABLE_ENTITY` | 422 | Business logic validation failed | See details field for reason |
+| `INTERNAL_ERROR` | 500 | Server error (rare, idempotent if 202 was returned) | Retry with exponential backoff |
+
+### Response Error Format
+
+All error responses follow this structure:
+
+```json
+{
+  "error": {
+    "code": "INVALID_INPUT",
+    "message": "Validation failed",
+    "details": [
+      {
+        "field": "serialStart",
+        "issue": "Must be greater than 0"
+      },
+      {
+        "field": "beneficialOwner",
+        "issue": "Contains invalid HTML: <script>"
+      }
+    ],
+    "requestId": "req-123-456",
+    "timestamp": "2026-06-01T12:34:56.000Z"
+  }
+}
+```
+
+---
+
+## Input Validation & Security
+
+### SQL Injection Prevention
+
+All string inputs are validated against SQL injection patterns:
+
+**Blocked patterns**:
+- `' OR '1'='1`
+- `; DROP TABLE`
+- `--` (SQL comments)
+- `/*` and `*/` (multi-line comments)
+- `xp_`, `sp_` (stored procedures)
+
+**Implementation**: Parameterized queries via Prisma ORM (no raw SQL)
+
+### XSS (Cross-Site Scripting) Protection
+
+HTML/JavaScript patterns are sanitized from user inputs:
+
+**Blocked patterns**:
+- `<script>`, `</script>`
+- `<iframe>`, `</iframe>`
+- `onclick=`, `onerror=`, `onload=` (event handlers)
+- `javascript:` protocol
+
+**Sanitization**: DOMPurify library + Content Security Policy headers
+
+### Beneficial Owner Field
+
+The `beneficialOwner` field specifically validates:
+- Max length: 255 characters
+- Allowed: alphanumeric, spaces, hyphens, apostrophes, periods
+- Blocked: HTML tags, SQL keywords, script patterns
+
+**Valid**:
+- "Acme Corporation Inc."
+- "John O'Brien-Smith"
+- "XYZ Ltd."
+
+**Invalid**:
+- "Acme<script>alert('xss')</script>"
+- "Acme'; DROP TABLE"
+
+---
+
+## Rate Limiting
+
+CarbonLedger uses token-bucket rate limiting. Limits apply per:
+- **Public endpoints**: Per IP address
+- **Authenticated endpoints**: Per user account
+- **Webhook deliveries**: Per subscription
+
+**Response headers**:
+```
+X-RateLimit-Limit: 60
+X-RateLimit-Remaining: 47
+X-RateLimit-Reset: 1623038400
+Retry-After: 25
+```
+
+When rate limit is exceeded (HTTP 429):
+```json
+{
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Too many requests",
+    "retryAfter": 25
+  }
+}
+```
+
+Recommended backoff strategy: Wait `Retry-After` seconds before retrying.
+
+---
+
+## Pagination
+
+List endpoints support cursor-based and offset-based pagination:
+
+**Offset pagination** (simpler, less efficient for large datasets):
+```
+GET /api/v1/credits?page=2&limit=50
+```
+
+**Cursor pagination** (recommended for production):
+```
+GET /api/v1/credits?cursor=next-cursor&limit=50
+```
+
+Response includes:
+```json
+{
+  "data": [...],
+  "pagination": {
+    "page": 2,
+    "limit": 50,
+    "total": 10000,
+    "totalPages": 200,
+    "cursors": {
+      "next": "abcd1234...",
+      "prev": "xyz9876..."
+    }
+  }
+}
+```
+
+---
+
+## Versioning
+
+API version is specified via the `Accept-Version` header (optional, defaults to latest):
+
+```
+Accept-Version: 1
+```
+
+Currently supported versions: **1** (latest)
+
+Future changes will require explicit version bump. Legacy versions will be supported for ≥2 major.minor releases.
+
+---
+
+## Support & Feedback
+
+- **API Documentation**: https://api-docs.carbonledger.io
+- **GitHub Issues**: https://github.com/carbonledger/carbonledger/issues
+- **Email Support**: api-support@carbonledger.io
+- **Status Page**: https://status.carbonledger.io
 - `400 Bad Request` — invalid or missing `publicKey`
 - `429 Too Many Requests` — rate limit exceeded
 

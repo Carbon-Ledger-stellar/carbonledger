@@ -171,6 +171,14 @@ export class RetirementsController {
     if (ability.cannot('read', subject(RetirementSubject, { retiredBy: retirement.retiredBy }))) {
       throw new ForbiddenException('Access denied');
     }
+
+    // Fire-and-forget: email the retirement certificate to the retiring user
+    this.mailService.sendIfEnabled(retirement.retiredBy, MailEvent.RETIREMENT_CONFIRMED, {
+      retirementId: retirement.retirementId,
+      beneficiary:  retirement.beneficiary,
+      amount:       retirement.amount.toString(),
+    }).catch(() => { /* email failure must never break the API response */ });
+
     return retirement;
   }
 
