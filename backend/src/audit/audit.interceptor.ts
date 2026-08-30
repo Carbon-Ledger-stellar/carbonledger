@@ -9,6 +9,7 @@ import { Observable, throwError } from 'rxjs';
 import { tap, catchError } from 'rxjs/operators';
 import { AuditService } from './audit.service';
 import { LoggerService } from '../logger/logger.service';
+import { consumeAuditBeforeState } from './audit-context';
 
 /**
  * Admin / sensitive routes whose mutations must always be logged regardless
@@ -67,6 +68,9 @@ export class AuditInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap((data) => {
+        // Consumed here (not before next.handle()) so the snapshot survives
+        // long enough for the mutating handler further down the chain to set it.
+        const before = consumeAuditBeforeState(request);
         this.auditService.createLog({
           userId,
           action,
@@ -89,6 +93,7 @@ export class AuditInterceptor implements NestInterceptor {
         });
       }),
       catchError((err) => {
+        const before = consumeAuditBeforeState(request);
         this.auditService.createLog({
           userId,
           action,

@@ -20,6 +20,8 @@ import { ProjectStateMachineService, ProjectStatus as SMStatus } from "./project
 import { randomUUID, randomBytes } from "crypto";
 import { sanitizeProjectPayload, sanitizeProjectForResponse } from "../common/sanitization.util";
 import { WebhookService } from "../webhook/webhook.service";
+import { captureAuditBeforeState } from "../audit/audit-context";
+import type { Request } from "express";
 
 /** Flat attestation fee, in stroops (1 XLM = 10,000,000 stroops). */
 const ATTESTATION_FEE_STROOPS = process.env.VERIFIER_ATTESTATION_FEE_STROOPS ?? "10000000";
@@ -430,8 +432,11 @@ export class ProjectsService {
     };
   }
 
-  async updateStatus(projectId: string, dto: UpdateProjectStatusDto, actor = 'admin') {
+  async updateStatus(projectId: string, dto: UpdateProjectStatusDto, actor = 'admin', req?: Request) {
     const project = await this.getProjectOrThrow(projectId);
+    // Snapshot pre-mutation state so AuditInterceptor can record a
+    // before/after diff on the resulting audit log entry (#963).
+    captureAuditBeforeState(req, project);
     await this.stateMachine.transition(
       projectId,
       project.status as SMStatus,

@@ -35,7 +35,12 @@ describe('RedisSlidingWindowRateLimitGuard', () => {
   });
 
   it('returns 429 for exhausted financial traffic', async () => {
-    const redisState = Array.from({ length: 25 }, () => '1');
+    // Timestamps must fall inside the current window to be counted — a
+    // literal "1" (1ms since epoch) sits far outside any realistic window
+    // and the guard correctly discards it as stale, which is why this
+    // fixture must use recent (now-ish) timestamps instead.
+    const recent = Date.now() - 1_000;
+    const redisState = Array.from({ length: 25 }, () => String(recent));
     const redisService = {
       getClient: () => ({
         lrange: async () => redisState,
@@ -63,5 +68,40 @@ describe('RedisSlidingWindowRateLimitGuard', () => {
     await expect(guard.canActivate(context)).resolves.toBe(false);
     expect(res.status).toHaveBeenCalled();
     expect(res.json).toHaveBeenCalled();
+  });
+
+  it('bypasses the limit entirely for admin users, even over quota (#960)', async () => {
+    const redisState = Array.from({ length: 999 }, () => String(Date.now()));
+    const redisService = {
+      getClient: () => ({
+        lrange: async () => redisState,
+        ltrim: async () => undefined,
+        rpush: async () => undefined,
+        expire: async () => undefined,
+      }),
+    } as any;
+
+    const guard = new RedisSlidingWindowRateLimitGuard(redisService);
+    const req = {
+      path: '/api/v1/marketplace/purchase',
+      ip: '127.0.0.1',
+      user: { publicKey: 'admin-wallet', role: 'admin' },
+    } as any;
+    const res = {
+      setHeader: jest.fn(),
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn(),
+    } as any;
+
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => req,
+        getResponse: () => res,
+      }),
+    } as ExecutionContext;
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.setHeader).toHaveBeenCalledWith('X-RateLimit-Bypass', 'admin');
   });
 });
