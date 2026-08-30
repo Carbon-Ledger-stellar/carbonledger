@@ -181,29 +181,79 @@ async function bootstrap() {
   app.use(require('express').json({ limit: '1mb' }));
   app.use(require('express').urlencoded({ limit: '1mb', extended: true }));
 
+  // ── Keep-alive ─────────────────────────────────────────────────────────────
   // Ensure all responses use keep-alive to prevent ECONNRESET under load
   app.use((_req: any, res: any, next: any) => {
     res.setHeader('Connection', 'keep-alive');
     next();
   });
 
+  // ── Security headers (#1077) ───────────────────────────────────────────────
+  // Applied to every response to harden the API against common attacks.
+  // The frontend (Next.js) applies its own CSP; these headers protect the API.
+  app.use((_req: any, res: any, next: any) => {
+    // Prevent MIME-type sniffing attacks
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    // Prevent the API from being embedded in iframes
+    res.setHeader('X-Frame-Options', 'DENY');
+
+    // Control how much referrer information is sent
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+    // Disable browser features the API never needs
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+
+    // Restrict cross-origin resource sharing at the HTTP layer
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+
+    // In production, enforce HTTPS for 2 years
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+    }
+
+    // API-level CSP: restrictive since the API serves JSON, not HTML
+    // Prevents browsers from interpreting API responses as runnable content
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'none'; frame-ancestors 'none'",
+    );
+
+    next();
+  });
+
+  // ── CORS (#1077) ───────────────────────────────────────────────────────────
+  // Strictly restricted to the configured frontend origin(s).
+  // ALLOWED_ORIGINS can be a comma-separated list for multi-environment deploys.
   const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
     : [process.env.FRONTEND_URL || 'http://localhost:3000'];
 
   app.enableCors({
-     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-          callback(null, true);
-        } else {
-          callback(new ForbiddenException('Origin not allowed by CORS'), false);
-        }
-      },
-     credentials: true,
-     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-     preflightContinue: false,
-     optionsSuccessStatus: 204,
-   });
+    origin: (origin, callback) => {
+      // Allow same-origin requests (no origin header) and server-to-server calls
+      if (!origin) {
+        return callback(null, true);
+      }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new ForbiddenException(`CORS: origin '${origin}' is not allowed`), false);
+    },
+    credentials:          true,
+    methods:              ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders:       [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'Idempotency-Key',
+      'X-Correlation-ID',
+    ],
+    exposedHeaders:       ['X-Correlation-ID', 'X-RateLimit-Remaining'],
+    preflightContinue:    false,
+    optionsSuccessStatus: 204,
+    maxAge:               86400, // Cache preflight results for 24h
+  });
 
   const stellarNetwork = app.get(StellarNetworkService);
   const httpAdapter = app.getHttpAdapter();
