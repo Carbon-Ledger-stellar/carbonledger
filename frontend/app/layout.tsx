@@ -6,6 +6,7 @@ import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
 import AppProviders from '../components/AppProviders';
 import RealtimeNotificationProvider from '../components/RealtimeNotificationProvider';
 import LocaleProvider from '../components/LocaleProvider';
+import ErrorBoundary from '../components/ErrorBoundary';
 import en from '../public/locales/en/common.json';
 
 export const dynamic = 'force-dynamic';
@@ -60,20 +61,22 @@ export default function RootLayout({
         />
       </head>
        <body>
-         <LocaleProvider initialMessages={en}>
-           <a href="#main-content" className="skip-link">Skip to main content</a>
-           <ServiceWorkerRegistration />
-           <ThemeProvider>
-                     <AppProviders>
-                       <RealtimeNotificationProvider>
-                         <Navbar />
-                         <main id="main-content">
-                           {children}
-                         </main>
-                       </RealtimeNotificationProvider>
-                     </AppProviders>
-                   </ThemeProvider>
-         </LocaleProvider>
+         <ErrorBoundary>
+           <LocaleProvider initialMessages={en}>
+             <a href="#main-content" className="skip-link">Skip to main content</a>
+             <ServiceWorkerRegistration />
+             <ThemeProvider>
+               <AppProviders>
+                 <RealtimeNotificationProvider>
+                   <Navbar />
+                   <main id="main-content">
+                     {children}
+                   </main>
+                 </RealtimeNotificationProvider>
+               </AppProviders>
+             </ThemeProvider>
+           </LocaleProvider>
+         </ErrorBoundary>
        </body>
     </html>
   );
