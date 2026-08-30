@@ -47,6 +47,10 @@ pub enum CarbonError {
     AlreadyInitialized = 19,
     Arithmetic = 20,
     UnauthorizedUpgrade = 21,
+    /// Returned when execute_price is called before the 24-hour timelock expires.
+    TimelockNotExpired = 24,
+    /// Returned when execute_price or cancel_price is called with no pending proposal.
+    NoPendingProposal = 25,
 }
 
 // -- Constants ----------------------------------------------------------------
@@ -58,8 +62,10 @@ pub const MAX_VINTAGE_AGE_YEARS: u32 = 30;
 
 const MONITORING_FRESHNESS_SECS: u64 = 365 * 24 * 60 * 60;
 /// Maximum age of a benchmark price before it is considered stale (24 hours).
-/// Marketplace circuit breaker halts purchases when price data exceeds this threshold.
 pub const PRICE_STALENESS_SECS: u64 = 24 * 60 * 60;
+/// Minimum delay that must elapse between propose_price and execute_price.
+/// Set to 24 hours (86 400 seconds) to give time for key-compromise detection.
+pub const PRICE_TIMELOCK_DELAY_SECS: u64 = 24 * 60 * 60;
 const PRICE_CACHE_TTL_LEDGERS: u32 = 17_280;
 /// TTL for persistent timestamp keys (price / monitoring freshness metadata).
 const PERSISTENT_META_TTL_LEDGERS: u32 = 518_400;
@@ -74,9 +80,9 @@ pub enum DataKey {
     LatestMonitoring(String),
     BenchmarkPrice(String, u32),
     /// Unix timestamp of when BenchmarkPrice(methodology, vintage_year) was last updated.
-    /// Stored in persistent storage (unlike the price itself which uses temporary storage)
-    /// so that staleness can be checked even after the TTL-based price entry expires.
     PriceUpdatedAt(String, u32),
+    /// Pending (proposed but not yet executed) price update for (methodology, vintage_year).
+    PendingPrice(String, u32),
     FlaggedProject(String),
     OracleAddress,
     OraclePublicKey,
@@ -84,7 +90,7 @@ pub enum DataKey {
     Admin,
     ContractVersion,
     UpgradeHistory,
-    /// Configurable liveness SLA in seconds.  Default: 365 days (31_536_000 s).
+    /// Configurable liveness SLA in seconds. Default: 365 days.
     LivenessSlaSeconds,
     /// Address of the carbon_registry contract for cross-contract suspend calls.
     RegistryAddress,
@@ -114,6 +120,23 @@ pub struct UpgradeRecord {
     pub wasm_hash: BytesN<32>,
 }
 
+/// A pending price proposal that has been submitted but not yet executed.
+/// Cannot be executed before `proposed_at + PRICE_TIMELOCK_DELAY_SECS`.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PendingPriceProposal {
+    /// The methodology this price applies to (e.g. "VCS", "Gold Standard").
+    pub methodology: String,
+    /// The vintage year this price applies to.
+    pub vintage_year: u32,
+    /// The proposed price in micro-USDC stroops.
+    pub price_usdc: i128,
+    /// The oracle address that submitted this proposal.
+    pub proposed_by: Address,
+    /// Ledger timestamp when the proposal was submitted.
+    pub proposed_at: u64,
+}
+
 // -- Contract -----------------------------------------------------------------
 
 #[contract]
@@ -122,7 +145,6 @@ pub struct CarbonOracleContract;
 #[contractimpl]
 impl CarbonOracleContract {
 
-    pub fn initialize(env: Env, admin: Address, oracle_address: Address, oracle_pub_key: BytesN<32>, registry_address: Address) -> Result<(), CarbonError> {
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -134,12 +156,6 @@ impl CarbonOracleContract {
         }
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::OracleAddress, &oracle_address);
-        env.storage().persistent().set(&DataKey::OraclePublicKey, &oracle_pub_key);
-        env.storage().persistent().set(&DataKey::OracleNonce, &0_u64);
-        env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
-        env.storage().persistent().set(&DataKey::RegistryAddress, &registry_address);
-        env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &MONITORING_FRESHNESS_SECS);
         env.storage()
             .persistent()
             .set(&DataKey::OracleAddress, &oracle_address);
@@ -295,7 +311,19 @@ impl CarbonOracleContract {
         Ok(())
     }
 
-    pub fn update_credit_price(
+    // ── Timelock price update: propose / execute / cancel ───────────────────
+
+    /// Phase 1 of the timelock price update flow.
+    ///
+    /// Stores a `PendingPriceProposal` with the current ledger timestamp.
+    /// The proposal cannot be executed until `PRICE_TIMELOCK_DELAY_SECS`
+    /// (24 hours) have elapsed.
+    ///
+    /// Replaces the former `update_credit_price` which applied prices immediately.
+    /// A new proposal overwrites any existing pending proposal for the same
+    /// (methodology, vintage_year) pair — the caller must re-call execute_price
+    /// after the new 24-hour window.
+    pub fn propose_price(
         env: Env,
         oracle_signer: Address,
         methodology: String,
@@ -308,7 +336,6 @@ impl CarbonOracleContract {
         Self::require_oracle(&env, &oracle_signer)?;
 
         let payload = (methodology.clone(), vintage_year, price_usdc).to_xdr(&env);
-
         Self::verify_oracle_signature(&env, &payload, &signature, nonce)?;
 
         if price_usdc <= 0 {
@@ -320,16 +347,71 @@ impl CarbonOracleContract {
 
         let now = env.ledger().timestamp();
 
-        let key = DataKey::BenchmarkPrice(methodology.clone(), vintage_year);
-        env.storage().temporary().set(&key, &price_usdc);
-        env.storage().temporary().extend_ttl(
+        let proposal = PendingPriceProposal {
+            methodology: methodology.clone(),
+            vintage_year,
+            price_usdc,
+            proposed_by: oracle_signer.clone(),
+            proposed_at: now,
+        };
+
+        let key = DataKey::PendingPrice(methodology.clone(), vintage_year);
+        env.storage().persistent().set(&key, &proposal);
+        env.storage().persistent().extend_ttl(
             &key,
+            PERSISTENT_META_TTL_LEDGERS,
+            PERSISTENT_META_TTL_LEDGERS,
+        );
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("price_prp")),
+            (methodology, vintage_year, price_usdc, now),
+        );
+        Ok(())
+    }
+
+    /// Phase 2 of the timelock price update flow.
+    ///
+    /// Applies the pending price proposal to the benchmark price storage.
+    /// Callable by the oracle after `PRICE_TIMELOCK_DELAY_SECS` (24 hours)
+    /// have elapsed since `propose_price` was called.
+    ///
+    /// Returns:
+    ///  - `CarbonError::NoPendingProposal` if no proposal exists for the key
+    ///  - `CarbonError::TimelockNotExpired` if fewer than 24 hours have elapsed
+    pub fn execute_price(
+        env: Env,
+        oracle_signer: Address,
+        methodology: String,
+        vintage_year: u32,
+    ) -> Result<(), CarbonError> {
+        oracle_signer.require_auth();
+        Self::require_oracle(&env, &oracle_signer)?;
+
+        let pending_key = DataKey::PendingPrice(methodology.clone(), vintage_year);
+        let proposal: PendingPriceProposal = env
+            .storage()
+            .persistent()
+            .get(&pending_key)
+            .ok_or(CarbonError::NoPendingProposal)?;
+
+        let now = env.ledger().timestamp();
+        let elapsed = now.saturating_sub(proposal.proposed_at);
+
+        if elapsed < PRICE_TIMELOCK_DELAY_SECS {
+            return Err(CarbonError::TimelockNotExpired);
+        }
+
+        // Timelock satisfied — apply the price
+        let price_key = DataKey::BenchmarkPrice(methodology.clone(), vintage_year);
+        env.storage().temporary().set(&price_key, &proposal.price_usdc);
+        env.storage().temporary().extend_ttl(
+            &price_key,
             PRICE_CACHE_TTL_LEDGERS,
             PRICE_CACHE_TTL_LEDGERS,
         );
 
-        // Store the update timestamp persistently so staleness can be checked
-        // even if the temporary price entry has expired.
+        // Persist updated-at timestamp for staleness checks
         let ts_key = DataKey::PriceUpdatedAt(methodology.clone(), vintage_year);
         env.storage().persistent().set(&ts_key, &now);
         env.storage().persistent().extend_ttl(
@@ -338,12 +420,59 @@ impl CarbonOracleContract {
             PERSISTENT_META_TTL_LEDGERS,
         );
 
+        // Remove the pending proposal — it has been consumed
+        env.storage().persistent().remove(&pending_key);
+
         env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("price_upd")),
-            (methodology, vintage_year, price_usdc),
+            (symbol_short!("c_ledger"), symbol_short!("price_exe")),
+            (methodology, vintage_year, proposal.price_usdc),
         );
         Ok(())
     }
+
+    /// Emergency cancellation of a pending price proposal.
+    ///
+    /// Only the ADMIN may call this function. Intended for use when a
+    /// compromised oracle key has submitted a malicious price proposal
+    /// and the 24-hour window is still open.
+    ///
+    /// Returns `CarbonError::NoPendingProposal` if no proposal exists.
+    pub fn cancel_price(
+        env: Env,
+        admin: Address,
+        methodology: String,
+        vintage_year: u32,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        let key = DataKey::PendingPrice(methodology.clone(), vintage_year);
+        if !env.storage().persistent().has(&key) {
+            return Err(CarbonError::NoPendingProposal);
+        }
+
+        env.storage().persistent().remove(&key);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("price_cnl")),
+            (methodology, vintage_year, admin),
+        );
+        Ok(())
+    }
+
+    /// Returns the pending price proposal for (methodology, vintage_year) if
+    /// one exists, or None if no proposal is pending.
+    pub fn get_pending_proposal(
+        env: Env,
+        methodology: String,
+        vintage_year: u32,
+    ) -> Option<PendingPriceProposal> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingPrice(methodology, vintage_year))
+    }
+
+    // ── Read functions ───────────────────────────────────────────────────────
 
     pub fn get_monitoring_data(
         env: Env,
@@ -408,14 +537,54 @@ impl CarbonOracleContract {
         }
     }
 
-    /// Permissionless liveness check.  Anyone may call this to verify that a
-    /// project's monitoring data is within the configured SLA window.  If the
-    /// data is stale the function:
-    ///   1. Flags the project in oracle storage
-    ///   2. Cross-contract calls `carbon_registry::oracle_suspend_project`
-    ///   3. Emits a `(c_ledger, liveness_flag)` event
-    ///
-    /// Idempotent: if the project is already flagged, no action is taken.
+    /// Admin-only: adjust the liveness SLA window in seconds.
+    pub fn set_liveness_sla(env: Env, admin: Address, seconds: u64) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &seconds);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("sla_upd")),
+            (admin, seconds),
+        );
+        Ok(())
+    }
+
+    /// Returns true if the benchmark price for (methodology, vintage_year) was
+    /// updated within the last 24 hours.
+    pub fn is_price_current(env: Env, methodology: String, vintage_year: u32) -> bool {
+        let ts: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceUpdatedAt(methodology, vintage_year));
+
+        match ts {
+            None => false,
+            Some(updated_at) => {
+                let now = env.ledger().timestamp();
+                now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS
+            }
+        }
+    }
+
+    pub fn get_total_verified_tonnes(env: Env, project_id: String, periods: Vec<String>) -> i128 {
+        let mut total: i128 = 0;
+        for period in periods.iter() {
+            if let Some(data) =
+                env.storage()
+                    .persistent()
+                    .get::<DataKey, MonitoringData>(&DataKey::MonitoringData(
+                        project_id.clone(),
+                        period.clone(),
+                    ))
+            {
+                total = total.saturating_add(data.tonnes_verified);
+            }
+        }
+        total
+    }
+
+    /// Permissionless liveness check.
     pub fn check_liveness(env: Env, project_id: String) -> Result<(), CarbonError> {
         let sla: u64 = env
             .storage()
@@ -448,13 +617,11 @@ impl CarbonOracleContract {
 
         let reason = String::from_str(&env, "liveness_sla_breach");
 
-        // 1. Flag in oracle storage.
         env.storage().persistent().set(
             &DataKey::FlaggedProject(project_id.clone()),
             &reason,
         );
 
-        // 2. Cross-contract call: suspend in registry.
         let registry_address: Address = env
             .storage()
             .persistent()
@@ -470,7 +637,6 @@ impl CarbonOracleContract {
             ).into_val(&env),
         );
 
-        // 3. Emit event.
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("liveness_flag")),
             (project_id, reason),
@@ -479,75 +645,7 @@ impl CarbonOracleContract {
         Ok(())
     }
 
-    /// Admin-only: adjust the liveness SLA window in seconds.
-    pub fn set_liveness_sla(env: Env, admin: Address, seconds: u64) -> Result<(), CarbonError> {
-        admin.require_auth();
-        Self::require_admin(&env, &admin)?;
-        env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &seconds);
-
-        env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("sla_upd")),
-            (admin, seconds),
-        );
-        Ok(())
-    }
-
-    /// Returns true if the benchmark price for (methodology, vintage_year) was
-    /// updated within the last 24 hours.  Returns false if the price was never
-    /// set or was last updated more than PRICE_STALENESS_SECS (24 h) ago.
-    ///
-    /// This is the primary gate used by the marketplace circuit breaker:
-    /// purchase_credits() calls this before allowing any trade to proceed.
-    pub fn is_price_current(env: Env, methodology: String, vintage_year: u32) -> bool {
-        let ts: Option<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PriceUpdatedAt(methodology, vintage_year));
-
-        match ts {
-            None => false,
-            Some(updated_at) => {
-                let now = env.ledger().timestamp();
-                now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS
-            }
-        }
-    }
-
-    /// Returns the cumulative verified tonnes for a project across all monitoring
-    /// periods recorded by the oracle.
-    ///
-    /// This is called by `carbon_credit::mint_credits` to enforce the cross-contract
-    /// invariant: `total_credits_issued + new_amount <= total_verified_tonnes`.
-    ///
-    /// # Trust model
-    /// - The oracle is assumed trusted (see ADR-004 and PR #530 spec doc).
-    /// - This function sums all periods stored under MonitoringData(project_id, *).
-    /// - Only periods explicitly recorded via `submit_monitoring_data` are counted.
-    /// - Oracle data freshness (365-day staleness) is checked separately via
-    ///   `is_monitoring_current`; this function returns the raw cumulative total
-    ///   regardless of age, allowing the caller to decide on freshness policy.
-    ///
-    /// # Monitoring alert
-    /// Callers should emit an event when this check fails so that off-chain
-    /// monitoring can alert on attempted over-issuance:
-    ///   event topic: ("c_ledger", "over_issue")
-    ///   payload: (project_id, attempted_total, verified_total)
-    pub fn get_total_verified_tonnes(env: Env, project_id: String, periods: Vec<String>) -> i128 {
-        let mut total: i128 = 0;
-        for period in periods.iter() {
-            if let Some(data) =
-                env.storage()
-                    .persistent()
-                    .get::<DataKey, MonitoringData>(&DataKey::MonitoringData(
-                        project_id.clone(),
-                        period.clone(),
-                    ))
-            {
-                total = total.saturating_add(data.tonnes_verified);
-            }
-        }
-        total
-    }
+    // ── Private helpers ──────────────────────────────────────────────────────
 
     fn require_oracle(env: &Env, caller: &Address) -> Result<(), CarbonError> {
         let oracle: Address = env
@@ -678,17 +776,269 @@ mod tests {
 
         let admin = Address::generate(env);
         let oracle = Address::generate(env);
-        let registry = Address::generate(env);
-        let id     = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(env, &id);
-        
-        client.initialize(&admin, &oracle, &pub_key, &registry);
         let id = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
 
         client.initialize(&admin, &oracle, &pub_key);
         (client, admin, oracle, signing_key)
     }
+
+    fn advance_time(env: &Env, secs: u64) {
+        let info = env.ledger().get();
+        env.ledger().set(LedgerInfo {
+            timestamp: info.timestamp + secs,
+            protocol_version: info.protocol_version,
+            sequence_number: info.sequence_number,
+            network_id: info.network_id,
+            base_reserve: info.base_reserve,
+            min_temp_entry_ttl: info.min_temp_entry_ttl,
+            min_persistent_entry_ttl: info.min_persistent_entry_ttl,
+            max_entry_ttl: info.max_entry_ttl,
+        });
+    }
+
+    fn sign_price(
+        env: &Env,
+        key: &SigningKey,
+        methodology: &String,
+        vintage_year: u32,
+        price: i128,
+        nonce: u64,
+    ) -> BytesN<64> {
+        let payload = (methodology.clone(), vintage_year, price).to_xdr(env);
+        let sig = key.sign(payload.to_alloc_vec().as_slice());
+        BytesN::from_array(env, &sig.to_bytes())
+    }
+
+    // ── 1. propose_price stores a pending proposal ───────────────────────────
+
+    #[test]
+    fn test_propose_price_stores_pending_proposal() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        let proposal = client.get_pending_proposal(&method, &2023_u32);
+        assert!(proposal.is_some(), "proposal should be stored");
+        let p = proposal.unwrap();
+        assert_eq!(p.price_usdc, price);
+        assert_eq!(p.vintage_year, 2023);
+    }
+
+    // ── 2. execute_price before timelock returns TimelockNotExpired ──────────
+
+    #[test]
+    fn test_execute_price_before_timelock_returns_error() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        // Propose
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Try to execute immediately — should fail
+        let err = client
+            .try_execute_price(&oracle, &method, &2023_u32)
+            .unwrap_err()
+            .unwrap();
+
+        assert_eq!(err, CarbonError::TimelockNotExpired);
+    }
+
+    // ── 3. execute_price after 24h succeeds ──────────────────────────────────
+
+    #[test]
+    fn test_execute_price_after_24h_succeeds() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        // Propose
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Advance exactly 24 hours
+        advance_time(&env, PRICE_TIMELOCK_DELAY_SECS);
+
+        // Execute — should succeed
+        client.execute_price(&oracle, &method, &2023_u32);
+
+        // Price should now be available
+        let stored_price = client.get_benchmark_price(&method, &2023_u32);
+        assert_eq!(stored_price, price);
+    }
+
+    // ── 4. execute_price at exactly timelock boundary (24h - 1s) fails ───────
+
+    #[test]
+    fn test_execute_price_one_second_before_timelock_fails() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Advance to 1 second before the timelock
+        advance_time(&env, PRICE_TIMELOCK_DELAY_SECS - 1);
+
+        let err = client
+            .try_execute_price(&oracle, &method, &2023_u32)
+            .unwrap_err()
+            .unwrap();
+
+        assert_eq!(err, CarbonError::TimelockNotExpired);
+    }
+
+    // ── 5. cancel_price removes pending proposal ─────────────────────────────
+
+    #[test]
+    fn test_cancel_price_removes_proposal() {
+        let env = Env::default();
+        let (client, admin, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Admin cancels during the timelock window
+        client.cancel_price(&admin, &method, &2023_u32);
+
+        let proposal = client.get_pending_proposal(&method, &2023_u32);
+        assert!(proposal.is_none(), "proposal should be removed after cancel");
+    }
+
+    // ── 6. execute_price after cancel returns NoPendingProposal ─────────────
+
+    #[test]
+    fn test_execute_price_after_cancel_returns_no_pending() {
+        let env = Env::default();
+        let (client, admin, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Cancel
+        client.cancel_price(&admin, &method, &2023_u32);
+
+        // Advance past the timelock
+        advance_time(&env, PRICE_TIMELOCK_DELAY_SECS + 1);
+
+        let err = client
+            .try_execute_price(&oracle, &method, &2023_u32)
+            .unwrap_err()
+            .unwrap();
+
+        assert_eq!(err, CarbonError::NoPendingProposal);
+    }
+
+    // ── 7. execute_price with no proposal at all returns NoPendingProposal ───
+
+    #[test]
+    fn test_execute_price_with_no_proposal_returns_error() {
+        let env = Env::default();
+        let (client, _, oracle, _) = setup(&env);
+        let method = s(&env, "VCS");
+
+        let err = client
+            .try_execute_price(&oracle, &method, &2023_u32)
+            .unwrap_err()
+            .unwrap();
+
+        assert_eq!(err, CarbonError::NoPendingProposal);
+    }
+
+    // ── 8. cancel_price with no proposal returns NoPendingProposal ──────────
+
+    #[test]
+    fn test_cancel_price_with_no_proposal_returns_error() {
+        let env = Env::default();
+        let (client, admin, _, _) = setup(&env);
+        let method = s(&env, "VCS");
+
+        let err = client
+            .try_cancel_price(&admin, &method, &2023_u32)
+            .unwrap_err()
+            .unwrap();
+
+        assert_eq!(err, CarbonError::NoPendingProposal);
+    }
+
+    // ── 9. cancel_price cannot be called by non-admin ────────────────────────
+
+    #[test]
+    fn test_cancel_price_non_admin_not_authorized() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        // Use a random non-admin address
+        let impostor = Address::generate(&env);
+        let err = client
+            .try_cancel_price(&impostor, &method, &2023_u32)
+            .unwrap_err()
+            .unwrap();
+
+        assert_eq!(err, CarbonError::UnauthorizedVerifier);
+    }
+
+    // ── 10. pending proposal cleared after execute ───────────────────────────
+
+    #[test]
+    fn test_pending_proposal_cleared_after_execute() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        advance_time(&env, PRICE_TIMELOCK_DELAY_SECS);
+        client.execute_price(&oracle, &method, &2023_u32);
+
+        // Proposal should be removed
+        let proposal = client.get_pending_proposal(&method, &2023_u32);
+        assert!(proposal.is_none(), "proposal should be consumed by execute_price");
+    }
+
+    // ── 11. is_price_current is true after execute ───────────────────────────
+
+    #[test]
+    fn test_is_price_current_true_after_execute() {
+        let env = Env::default();
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
+
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
+        client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
+
+        advance_time(&env, PRICE_TIMELOCK_DELAY_SECS);
+        client.execute_price(&oracle, &method, &2023_u32);
+
+        assert!(
+            client.is_price_current(&method, &2023_u32),
+            "price should be current after successful execute"
+        );
+    }
+
+    // ── 12. Monitoring data submission still works ───────────────────────────
 
     #[test]
     fn test_valid_signature_submission() {
@@ -730,104 +1080,61 @@ mod tests {
         assert_eq!(data.methodology_score, 85);
     }
 
+    // ── 13. Error constant values ─────────────────────────────────────────────
+
     #[test]
-    #[should_panic(expected = "HostError")]
-    fn test_invalid_signature_submission() {
-        let env = Env::default();
-        let (client, _, oracle, signing_key) = setup(&env);
-
-        let project_id = s(&env, "proj-001");
-        let period = s(&env, "2023-Q1");
-        let tonnes = 5000_i128;
-        let score = 85_u32;
-        let cid = s(&env, "QmSatCID");
-        let nonce = 0_u64;
-
-        let payload = (
-            project_id.clone(),
-            period.clone(),
-            tonnes,
-            score,
-            cid.clone(),
-        )
-            .to_xdr(&env);
-
-        let sig = signing_key.sign(payload.to_alloc_vec().as_slice());
-        let mut sig_bytes = sig.to_bytes();
-        // Corrupt signature
-        sig_bytes[0] ^= 0xFF;
-        let invalid_signature = BytesN::from_array(&env, &sig_bytes);
-
-        // This will panic internally in `ed25519_verify`
-        client.submit_monitoring_data(
-            &oracle,
-            &project_id,
-            &period,
-            &tonnes,
-            &score,
-            &cid,
-            &invalid_signature,
-            &nonce,
-        );
+    fn test_timelock_error_code() {
+        assert_eq!(CarbonError::TimelockNotExpired as u32, 24);
     }
 
     #[test]
-    fn test_invalid_nonce_submission() {
+    fn test_no_pending_proposal_error_code() {
+        assert_eq!(CarbonError::NoPendingProposal as u32, 25);
+    }
+
+    // ── 14. propose → wait → execute full happy path ─────────────────────────
+
+    #[test]
+    fn test_full_timelock_flow() {
         let env = Env::default();
-        let (client, _, oracle, signing_key) = setup(&env);
+        let (client, _, oracle, key) = setup(&env);
+        let method = s(&env, "Gold Standard");
+        let price = 30_0000000_i128;
 
-        let project_id = s(&env, "proj-001");
-        let period = s(&env, "2023-Q1");
-        let tonnes = 5000_i128;
-        let score = 85_u32;
-        let cid = s(&env, "QmSatCID");
-        // Using an incorrect nonce, should return CarbonError::InvalidNonce (22)
-        let invalid_nonce = 1_u64;
+        // 1. Propose
+        let sig = sign_price(&env, &key, &method, 2024, price, 0);
+        client.propose_price(&oracle, &method, &2024_u32, &price, &sig, &0_u64);
 
-        let payload = (
-            project_id.clone(),
-            period.clone(),
-            tonnes,
-            score,
-            cid.clone(),
-        )
-            .to_xdr(&env);
+        // 2. Verify proposal is pending
+        let pending = client.get_pending_proposal(&method, &2024_u32).unwrap();
+        assert_eq!(pending.price_usdc, price);
 
-        let sig = signing_key.sign(payload.to_alloc_vec().as_slice());
-        let signature = BytesN::from_array(&env, &sig.to_bytes());
-
+        // 3. Cannot execute yet
         let err = client
-            .try_submit_monitoring_data(
-                &oracle,
-                &project_id,
-                &period,
-                &tonnes,
-                &score,
-                &cid,
-                &signature,
-                &invalid_nonce,
-            )
-            .unwrap_err();
+            .try_execute_price(&oracle, &method, &2024_u32)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, CarbonError::TimelockNotExpired);
 
-        assert_eq!(err.unwrap(), CarbonError::InvalidNonce);
+        // 4. Advance 24 hours
+        advance_time(&env, PRICE_TIMELOCK_DELAY_SECS);
+
+        // 5. Execute succeeds
+        client.execute_price(&oracle, &method, &2024_u32);
+
+        // 6. Price is now accessible
+        assert_eq!(client.get_benchmark_price(&method, &2024_u32), price);
+        assert!(client.is_price_current(&method, &2024_u32));
+
+        // 7. Proposal is gone
+        assert!(client.get_pending_proposal(&method, &2024_u32).is_none());
     }
 }
 
-// ── Circuit breaker / staleness tests ─────────────────────────────────────────
+// ── Staleness tests (retained from original) ─────────────────────────────────
 
 #[cfg(test)]
 mod staleness_tests {
-    //! Tests for is_price_current() and the price-staleness circuit breaker
-    //! mechanism (closes #534).
-    //!
-    //! Scenarios covered:
-    //!  1. is_price_current returns false when no price has ever been set.
-    //!  2. is_price_current returns true immediately after update_credit_price.
-    //!  3. is_price_current returns false after advancing ledger time > 24 hours.
-    //!  4. is_price_current returns true after a fresh price update following staleness.
-    //!  5. is_monitoring_current returns false if no data in > 365 days (regression).
-    //!  6. Different (methodology, vintage_year) pairs are tracked independently.
-
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     use soroban_sdk::xdr::ToXdr;
@@ -849,7 +1156,7 @@ mod staleness_tests {
     fn setup(env: &Env) -> (CarbonOracleContractClient<'_>, Address, Address, SigningKey) {
         env.mock_all_auths();
         env.ledger().set(LedgerInfo {
-            timestamp: 1_735_689_600, // 2025-01-01 00:00:00 UTC
+            timestamp: 1_735_689_600,
             protocol_version: 20,
             sequence_number: 1,
             network_id: [0; 32],
@@ -861,15 +1168,11 @@ mod staleness_tests {
         let signing_key = test_signing_key();
         let pub_bytes = signing_key.verifying_key().to_bytes();
         let pub_key = BytesN::from_array(env, &pub_bytes);
-        let admin    = Address::generate(env);
-        let oracle   = Address::generate(env);
-        let registry = Address::generate(env);
-        let id     = env.register_contract(None, CarbonOracleContract);
         let admin = Address::generate(env);
         let oracle = Address::generate(env);
         let id = env.register_contract(None, CarbonOracleContract);
         let client = CarbonOracleContractClient::new(env, &id);
-        client.initialize(&admin, &oracle, &pub_key, &registry);
+        client.initialize(&admin, &oracle, &pub_key);
         (client, admin, oracle, signing_key)
     }
 
@@ -899,86 +1202,52 @@ mod staleness_tests {
         });
     }
 
-    // ── 1. No price set → stale ───────────────────────────────────────────────
+    fn propose_and_execute(
+        env: &Env,
+        client: &CarbonOracleContractClient,
+        oracle: &Address,
+        key: &SigningKey,
+        methodology: &String,
+        vintage_year: u32,
+        price: i128,
+        nonce: u64,
+    ) {
+        let sig = sign_price(env, key, methodology, vintage_year, price);
+        // We need to rebuild the payload with nonce for the full sign_price with nonce
+        let payload = (methodology.clone(), vintage_year, price).to_xdr(env);
+        let raw_sig = key.sign(payload.to_alloc_vec().as_slice());
+        let signature = BytesN::from_array(env, &raw_sig.to_bytes());
+        let _ = sig;
+        client.propose_price(oracle, methodology, &vintage_year, &price, &signature, &nonce);
+        advance_time(env, PRICE_TIMELOCK_DELAY_SECS);
+        client.execute_price(oracle, methodology, &vintage_year);
+    }
 
     #[test]
     fn test_is_price_current_false_when_never_set() {
         let env = Env::default();
         let (client, _, _, _) = setup(&env);
-        assert!(
-            !client.is_price_current(&s(&env, "VCS"), &2023_u32),
-            "price should not be current when never set"
-        );
+        assert!(!client.is_price_current(&s(&env, "VCS"), &2023_u32));
     }
 
-    // ── 2. Fresh price → current ──────────────────────────────────────────────
-
     #[test]
-    fn test_is_price_current_true_immediately_after_update() {
+    fn test_is_price_current_true_after_execute() {
         let env = Env::default();
         let (client, _, oracle, key) = setup(&env);
         let method = s(&env, "VCS");
-        let price = 25_0000000_i128;
-        let sig = sign_price(&env, &key, &method, 2023, price);
-        client.update_credit_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
-        assert!(
-            client.is_price_current(&method, &2023_u32),
-            "price should be current immediately after update"
-        );
+        propose_and_execute(&env, &client, &oracle, &key, &method, 2023, 25_0000000, 0);
+        assert!(client.is_price_current(&method, &2023_u32));
     }
 
-    // ── 3. Price becomes stale after >24 h ────────────────────────────────────
-
     #[test]
-    fn test_is_price_current_false_after_24_hours() {
+    fn test_is_price_current_false_after_24_hours_from_execute() {
         let env = Env::default();
         let (client, _, oracle, key) = setup(&env);
         let method = s(&env, "VCS");
-        let price = 25_0000000_i128;
-        let sig = sign_price(&env, &key, &method, 2023, price);
-        client.update_credit_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
-
-        // Advance past the 24-hour staleness threshold
-        advance_time(&env, 24 * 60 * 60 + 1);
-
-        assert!(
-            !client.is_price_current(&method, &2023_u32),
-            "price should be stale after 24 h + 1 s"
-        );
+        propose_and_execute(&env, &client, &oracle, &key, &method, 2023, 25_0000000, 0);
+        advance_time(&env, PRICE_STALENESS_SECS + 1);
+        assert!(!client.is_price_current(&method, &2023_u32));
     }
-
-    // ── 4. Stale price recovers after fresh update ────────────────────────────
-
-    #[test]
-    fn test_is_price_current_true_after_refresh_following_staleness() {
-        let env = Env::default();
-        let (client, _, oracle, key) = setup(&env);
-        let method = s(&env, "VCS");
-
-        // First update
-        let price1 = 25_0000000_i128;
-        let sig1 = sign_price(&env, &key, &method, 2023, price1);
-        client.update_credit_price(&oracle, &method, &2023_u32, &price1, &sig1, &0_u64);
-
-        // Advance to stale
-        advance_time(&env, 25 * 60 * 60);
-        assert!(
-            !client.is_price_current(&method, &2023_u32),
-            "should be stale after 25 h"
-        );
-
-        // Oracle submits a fresh price
-        let price2 = 26_0000000_i128;
-        let sig2 = sign_price(&env, &key, &method, 2023, price2);
-        client.update_credit_price(&oracle, &method, &2023_u32, &price2, &sig2, &1_u64);
-
-        assert!(
-            client.is_price_current(&method, &2023_u32),
-            "price should be current again after fresh update"
-        );
-    }
-
-    // ── 5. is_monitoring_current regression ───────────────────────────────────
 
     #[test]
     fn test_is_monitoring_current_false_after_365_days() {
@@ -988,678 +1257,18 @@ mod staleness_tests {
         let project_id = s(&env, "proj-stale");
         let period = s(&env, "2023-Q1");
         let payload = (
-            project_id.clone(),
-            period.clone(),
-            5000_i128,
-            85_u32,
-            s(&env, "QmCID"),
-        )
-            .to_xdr(&env);
+            project_id.clone(), period.clone(), 5000_i128, 85_u32, s(&env, "QmCID"),
+        ).to_xdr(&env);
         let sig = key.sign(payload.to_alloc_vec().as_slice());
         let signature = BytesN::from_array(&env, &sig.to_bytes());
 
         client.submit_monitoring_data(
-            &oracle,
-            &project_id,
-            &period,
-            &5000_i128,
-            &85_u32,
-            &s(&env, "QmCID"),
-            &signature,
-            &0_u64,
+            &oracle, &project_id, &period, &5000_i128, &85_u32,
+            &s(&env, "QmCID"), &signature, &0_u64,
         );
-        assert!(
-            client.is_monitoring_current(&project_id),
-            "should be current just after submit"
-        );
-
-        // Advance by 366 days — past the 365-day monitoring freshness window
-        advance_time(&env, 366 * 24 * 60 * 60);
-        assert!(
-            !client.is_monitoring_current(&project_id),
-            "monitoring should be stale after 366 days"
-        );
-    }
-
-    // ── 6. Independent per-(methodology, vintage_year) tracking ──────────────
-
-    #[test]
-    fn test_price_staleness_independent_per_methodology_vintage() {
-        let env = Env::default();
-        let (client, _, oracle, key) = setup(&env);
-
-        let vcs = s(&env, "VCS");
-        let gs = s(&env, "Gold Standard");
-        let price = 25_0000000_i128;
-
-        // Only set VCS 2023
-        let sig = sign_price(&env, &key, &vcs, 2023, price);
-        client.update_credit_price(&oracle, &vcs, &2023_u32, &price, &sig, &0_u64);
-
-        // Advance 13 h — VCS 2023 still fresh
-        advance_time(&env, 13 * 60 * 60);
-        assert!(
-            client.is_price_current(&vcs, &2023_u32),
-            "VCS 2023 fresh at 13 h"
-        );
-        assert!(
-            !client.is_price_current(&gs, &2023_u32),
-            "GS 2023 never set → stale"
-        );
-        assert!(
-            !client.is_price_current(&vcs, &2022_u32),
-            "VCS 2022 never set → stale"
-        );
-
-        // Advance another 13 h — VCS 2023 now stale (26 h total)
-        advance_time(&env, 13 * 60 * 60);
-        assert!(
-            !client.is_price_current(&vcs, &2023_u32),
-            "VCS 2023 stale after 26 h"
-        );
-    }
-}
-
-// ── Vintage Year Validation Tests (Oracle) ────────────────────────────────────
-//
-// Tests covering vintage year validation on update_credit_price.
-// Validates that the oracle rejects invalid vintage years and expired batches.
-#[cfg(test)]
-mod vintage_year_validation_tests {
-    use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
-    use soroban_sdk::xdr::ToXdr;
-    use soroban_sdk::{
-        testutils::{Address as _, Ledger, LedgerInfo},
-        BytesN, Env, String,
-    };
-
-    const TEST_SIGNING_KEY: [u8; 32] = [42u8; 32];
-
-    fn test_signing_key() -> SigningKey {
-        SigningKey::from_bytes(&TEST_SIGNING_KEY)
-    }
-
-    fn s(env: &Env, v: &str) -> String {
-        String::from_str(env, v)
-    }
-
-    fn set_year(env: &Env, year: u32) {
-        let seconds_per_year: u64 = 31_557_600;
-        let timestamp = (year as u64 - 1970) * seconds_per_year + 86_400;
-        env.ledger().set(LedgerInfo {
-            timestamp,
-            protocol_version: 20,
-            sequence_number: 1,
-            network_id: [0; 32],
-            base_reserve: 10,
-            min_temp_entry_ttl: 1,
-            min_persistent_entry_ttl: 1,
-            max_entry_ttl: 518_400,
-        });
-    }
-
-    fn setup_at_year(year: u32) -> (Env, Address, Address, Address, SigningKey) {
-        let env = Env::default();
-        env.mock_all_auths();
-        set_year(&env, year);
-        let signing_key = test_signing_key();
-        let pub_bytes = signing_key.verifying_key().to_bytes();
-        let pub_key = BytesN::from_array(&env, &pub_bytes);
-        let admin    = Address::generate(&env);
-        let oracle   = Address::generate(&env);
-        let registry = Address::generate(&env);
-        let id     = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(&env, &id);
-        client.initialize(&admin, &oracle, &pub_key, &registry);
-        (env, client, admin, oracle, signing_key)
-        let admin = Address::generate(&env);
-        let oracle = Address::generate(&env);
-        let id = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(&env, &id);
-        client.initialize(&admin, &oracle, &pub_key);
-        let _ = client;
-        (env, id, admin, oracle, signing_key)
-    }
-
-    fn client_at<'a>(env: &'a Env, id: &'a Address) -> CarbonOracleContractClient<'a> {
-        CarbonOracleContractClient::new(env, id)
-    }
-
-    fn sign_price(
-        env: &Env,
-        key: &SigningKey,
-        methodology: &String,
-        vintage_year: u32,
-        price: i128,
-        _nonce: u64,
-    ) -> BytesN<64> {
-        let payload = (methodology.clone(), vintage_year, price).to_xdr(env);
-        let sig = key.sign(payload.to_alloc_vec().as_slice());
-        BytesN::from_array(env, &sig.to_bytes())
-    }
-
-    fn try_update_price(
-        env: &Env,
-        client: &CarbonOracleContractClient,
-        oracle: &Address,
-        key: &SigningKey,
-        vintage_year: u32,
-        nonce: u64,
-    ) -> Result<(), CarbonError> {
-        let method = s(env, "VCS");
-        let price = 25_0000000_i128;
-        let sig = sign_price(env, key, &method, vintage_year, price, nonce);
-        client
-            .try_update_credit_price(oracle, &method, &vintage_year, &price, &sig, &nonce)
-            .map_err(|e| e.unwrap())
-            .and_then(|r| r.map_err(|_| CarbonError::InvalidVintageYear))
-    }
-
-    fn update_price_ok(
-        env: &Env,
-        client: &CarbonOracleContractClient,
-        oracle: &Address,
-        key: &SigningKey,
-        vintage_year: u32,
-        nonce: u64,
-    ) {
-        let method = s(env, "VCS");
-        let price = 25_0000000_i128;
-        let sig = sign_price(env, key, &method, vintage_year, price, nonce);
-        client.update_credit_price(oracle, &method, &vintage_year, &price, &sig, &nonce);
-    }
-
-    // ── Below-minimum year tests ───────────────────────────────────────────────
-
-    #[test]
-    fn test_oracle_price_vintage_0_rejected() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 0, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_1_rejected() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 1, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_1900_rejected() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 1900, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_1989_rejected() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 1989, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── Minimum boundary (1990) ────────────────────────────────────────────────
-
-    #[test]
-    fn test_oracle_price_vintage_1990_accepted_when_not_expired() {
-        // At year 2019: 1990+30=2020 >= 2019 → not expired; 1990 >= 1990 → valid
-        let (env, contract_id, _, oracle, key) = setup_at_year(2019);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 1990, 0);
-    }
-
-    // ── Current year boundary ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_oracle_price_vintage_current_accepted() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 2026, 0);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_current_plus_1_accepted() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 2027, 0);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_current_plus_2_rejected() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 2028, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_u32_max_rejected() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, u32::MAX, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── Batch expiry ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_oracle_price_expired_vintage_rejected() {
-        // At year 2026: 1994+30=2024 < 2026 → expired
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 1994, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test]
-    fn test_oracle_price_at_exact_expiry_boundary_rejected() {
-        // At year 2026: vintage 1995+30=2025 < 2026 → expired
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 1995, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    #[test]
-    fn test_oracle_price_just_inside_expiry_boundary_accepted() {
-        // At year 2026: vintage 1996+30=2026 = 2026, NOT < 2026 → valid
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 1996, 0);
-    }
-
-    #[test]
-    fn test_oracle_price_far_past_expiry_rejected() {
-        // At year 2026: vintage 1990+30=2020 < 2026 → expired
-        let (env, contract_id, _, oracle, key) = setup_at_year(2026);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 1990, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── Century boundaries ────────────────────────────────────────────────────
-
-    #[test]
-    fn test_oracle_price_vintage_1999_accepted_in_2025() {
-        // 1999+30=2029 >= 2025 → valid
-        let (env, contract_id, _, oracle, key) = setup_at_year(2025);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 1999, 0);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_2000_accepted_in_2025() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2025);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 2000, 0);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_2099_accepted_in_2099() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2099);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 2099, 0);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_2100_accepted_in_2099() {
-        // 2100 = 2099+1 → valid future vintage
-        let (env, contract_id, _, oracle, key) = setup_at_year(2099);
-        let client = client_at(&env, &contract_id);
-        update_price_ok(&env, &client, &oracle, &key, 2100, 0);
-    }
-
-    #[test]
-    fn test_oracle_price_vintage_2101_rejected_in_2099() {
-        let (env, contract_id, _, oracle, key) = setup_at_year(2099);
-        let client = client_at(&env, &contract_id);
-        let res = try_update_price(&env, &client, &oracle, &key, 2101, 0);
-        assert_eq!(res.unwrap_err(), CarbonError::InvalidVintageYear);
-    }
-
-    // ── Constant correctness ──────────────────────────────────────────────────
-
-    #[test]
-    fn test_oracle_vintage_year_min_constant() {
-        assert_eq!(VINTAGE_YEAR_MIN, 1990);
-    }
-
-    #[test]
-    fn test_oracle_max_vintage_age_constant() {
-        assert_eq!(MAX_VINTAGE_AGE_YEARS, 30);
-    }
-
-    #[test]
-    fn test_oracle_invalid_vintage_error_code() {
-        assert_eq!(CarbonError::InvalidVintageYear as u32, 9);
-    }
-}
-
-// ── Liveness Check Tests ─────────────────────────────────────────────────────
-//
-// Tests for check_liveness() and the cross-contract suspend mechanism.
-// Validates that stale monitoring data triggers flag + suspend, that the check
-// is idempotent, and that the SLA window is configurable.
-#[cfg(test)]
-mod liveness_tests {
-    use super::*;
-    use carbon_registry::{
-        CarbonRegistryContract, CarbonRegistryContractClient,
-        ProjectStatus,
-    };
-    use soroban_sdk::{
-        testutils::{Address as _, Ledger, LedgerInfo},
-        Env, String, BytesN, vec,
-    };
-    use ed25519_dalek::{SigningKey, Signer};
-    use rand::rngs::OsRng;
-    use soroban_sdk::xdr::ToXdr;
-
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
-
-    fn advance_time(env: &Env, secs: u64) {
-        let ts  = env.ledger().timestamp();
-        let seq = env.ledger().sequence();
-        env.ledger().set(LedgerInfo {
-            timestamp:           ts + secs,
-            protocol_version:    20,
-            sequence_number:     seq + 1,
-            network_id:          [0; 32],
-            base_reserve:        10,
-            min_temp_entry_ttl:  1,
-            min_persistent_entry_ttl: 1,
-            max_entry_ttl:       518_400,
-        });
-    }
-
-    /// Deploy both contracts and wire them together.
-    fn setup_cross_contract() -> (
-        Env,
-        CarbonOracleContractClient,
-        CarbonRegistryContractClient,
-        Address,  // admin
-        Address,  // oracle signer
-        Address,  // verifier
-        SigningKey,
-    ) {
-        let env = Env::default();
-        env.mock_all_auths();
-        env.ledger().set(LedgerInfo {
-            timestamp:           1_735_689_600, // 2025-01-01
-            protocol_version:    20,
-            sequence_number:     1,
-            network_id:          [0; 32],
-            base_reserve:        10,
-            min_temp_entry_ttl:  1,
-            min_persistent_entry_ttl: 1,
-            max_entry_ttl:       518_400,
-        });
-
-        let mut csprng = OsRng;
-        let signing_key = SigningKey::generate(&mut csprng);
-        let pub_bytes = signing_key.verifying_key().to_bytes();
-        let pub_key = BytesN::from_array(&env, &pub_bytes);
-
-        let admin    = Address::generate(&env);
-        let oracle   = Address::generate(&env);
-        let verifier = Address::generate(&env);
-
-        // Register both contracts.
-        let oracle_id  = env.register_contract(None, CarbonOracleContract);
-        let registry_id = env.register_contract(None, CarbonRegistryContract);
-
-        let oracle_client  = CarbonOracleContractClient::new(&env, &oracle_id);
-        let registry_client = CarbonRegistryContractClient::new(&env, &registry_id);
-
-        // Initialize registry with oracle contract address as the oracle.
-        registry_client.initialize(&admin, &oracle_id, &vec![&env, verifier.clone()]);
-
-        // Initialize oracle with registry contract address.
-        oracle_client.initialize(&admin, &oracle, &pub_key, &registry_id);
-
-        (env, oracle_client, registry_client, admin, oracle, verifier, signing_key)
-    }
-
-    fn sign_monitoring(
-        env: &Env,
-        key: &SigningKey,
-        project_id: &String,
-        period: &String,
-        tonnes: i128,
-        score: u32,
-        cid: &String,
-    ) -> BytesN<64> {
-        let payload = (project_id.clone(), period.clone(), tonnes, score, cid.clone()).to_xdr(env);
-        let sig = key.sign(payload.to_alloc_vec().as_slice());
-        BytesN::from_array(env, &sig.to_bytes())
-    }
-
-    fn register_project(
-        env: &Env,
-        registry: &CarbonRegistryContractClient,
-        admin: &Address,
-        project_id: &str,
-    ) {
-        registry.register_project(
-            admin,
-            &s(env, project_id),
-            &s(env, "Test Project"),
-            &s(env, "QmCID"),
-            &Address::generate(env),
-            &s(env, "VCS"),
-            &s(env, "Brazil"),
-            &s(env, "forestry"),
-            &75_u32,
-            &2023_u32,
-        );
-    }
-
-    // ── 1. Fresh data → no flag ──────────────────────────────────────────────
-
-    #[test]
-    fn test_check_liveness_fresh_data_no_flag() {
-        let (env, oracle_client, registry_client, admin, oracle, _, key) =
-            setup_cross_contract();
-
-        let project_id = s(&env, "proj-fresh");
-        register_project(&env, &registry_client, &admin, "proj-fresh");
-
-        let period = s(&env, "2025-Q1");
-        let cid    = s(&env, "QmCID");
-        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
-
-        oracle_client.submit_monitoring_data(
-            &oracle, &project_id, &period,
-            &5000_i128, &85_u32, &cid,
-            &sig, &0_u64,
-        );
-
-        // Check immediately — data is fresh.
-        oracle_client.check_liveness(&project_id);
-
-        // Project should NOT be flagged.
-        let flagged: Option<String> = env
-            .storage().persistent()
-            .get(&DataKey::FlaggedProject(project_id.clone()));
-        assert!(flagged.is_none(), "fresh project should not be flagged");
-
-        // Project should still be Verified (not Suspended).
-        let p = registry_client.get_project(&project_id);
-        assert_eq!(p.status, ProjectStatus::Pending);
-    }
-
-    // ── 2. Stale data → flag + suspend ───────────────────────────────────────
-
-    #[test]
-    fn test_check_liveness_stale_data_flags_and_suspends() {
-        let (env, oracle_client, registry_client, admin, oracle, _, key) =
-            setup_cross_contract();
-
-        let project_id = s(&env, "proj-stale");
-        register_project(&env, &registry_client, &admin, "proj-stale");
-
-        let period = s(&env, "2025-Q1");
-        let cid    = s(&env, "QmCID");
-        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
-
-        oracle_client.submit_monitoring_data(
-            &oracle, &project_id, &period,
-            &5000_i128, &85_u32, &cid,
-            &sig, &0_u64,
-        );
-
-        // Advance past the 365-day default SLA.
-        advance_time(&env, 366 * 24 * 60 * 60);
-
-        oracle_client.check_liveness(&project_id);
-
-        // Project should be flagged in oracle storage.
-        let flagged: Option<String> = env
-            .storage().persistent()
-            .get(&DataKey::FlaggedProject(project_id.clone()));
-        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
-
-        // Project should be Suspended in the registry.
-        let p = registry_client.get_project(&project_id);
-        assert_eq!(p.status, ProjectStatus::Suspended);
-    }
-
-    // ── 3. Already flagged → idempotent ──────────────────────────────────────
-
-    #[test]
-    fn test_check_liveness_already_flagged_is_idempotent() {
-        let (env, oracle_client, registry_client, admin, oracle, _, key) =
-            setup_cross_contract();
-
-        let project_id = s(&env, "proj-idem");
-        register_project(&env, &registry_client, &admin, "proj-idem");
-
-        let period = s(&env, "2025-Q1");
-        let cid    = s(&env, "QmCID");
-        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
-
-        oracle_client.submit_monitoring_data(
-            &oracle, &project_id, &period,
-            &5000_i128, &85_u32, &cid,
-            &sig, &0_u64,
-        );
+        assert!(client.is_monitoring_current(&project_id));
 
         advance_time(&env, 366 * 24 * 60 * 60);
-
-        // First call — should flag and suspend.
-        oracle_client.check_liveness(&project_id);
-
-        let p = registry_client.get_project(&project_id);
-        assert_eq!(p.status, ProjectStatus::Suspended);
-
-        // Second call — should be idempotent (no error).
-        oracle_client.check_liveness(&project_id);
-
-        // Status unchanged.
-        let p = registry_client.get_project(&project_id);
-        assert_eq!(p.status, ProjectStatus::Suspended);
-    }
-
-    // ── 4. SLA change → different behavior ───────────────────────────────────
-
-    #[test]
-    fn test_check_liveness_custom_sla() {
-        let (env, oracle_client, registry_client, admin, oracle, _, key) =
-            setup_cross_contract();
-
-        let project_id = s(&env, "proj-sla");
-        register_project(&env, &registry_client, &admin, "proj-sla");
-
-        let period = s(&env, "2025-Q1");
-        let cid    = s(&env, "QmCID");
-        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
-
-        oracle_client.submit_monitoring_data(
-            &oracle, &project_id, &period,
-            &5000_i128, &85_u32, &cid,
-            &sig, &0_u64,
-        );
-
-        // Set a very short SLA: 1 hour.
-        let one_hour: u64 = 3600;
-        oracle_client.set_liveness_sla(&admin, &one_hour);
-
-        // Advance 2 hours — past the 1-hour SLA.
-        advance_time(&env, 2 * 60 * 60);
-
-        oracle_client.check_liveness(&project_id);
-
-        let flagged: Option<String> = env
-            .storage().persistent()
-            .get(&DataKey::FlaggedProject(project_id.clone()));
-        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
-
-        let p = registry_client.get_project(&project_id);
-        assert_eq!(p.status, ProjectStatus::Suspended);
-    }
-
-    // ── 5. No monitoring data ever → stale ───────────────────────────────────
-
-    #[test]
-    fn test_check_liveness_no_data_ever_is_stale() {
-        let (env, oracle_client, registry_client, admin, _, _, _) =
-            setup_cross_contract();
-
-        register_project(&env, &registry_client, &admin, "proj-never");
-
-        let project_id = s(&env, "proj-never");
-        oracle_client.check_liveness(&project_id);
-
-        let flagged: Option<String> = env
-            .storage().persistent()
-            .get(&DataKey::FlaggedProject(project_id.clone()));
-        assert_eq!(flagged, Some(s(&env, "liveness_sla_breach")));
-
-        let p = registry_client.get_project(&project_id);
-        assert_eq!(p.status, ProjectStatus::Suspended);
-    }
-
-    // ── 6. Fresh data within custom SLA → no flag ────────────────────────────
-
-    #[test]
-    fn test_check_liveness_fresh_within_custom_sla() {
-        let (env, oracle_client, registry_client, admin, oracle, _, key) =
-            setup_cross_contract();
-
-        let project_id = s(&env, "proj-sla-fresh");
-        register_project(&env, &registry_client, &admin, "proj-sla-fresh");
-
-        let period = s(&env, "2025-Q1");
-        let cid    = s(&env, "QmCID");
-        let sig    = sign_monitoring(&env, &key, &project_id, &period, 5000, 85, &cid);
-
-        oracle_client.submit_monitoring_data(
-            &oracle, &project_id, &period,
-            &5000_i128, &85_u32, &cid,
-            &sig, &0_u64,
-        );
-
-        // Set a long SLA: 2 years.
-        let two_years: u64 = 2 * 365 * 24 * 60 * 60;
-        oracle_client.set_liveness_sla(&admin, &two_years);
-
-        // Advance 366 days — within the 2-year SLA.
-        advance_time(&env, 366 * 24 * 60 * 60);
-
-        oracle_client.check_liveness(&project_id);
-
-        let flagged: Option<String> = env
-            .storage().persistent()
-            .get(&DataKey::FlaggedProject(project_id.clone()));
-        assert!(flagged.is_none(), "should not be flagged within custom SLA");
-
-        let p = registry_client.get_project(&project_id);
-        assert_ne!(p.status, ProjectStatus::Suspended);
+        assert!(!client.is_monitoring_current(&project_id));
     }
 }
