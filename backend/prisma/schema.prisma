@@ -79,6 +79,11 @@ model CreditBatch {
   @@index([deletedAt])
   // Performance optimization index for batch lookups
   @@index([projectId, status])  // Optimize batch queries by project and status
+  // Serial range search indexes (#1019)
+  @@index([serialStart])
+  @@index([serialEnd])
+  @@index([serialStart, serialEnd])
+  @@index([batchId])
 }
 
 model RetirementRecord {

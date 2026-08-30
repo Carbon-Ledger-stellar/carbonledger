@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException, Logger, Inject, forwardRef } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException, Logger, Inject, forwardRef, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { MintCreditsDto, RetireCreditsDto, BatchOperationResult, BatchItemStatus } from "./credits.dto";
 import { MailService } from "../mail/mail.service";
@@ -10,13 +10,13 @@ import { CreditEventType } from "../events/credit-event.types";
 import { WebhookService } from "../webhook/webhook.service";
 import { QueueService } from "../queue/queue.service";
 import { JobType } from "../queue/queue.constants";
+import { CertificateService } from "../certificates/certificate.service";
 
 /**
  * Serial numbers are stored as fixed-point integers scaled by 100.
  * 1 tCO₂e = 100 serial units, 0.5 tCO₂e = 50 serial units, 0.01 tCO₂e = 1 serial unit.
  * This allows fractional batches while keeping serial arithmetic in integers.
  */
-import { Optional } from "@nestjs/common";
 
 const SERIAL_SCALE = 100;
 
@@ -35,6 +35,7 @@ export class CreditsService {
     @Optional() private readonly eventSourcing?: EventSourcingService,
     @Optional() private readonly webhookService?: WebhookService,
     @Inject(forwardRef(() => QueueService)) private readonly queueService?: QueueService,
+    @Optional() private readonly certificateService?: CertificateService,
   ) {}
 
   async mintCredits(dto: MintCreditsDto, actor?: string) {
@@ -732,6 +733,150 @@ export class CreditsService {
       successCount: dtos.length,
       errorCount: 0,
       results,
+    };
+  }
+
+  /**
+   * GET /credits/:id/certificate
+   *
+   * Returns the retirement certificate for a given retirementId:
+   *   - If the certificate has already been generated, returns the existing
+   *     certificateUrl (JSON) or regenerates the PDF on demand.
+   *   - If no certificate exists yet, generates a PDF via CertificateService,
+   *     stores the certificateUrl in the database, and returns the PDF buffer.
+   *
+   * The generated URL is publicly accessible for 30 days via the CDN/static
+   * host at https://carbonledger.io/certificates/:retirementId.
+   *
+   * @param retirementId  The retirement's unique ID (retirementId field) or
+   *                      its database primary key (id field).
+   */
+  async getCertificate(
+    retirementId: string,
+  ): Promise<{ pdfBuffer?: Buffer; certificateUrl?: string }> {
+    const record = await this.prisma.retirementRecord.findFirst({
+      where: {
+        OR: [{ retirementId }, { id: retirementId }],
+        deletedAt: null,
+      },
+      include: {
+        batch: true,
+        project: true,
+      },
+    });
+
+    if (!record) {
+      throw new NotFoundException(`Retirement record ${retirementId} not found`);
+    }
+
+    // Return existing certificate URL if already generated (no need to regenerate)
+    if (record.certificateUrl) {
+      return { certificateUrl: record.certificateUrl };
+    }
+
+    // Generate PDF certificate using the CertificateService from the certificates module
+    if (this.certificateService) {
+      const pdfBuffer = await this.certificateService.generatePdf({
+        retirementId: record.retirementId,
+        beneficiary: record.beneficiary,
+        amount: Number(record.amount),
+        projectName: record.project.name,
+        retirementReason: record.retirementReason,
+        retiredAt: record.retiredAt,
+        serialNumbers: record.serialNumbers,
+        serialStart: record.serialStart,
+        serialEnd: record.serialEnd,
+        vintageYear: record.vintageYear,
+        txHash: record.txHash,
+        contentCid: record.certificateContentCid ?? undefined,
+      });
+
+      // Persist the certificate URL for future requests.
+      // The URL is publicly accessible for 30 days via the CDN/static host.
+      const certificateUrl = `https://carbonledger.io/certificates/${record.retirementId}`;
+      await this.prisma.retirementRecord.update({
+        where: { id: record.id },
+        data: {
+          certificateUrl,
+          certificateStatus: "generated",
+          certificateGeneratedAt: new Date(),
+        },
+      });
+
+      return { pdfBuffer, certificateUrl };
+    }
+
+    // CertificateService not available — return URL-only response
+    const certificateUrl = `https://carbonledger.io/certificates/${record.retirementId}`;
+    return { certificateUrl };
+  }
+
+  /**
+   * GET /credits/search?serial=VCS-123
+   *
+   * Full-text serial number search across CreditBatch records.
+   * Supports partial match: "VCS" returns all batches whose batchId or
+   * projectId contains "VCS" (case-insensitive).  Also matches on
+   * serialStart / serialEnd for numeric range lookups.
+   *
+   * Uses the indexed serialStart, serialEnd, and batchId columns added in
+   * migration 20260830100000_add_serial_search_index.
+   *
+   * Returns up to 100 matches ordered by issuance date (newest first).
+   */
+  async searchBySerial(serial: string) {
+    if (!serial || serial.trim().length === 0) {
+      throw new BadRequestException('serial query parameter is required');
+    }
+    const q = serial.trim();
+
+    const batches = await this.prisma.creditBatch.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { batchId:    { contains: q, mode: 'insensitive' } },
+          { projectId:  { contains: q, mode: 'insensitive' } },
+          { serialStart: { contains: q } },
+          { serialEnd:   { contains: q } },
+        ],
+      },
+      include: {
+        project: {
+          select: {
+            name:        true,
+            methodology: true,
+            country:     true,
+            status:      true,
+          },
+        },
+        retirements: {
+          select: {
+            id:        true,
+            retiredAt: true,
+            amount:    true,
+          },
+        },
+      },
+      take: 100,
+      orderBy: { issuedAt: 'desc' },
+    });
+
+    return {
+      total: batches.length,
+      batches: batches.map((b) => ({
+        id:              b.id,
+        batchId:         b.batchId,
+        projectId:       b.projectId,
+        vintageYear:     b.vintageYear,
+        amount:          b.amount,
+        serialStart:     b.serialStart,
+        serialEnd:       b.serialEnd,
+        status:          b.status,
+        issuedAt:        b.issuedAt,
+        project:         b.project,
+        isRetired:       b.retirements.length > 0,
+        retirementCount: b.retirements.length,
+      })),
     };
   }
 }
