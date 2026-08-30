@@ -14,7 +14,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
   title: 'Carbon Ledger',
   description: 'Carbon credit marketplace and tracking platform',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes',
+  viewport: 'width=device-width, initial-scale=1',
   openGraph: {
     siteName: 'Carbon Ledger',
     type: 'website',
