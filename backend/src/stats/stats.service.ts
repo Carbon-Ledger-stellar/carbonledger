@@ -61,7 +61,10 @@ export class StatsService {
   }
 
   async getAggregateStats(): Promise<AggregateStats> {
-    const [retirements, listings, projects, soldListings] = await Promise.all([
+    // Run all four aggregates in a single parallel round-trip.
+    // The USDC volume is computed directly in PostgreSQL using SUM() so we
+    // never pull all sold-listing rows into JS memory (fixes N+1 / full-scan).
+    const [retirements, listings, projects, volumeResult] = await Promise.all([
       this.prisma.retirementRecord.aggregate({
         _sum: { amount: true },
       }),
@@ -71,23 +74,16 @@ export class StatsService {
       this.prisma.carbonProject.count({
         where: { status: "Verified" },
       }),
-      this.prisma.marketListing.findMany({
-        where: { status: "Sold" },
-        select: {
-          pricePerCredit: true,
-          amountAvailable: true,
-        },
-      }),
+      // Compute USDC volume in SQL: SUM(CAST(price_per_credit AS numeric) * amount_available)
+      // This replaces the previous findMany + JS reduce that loaded every sold listing row.
+      this.prisma.$queryRaw<[{ total: string | null }]>`
+        SELECT SUM(CAST("pricePerCredit" AS numeric) * "amountAvailable")::text AS total
+        FROM "MarketListing"
+        WHERE status = 'Sold'
+      `,
     ]);
 
-    // Calculate USDC volume from sold listings
-    // Note: amountAvailable represents the original amount since it's not updated on sale
-    // In a real implementation, you'd track actual purchase amounts in a transaction table
-    const totalUsdcVolume = soldListings.reduce((sum, listing) => {
-      const price = parseFloat(listing.pricePerCredit);
-      const amount = parseFloat(listing.amountAvailable.toString());
-      return sum + (price * amount);
-    }, 0);
+    const totalUsdcVolume = parseFloat(volumeResult[0]?.total ?? "0") || 0;
 
     return {
       total_co2_retired: retirements._sum.amount?.toNumber() ?? 0,

@@ -1,10 +1,14 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
-import { Module, Controller, Get, MiddlewareConsumer, NestModule } from "@nestjs/common";
+import { BlockchainModule } from './blockchain/blockchain.module';
+import { WebhookModule } from "./webhook/webhook.module";
+import { GraphqlModule } from "./graphql/graphql.module";
+import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
-import { ScheduleModule } from "@nestjs/schedule";
-import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
+import { ThrottlerModule } from "@nestjs/throttler";
+import { ThrottlerStorageRedisService } from "@nest-lab/throttler-storage-redis";
 import { AuthModule } from "./auth/auth.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { CreditsModule } from "./credits/credits.module";
@@ -21,21 +25,84 @@ import { PrismaService } from "./prisma.service";
 import { VerifiersModule } from "./verifiers/verifiers.module";
 import { ThrottlerExceptionFilter, ResponseAlreadySentFilter } from "./common/throttler-exception.filter";
 import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
+import { StellarNetworkService } from './common/stellar-network.service';
+import { StellarUnavailableExceptionFilter } from './common/stellar-unavailable.filter';
 import { LoggerModule } from "./logger/logger.module";
 import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
+import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
+// Role-based quota throttling (issue #540)
+import { ThrottleModule, RoleLimitGuard } from "./throttle";
+import { RedisSlidingWindowRateLimitGuard } from "./common/redis-sliding-window-rate-limit.guard";
+import { RateLimitMiddleware } from "./common/rate-limit.middleware";
+// Idempotency support for critical POST endpoints (issue #539)
+import { IdempotencyModule } from "./idempotency/idempotency.module";
+import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
+import { RedisModule } from "./redis.module";
+import { RetentionModule } from "./retention/retention.module";
+import { ReconciliationModule } from "./reconciliation/reconciliation.module";
+import { PortfolioModule } from "./portfolio/portfolio.module";
+import { TwoFactorModule } from "./two-factor/two-factor.module";
+
+import { Res, HttpStatus } from "@nestjs/common";
+import { Response } from "express";
+import { Horizon } from "@stellar/stellar-sdk";
+import { Redis } from "ioredis";
 
 @Controller("health")
 class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  check() {
-    return {
-      status: "ok",
+  async check(@Res() res: Response) {
+    const checks = {
+      postgres: "down",
+      redis: "down",
+      stellar: "down",
+    };
+    let allUp = true;
+
+    // Check Postgres
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+      checks.postgres = "up";
+    } catch (e) {
+      allUp = false;
+    }
+
+    // Check Redis
+    try {
+      const redis = new Redis(process.env.REDIS_URL ?? `redis://${process.env.REDIS_HOST ?? "localhost"}:${process.env.REDIS_PORT ?? "6379"}`);
+      await redis.ping();
+      redis.disconnect();
+      checks.redis = "up";
+    } catch (e) {
+      allUp = false;
+    }
+
+    // Check Stellar
+    try {
+      const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
+      const server = new Horizon.Server(horizonUrl);
+      await server.root();
+      checks.stellar = "up";
+    } catch (e) {
+      allUp = false;
+    }
+
+    const payload = {
+      status: allUp ? "ok" : "error",
       stellar_network: process.env.STELLAR_NETWORK || "testnet",
       timestamp: new Date().toISOString(),
+      checks,
     };
+
+    if (allUp) {
+      return res.status(HttpStatus.OK).json(payload);
+    } else {
+      return res.status(HttpStatus.SERVICE_UNAVAILABLE).json(payload);
+    }
   }
 
   @Get("pool")
@@ -46,12 +113,23 @@ class HealthController {
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      { name: "default", ttl: 60_000, limit: 60 },   // 60 req/min for most endpoints
-      { name: "auth",    ttl: 60_000, limit: 5 },    // 5 req/min for login (brute-force protection)
-      { name: "retire",  ttl: 60_000, limit: 10 },   // 10 req/min for retire (business flow protection)
-    ]),
-    ScheduleModule.forRoot(),
+    ConfigModule.forRoot({ isGlobal: true }),
+    // Built-in NestJS throttler (IP-based, Redis-backed) — handles burst/DDoS at infra level
+    ThrottlerModule.forRoot({
+      throttlers: [
+        { name: "default",       ttl: 60_000, limit: 60   },
+        { name: "auth",          ttl: 60_000, limit: 5    },
+        { name: "retire",        ttl: 60_000, limit: 10   },
+        { name: "public",        ttl: 60_000, limit: 100  },
+        { name: "authenticated", ttl: 60_000, limit: 1000 },
+      ],
+      storage: new ThrottlerStorageRedisService(
+        process.env.REDIS_URL ?? `redis://${process.env.REDIS_HOST ?? "localhost"}:${process.env.REDIS_PORT ?? "6379"}`,
+      ),
+    }),
+    // Role-based quota throttling: project=100 mint/day, corp=1000 purchase/day,
+    // public=100 read/hr. Adaptive throttling reduces limits when CPU >80% for 5+ min.
+    ThrottleModule,
     BullModule.forRoot({
       connection: process.env.REDIS_SENTINELS
         ? {
@@ -72,6 +150,7 @@ class HealthController {
     AuthModule,
     ProjectsModule,
     CreditsModule,
+    BlockchainModule,
     RetirementsModule,
     MarketplaceModule,
     OracleModule,
@@ -82,21 +161,44 @@ class HealthController {
     VerifiersModule,
     AdminModule,
     PublicApiModule,
+    GraphqlModule,
+    WebhookModule,
+    RedisModule,
+    IdempotencyModule,
+    RetentionModule,
+    ReconciliationModule,
+    PortfolioModule,
+    TwoFactorModule,
   ],
   controllers: [HealthController],
   providers: [
     PrismaService,
+    StellarNetworkService,
     {
       provide: APP_FILTER,
       useClass: ThrottlerExceptionFilter,
     },
     {
       provide: APP_FILTER,
+      useClass: StellarUnavailableExceptionFilter,
+    },
+    {
+      provide: APP_FILTER,
       useClass: ResponseAlreadySentFilter,
+    },
+    // IP-level throttler guard (NestJS built-in, Redis-backed)
+    {
+      provide: APP_GUARD,
+      useClass: CustomThrottlerGuard,
     },
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,  // Apply rate limiting globally
+      useClass: RedisSlidingWindowRateLimitGuard,
+    },
+    // Role-based quota guard: enforces per-role daily/hourly limits
+    {
+      provide: APP_GUARD,
+      useClass: RoleLimitGuard,
     },
     {
       provide: APP_INTERCEPTOR,
@@ -115,5 +217,21 @@ class HealthController {
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+    consumer.apply(RateLimitMiddleware).forRoutes('*');
+
+    // Adds RFC 8594 Deprecation + Sunset headers to all v1 responses.
+    // v2 routes only receive X-API-Version: 2 (no deprecation headers).
+    consumer.apply(DeprecationMiddleware).forRoutes('*');
+
+    // Apply idempotency enforcement to the three critical mutating endpoints.
+    // The Idempotency-Key header is optional; omitting it simply bypasses the check.
+    consumer
+      .apply(IdempotencyMiddleware)
+      .forRoutes(
+        { path: 'credits/mint',           method: RequestMethod.POST },
+        { path: 'marketplace/purchase',   method: RequestMethod.POST },
+        { path: 'retirements',            method: RequestMethod.POST },
+        { path: 'retirements/bulk',        method: RequestMethod.POST },
+      );
   }
 }

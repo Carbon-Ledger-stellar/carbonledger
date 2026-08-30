@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useProject, useRetirements, useCreditBatches } from "../../../lib/api";
 import { formatTonnes } from "../../../lib/carbon-utils";
 import { colors, statusBadge } from "../../../styles/design-system";
@@ -77,11 +78,113 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
     </div>
   );
 
-  if (!project) return (
-    <div style={{ textAlign: "center", padding: "4rem" }}>
-      <p style={{ color: colors.neutral[500] }}>Project not found.</p>
-    </div>
-  );
+  if (!project) {
+    useEffect(() => {
+      document.title = 'Project Not Found | CarbonLedger';
+    }, []);
+
+    return (
+      <div style={{ maxWidth: "800px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+        <div style={{
+          background: colors.surface,
+          border: `2px solid ${colors.suspended.border}`,
+          borderRadius: "1rem",
+          padding: "3rem 2rem",
+          textAlign: "center",
+          boxShadow: "0 4px 6px rgb(0 0 0 / 0.1)",
+        }}>
+          {/* Error Icon */}
+          <div style={{ fontSize: "4rem", marginBottom: "1.5rem" }}>🔍</div>
+          
+          {/* Error Title */}
+          <h1 style={{
+            fontSize: "2rem",
+            fontWeight: 800,
+            color: colors.neutral[900],
+            margin: "0 0 1rem",
+          }}>
+            Project Not Found
+          </h1>
+          
+          {/* Error Message */}
+          <p style={{
+            fontSize: "1.125rem",
+            color: colors.neutral[600],
+            margin: "0 0 0.5rem",
+            lineHeight: 1.6,
+          }}>
+            This project may have been rejected, deleted, or the URL may be incorrect.
+          </p>
+          
+          {/* Additional Context */}
+          <p style={{
+            fontSize: "0.875rem",
+            color: colors.neutral[500],
+            margin: "0 0 2rem",
+          }}>
+            If you followed a shared audit link, the project might no longer be available.
+          </p>
+          
+          {/* Action Links */}
+          <div style={{
+            display: "flex",
+            gap: "1rem",
+            justifyContent: "center",
+            flexWrap: "wrap",
+          }}>
+            <a
+              href="/audit"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.875rem 1.5rem",
+                background: colors.primary[600],
+                color: "#fff",
+                borderRadius: "0.5rem",
+                fontSize: "1rem",
+                fontWeight: 700,
+                textDecoration: "none",
+                transition: "background 0.2s",
+              }}
+            >
+              Browse the Audit Explorer
+              <span>→</span>
+            </a>
+            <a
+              href="/projects"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.875rem 1.5rem",
+                background: colors.surface,
+                color: colors.primary[700],
+                border: `2px solid ${colors.primary[300]}`,
+                borderRadius: "0.5rem",
+                fontSize: "1rem",
+                fontWeight: 700,
+                textDecoration: "none",
+                transition: "background 0.2s",
+              }}
+            >
+              ← View All Projects
+            </a>
+          </div>
+        </div>
+        
+        {/* Helper Text */}
+        <p style={{
+          textAlign: "center",
+          fontSize: "0.875rem",
+          color: colors.neutral[400],
+          marginTop: "2rem",
+        }}>
+          Need help? Contact support or check the project URL and try again.
+        </p>
+      </div>
+    );
+  }
 
   const badge = statusBadge(project.status);
   const retiredPct = project.totalCreditsIssued > 0

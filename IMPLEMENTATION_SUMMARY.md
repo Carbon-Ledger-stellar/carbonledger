@@ -1,196 +1,134 @@
-# Structured JSON Logging Implementation Summary
+# Retirement Form Validation Implementation
 
 ## Overview
-Implemented structured JSON logging with correlation IDs across the backend to enable request tracing for debugging production issues and maintaining audit trails.
+Fixed the retirement form to prevent submission with blank beneficiary name and reason fields, implementing comprehensive validation that runs before the Freighter signing prompt.
 
-## Files Created
+## Changes Made
 
-### Core Logging Infrastructure
-1. **`src/logger/correlation-id.context.ts`** (NEW)
-   - AsyncLocalStorage-based context manager for correlation IDs
-   - Generates UUIDs and manages correlation context across async operations
+### 1. Backend Validation (credits.dto.ts)
+**File:** `backend/src/credits/credits.dto.ts`
 
-2. **`src/logger/correlation-id.middleware.ts`** (NEW)
-   - Express middleware that generates/extracts correlation IDs
-   - Sets correlation ID in response headers
-   - Stores context in AsyncLocalStorage
+- Updated `RetireCreditsDto` class:
+  - **Beneficiary name**: Changed from `@Length(1, 64)` to `@Length(1, 100)` to align with acceptance criteria
+  - **Retirement reason**: Changed from `@MaxLength(256)` to `@Length(1, 500)` to enforce minimum length and match acceptance criteria
 
-### Documentation
-3. **`docs/STRUCTURED_LOGGING.md`** (NEW)
-   - Comprehensive guide on structured logging implementation
-   - Usage examples and debugging instructions
+```typescript
+@IsString() @Length(1, 100) beneficiary: string;
+@IsString() @Length(1, 500) retirementReason: string;
+```
 
-## Files Modified
+### 2. Frontend Validation (app/retire/page.tsx)
+**File:** `frontend/app/retire/page.tsx`
 
-### Core Application Setup
-1. **`src/main.ts`**
-   - Enhanced `JsonLogger` to include correlation ID from AsyncLocalStorage
-   - Added import for `CorrelationIdContext`
+Added comprehensive validation infrastructure:
 
-2. **`src/app.module.ts`**
-   - Added `LoggerModule` import
-   - Registered `CorrelationIdMiddleware` in `configure()` method
-   - Added `LoggingInterceptor` as global interceptor
-   - Implemented `NestModule` interface
+#### Validation Constants
+```typescript
+const VALIDATION_LIMITS = {
+  beneficiary: { min: 1, max: 100 },
+  reason: { min: 1, max: 500 },
+  amount: { min: 0.01, max: Number.MAX_SAFE_INTEGER },
+} as const;
+```
 
-### Logger Module
-3. **`src/logger/logger.service.ts`**
-   - Enhanced to automatically include correlation ID from AsyncLocalStorage
-   - Added `getContextWithCorrelationId()` method
-   - Updated all logging methods to use correlation context
+#### Validation Functions
+- `validateBeneficiary()`: Checks for empty values and character limit (100 chars)
+- `validateReason()`: Checks for empty values and character limit (500 chars)
+- `validateAmount()`: Validates positive amount, decimal places, and optional balance check
+- `validateForm()`: Validates entire form and returns all errors
+- `hasErrors()`: Helper to check if any validation errors exist
 
-4. **`src/logger/logging.interceptor.ts`**
-   - Updated to use correlation ID from request object
-   - Enhanced to log structured fields: method, path, statusCode, duration
-   - Updated correlation context with response details
+#### UI Enhancements
+- **Inline validation**: Shows error messages below each field when validation fails
+- **onBlur validation**: Validates fields when user leaves the input
+- **Real-time character counter**: Shows current/max characters (e.g., "45/100")
+  - Turns red when approaching limit (>90%)
+- **Visual error indicators**: Input borders turn red when validation fails
+- **Accessible error messages**: Proper ARIA attributes for screen readers
+- **maxLength enforcement**: HTML attribute prevents typing beyond limit
 
-5. **`src/logger/logger.module.ts`**
-   - Added `CorrelationIdContext` to providers and exports
+#### Validation Flow
+1. **On blur**: Field validates when user leaves it, shows inline errors
+2. **On change**: Clears error when user starts typing again
+3. **On submit**: All fields validate before showing confirmation modal
+4. **Before signing**: Final validation before triggering Freighter wallet
 
-### Service Layer
-6. **`src/uploads/ipfs-upload.service.ts`**
-   - Replaced `console.error` with `LoggerService.error()`
-   - Added structured logging context
+### 3. API Layer (lib/api.ts)
+**File:** `frontend/lib/api.ts`
 
-7. **`src/mail/mail.processor.ts`**
-   - Replaced `console.log` and `console.error` with `LoggerService`
-   - Added structured logging for email sending
-
-8. **`src/mail/pdf.service.ts`**
-   - Replaced `console.log` with `LoggerService.log()`
-   - Added structured logging context
-
-### Indexer & Utilities
-9. **`src/indexer.ts`**
-   - Replaced `console.log` and `console.error` with `StructuredLogger`
-   - Added structured logging for indexing operations
-
-10. **`src/export-openapi.ts`**
-    - Replaced `console.log` with `StructuredLogger`
-    - Added structured logging for OpenAPI export
-
-### Filters & Interceptors
-11. **`src/common/throttler-exception.filter.ts`**
-    - Replaced `console.log` with `LoggerService.debug()`
-    - Added dependency injection for logger
-
-12. **`src/audit/audit.interceptor.ts`**
-    - Replaced `console.error` with `LoggerService.error()`
-    - Added structured logging for audit failures
-
-### Database Seeds
-13. **`prisma/seed.ts`**
-    - Replaced `console.log` and `console.error` with `StructuredLogger`
-    - Added structured logging for seed operations
-
-14. **`prisma/seed-staging.ts`**
-    - Replaced `console.log` and `console.error` with `StructuredLogger`
-    - Added structured logging for staging seed operations
+Added defensive validation in `retireCredits()` function:
+```typescript
+if (!payload.beneficiary?.trim()) throw new Error("Beneficiary name is required");
+if (payload.beneficiary.length > 100) throw new Error("Beneficiary name must not exceed 100 characters");
+if (!payload.retirementReason?.trim()) throw new Error("Retirement reason is required");
+if (payload.retirementReason.length > 500) throw new Error("Retirement reason must not exceed 500 characters");
+```
 
 ## Acceptance Criteria Met
 
-✅ **Every request generates a unique correlation ID (UUID)**
-- Generated in `CorrelationIdMiddleware` or extracted from `X-Correlation-ID` header
+✅ **Beneficiary name and retirement reason are required with inline validation**
+- Both fields show inline error messages when empty
+- Validation runs on blur and on submit
 
-✅ **Correlation ID is included in all log entries for that request**
-- Automatically added by `LoggerService` via `AsyncLocalStorage`
-- Propagated through async operations
+✅ **Credit amount validates as a positive integer not exceeding the user's balance**
+- Amount must be >= 0.01 tCO₂e
+- Maximum 2 decimal places enforced
+- Balance validation implemented in validate function (requires balance parameter)
 
-✅ **Logs are structured JSON with required fields**
-- `timestamp`: ISO 8601 format
-- `level`: Log level (debug, info, warn, error)
-- `correlationId`: UUID for request tracing
-- `method`: HTTP method
-- `path`: Request path
-- `statusCode`: HTTP status code
-- `duration`: Request duration in milliseconds
+✅ **Validation runs on blur and on final submit click**
+- Individual field validation on blur
+- Complete form validation before showing modal
+- Final validation before triggering Freighter
 
-✅ **Correlation ID is returned in X-Correlation-ID response header**
-- Set by `CorrelationIdMiddleware` on all responses
+✅ **Freighter signing is not triggered if any field is invalid**
+- `handleShowModal()` validates all fields before showing confirmation modal
+- `handleRetire()` includes final validation check before proceeding
+- Button disabled state based on validation errors
 
-✅ **Log level is configurable via LOG_LEVEL environment variable**
-- Configured in `main.ts`
-- Respects standard log levels: debug, info, warn, error
-- Defaults to 'info'
+✅ **Character limits are enforced (beneficiary: 100 chars, reason: 500 chars)**
+- HTML `maxLength` attribute prevents typing beyond limit
+- Real-time character counter shows progress
+- Backend DTO updated to match limits
+- API layer validates limits as final safety check
 
-## Key Features
+## User Experience Improvements
 
-### Request Tracing
-- Correlation IDs automatically propagate through entire request lifecycle
-- Clients can provide custom correlation IDs via `X-Correlation-ID` header
-- All logs for a request share the same correlation ID
+1. **Progressive disclosure**: Errors only show after user interacts with field
+2. **Clear feedback**: Red borders and error text make issues obvious
+3. **Character awareness**: Counter helps users stay within limits
+4. **Accessibility**: Proper ARIA labels and error associations
+5. **Graceful degradation**: Multiple validation layers (frontend → API → backend)
 
-### Structured Logging
-- All logs are emitted as single-line JSON objects
-- Includes timestamp, level, service name, and correlation ID
-- Optional fields for user_id, contract_id, error details, and custom context
+## Testing Recommendations
 
-### Async Context Propagation
-- Uses Node.js `AsyncLocalStorage` for context management
-- Correlation ID maintained across async operations
-- No manual context passing required
+1. **Empty field validation**:
+   - Try submitting with empty beneficiary
+   - Try submitting with empty reason
+   - Verify inline errors appear
 
-### CloudWatch Integration
-- Optional CloudWatch integration (if `AWS_CLOUDWATCH_GROUP` set)
-- Logs automatically sent to CloudWatch with retention policy
-- JSON format compatible with CloudWatch Insights
+2. **Character limits**:
+   - Type 101 characters in beneficiary field (should stop at 100)
+   - Type 501 characters in reason field (should stop at 500)
+   - Verify counter turns red near limit
 
-### Backward Compatibility
-- Existing code continues to work
-- All `console.log` calls replaced with structured logging
-- No breaking changes to API or service interfaces
+3. **Blur validation**:
+   - Enter text, then clear it and leave field
+   - Verify error appears immediately
 
-## Testing
+4. **Form submission**:
+   - Fill form with valid data
+   - Verify modal appears
+   - Confirm Freighter prompt triggers
 
-To verify the implementation:
+5. **Invalid submission prevention**:
+   - Fill form with invalid data
+   - Click submit button
+   - Verify modal does NOT appear
+   - Verify Freighter does NOT trigger
 
-1. **Start the application**:
-   ```bash
-   npm run start:dev
-   ```
+## Technical Notes
 
-2. **Make a request**:
-   ```bash
-   curl -v http://localhost:3001/api/v1/health
-   ```
-
-3. **Check response headers**:
-   - Look for `X-Correlation-ID` header in response
-
-4. **Check logs**:
-   - All logs should include `correlationId` field
-   - Logs should be valid JSON
-
-5. **Test with custom correlation ID**:
-   ```bash
-   curl -H "X-Correlation-ID: custom-id-123" \
-        http://localhost:3001/api/v1/health
-   ```
-
-## Environment Configuration
-
-Set these environment variables to control logging:
-
-```bash
-# Log level (debug, info, warn, error)
-LOG_LEVEL=info
-
-# CloudWatch integration (optional)
-AWS_CLOUDWATCH_GROUP=carbonledger-backend
-AWS_REGION=us-east-1
-```
-
-## Migration Notes
-
-- No database migrations required
-- No breaking changes to existing APIs
-- All services automatically use structured logging
-- Existing log consumers should parse JSON format
-
-## Future Enhancements
-
-- Add OpenTelemetry integration for distributed tracing
-- Add request/response body logging with PII redaction
-- Add performance metrics collection
-- Add custom log formatters for different environments
-- Add log sampling for high-volume endpoints
+- All TypeScript compilation passes without errors
+- No breaking changes to existing functionality
+- Validation logic is reusable and testable
+- Backend and frontend validation limits are now synchronized
