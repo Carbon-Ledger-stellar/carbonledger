@@ -15,7 +15,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { IsISO8601 } from "class-validator";
-import { IsCreditAmount, IsStellarAddress } from "../common/validators";
+import { IsCreditAmount, IsStellarAddress, IsSafeString, IsTxHash } from "../common/validators";
 
 export class RetireCreditsDto {
   @IsString()
@@ -37,11 +37,13 @@ export class RetireCreditsDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(100)
+  @IsSafeString()
   beneficiary: string;
 
   @IsString()
   @IsNotEmpty()
   @MaxLength(500)
+  @IsSafeString()
   retirementReason: string;
 
   /** Stellar public key of the account retiring the credits. */
@@ -51,7 +53,7 @@ export class RetireCreditsDto {
   /** Stellar transaction hash of the on-chain retirement. */
   @IsString()
   @IsNotEmpty()
-  @MaxLength(128)
+  @IsTxHash()
   txHash: string;
 }
 
