@@ -12,16 +12,17 @@
  *     credits, and marketplace endpoints.
  */
 
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
+import { INestApplication } from "@nestjs/common";
+import request from "supertest";
 import * as jwt from "jsonwebtoken";
 
-import { AppModule } from "../app.module";
+import { createSecurityTestApp } from "./create-security-test-app";
+
+import { signSecurityToken } from "./security-test-auth";
 
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
-const ADMIN_TOKEN = jwt.sign({ sub: "GADMIN_SQL", role: "admin" }, SECRET, { expiresIn: "1h" });
-const CORP_TOKEN  = jwt.sign({ sub: "GCORP_SQL",  role: "corporation" }, SECRET, { expiresIn: "1h" });
+const ADMIN_TOKEN = signSecurityToken("GADMIN_SQL", "admin");
+const CORP_TOKEN  = signSecurityToken("GCORP_SQL",  "corporation");
 
 /** Classic and modern SQL injection payloads */
 const SQL_PAYLOADS = [
@@ -54,16 +55,16 @@ describe("SQL Injection (OWASP API1 / #424)", () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
-    await app.init();
+    app = await createSecurityTestApp({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    });
   });
 
-  afterAll(() => app.close());
+  afterAll(async () => {
+    await app.close();
+  });
 
   // ── GET /projects — methodology / country filter params ───────────────────
 

@@ -3,6 +3,7 @@
 import { MarketListing } from "../lib/api";
 import { formatStroops, formatTonnes, getCountryFlag } from "../lib/carbon-utils";
 import { statusBadge, colors } from "../styles/design-system";
+import { useTranslations } from "next-intl";
 
 interface Props {
   listing: MarketListing;
@@ -18,28 +19,66 @@ const methodologyColors: Record<string, string> = {
 };
 
 export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
+  const t = useTranslations("creditCard");
   const badge = statusBadge(listing.status);
   const methodColor = methodologyColors[listing.methodology] ?? "#6b7280";
   const priceUSDC = formatStroops(listing.pricePerCredit);
   const projectLabel = listing.projectName || listing.projectId;
+  const statusLabel = listing.status === "Active" ? t("statusActive") : listing.status;
 
   return (
-    <article aria-label={`${projectLabel} — ${listing.methodology} ${listing.vintageYear}`} style={{
-      background: colors.surface,
-      border: `1px solid ${colors.neutral[200]}`,
-      borderRadius: "0.75rem",
-      padding: "1.5rem",
-      boxShadow: "0 1px 3px rgb(0 0 0 / 0.08)",
-      display: "flex",
-      flexDirection: "column",
-      gap: "1rem",
-      transition: "box-shadow 0.2s",
-    }}>
+    <article
+      data-testid="credit-card"
+      aria-label={t("cardAria", { project: projectLabel, methodology: listing.methodology, vintageYear: listing.vintageYear })}
+      className="credit-card"
+    >
+      <style>{`
+        .credit-card {
+          background: ${colors.surface};
+          border: 1px solid ${colors.neutral[200]};
+          border-radius: 0.75rem;
+          padding: 1.5rem;
+          box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          transition: box-shadow 0.2s;
+        }
+        .credit-card:hover {
+          box-shadow: 0 4px 6px rgb(0 0 0 / 0.12);
+        }
+        @media (max-width: 639px) {
+          .credit-card {
+            padding: 1rem;
+          }
+          .credit-card-header {
+            flex-direction: column !important;
+            gap: 0.5rem;
+          }
+          .credit-card-stats {
+            grid-template-columns: 1fr !important;
+            gap: 0.5rem !important;
+          }
+          .credit-card-actions {
+            flex-direction: column !important;
+          }
+          .credit-card-actions a,
+          .credit-card-actions button {
+            width: 100% !important;
+            text-align: center !important;
+          }
+        }
+        @media (min-width: 640px) and (max-width: 1023px) {
+          .credit-card {
+            padding: 1.25rem;
+          }
+        }
+      `}</style>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div className="credit-card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <p style={{ fontSize: "0.75rem", color: colors.neutral[500], marginBottom: "0.25rem" }}>
-            {getCountryFlag(listing.country)} {listing.country} · {listing.vintageYear} Vintage
+            {getCountryFlag(listing.country)} {listing.country} · {listing.vintageYear} {t("vintageSuffix")}
           </p>
           <h3 style={{ fontSize: "1rem", fontWeight: 600, color: colors.neutral[900], margin: 0 }}>
             {projectLabel}
@@ -55,7 +94,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
           fontWeight: 600,
           whiteSpace: "nowrap",
         }}>
-          {listing.status}
+          {statusLabel}
         </span>
       </div>
 
@@ -87,15 +126,15 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
           fontWeight: 600,
           width: "fit-content",
         }}>
-          {listing.oracleDaysSinceUpdate <= 300 ? "Verified" : "Stale Oracle"}
+          {listing.oracleDaysSinceUpdate <= 300 ? t("verified") : t("staleOracle")}
         </span>
       )}
 
       {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+      <div className="credit-card-stats" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
         <div>
           <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.2rem" }}>
-            Available
+            {t("available")}
           </p>
           <p style={{ fontSize: "0.95rem", fontWeight: 600, color: colors.neutral[800], margin: 0 }}>
             {formatTonnes(listing.amountAvailable)}
@@ -103,7 +142,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
         </div>
         <div>
           <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.2rem" }}>
-            Price per tonne
+            {t("pricePerTonne")}
           </p>
           <p style={{ fontSize: "0.95rem", fontWeight: 700, color: colors.primary[700], margin: 0 }}>
             ${priceUSDC} USDC
@@ -112,24 +151,59 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
       </div>
 
       {/* CTA */}
-      {onBuy && listing.status === "Active" && (
-        <button
-          onClick={() => onBuy(listing)}
-          aria-label={`Purchase carbon credits from ${projectLabel}`}
-          style={{
-            background: colors.primary[600],
-            color: "#fff",
-            border: "none",
-            borderRadius: "0.5rem",
-            padding: "0.6rem 1rem",
-            fontSize: "0.875rem",
-            fontWeight: 600,
-            cursor: "pointer",
-            width: "100%",
-          }}
-        >
-          Purchase Carbon Credits
-        </button>
+      {(onBuyNow || onAddToCart) && listing.status === "Active" && (
+        <div className="credit-card-actions" style={{ display: "flex", gap: "0.5rem" }}>
+          {onBuyNow && (
+            <button
+              onClick={() => onBuyNow(listing)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onBuyNow(listing);
+                }
+              }}
+              aria-label={t("purchaseAria", { project: projectLabel })}
+              style={{
+                flex: 1,
+                background: colors.primary[600],
+                color: "#fff",
+                border: "none",
+                borderRadius: "0.5rem",
+                padding: "0.6rem 1rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {t("purchaseCredits")}
+            </button>
+          )}
+          {onAddToCart && (
+            <button
+              onClick={() => onAddToCart(listing)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onAddToCart(listing);
+                }
+              }}
+              aria-label={t("addToCartAria", { project: projectLabel })}
+              style={{
+                flex: 1,
+                background: colors.primary[100],
+                color: colors.primary[700],
+                border: `1px solid ${colors.primary[300]}`,
+                borderRadius: "0.5rem",
+                padding: "0.6rem 1rem",
+                fontSize: "0.875rem",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {t("addToCart")}
+            </button>
+          )}
+        </div>
       )}
     </article>
   );

@@ -4,7 +4,9 @@ members = [
     "carbon_credit",
     "carbon_marketplace",
     "carbon_oracle",
-    "upgrade_governance",
+    "carbon_zk_verifier",
+    "adversarial_tests",
+    "../tests",
 ]
 resolver = "2"
 
@@ -12,4 +14,4 @@ resolver = "2"
 # was removed in arbitrary ≥ 1.4.0, causing compilation failures.
 [workspace.dependencies]
 arbitrary = "=1.3.2"
-
+insta = "1.34"

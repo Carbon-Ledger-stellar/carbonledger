@@ -9,31 +9,31 @@
  *  - SQL-like injection strings in search params
  */
 
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
+import { INestApplication } from "@nestjs/common";
+import request from "supertest";
 import * as jwt from "jsonwebtoken";
 
-import { AppModule } from "../app.module";
+import { createSecurityTestApp } from "./create-security-test-app";
+
+import { signSecurityToken } from "./security-test-auth";
 
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
-const ADMIN_TOKEN = jwt.sign({ sub: "GADMIN", role: "admin" }, SECRET, { expiresIn: "1h" });
-const CORP_TOKEN = jwt.sign({ sub: "GCORP", role: "corporation" }, SECRET, { expiresIn: "1h" });
+const ADMIN_TOKEN = signSecurityToken("GADMIN", "admin");
+const CORP_TOKEN = signSecurityToken("GCORP", "corporation");
 
 describe("Injection (OWASP API8)", () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
-    await app.init();
+    app = await createSecurityTestApp({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
   });
 
-  afterAll(() => app.close());
+  afterAll(async () => {
+    await app.close();
+  });
 
   // ── Prisma operator injection via query params ─────────────────────────────
 
@@ -42,7 +42,7 @@ describe("Injection (OWASP API8)", () => {
     // NestJS query parsing turns ?methodology[$ne]=VCS into { methodology: { $ne: 'VCS' } }.
     // Prisma ignores unknown operators, but the string should be treated as a literal.
     const res = await request(app.getHttpServer())
-      .get("/projects?methodology[$ne]=VCS")
+      .get("/api/v1/projects?methodology[$ne]=VCS")
       .expect(200);
 
     // Should return 0 results (no project with methodology literally equal to '{"$ne":"VCS"}')
@@ -62,7 +62,7 @@ describe("Injection (OWASP API8)", () => {
 
   it("GET /projects/search?search=<script>alert(1)</script> must not reflect XSS", async () => {
     const res = await request(app.getHttpServer())
-      .get("/projects/search?search=%3Cscript%3Ealert%281%29%3C%2Fscript%3E")
+      .get("/api/v1/projects/search?search=%3Cscript%3Ealert%281%29%3C%2Fscript%3E")
       .expect(200);
 
     // Response body must not contain unescaped script tags
@@ -75,7 +75,7 @@ describe("Injection (OWASP API8)", () => {
   it("POST /projects/register with 2 MB body → 413", () => {
     const oversized = { projectId: "p-inject", name: "x".repeat(2 * 1024 * 1024), methodology: "VCS", country: "BR", projectType: "forestry", vintageYear: 2023, methodologyScore: 80, metadataCid: "Qm1", verifierAddress: "GV", ownerAddress: "GO" };
     return request(app.getHttpServer())
-      .post("/projects/register")
+      .post("/api/v1/projects/register")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
       .send(oversized)
       .expect(413);
@@ -84,7 +84,7 @@ describe("Injection (OWASP API8)", () => {
   it("POST /oracle/monitoring with 2 MB satelliteCid → 413", () => {
     const oversized = { projectId: "p1", period: "2024-Q1", tonnesVerified: 100, methodologyScore: 80, satelliteCid: "x".repeat(2 * 1024 * 1024), submittedBy: "GV" };
     return request(app.getHttpServer())
-      .post("/oracle/monitoring")
+      .post("/api/v1/oracle/ingest/monitoring")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
       .send(oversized)
       .expect(413);
@@ -94,7 +94,7 @@ describe("Injection (OWASP API8)", () => {
 
   it("POST /auth/login with __proto__ in body must not pollute Object prototype", async () => {
     await request(app.getHttpServer())
-      .post("/auth/login")
+      .post("/api/v1/auth/challenge")
       .set("Content-Type", "application/json")
       .send('{"publicKey":"GPOLLUTE","role":"corporation","__proto__":{"isAdmin":true}}')
       .expect((res) => {
@@ -112,7 +112,7 @@ describe("Injection (OWASP API8)", () => {
 
   it("POST /projects/register with constructor.prototype injection must not 500", () =>
     request(app.getHttpServer())
-      .post("/projects/register")
+      .post("/api/v1/projects/register")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
       .set("Content-Type", "application/json")
       .send('{"projectId":"p-proto","name":"x","methodology":"VCS","country":"BR","projectType":"forestry","vintageYear":2023,"methodologyScore":80,"metadataCid":"Qm1","verifierAddress":"GV","ownerAddress":"GO","constructor":{"prototype":{"isAdmin":true}}}')
@@ -125,14 +125,14 @@ describe("Injection (OWASP API8)", () => {
 
   it("GET /projects/../auth/login must not bypass routing → 404 or 400", () =>
     request(app.getHttpServer())
-      .get("/projects/..%2Fauth%2Flogin")
+      .get("/api/v1/projects/..%2Fauth%2Flogin")
       .expect((res) => {
         expect([400, 404]).toContain(res.status);
       }));
 
   it("GET /retirements/../../oracle/price-approvals must not bypass auth → 401 or 404", () =>
     request(app.getHttpServer())
-      .get("/retirements/..%2F..%2Foracle%2Fprice-approvals")
+      .get("/api/v1/retirements/..%2F..%2Foracle%2Fprice-approvals")
       .expect((res) => {
         expect([401, 404]).toContain(res.status);
       }));

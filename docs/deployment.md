@@ -7,9 +7,23 @@ CarbonLedger uses a **rolling deployment** strategy so the API stays available d
 | Concern | Approach |
 |---------|----------|
 | Deployment type | Rolling (one replica replaced at a time) |
+| Canary stages | 5%, 25%, 50%, 100% with configurable thresholds |
 | Health gate | New container must pass `/health` before old one stops |
 | Rollback time | < 5 minutes (automated on failure) |
 | DB migrations | Run before containers are replaced (`prisma migrate deploy`) |
+| Rollout window | 30 minutes maximum before automatic rollback |
+
+## Canary rollout policy
+
+CarbonLedger’s deployment automation now enforces a staged canary rollout using the existing zero-downtime rolling strategy:
+
+- `CANARY_STAGES` defaults to `5,25,50,100`
+- `CANARY_ERROR_THRESHOLD` defaults to `4%`
+- `CANARY_MAX_DURATION_SECONDS` defaults to `1800` (30 minutes)
+- Grafana stays open during the rollout at `http://localhost:3200` for live metrics review
+- A failed health check or error-rate threshold breach triggers a rollback before the next stage is promoted
+
+This fits the project architecture because the repo already has `docker-compose` health checks and a Grafana/Loki stack, but it does not currently have an edge-level traffic splitter or service-mesh routing. The safe implementation is therefore to gate each progressive stage with the existing health and monitoring infrastructure rather than inventing a new ingress layer that the project does not deploy.
 
 ## Files
 

@@ -680,7 +680,7 @@ def submit_monitoring_data(
 
 - **Documentation**: Check [docs/](docs/) folder
 - **Architecture Decisions**: See [docs/adr/](docs/adr/)
-- **API Reference**: See [backend/docs/PROJECTS_API.md](backend/docs/PROJECTS_API.md)
+- **API Reference**: See [backend/docs/API_REFERENCE.md](backend/docs/API_REFERENCE.md)
 - **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/carbonledger/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/carbonledger/discussions)
 
