@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { enqueueWithTrace } from '../telemetry/tracing';
 import { Queue } from 'bullmq';
 import { WEBHOOK_QUEUE_NAME } from '../queue/queue.constants';
 
@@ -7,7 +8,12 @@ import { WEBHOOK_QUEUE_NAME } from '../queue/queue.constants';
 const TRACKED_TOPICS = new Set(['c_ledger']);
 
 export interface HorizonEvent {
-  type: 'credit_minted' | 'credit_retired' | 'project_verified';
+  type:
+    | 'credit_minted'
+    | 'credit_retired'
+    | 'project_verified'
+    | 'monitoring_data_submitted'
+    | 'price_updated';
   contractId: string;
   ledger: number;
   txHash: string;
@@ -122,12 +128,14 @@ export class HorizonListenerService implements OnApplicationBootstrap, OnApplica
 
     this.reconnectDelay = 1000; // reset back-off on successful event
 
-    await this.webhookQueue.add('horizon_event', event, {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: false,
-      removeOnFail: false,   // dead-letter: failed jobs remain queryable
-    });
+    await enqueueWithTrace(WEBHOOK_QUEUE_NAME, 'horizon_event', event as Record<string, unknown>,
+      (data) => this.webhookQueue.add('horizon_event', data, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: false,
+        removeOnFail: false,
+      }),
+    );
 
     this.logger.log(`Queued ${event.type} from contract ${event.contractId} ledger ${event.ledger}`);
   }
@@ -144,9 +152,13 @@ export class HorizonListenerService implements OnApplicationBootstrap, OnApplica
       const topicStr = topics.join(',');
       let type: HorizonEvent['type'] | null = null;
 
-      if (topicStr.includes('minted'))          type = 'credit_minted';
-      else if (topicStr.includes('retired'))     type = 'credit_retired';
-      else if (topicStr.includes('verified'))    type = 'project_verified';
+      if (topicStr.includes('minted'))            type = 'credit_minted';
+      else if (topicStr.includes('retired'))       type = 'credit_retired';
+      else if (topicStr.includes('verified'))      type = 'project_verified';
+      // carbon_oracle contract topics (symbol_short!): "mon_data" for
+      // submit_monitoring_data, "price_upd" for update_credit_price.
+      else if (topicStr.includes('mon_data'))      type = 'monitoring_data_submitted';
+      else if (topicStr.includes('price_upd'))     type = 'price_updated';
 
       if (!type) return null;
 

@@ -1,7 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { SearchResult, ProvenanceTrail } from '@/types/audit';
+
+const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+function formatTimeSince(ts: number | null): string {
+  if (!ts) return 'never';
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
 
 export default function AuditPage() {
   const [searchType, setSearchType] = useState<'serial' | 'project' | 'retirement'>('serial');
@@ -9,34 +23,106 @@ export default function AuditPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isNotFound, setIsNotFound] = useState(false);
 
-  const handleSearch = async (e: React.FormEvent) => {
+  const [isOnline, setIsOnline] = useState(true);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [cachedResult, setCachedResult] = useState<SearchResult | null>(null);
+
+  // Track online/offline status
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Register service worker
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/audit-sw.js').catch(() => {});
+    }
+  }, []);
+
+  // Load cached result from IndexedDB on mount
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.indexedDB) return;
+    const req = indexedDB.open('carbonledger-audit', 1);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('retirements')) return;
+      const tx = db.transaction('retirements', 'readonly');
+      const store = tx.objectStore('retirements');
+      const getAll = store.getAll();
+      getAll.onsuccess = () => {
+        const records = getAll.result as Array<{ cachedAt?: number; data?: SearchResult }>;
+        if (records.length > 0) {
+          const latest = records.reduce((a, b) => (a.cachedAt ?? 0) > (b.cachedAt ?? 0) ? a : b);
+          setLastSyncedAt(latest.cachedAt ?? null);
+          if (latest.data) setCachedResult(latest.data);
+        }
+      };
+    };
+  }, []);
+
+  const isStale = lastSyncedAt !== null && (Date.now() - lastSyncedAt) > STALE_THRESHOLD_MS;
+
+  const handleSearch = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchTerm.trim()) return;
 
     setLoading(true);
     setError(null);
     setResult(null);
+    setIsNotFound(false);
 
     try {
-      // Call your backend API (no wallet required)
       const response = await fetch(`/api/audit/search?type=${searchType}&q=${encodeURIComponent(searchTerm)}`);
-      
+
+      if (response.status === 404) {
+        setIsNotFound(true);
+        setLoading(false);
+        return;
+      }
+
       if (!response.ok) {
         throw new Error(`Search failed: ${response.statusText}`);
       }
-      
+
       const data = await response.json();
       setResult(data);
+      setLastSyncedAt(Date.now());
+      setCachedResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to search. Please try again.');
+      // Offline: serve from cache if available
+      if (!navigator.onLine && cachedResult) {
+        setResult(cachedResult);
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to search. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchType, searchTerm, cachedResult]);
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Offline Banner */}
+      <div
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+        className={`transition-all duration-300 ${isOnline ? 'h-0 overflow-hidden opacity-0' : 'bg-amber-500 text-white py-2 px-4 text-center font-medium'}`}
+      >
+        You are offline. Showing cached data.
+      </div>
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Header */}
         <div className="text-center mb-12">
@@ -47,8 +133,16 @@ export default function AuditPage() {
             Search credits by serial number, project ID, or retirement certificate ID
           </p>
           <p className="text-sm text-gray-500 mt-2">
-            🔓 No wallet required - Public audit trail for regulators, journalists, and the public
+            No wallet required - Public audit trail for regulators, journalists, and the public
           </p>
+
+          {/* Last synced indicator */}
+          {lastSyncedAt && (
+            <p className={`text-sm mt-2 ${isStale ? 'text-amber-600 font-medium' : 'text-gray-400'}`}>
+              Last synced: {formatTimeSince(lastSyncedAt)}
+              {isStale && ' — data may be outdated'}
+            </p>
+          )}
         </div>
 
         {/* Search Form */}
@@ -64,7 +158,7 @@ export default function AuditPage() {
                 <option value="project">Project ID</option>
                 <option value="retirement">Retirement Certificate ID</option>
               </select>
-              
+
               <input
                 type="text"
                 value={searchTerm}
@@ -73,7 +167,7 @@ export default function AuditPage() {
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
                 required
               />
-              
+
               <button
                 type="submit"
                 disabled={loading}
@@ -85,18 +179,72 @@ export default function AuditPage() {
           </form>
         </div>
 
-        {/* Loading State */}
+        {/* Stale data warning */}
+        {isStale && !loading && (
+          <div
+            role="alert"
+            className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-8"
+          >
+            <p className="text-amber-700 font-medium">
+              Cached data is over 24 hours old and may be outdated.
+            </p>
+          </div>
+        )}
+
+        {/* Loading State — mirrors the shape of the results below (Credit Details
+            card + Provenance Trail steps) so there's no layout shift on arrival. */}
         {loading && (
-          <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-            <p className="mt-2 text-gray-600">Searching carbon credit records...</p>
+          <div className="space-y-6" aria-busy="true" aria-label="Searching carbon credit records">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="h-7 w-40 bg-gray-200 rounded animate-pulse mb-4" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="border-b border-gray-100 pb-2 space-y-2">
+                    <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-5 w-32 bg-gray-200 rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="h-7 w-48 bg-gray-200 rounded animate-pulse mb-4" />
+              <div className="space-y-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="border-l-4 border-gray-200 p-4 rounded-r-lg bg-gray-50">
+                    <div className="h-4 w-24 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="h-3 w-full bg-gray-100 rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 
         {/* Error State */}
-        {error && (
+        {error && !isNotFound && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-8">
             <p className="text-red-700">{error}</p>
+          </div>
+        )}
+
+        {/* Empty State / Not Found */}
+        {isNotFound && (
+          <div
+            className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow-sm border border-gray-100 text-center mb-8"
+            role="alert"
+            aria-live="polite"
+          >
+            <div className="text-6xl mb-4">🔍</div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">No Records Found</h2>
+            <p className="text-gray-600 max-w-md mb-6">
+              We couldn&apos;t find any records matching your search. Please check for typos and try again.
+            </p>
+            <a
+              href="/projects"
+              className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-semibold"
+            >
+              Browse All Projects
+            </a>
           </div>
         )}
 
@@ -110,7 +258,7 @@ export default function AuditPage() {
                 <InfoRow label="Serial Number" value={result.serialNumber} />
                 <InfoRow label="Project ID" value={result.projectId} />
                 <InfoRow label="Project Name" value={result.projectName} />
-                <InfoRow label="Vintage Year" value={result.vintageYear} />
+                <InfoRow label="Vintage Year" value={String(result.vintageYear)} />
                 <InfoRow label="Amount" value={`${result.amount} tonnes CO₂`} />
                 <InfoRow label="Status" value={result.status} highlight={result.status === 'Retired'} />
                 <InfoRow label="Issuance Date" value={new Date(result.issuanceDate).toLocaleDateString()} />
@@ -144,7 +292,7 @@ export default function AuditPage() {
                     download
                     className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                   >
-                    📄 Download Certificate (PDF)
+                    Download Certificate (PDF)
                   </a>
                   <p className="text-xs text-gray-500 mt-2">
                     This certificate is permanently verifiable on-chain
@@ -156,7 +304,7 @@ export default function AuditPage() {
         )}
 
         {/* Help Section */}
-        {!result && !loading && (
+        {!result && !loading && !isNotFound && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mt-8">
             <h3 className="text-lg font-semibold text-blue-900 mb-2">How to use the audit explorer</h3>
             <ul className="space-y-2 text-blue-800">

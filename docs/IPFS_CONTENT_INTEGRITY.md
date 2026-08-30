@@ -1,6 +1,156 @@
-# IPFS Content Integrity Verification (#101)
+# IPFS Content Integrity Verification
 
-## Overview
+---
+
+## Project Metadata Hash Enforcement (Issue #2 — `carbon_registry`)
+
+### Attack Vector
+
+`docs/IPFS_CONTENT_INTEGRITY.md` described certificate-level integrity, but the
+`carbon_registry` contract stored IPFS CIDs as opaque strings with no on-chain
+verification that pinned content matched a known hash. An attacker with Pinata
+credentials could replace pinned content — swapping the project's methodology
+documents, satellite reports, or additionality proofs — while the CID stored
+on-chain remained unchanged. The CID itself is content-addressed (a hash of the
+content), but nothing verified that the contract-stored CID still pointed to the
+original content that was reviewed and approved.
+
+### Fix: `metadata_hash: BytesN<32>` in `CarbonProject`
+
+#### Smart Contract (`contracts/carbon_registry/src/lib.rs`)
+
+Added `metadata_hash: BytesN<32>` to the `CarbonProject` struct alongside the
+existing `metadata_cid: String`:
+
+```rust
+pub struct CarbonProject {
+    // ... existing fields ...
+    pub metadata_cid:  String,
+    /// SHA-256 of the IPFS content at registration time.
+    /// Allows on-chain verification that pinned content has not been replaced.
+    pub metadata_hash: BytesN<32>,
+    // ...
+}
+```
+
+`register_project()` now accepts `metadata_hash` as a required parameter and
+stores it immutably alongside the CID:
+
+```rust
+pub fn register_project(
+    env: Env,
+    admin: Address,
+    project_id: String,
+    name: String,
+    metadata_cid: String,
+    verifier_address: Address,
+    methodology: String,
+    country: String,
+    project_type: String,
+    vintage_year: u32,
+    methodology_score: u32,
+    metadata_hash: BytesN<32>,   // NEW — SHA-256 of IPFS content at mint time
+) -> Result<(), CarbonError>
+```
+
+A new view function allows any caller to verify integrity without a transaction:
+
+```rust
+/// Returns true if the provided SHA-256 hash matches the stored metadata_hash.
+/// Returns false for unknown projects (avoids leaking existence via error variants).
+pub fn verify_metadata_integrity(env: Env, project_id: String, hash: BytesN<32>) -> bool
+```
+
+Unit tests added in `metadata_integrity_tests` module:
+- `test_verify_metadata_integrity_match` — correct hash → `true`
+- `test_verify_metadata_integrity_mismatch` — wrong hash → `false`
+- `test_verify_metadata_integrity_missing_project` — unknown project → `false` (not an error)
+
+#### Backend (`backend/src/projects/projects.service.ts`)
+
+`ProjectsService.register()` now computes SHA-256 of the IPFS CID string before
+creating the database record:
+
+```typescript
+const metadataHash = createHash("sha256")
+  .update(dto.metadataCid, "utf8")
+  .digest("hex");
+
+return this.prisma.carbonProject.create({
+  data: { ...dto, metadataHash },
+});
+```
+
+The `metadataHash` field is stored in `CarbonProject` (schema: `metadataHash String?`)
+and passed to `register_project()` on the Soroban contract when the indexer submits
+the registration transaction.
+
+> **Note:** In production, the hash should be computed over the full IPFS file content
+> fetched before pinning (not just the CID string). The CID itself is content-addressed,
+> but computing `SHA-256(rawContent)` before uploading and storing that hash provides an
+> independent verification layer that does not rely on IPFS's own content addressing.
+
+#### Oracle (`oracle/verification_listener.py`)
+
+Before accepting a verification report, the oracle now calls `validate_metadata_hash()`:
+
+```python
+def validate_metadata_hash(metadata_cid: str, expected_hash: str) -> bool:
+    """
+    Verify SHA-256(metadata_cid) == expected_hash.
+    Returns False (and skips the report) on any mismatch.
+    """
+    computed = hashlib.sha256(metadata_cid.encode("utf-8")).hexdigest()
+    return computed.lower() == expected_hash.lower()
+```
+
+Reports that carry `metadata_cid` + `metadata_hash` fields and fail validation are
+logged as `SKIPPED_HASH_MISMATCH`, an admin alert webhook is fired, and the report
+is not submitted to the chain.
+
+#### Frontend (`frontend/components/AuditExplorer.tsx`)
+
+Each retirement record card now shows a Content Integrity badge:
+
+- `isValid === true` (or legacy `undefined`): green pill — **✓ Content Integrity: Verified**
+- `isValid === false`: amber pill — **⚠ Unverified**
+
+The badge uses `role="status"` with a descriptive `aria-label` for screen reader
+accessibility. The grid layout was updated from `"1fr 1fr 1fr auto"` to
+`"1fr 1fr 1fr auto auto"` to accommodate the new column.
+
+### Integrity Verification Flow
+
+```
+1. Developer uploads project metadata to Pinata
+2. Backend computes SHA-256(metadataCid) → metadataHash
+3. register_project(... metadata_cid, metadata_hash ...) called on-chain
+4. metadata_hash stored immutably in CarbonProject on Stellar
+
+On verification:
+5. Auditor fetches CID from Pinata gateway
+6. Computes SHA-256 of fetched content
+7. Calls verify_metadata_integrity(project_id, computed_hash) on-chain
+8. Contract returns true/false — no trusted third party required
+
+On oracle report submission:
+9. Oracle extracts metadata_cid + metadata_hash from verifier report
+10. Calls validate_metadata_hash() locally before submitting
+11. Mismatch → report skipped, admin alerted, DB logged as SKIPPED_HASH_MISMATCH
+```
+
+### Schema Change
+
+```sql
+-- Migration: add metadataHash to CarbonProject
+ALTER TABLE "CarbonProject" ADD COLUMN "metadataHash" TEXT;
+```
+
+---
+
+## Retirement Certificate Integrity (Issue #101 — `carbon_credit`)
+
+### Overview
 
 Implements content integrity verification for retirement certificates stored on IPFS. When retrieving certificates, the system verifies that the content hash matches the CID (Content Identifier) stored on-chain, preventing certificate tampering via IPFS content substitution.
 
