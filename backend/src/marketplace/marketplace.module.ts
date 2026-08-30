@@ -8,13 +8,10 @@ import { PrismaService } from "../prisma.service";
 import { AuthModule } from "../auth/auth.module";
 import { PoliciesModule } from "../policies/policies.module";
 import { AbilityFactory } from "../policies/ability.factory";
-
-@Module({
-  imports: [AuthModule, PoliciesModule],
 import { WebhookModule } from "../webhook/webhook.module";
 
 @Module({
-  imports: [AuthModule, WebhookModule],
+  imports: [AuthModule, PoliciesModule, WebhookModule],
   controllers: [MarketplaceController],
   providers: [
     MarketplaceService,
@@ -24,5 +21,6 @@ import { WebhookModule } from "../webhook/webhook.module";
     PrismaService,
     AbilityFactory,
   ],
+  exports: [ListingsCacheService, MarketplaceService, MarketplaceSearchService],
 })
 export class MarketplaceModule {}

@@ -10,7 +10,7 @@
  * h1 heading; stat cells are 80 × 16 px inline blocks.
  */
 
-import LoadingSkeleton from "../../../../components/LoadingSkeleton";
+import LoadingSkeleton from "../../../components/LoadingSkeleton";
 
 export default function ProjectDetailLoading() {
   return (

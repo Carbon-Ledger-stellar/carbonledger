@@ -44,6 +44,32 @@ export class WebhookController {
   }
 
   /**
+   * Admin-wide webhook delivery log query across all subscriptions.
+   *
+   * Must be registered before the `:id` route below so Nest's route
+   * matching doesn't treat "deliveries" as a subscription id.
+   *
+   * GET /api/v1/webhooks/deliveries
+   */
+  @Get('deliveries')
+  @Roles('admin')
+  getAllDeliveries(
+    @Query('subscriptionId') subscriptionId: string | undefined,
+    @Query('eventType') eventType: string | undefined,
+    @Query('success') success: string | undefined,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('pageSize', new DefaultValuePipe(20), ParseIntPipe) pageSize: number,
+  ) {
+    return this.webhookService.getAllDeliveryLogs({
+      subscriptionId,
+      eventType,
+      success: success === undefined ? undefined : success === 'true',
+      page,
+      pageSize,
+    });
+  }
+
+  /**
    * Get a single webhook subscription by ID.
    *
    * GET /api/v1/webhooks/:id

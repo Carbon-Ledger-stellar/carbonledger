@@ -56,6 +56,8 @@
 pub mod conservation {
     use crate::{CarbonCreditContractClient, CreditStatus};
     use soroban_sdk::{Env, String};
+    extern crate std;
+    use std::format;
 
     // ── Data types ────────────────────────────────────────────────────────────
 
@@ -214,7 +216,7 @@ pub mod conservation {
             .iter()
             .find(|b| {
                 // Compare string content (Soroban String doesn't impl PartialEq<&str>)
-                format!("{:?}", b.batch_id) == format!("{:?}", b.batch_id)
+                format!("{:?}", b.batch_id) == format!("{:?}", batch_id)
                     && b.batch_id.len() == batch_id.len() as u32
             })
             .map(|b| b.retired)

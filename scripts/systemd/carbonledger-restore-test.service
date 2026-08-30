@@ -1,0 +1,12 @@
+[Unit]
+Description=CarbonLedger PostgreSQL Monthly Restore Test
+Documentation=https://github.com/your-org/carbonledger/docs/BACKUP_RESTORE.md
+
+[Service]
+Type=oneshot
+User=carbonledger
+EnvironmentFile=/opt/carbonledger/.env
+ExecStart=/opt/carbonledger/scripts/test-restore-monthly.sh
+StandardOutput=append:/var/log/carbonledger/restore-test.log
+StandardError=append:/var/log/carbonledger/restore-test.log
+TimeoutStartSec=3600

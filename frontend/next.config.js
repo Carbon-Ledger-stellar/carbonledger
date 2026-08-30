@@ -186,6 +186,16 @@ const nextConfig = {
 
   // Attach security headers to every response.
   async headers() {
+    // The strict CSP relies on Next.js nonce-gated script tags. Turbopack's
+    // dev server does not attach nonces to its dynamically loaded chunks, so
+    // enforcing the CSP in development blocks hydration entirely. Only apply
+    // the security headers for production builds (where nonces are emitted);
+    // the `security-headers` Playwright project asserts them against `next
+    // start`, so they remain covered in CI.
+    if (process.env.NODE_ENV !== "production") {
+      return [];
+    }
+
     return [
       {
         // Apply to all routes.

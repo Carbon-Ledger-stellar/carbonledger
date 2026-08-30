@@ -80,6 +80,7 @@ pub enum DataKey {
     SweepThreshold,
     TotalFeesSwept,
     OracleContract,
+    PriceFreshnessWindow,
 }
 
 /// Governance-controlled fee configuration.
@@ -126,6 +127,11 @@ pub struct CircuitBreakerEvent {
     pub threshold_secs: u64,
     pub tripped_at: u64,
 }
+
+/// Compile-time default fee constants (1%).
+/// Used as fallback when FeeConfig has not been set via governance.
+pub const DEFAULT_FEE_NUMERATOR: i128 = 1;
+pub const DEFAULT_FEE_DENOM:     i128 = 100;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -272,7 +278,16 @@ impl CarbonMarketplaceContract {
         Ok(())
     }
 
-    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), CarbonError> {
+    /// Replaces this contract's WASM executable after authenticating the stored admin.
+    ///
+    /// Persistent contract storage is retained by Soroban during the executable
+    /// replacement. Schema changes must therefore follow the migration rules in
+    /// `docs/UPGRADE_GUIDE.md`.
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
         Self::require_not_paused(&env)?;
@@ -702,8 +717,10 @@ impl CarbonMarketplaceContract {
         Self::extend_listing_ttl(&env, &listing_id);
 
         let usdc: Address = env.storage().persistent().get(&DataKey::UsdcToken).unwrap();
-        let usdc_client = token::Client::new(&env, &usdc);
-        usdc_client.transfer(&buyer, &listing.seller, &seller_proceeds);
+        let usdc_client = token::TokenClient::new(&env, &usdc);
+        // In soroban-sdk 28 transfer's `to` param is MuxedAddress
+        let seller_muxed = MuxedAddress::from(listing.seller.clone());
+        usdc_client.transfer(&buyer, &seller_muxed, &seller_proceeds);
 
         let treasury: Address = env.storage().persistent().get(&DataKey::Treasury).unwrap();
         usdc_client.transfer(&buyer, &treasury, &protocol_fee);
@@ -866,19 +883,13 @@ impl CarbonMarketplaceContract {
             let amount = amounts.get(i).unwrap();
             let mut listing = validated_listings.get(i).unwrap();
 
-            let total_cost = listing.price_per_credit.checked_mul(amount)
-                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-            let protocol_fee = total_cost.checked_div(FEE_RATE_DENOM)
-                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-            let seller_proceeds = total_cost.checked_sub(protocol_fee)
-                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
-
-        listing.amount_available = listing.amount_available.checked_sub(amount)
-            .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
+            // Deduct the purchased amount from the listing's available supply.
+            // total_cost / fee calculations are intentionally deferred to Phase 3
+            // where load_fee_config() is used for consistency with governance-set rates.
             listing.amount_available = listing
                 .amount_available
                 .checked_sub(amount)
-                .ok_or(CarbonError::Arithmetic)?;
+                .ok_or_else(|| { Self::release_lock(&env); CarbonError::Arithmetic })?;
             listing.status = if listing.amount_available == 0 {
                 ListingStatus::Sold
             } else {
@@ -1407,6 +1418,8 @@ mod tests {
             &s(env, "Brazil"),
         );
     }
+
+    // ── Original functional tests (preserved) ────────────────────────────
 
     #[test]
     fn test_list_credits_creates_active_listing() {
@@ -2056,6 +2069,74 @@ mod edge_case_tests {
             result.unwrap_err().unwrap(),
             CarbonError::AlreadyInitialized
         );
+    }
+
+    // ── Fee governance tests (issue #651) ─────────────────────────────────────
+
+    #[test]
+    fn test_default_fee_config_is_one_percent() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, DEFAULT_FEE_NUMERATOR);
+        assert_eq!(fee.denom, DEFAULT_FEE_DENOM);
+    }
+
+    #[test]
+    fn test_admin_can_set_fee_rate() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // Set fee to 2%
+        client.set_fee_rate(&admin, &2_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 2);
+        assert_eq!(fee.denom, 100);
+    }
+
+    #[test]
+    fn test_non_admin_cannot_set_fee_rate() {
+        let env = Env::default();
+        let (client, _, _) = init(&env);
+        let rogue = Address::generate(&env);
+        let result = client.try_set_fee_rate(&rogue, &2_i128, &100_i128);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
+    }
+
+    #[test]
+    fn test_fee_above_ten_percent_rejected() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // 11% must be rejected
+        let result = client.try_set_fee_rate(&admin, &11_i128, &100_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_denom_fee_rejected() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        let result = client.try_set_fee_rate(&admin, &1_i128, &0_i128);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_zero_fee_rate_accepted() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // 0% fee is valid
+        client.set_fee_rate(&admin, &0_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 0);
+    }
+
+    #[test]
+    fn test_max_ten_percent_fee_accepted() {
+        let env = Env::default();
+        let (client, admin, _) = init(&env);
+        // Exactly 10% = 10/100 is valid (numerator == denom/10)
+        client.set_fee_rate(&admin, &10_i128, &100_i128);
+        let fee = client.get_fee_config();
+        assert_eq!(fee.numerator, 10);
     }
 
     // ── InvalidSerialRange (bulk_purchase length mismatch) ────────────────────

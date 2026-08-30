@@ -9,7 +9,7 @@ import {
   Account,
 } from "@stellar/stellar-sdk";
 
-const HORIZON_URL = process.env.NEXT_PUBLIC_HORIZON_URL!;
+const HORIZON_URL = process.env.NEXT_PUBLIC_HORIZON_URL || "https://horizon-testnet.stellar.org";
 const NETWORK     = process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet"
   ? Networks.PUBLIC
   : Networks.TESTNET;

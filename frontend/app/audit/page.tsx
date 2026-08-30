@@ -191,11 +191,32 @@ export default function AuditPage() {
           </div>
         )}
 
-        {/* Loading State */}
+        {/* Loading State — mirrors the shape of the results below (Credit Details
+            card + Provenance Trail steps) so there's no layout shift on arrival. */}
         {loading && (
-          <div className="text-center py-12">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
-            <p className="mt-2 text-gray-600">Searching carbon credit records...</p>
+          <div className="space-y-6" aria-busy="true" aria-label="Searching carbon credit records">
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="h-7 w-40 bg-gray-200 rounded animate-pulse mb-4" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="border-b border-gray-100 pb-2 space-y-2">
+                    <div className="h-3 w-24 bg-gray-100 rounded animate-pulse" />
+                    <div className="h-5 w-32 bg-gray-200 rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <div className="h-7 w-48 bg-gray-200 rounded animate-pulse mb-4" />
+              <div className="space-y-4">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="border-l-4 border-gray-200 p-4 rounded-r-lg bg-gray-50">
+                    <div className="h-4 w-24 bg-gray-200 rounded animate-pulse mb-2" />
+                    <div className="h-3 w-full bg-gray-100 rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 

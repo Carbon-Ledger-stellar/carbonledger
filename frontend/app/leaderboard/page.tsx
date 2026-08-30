@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useLeaderboard } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { colors } from "../../styles/design-system";
+import LoadingSkeleton from "../../components/LoadingSkeleton";
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -75,11 +76,7 @@ export default function LeaderboardPage() {
           <span>Tonnes Retired</span>
         </div>
 
-        {isLoading && (
-          <div style={{ padding: "3rem", textAlign: "center", color: colors.neutral[400] }}>
-            Loading…
-          </div>
-        )}
+        {isLoading && <LoadingSkeleton variant="Table" columns={3} count={8} />}
 
         {!isLoading && (!data || data.length === 0) && (
           <div style={{ padding: "3rem", textAlign: "center", color: colors.neutral[400] }}>

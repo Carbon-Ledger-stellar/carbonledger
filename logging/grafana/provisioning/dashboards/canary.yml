@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: "CarbonLedger Canary Dashboards"
+    orgId: 1
+    folder: "CarbonLedger"
+    folderUid: "carbonledger"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: true

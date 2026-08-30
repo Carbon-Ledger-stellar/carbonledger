@@ -15,6 +15,14 @@ interface CertificateData {
   serialEnd: string;
   vintageYear: number;
   txHash: string;
+  /**
+   * IPFS CID of this certificate's pinned JSON content (#600). Embedded as
+   * a self-referential link (QR code + text) so a holder of only the PDF
+   * can locate and verify the canonical, content-addressed data it
+   * describes — the PDF cannot embed its own CID (that would change its
+   * own hash), so it links to the CID of the data it renders instead.
+   */
+  contentCid?: string;
 }
 
 @Injectable()
@@ -26,7 +34,7 @@ export class CertificateService {
     // This avoids the anti-pattern of an async executor inside new Promise.
     let qrBuffer: Buffer | null = null;
     try {
-      qrBuffer = await this.generateQrCode(data.retirementId);
+      qrBuffer = await this.generateQrCode(data.retirementId, data.contentCid);
     } catch (qrError) {
       this.logger.warn(`QR code generation failed: ${qrError}`);
     }
@@ -69,9 +77,14 @@ export class CertificateService {
     });
   }
 
-  private async generateQrCode(retirementId: string): Promise<Buffer> {
-    const auditUrl = `https://carbonledger.io/audit/retirement/${retirementId}`;
-    return QRCode.toBuffer(auditUrl, {
+  private async generateQrCode(retirementId: string, contentCid?: string): Promise<Buffer> {
+    // Self-referential (#600): when the content CID is known, the QR code
+    // links directly to this certificate's pinned, content-addressed data
+    // on IPFS rather than the mutable audit page.
+    const target = contentCid
+      ? `https://gateway.pinata.cloud/ipfs/${contentCid}`
+      : `https://carbonledger.io/audit/retirement/${retirementId}`;
+    return QRCode.toBuffer(target, {
       errorCorrectionLevel: 'H',
       type: 'png',
       width: 300,
@@ -253,11 +266,35 @@ export class CertificateService {
       .font('Helvetica')
       .fillColor('#666666')
       .text(
-        'Scan to verify on-chain',
+        data.contentCid ? 'Scan to verify content' : 'Scan to verify on-chain',
         pageWidth - 170,
         290,
         { width: 120, align: 'center' }
       );
+
+    // Content CID — self-referential link to this certificate's pinned,
+    // content-addressed data on IPFS (#600).
+    if (data.contentCid) {
+      doc
+        .fontSize(11)
+        .font('Helvetica-Bold')
+        .fillColor('#000000')
+        .text('Certificate Content CID:', 60, 640);
+      doc
+        .fontSize(8)
+        .font('Courier')
+        .fillColor('#333333')
+        .text(data.contentCid, 60, 658, { width: pageWidth - 120 });
+      doc
+        .fontSize(8)
+        .font('Helvetica')
+        .fillColor('#666666')
+        .text(
+          `Verify: GET /certificates/${data.contentCid}/verify`,
+          60,
+          676,
+        );
+    }
 
     // Footer
     doc

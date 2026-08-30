@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma.service';
+
+const EVERY_DAY_AT_MIDNIGHT = '0 0 * * *';
 
 @Injectable()
 export class RetentionService {
@@ -8,14 +10,14 @@ export class RetentionService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron(EVERY_DAY_AT_MIDNIGHT)
   async enforceRetentionPolicy() {
     const retentionDays = this.getRetentionDays();
     if (retentionDays <= 0) {
       this.logger.warn('Retention enforcement disabled because retention window is non-positive');
       return;
     }
-
+  
     const now = new Date();
     const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
 

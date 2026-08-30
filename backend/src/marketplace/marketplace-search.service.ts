@@ -1,5 +1,7 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import { ApiCacheService } from '../cache/api-cache.service';
+import { MARKETPLACE_SEARCH_CACHE_TTL_SECONDS } from '../cache/cache.constants';
 import {
   SearchListingsDto,
   SearchListingsResponse,
@@ -32,7 +34,10 @@ import {
 export class MarketplaceSearchService {
   private readonly logger = new Logger(MarketplaceSearchService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly apiCache?: ApiCacheService,
+  ) {}
 
   /**
    * Search and filter marketplace listings.
@@ -45,6 +50,19 @@ export class MarketplaceSearchService {
    * @returns     SearchListingsResponse with ranked, paginated results
    */
   async searchListings(dto: SearchListingsDto): Promise<SearchListingsResponse> {
+    if (this.apiCache) {
+      const cacheKey = `cache:marketplace:search:${JSON.stringify(dto)}`;
+      return this.apiCache.getOrSet(
+        cacheKey,
+        MARKETPLACE_SEARCH_CACHE_TTL_SECONDS,
+        'marketplace:search',
+        () => this._searchListingsDb(dto),
+      );
+    }
+    return this._searchListingsDb(dto);
+  }
+
+  private async _searchListingsDb(dto: SearchListingsDto): Promise<SearchListingsResponse> {
     const {
       search,
       methodology,

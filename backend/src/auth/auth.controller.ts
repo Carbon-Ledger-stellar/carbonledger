@@ -4,14 +4,34 @@ import {
   Get,
   Body,
   Query,
+  Req,
+  Res,
   UseGuards,
   HttpCode,
   HttpStatus,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { ChallengeDto, VerifyDto, RefreshDto, LogoutDto } from './auth.dto';
 import { Public } from './decorators';
+
+export const REFRESH_COOKIE = 'refresh_token';
+
+/** 30 days — matches the TokenFamilyService hard TTL. */
+const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Must match how this controller is actually mounted: main.ts sets
+ * `setGlobalPrefix('api')` plus URI versioning (`prefix: 'v'`,
+ * `defaultVersion: '1'`), so `@Controller('auth')` is served at
+ * `/api/v1/auth/*` — not `/auth/*`. A cookie scoped to the wrong Path is
+ * simply never sent back by the browser, which silently breaks the
+ * refresh flow entirely (verified: a client that calls /api/v1/auth/verify
+ * then /api/v1/auth/refresh never gets the cookie and refresh 401s).
+ */
+const REFRESH_COOKIE_PATH = '/api/v1/auth';
 
 @Controller('auth')
 @Public()
@@ -26,43 +46,98 @@ export class AuthController {
     return this.authService.generateChallenge(dto.publicKey);
   }
 
-  /** Step 2 — Submit signed challenge to receive JWT access token + opaque refresh token. */
+  /**
+   * Step 2 — Submit signed challenge to receive JWT access token + opaque
+   * refresh token.
+   *
+   * The refresh token is delivered ONLY inside an HTTP-only cookie so that
+   * browser-based clients can never leak it to JavaScript (#892).
+   */
   @Post('verify')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
-  verify(@Body() dto: VerifyDto) {
-    return this.authService.verifySignatureAndLogin(
+  async verify(@Body() dto: VerifyDto, @Res({ passthrough: true }) res: Response) {
+    const { access_token, refresh_token } = await this.authService.verifySignatureAndLogin(
       dto.publicKey,
       dto.signature,
       dto.nonce,
       dto.role,
     );
+
+    this.setRefreshCookie(res, refresh_token);
+    // Body keeps the access token only; the refresh token travels via cookie.
+    return { access_token };
   }
 
   /**
    * Step 3 — Exchange a valid refresh token for a new token pair.
    *
-   * The old refresh token is invalidated immediately (rotation).
-   * If the same token is presented twice, the entire family is
-   * invalidated and re-login is required.
+   * The refresh token is read from the HTTP-only cookie (body accepted as a
+   * fallback for non-cookie API clients). Rotation is atomic: the old token
+   * is invalidated immediately and a fresh one is set on the response cookie.
+   * Presenting the same token twice trips reuse detection and invalidates
+   * the entire family.
    */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
-  refresh(@Body() dto: RefreshDto) {
-    return this.authService.refresh(dto.refreshToken);
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Body() dto: RefreshDto,
+  ) {
+    const refreshToken = this.extractRefreshToken(req, dto.refreshToken);
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token missing');
+    }
+
+    const { access_token, refresh_token } = await this.authService.refresh(refreshToken);
+
+    this.setRefreshCookie(res, refresh_token);
+    return { access_token };
   }
 
   /**
-   * Logout — invalidate the full refresh token family.
-   *
-   * Pass the current refresh token; every device sharing the same family
-   * (i.e., this login session) is signed out.
+   * Logout — blacklist the current ACCESS token's `jti` in Redis (route
+   * guards reject it from this moment on) and invalidate the full refresh
+   * token family, then clear the cookie.
    */
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
-  logout(@Body() dto: LogoutDto) {
-    return this.authService.logout(dto.refreshToken);
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Body() dto: LogoutDto,
+  ) {
+    const refreshToken = this.extractRefreshToken(req, dto.refreshToken);
+    const accessToken = this.extractBearerToken(req);
+
+    const result = await this.authService.logout(refreshToken ?? '', accessToken ?? undefined);
+
+    res.clearCookie(REFRESH_COOKIE, { path: REFRESH_COOKIE_PATH });
+    return result;
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private setRefreshCookie(res: Response, rawToken: string): void {
+    res.cookie(REFRESH_COOKIE, rawToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: REFRESH_COOKIE_PATH,
+      maxAge: REFRESH_COOKIE_MAX_AGE_MS,
+    });
+  }
+
+  private extractRefreshToken(req: Request, bodyToken?: string): string | undefined {
+    const cookies = (req as Request & { cookies?: Record<string, string> }).cookies;
+    return cookies?.[REFRESH_COOKIE] || bodyToken || undefined;
+  }
+
+  private extractBearerToken(req: Request): string | null {
+    const auth: string = req.headers?.authorization ?? '';
+    return auth.startsWith('Bearer ') ? auth.slice(7) : null;
   }
 }
