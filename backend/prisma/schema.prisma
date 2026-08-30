@@ -318,6 +318,23 @@ model SyncMetadata {
   updatedAt         DateTime @updatedAt
 }
 
+/// Disjoint ledger ranges that the Soroban event poller has fully processed.
+/// Used to detect and backfill missing sequences after RPC downtime.
+/// Ranges are kept non-overlapping/coalesced by the poller under a transaction
+/// advisory lock so concurrent instances cannot record overlapping windows.
+model ProcessedLedgerRange {
+  id          Int      @id @default(autoincrement())
+  /// First ledger of the contiguous processed range (inclusive).
+  startLedger Int
+  /// Last ledger of the contiguous processed range (inclusive).
+  endLedger   Int
+  processedAt DateTime @default(now())
+
+  @@unique([startLedger, endLedger])
+  @@index([startLedger])
+  @@index([endLedger])
+}
+
 model Job {
   id          String    @id @default(cuid())
   queue       String
