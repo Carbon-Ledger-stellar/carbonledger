@@ -7,9 +7,10 @@ import { PrismaService } from '../prisma.service';
 import { StellarNetworkService } from '../common/stellar-network.service';
 import { RedisModule } from '../redis.module';
 import { AuthModule } from '../auth/auth.module';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
-  imports: [IndexerModule, OracleModule, RedisModule, AuthModule],
+  imports: [IndexerModule, OracleModule, RedisModule, AuthModule, QueueModule],
   controllers: [AdminController],
   providers: [AdminService, PrismaService, StellarNetworkService],
 })

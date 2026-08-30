@@ -4,6 +4,7 @@ import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
 import { RedisService } from '../redis.service';
 import { StellarNetworkService } from '../common/stellar-network.service';
+import { DlqService } from '../queue/dlq.service';
 import { UpdateCanaryDto } from './admin.dto';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class AdminService {
     private readonly oracle: OracleService,
     private readonly redis: RedisService,
     private readonly stellarNetwork: StellarNetworkService,
+    private readonly dlqService: DlqService,
   ) {}
 
   // ── Verifier whitelist ──────────────────────────────────────────────────────
@@ -146,5 +148,43 @@ export class AdminService {
     
     const logs = await client.lrange('abuse:log', 0, -1);
     return logs.map(log => JSON.parse(log));
+  }
+
+  // ── Queue / Dead Letter Queue ────────────────────────────────────────────────
+
+  /**
+   * List all jobs currently in the Dead Letter Queue.
+   * Optionally filter by jobType and pagination.
+   */
+  listDeadLetterJobs(query: { jobType?: string; requeued?: boolean; limit?: number; offset?: number }) {
+    return this.dlqService.list({
+      jobType: query.jobType,
+      requeued: query.requeued,
+      limit: query.limit ? Number(query.limit) : 50,
+      offset: query.offset ? Number(query.offset) : 0,
+    });
+  }
+
+  /**
+   * Requeue a single failed job by its DLQ record ID.
+   */
+  requeueDeadLetterJob(dlqId: string) {
+    return this.dlqService.requeueById(dlqId);
+  }
+
+  /**
+   * Requeue all pending (non-requeued) DLQ entries.
+   * Optionally filter by job type.
+   */
+  requeueAllFailedJobs(jobType?: string) {
+    return this.dlqService.requeueAll(jobType);
+  }
+
+  /**
+   * Count pending DLQ entries (not yet requeued).
+   */
+  async getDlqStats() {
+    const pending = await this.dlqService.countPending();
+    return { pendingDlqJobs: pending };
   }
 }

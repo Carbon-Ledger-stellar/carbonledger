@@ -3,6 +3,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from './queue.service';
 import { QueueController } from './queue.controller';
 import { QueueProcessor } from './queue.processor';
+import { DlqService } from './dlq.service';
 import { AuthModule } from '../auth/auth.module';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { QUEUE_NAME } from './queue.constants';
@@ -17,9 +18,9 @@ import { CertificatesModule as RetirementsCertificatesModule } from '../retireme
     CertificatesModule,
     RetirementsCertificatesModule,
   ],
-  providers: [QueueService, QueueProcessor, PrismaService],
+  providers: [QueueService, QueueProcessor, DlqService, PrismaService],
   controllers: [QueueController],
-  exports: [QueueService],
+  exports: [QueueService, DlqService],
 })
 export class QueueModule implements OnModuleInit {
   constructor(private readonly certificateProcessor: CertificateProcessor) {}

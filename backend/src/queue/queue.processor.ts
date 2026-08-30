@@ -1,23 +1,40 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { QUEUE_NAME, JobType } from './queue.constants';
 import { PrismaService } from '../prisma.service';
 import { CertificateService } from '../retirements/certificate.service';
+import { DlqService } from './dlq.service';
 
-@Processor(QUEUE_NAME)
+/**
+ * BullMQ worker for the main "carbonledger" queue.
+ *
+ * Retry strategy (configured per-job in QueueService.enqueue):
+ *   - Maximum 3 attempts
+ *   - Exponential backoff starting at 5 s (5 s → 10 s → 20 s)
+ *
+ * After all retries are exhausted, the onFailed() worker event archives
+ * the job to the Dead Letter Queue via DlqService.
+ */
+@Processor(QUEUE_NAME, {
+  // Worker-level concurrency — each instance processes up to 5 jobs in parallel
+  concurrency: 5,
+})
 export class QueueProcessor extends WorkerHost {
   private readonly logger = new Logger(QueueProcessor.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly certificateService: CertificateService,
+    private readonly dlqService: DlqService,
   ) {
     super();
   }
 
   async process(job: Job): Promise<unknown> {
-    this.logger.log(`Processing job ${job.id} type=${job.name} attempt=${job.attemptsMade + 1}`);
+    this.logger.log(
+      `Processing job ${job.id} type=${job.name} attempt=${job.attemptsMade + 1}/${job.opts.attempts ?? 1}`,
+    );
 
     switch (job.name as JobType) {
       case JobType.CERTIFICATE_GENERATION:
@@ -32,6 +49,58 @@ export class QueueProcessor extends WorkerHost {
         throw new Error(`Unknown job type: ${job.name}`);
     }
   }
+
+  // ── Worker lifecycle events ──────────────────────────────────────────────────
+
+  /**
+   * Invoked by BullMQ after every failed attempt (including non-final ones).
+   * When the job has exhausted all retries it is moved to the "failed" state
+   * and this handler archives it to the DLQ so no data is silently discarded.
+   */
+  @OnWorkerEvent('failed')
+  async onFailed(job: Job, error: Error): Promise<void> {
+    const maxAttempts = job.opts.attempts ?? 1;
+    const isFinal = job.attemptsMade >= maxAttempts;
+
+    this.logger.warn(
+      `Job ${job.id} (${job.name}) failed on attempt ${job.attemptsMade}/${maxAttempts}: ${error.message}`,
+      { jobId: job.id, jobType: job.name, attempt: job.attemptsMade, final: isFinal },
+    );
+
+    if (!isFinal) {
+      // Not yet dead-lettered — BullMQ will retry with exponential backoff
+      return;
+    }
+
+    // All retries exhausted — archive to DLQ
+    await this.dlqService.archiveToDlq({
+      jobId: String(job.id),
+      queueName: QUEUE_NAME,
+      jobType: job.name,
+      payload: job.data as Record<string, unknown>,
+      attempts: job.attemptsMade,
+      lastError: error.message,
+      errorStack: error.stack,
+      enqueuedAt: new Date(job.timestamp),
+    });
+  }
+
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job): void {
+    this.logger.log(`Job ${job.id} (${job.name}) completed successfully`);
+  }
+
+  @OnWorkerEvent('active')
+  onActive(job: Job): void {
+    this.logger.debug(`Job ${job.id} (${job.name}) is now active`);
+  }
+
+  @OnWorkerEvent('stalled')
+  onStalled(jobId: string): void {
+    this.logger.warn(`Job ${jobId} stalled and has been re-queued`);
+  }
+
+  // ── Job handlers ─────────────────────────────────────────────────────────────
 
   private async handleCertificateGeneration(data: Record<string, unknown>) {
     const retirementId = data['retirementId'] as string;
@@ -53,11 +122,13 @@ export class QueueProcessor extends WorkerHost {
 
   private async handleOracleSubmission(data: Record<string, unknown>) {
     const { oracleUpdateId, type } = data as { oracleUpdateId: string; type: string };
-    this.logger.log(`Submitting oracle data to Soroban type=${type} oracleUpdateId=${oracleUpdateId}`);
+    this.logger.log(
+      `Submitting oracle data to Soroban type=${type} oracleUpdateId=${oracleUpdateId}`,
+    );
 
     await this.prisma.oracleJob.update({
       where: { id: oracleUpdateId },
-      data:  { status: 'pending', attempts: { increment: 1 }, updatedAt: new Date() },
+      data: { status: 'pending', attempts: { increment: 1 }, updatedAt: new Date() },
     });
 
     try {
@@ -66,7 +137,7 @@ export class QueueProcessor extends WorkerHost {
 
       await this.prisma.oracleJob.update({
         where: { id: oracleUpdateId },
-        data:  { status: 'submitted', txHash, lastError: null, updatedAt: new Date() },
+        data: { status: 'submitted', txHash, lastError: null, updatedAt: new Date() },
       });
 
       this.logger.log(
@@ -76,7 +147,7 @@ export class QueueProcessor extends WorkerHost {
     } catch (err: any) {
       await this.prisma.oracleJob.update({
         where: { id: oracleUpdateId },
-        data:  { status: 'failed', lastError: err.message, updatedAt: new Date() },
+        data: { status: 'failed', lastError: err.message, updatedAt: new Date() },
       });
       throw err; // re-throw so BullMQ retries with exponential backoff
     }
