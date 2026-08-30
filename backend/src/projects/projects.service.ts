@@ -3,6 +3,8 @@ import { PrismaService } from "../prisma.service";
 import { RedisService } from "../redis.service";
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
 import { CacheInvalidationService } from "../cache/cache.service";
+import { CacheService } from "../cache/cache.service";
+import { CacheKeyGenerator } from "../cache/cache.decorator";
 import {
   RegisterProjectDto,
   UpdateProjectStatusDto,
@@ -54,6 +56,7 @@ export class ProjectsService {
     private readonly mailService: MailService,
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
+    private readonly cacheService: CacheService,
     @Optional() private readonly cacheInvalidation?: CacheInvalidationService,
     @Optional() private readonly webhookService?: WebhookService,
   ) {}
@@ -76,6 +79,14 @@ export class ProjectsService {
       caller,
     );
 
+    // Try to get from cache first
+    const cacheKey = CacheKeyGenerator.projectListingKey(filters);
+    const cached = await this.cacheService.getProjectListing(filters);
+    if (cached) {
+      this.logger.debug(`Cache hit for project listing: ${cacheKey}`);
+      return cached;
+    }
+
     const [projects, total] = await Promise.all([
       this.prisma.carbonProject.findMany({
         where,
@@ -93,7 +104,7 @@ export class ProjectsService {
 
     const sanitized = projects.map((project) => sanitizeProjectForResponse(project as Record<string, unknown>));
 
-    return {
+    const result = {
       data: sanitized,
       projects: sanitized,
       total,
@@ -105,6 +116,11 @@ export class ProjectsService {
       next_cursor: nextCursor,
       total_count: total,
     };
+
+    // Cache the result
+    await this.cacheService.setProjectListing(filters, result);
+
+    return result;
   }
 
   async searchProjects(searchDto: SearchProjectsDto, caller: CallerContext): Promise<PaginatedProjectsResponse> {

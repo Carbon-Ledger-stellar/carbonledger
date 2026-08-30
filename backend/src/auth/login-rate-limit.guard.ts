@@ -7,92 +7,85 @@ export class ResponseAlreadySentException extends Error {
   constructor() { super("Response already sent"); }
 }
 
+interface RateLimitEntry {
+  /** Number of requests in the current window. */
+  count: number;
+  /** Epoch ms when the current window resets. */
+  resetAt: number;
+  /** How many times this IP has been rate-limited (drives exponential backoff). */
+  violations: number;
+}
+
 /**
- * #1076: Redis-backed brute-force protection for the login endpoint.
+ * Per-IP rate limiter for the login endpoint with exponential backoff.
  *
- * Rules:
- *   - Max 5 failed attempts per IP within the 15-minute lockout window.
- *   - On the 6th attempt the IP is locked out for 900 seconds (15 min).
- *   - Survives process restarts because state lives in Redis, not memory.
- *   - Extracts real client IP from CF-Connecting-IP → X-Forwarded-For → req.ip
- *     so Cloudflare-fronted deployments rate-limit on the actual user IP.
+ * Base behaviour:
+ *   - 5 requests per minute per IP (LIMIT / BASE_WINDOW_MS)
+ *   - 6th request in the same window → HTTP 429 with Retry-After header
  *
- * Redis keys:
- *   login:attempts:{ip}  — incremented counter, TTL = LOCKOUT_SECONDS
- *   login:locked:{ip}    — set when attempts >= LIMIT, TTL = LOCKOUT_SECONDS
+ * Exponential backoff:
+ *   - Each rate-limit violation doubles the window length:
+ *       1st violation → 1 min, 2nd → 2 min, 3rd → 4 min, …, max 10 min
+ *   - The violation counter resets when an IP goes a full clean window without
+ *     being blocked.
+ *
+ * NOTE: This is an in-memory guard suitable for single-instance deployments.
+ * For multi-instance setups, replace the Map with a shared Redis counter.
  */
 @Injectable()
 export class LoginRateLimitGuard implements CanActivate {
-  private readonly logger  = new Logger(LoginRateLimitGuard.name);
-  private readonly redis: IORedis.Redis | null;
-
-  /** Maximum login attempts before the IP is locked out. */
+  /** Maximum requests allowed in the base window. */
   private readonly LIMIT = 5;
-  /** Lockout duration in seconds (15 minutes). */
-  private readonly LOCKOUT_SECONDS = 900;
 
-  constructor() {
-    try {
-      this.redis = new IORedis.default({
-        host:     process.env.REDIS_HOST     ?? 'localhost',
-        port:     parseInt(process.env.REDIS_PORT ?? '6379', 10),
-        password: process.env.REDIS_PASSWORD ?? undefined,
-        // Don't block startup if Redis is temporarily unavailable.
-        lazyConnect:    true,
-        enableOfflineQueue: false,
-        connectTimeout: 2_000,
-      });
-      this.redis.on('error', (err: Error) => {
-        this.logger.warn(`LoginRateLimitGuard Redis error: ${err.message}`);
-      });
-    } catch {
-      this.logger.warn('LoginRateLimitGuard: failed to create Redis client — falling back to allow-all');
-      this.redis = null;
+  /** Base sliding-window length: 60 seconds. */
+  private readonly BASE_WINDOW_MS = 60_000;
+
+  /** Maximum window multiplier (caps at 10× = 10 minutes). */
+  private readonly MAX_MULTIPLIER = 10;
+
+  private readonly entries = new Map<string, RateLimitEntry>();
+
+  canActivate(context: ExecutionContext): boolean {
+    const req = context.switchToHttp().getRequest();
+    const res = context.switchToHttp().getResponse();
+    const ip: string = req.ip || req.connection?.remoteAddress || "unknown";
+    const now = Date.now();
+
+    // ── Retrieve or create entry for this IP ────────────────────────────────
+    let entry = this.entries.get(ip);
+
+    if (!entry || now > entry.resetAt) {
+      // New window — carry forward the violation count if the IP was blocked
+      // in its previous window; otherwise reset violations too.
+      const violations = entry ? entry.violations : 0;
+      const multiplier = Math.min(2 ** violations, this.MAX_MULTIPLIER);
+      const windowMs = this.BASE_WINDOW_MS * multiplier;
+      entry = { count: 0, resetAt: now + windowMs, violations };
+      this.entries.set(ip, entry);
     }
   }
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const req = context.switchToHttp().getRequest<Request>();
-    const res = context.switchToHttp().getResponse<Response>();
-    const ip  = this.extractClientIp(req);
+    entry.count++;
 
-    // If Redis is unavailable, fail open (do not block the endpoint).
-    if (!this.redis) {
-      return true;
-    }
+    if (entry.count > this.LIMIT) {
+      // Record the violation so the next window will be longer
+      entry.violations++;
 
-    const lockedKey   = `login:locked:${ip}`;
-    const attemptsKey = `login:attempts:${ip}`;
+      const retryAfterSeconds = Math.ceil((entry.resetAt - now) / 1000);
 
-    try {
-      // Check whether this IP is already in a lockout period.
-      const locked = await this.redis.get(lockedKey);
-      if (locked) {
-        const ttl = await this.redis.ttl(lockedKey);
-        this.sendTooManyRequests(res, ttl > 0 ? ttl : this.LOCKOUT_SECONDS);
-        return false;
-      }
+      res
+        .status(HttpStatus.TOO_MANY_REQUESTS)
+        .set("Connection", "keep-alive")
+        .set("Retry-After", String(retryAfterSeconds))
+        .json({
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          message: "Too Many Requests",
+          error: "RateLimitExceeded",
+          retryAfter: retryAfterSeconds,
+        });
 
-      // Increment attempt counter; set expiry on first attempt so the window
-      // automatically resets even if the IP never hits the limit.
-      const attempts = await this.redis.incr(attemptsKey);
-      if (attempts === 1) {
-        // First attempt in this window — set the expiry.
-        await this.redis.expire(attemptsKey, this.LOCKOUT_SECONDS);
-      }
-
-      if (attempts > this.LIMIT) {
-        // Lock the IP for the full lockout window.
-        await this.redis.set(lockedKey, '1', 'EX', this.LOCKOUT_SECONDS);
-        // Remove the attempts key — lock key is the authoritative signal now.
-        await this.redis.del(attemptsKey);
-
-        this.sendTooManyRequests(res, this.LOCKOUT_SECONDS);
-        return false;
-      }
-    } catch (err: unknown) {
-      // Redis error — log and fail open so a Redis hiccup never blocks all logins.
-      this.logger.warn(`LoginRateLimitGuard check failed for ${ip}: ${(err as Error).message}`);
+      // Throw sentinel so NestJS does not attempt to send a second response
+      throw new ResponseAlreadySentException();
     }
 
     return true;
