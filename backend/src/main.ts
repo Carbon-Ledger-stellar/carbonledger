@@ -1,12 +1,13 @@
 import './telemetry/register';
 import { NestFactory } from '@nestjs/core';
-import { ConsoleLogger, ForbiddenException, LogLevel, ValidationPipe, VersioningType } from '@nestjs/common';
+import { ConsoleLogger, ForbiddenException, INestApplication, LogLevel, ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { PrismaService } from './prisma.service';
 import { CorrelationIdContext } from './logger/correlation-id.context';
 import { validateEnv } from './env.validation';
 import * as express from 'express';
 import cookieParser from 'cookie-parser';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { StellarNetworkService } from './common/stellar-network.service';
 import { contractCallsRegistry, poolMetricsRegistry } from './common/metrics.registry';
 import { ValidationExceptionFilter } from './common/validation-exception.filter';
@@ -40,6 +41,80 @@ class JsonLogger extends ConsoleLogger {
   warn(message: unknown, context?: string)  { this.write('warn',  message, context); }
   debug(message: unknown, context?: string) { this.write('debug', message, context); }
   verbose(message: unknown, context?: string) { this.write('verbose', message, context); }
+}
+
+/**
+ * Configures and serves the interactive Swagger UI and consolidated OpenAPI
+ * document at /api/docs.
+ *
+ * OpenAPI 3.1 is generated from the controller decorators via @nestjs/swagger's
+ * reflection, so it always reflects the currently-registered REST endpoints.
+ *
+ * Gating rules:
+ *  - SWAGGER_UI_ENABLED=true  -> always enabled
+ *  - SWAGGER_UI_ENABLED=false -> always disabled
+ *  - NODE_ENV=production      -> disabled by default (secure by default)
+ *  - otherwise (dev/staging)  -> enabled
+ */
+function setupSwagger(app: INestApplication): void {
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+
+  let enabled: boolean;
+  if (process.env.SWAGGER_UI_ENABLED !== undefined) {
+    enabled = process.env.SWAGGER_UI_ENABLED === 'true';
+  } else {
+    enabled = nodeEnv !== 'production';
+  }
+
+  if (!enabled) {
+    return;
+  }
+
+  const config = new DocumentBuilder()
+    .setTitle('CarbonLedger API')
+    .setDescription(
+      'Verified carbon credits. Permanent retirement. Full provenance.\n\n' +
+        '## Authentication\n' +
+        '- **JWT** (Bearer) — use `POST /api/v1/auth/verify` to obtain an access token.\n' +
+        '- **API Key** (`X-Api-Key`) — for the public API gateway endpoints.\n\n' +
+        '## Versioning\n' +
+        'All routes are served under `/api/v1/`.\n\n' +
+        '## CarbonError codes\n' +
+        '| Code | Name |\n' +
+        '|------|------|\n' +
+        '| 1  | ProjectNotFound |\n' +
+        '| 2  | ProjectNotVerified |\n' +
+        '| 3  | ProjectSuspended |\n' +
+        '| 4  | InsufficientCredits |\n' +
+        '| 5  | AlreadyRetired |\n' +
+        '| 6  | SerialNumberConflict |\n' +
+        '| 7  | UnauthorizedVerifier |\n' +
+        '| 8  | UnauthorizedOracle |\n' +
+        '| 9  | InvalidVintageYear |\n' +
+        '| 10 | ListingNotFound |\n' +
+        '| 11 | InsufficientLiquidity |\n' +
+        '| 12 | PriceNotSet |\n' +
+        '| 13 | MonitoringDataStale |\n' +
+        '| 14 | DoubleCountingDetected |\n' +
+        '| 15 | RetirementIrreversible |\n' +
+        '| 16 | ZeroAmountNotAllowed |\n' +
+        '| 17 | ProjectAlreadyExists |\n' +
+        '| 18 | InvalidSerialRange |',
+    )
+    .setVersion('1.0')
+    .setContact('CarbonLedger', 'https://carbonledger.io', '')
+    .addBearerAuth()
+    .addApiKey({ type: 'apiKey', in: 'header', name: 'X-Api-Key', description: 'Public API gateway key' }, 'X-Api-Key')
+    .build();
+
+  const document = SwaggerModule.createDocument(app, config);
+
+  SwaggerModule.setup('/api/docs', app, document, {
+    customSiteTitle: 'CarbonLedger API Docs',
+    swaggerOptions: { persistAuthorization: true },
+    jsonDocumentUrl: '/api/docs/json',
+    yamlDocumentUrl: '/api/docs/yaml',
+  });
 }
 
 async function bootstrap() {
@@ -190,6 +265,11 @@ async function bootstrap() {
       timestamp: new Date().toISOString(),
     });
   });
+
+  // OpenAPI + Swagger UI — interactive API explorer at /api/docs.
+  // Enabled by default in development and staging; disabled in production
+  // unless explicitly enabled with SWAGGER_UI_ENABLED=true.
+  setupSwagger(app);
 
   // Prometheus-compatible metrics endpoint.
   // Scraped by Grafana Agent / Prometheus at /metrics.
