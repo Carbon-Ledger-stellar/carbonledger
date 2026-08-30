@@ -1,4 +1,11 @@
-import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { AuditArchiveService } from './audit-archive.service';
 import { Roles } from '../auth/decorators';
@@ -13,39 +20,50 @@ export class AuditController {
 
   /**
    * GET /audit
-   * Cursor-based pagination over the audit log (issue #598).
+   * Cursor-based pagination over the audit log with date/user/action filtering.
    *
-   * Accepts:
-   *   ?cursor=<base64>  opaque cursor from previous response's next_cursor
-   *   ?limit=<1-100>    page size (default 50, max 100)
-   *   ?userId=<id>      filter by user
-   *   ?action=<str>     filter by action
-   *   ?offset=<n>       legacy offset fallback (ignored when cursor is present)
+   * Query params:
+   *   cursor     — opaque cursor from previous response's next_cursor
+   *   limit      — page size (1-100, default 50)
+   *   userId     — filter by user ID
+   *   action     — filter by action string (prefix/exact)
+   *   startDate  — ISO 8601 date filter (inclusive lower bound)
+   *   endDate    — ISO 8601 date filter (inclusive upper bound)
+   *   offset     — legacy offset fallback (ignored when cursor present)
    *
-   * Returns:
-   *   { logs, next_cursor, prev_cursor, total_count }
+   * Returns: { logs, next_cursor, prev_cursor, total_count }
    */
   @Get()
   @Roles('admin')
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('read', AuditLogSubject))
   getLogs(
-    @Query('cursor')  cursor?: string,
-    @Query('limit')   limit?: string,
-    @Query('userId')  userId?: string,
-    @Query('action')  action?: string,
-    @Query('offset')  offset?: string,
+    @Query('cursor')    cursor?:    string,
+    @Query('limit')     limit?:     string,
+    @Query('userId')    userId?:    string,
+    @Query('action')    action?:    string,
+    @Query('offset')    offset?:    string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate')   endDate?:   string,
   ) {
     const parsedLimit = limit ? Number(limit) : 50;
     if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
       throw new BadRequestException('limit must be a number between 1 and 100');
     }
 
+    // Validate date params when provided
+    if (startDate && isNaN(Date.parse(startDate))) {
+      throw new BadRequestException('startDate must be a valid ISO 8601 date');
+    }
+    if (endDate && isNaN(Date.parse(endDate))) {
+      throw new BadRequestException('endDate must be a valid ISO 8601 date');
+    }
+
     // Decode opaque cursor — base64-encoded JSON { id: string }
     let decodedCursor: { id: string } | undefined;
     if (cursor) {
       try {
-        const raw = Buffer.from(cursor, 'base64').toString('utf8');
+        const raw    = Buffer.from(cursor, 'base64').toString('utf8');
         const parsed = JSON.parse(raw);
         if (typeof parsed.id !== 'string') throw new Error('missing id');
         decodedCursor = { id: parsed.id };
@@ -55,11 +73,13 @@ export class AuditController {
     }
 
     return this.auditService.findAllCursor({
-      cursor: decodedCursor,
-      limit:  parsedLimit,
+      cursor:    decodedCursor,
+      limit:     parsedLimit,
       userId,
       action,
-      offset: offset ? Number(offset) : undefined,
+      offset:    offset ? Number(offset) : undefined,
+      startDate,
+      endDate,
     });
   }
 
@@ -78,60 +98,46 @@ export class AuditController {
   }
 
   /**
-   * GET /audit/archived
-   * Retrieves compressed audit log entries that have been archived from the
-   * hot AuditLog table (entries older than 6 months). Each row is
-   * decompressed on the fly; the full entry — including previousHash and
-   * entryHash — is returned so callers can verify the hash chain.
+   * GET /audit/report/monthly?year=2025&month=8
    *
-   * Query params:
-   *   ?limit=<1-100>   page size (default 50, max 100)
-   *   ?offset=<n>      skip n rows (default 0)
-   *   ?userId=<id>     filter by user
-   *   ?action=<str>    filter by action
-   *
-   * Returns:
-   *   { entries: ArchivedLogEntry[], total_count: number }
+   * Generates a monthly audit report for compliance purposes (#1080).
+   * Returns aggregate counts by action and user, plus detailed admin-action list.
+   * Admin-only.
    */
-  @Get('archived')
+  @Get('report/monthly')
   @Roles('admin')
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('read', AuditLogSubject))
-  getArchivedLogs(
-    @Query('limit')   limit?: string,
-    @Query('offset')  offset?: string,
-    @Query('userId')  userId?: string,
-    @Query('action')  action?: string,
+  getMonthlyReport(
+    @Query('year')  yearStr?:  string,
+    @Query('month') monthStr?: string,
   ) {
-    const parsedLimit = limit ? Number(limit) : 50;
-    if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
-      throw new BadRequestException('limit must be a number between 1 and 100');
+    const now = new Date();
+    const year  = yearStr  ? Number(yearStr)  : now.getFullYear();
+    const month = monthStr ? Number(monthStr) : now.getMonth() + 1;
+
+    if (isNaN(year) || year < 2020 || year > now.getFullYear() + 1) {
+      throw new BadRequestException('year must be a valid calendar year');
+    }
+    if (isNaN(month) || month < 1 || month > 12) {
+      throw new BadRequestException('month must be between 1 and 12');
     }
 
-    const parsedOffset = offset ? Number(offset) : 0;
-    if (isNaN(parsedOffset) || parsedOffset < 0) {
-      throw new BadRequestException('offset must be a non-negative number');
-    }
-
-    return this.auditArchiveService.getArchivedLogs({
-      limit: parsedLimit,
-      offset: parsedOffset,
-      userId,
-      action,
-    });
+    return this.auditService.getMonthlyReport(year, month);
   }
 
   /**
-   * GET /audit/archived/stats
-   * Returns aggregate compression statistics: total archived entries, average
-   * compression ratio, bytes saved. Useful for dashboards and capacity
-   * planning. Admin-only.
+   * GET /audit/retention/check
+   *
+   * Returns a retention policy status report (#1080).
+   * Shows how many records are within / beyond the 7-year retention window.
+   * Admin-only.
    */
-  @Get('archived/stats')
+  @Get('retention/check')
   @Roles('admin')
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('read', AuditLogSubject))
-  getCompressionStats() {
-    return this.auditArchiveService.getCompressionStats();
+  checkRetentionPolicy() {
+    return this.auditService.checkRetentionPolicy();
   }
 }

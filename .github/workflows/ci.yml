@@ -629,6 +629,18 @@ jobs:
           npx playwright test tests/checkout.spec.ts \
             --project=chromium \
             --reporter=list,html,junit
+      # Issue #1049: full browse → search → buy → retire → certificate journey
+      # with a per-transaction performance baseline. Screenshots/traces on
+      # failure are uploaded with the report below.
+      - name: Run marketplace flow E2E tests (#1049)
+        if: always()
+        env:
+          CI: "true"
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+        run: |
+          npx playwright test tests/e2e/marketplace-flow.spec.ts \
+            --project=chromium \
+            --reporter=list,html,junit
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
@@ -732,6 +744,14 @@ jobs:
         env:
           PROPTEST_CASES: 1000
         run: "cargo test -p carbon_credit 'proptest_invariant_tests::' -- --nocapture"
+
+      # Issue #1051: dedicated property-based test target — supply-conservation
+      # and ownership-consistency invariants against the public contract API.
+      - name: Run property-based test target (carbon_credit, cargo test --test proptest)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_credit --test proptest -- --nocapture"
 
       - name: Run fuzz tests (carbon_marketplace)
         working-directory: contracts

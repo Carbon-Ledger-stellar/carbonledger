@@ -48,6 +48,10 @@ model CarbonProject {
   @@index([createdAt])
   @@index([methodology, country, status])
   @@index([migrationVersion])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing queries with ordering
+  @@index([country, status])     // Regional filtering support
+
   @@index([lastMonitoringAt])
   @@index([deletedAt])
   @@index([retentionUntil])
@@ -73,6 +77,8 @@ model CreditBatch {
 
   @@index([projectId, vintageYear, status])
   @@index([deletedAt])
+  // Performance optimization index for batch lookups
+  @@index([projectId, status])  // Optimize batch queries by project and status
 }
 
 model RetirementRecord {
@@ -195,6 +201,8 @@ model MarketListing {
   @@index([deletedAt])
   // Supports ORDER BY status, createdAt DESC on the listings browse page
   @@index([status, createdAt])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing browsing with pagination
 }
 
 model MonitoringData {
@@ -318,43 +326,21 @@ model SyncMetadata {
   updatedAt         DateTime @updatedAt
 }
 
-/// Compressed archive of AuditLog entries older than 6 months.
-/// The full audit log entry (including hash chain fields) is stored as
-/// gzip-compressed JSON in compressedData. Query the hot AuditLog table for
-/// recent entries and this table for historical entries.
-model ArchivedAuditLog {
-  id              String   @id @default(cuid())
-  /// The original AuditLog.id — kept for deduplication and cross-referencing
-  originalId      String   @unique
-  /// Indexed separately so queries by user still work without decompressing
-  userId          String?
-  /// Indexed separately so queries by action still work without decompressing
-  action          String
-  /// Indexed separately for fast lookups without decompression
-  resourceId      String?
-  /// Indexed separately for fast lookups without decompression
-  ipAddress       String?
-  /// Short outcome label copied from the original row for quick filtering
-  result          String?
-  /// gzip-compressed JSON of the full AuditLog row including hash chain fields
-  compressedData  Bytes
-  /// Original entry timestamp — preserved for time-range queries
-  timestamp       DateTime
-  /// When this row was archived
-  archivedAt      DateTime @default(now())
-  /// Always "gzip" — reserved for future algorithm changes
-  compressionType String   @default("gzip")
-  /// Uncompressed JSON byte size — used to compute compression ratio
-  sizeOriginal    Int
-  /// Compressed byte size (compressedData.length)
-  sizeCompressed  Int
+/// Disjoint ledger ranges that the Soroban event poller has fully processed.
+/// Used to detect and backfill missing sequences after RPC downtime.
+/// Ranges are kept non-overlapping/coalesced by the poller under a transaction
+/// advisory lock so concurrent instances cannot record overlapping windows.
+model ProcessedLedgerRange {
+  id          Int      @id @default(autoincrement())
+  /// First ledger of the contiguous processed range (inclusive).
+  startLedger Int
+  /// Last ledger of the contiguous processed range (inclusive).
+  endLedger   Int
+  processedAt DateTime @default(now())
 
-  @@index([originalId])
-  @@index([timestamp])
-  @@index([userId])
-  @@index([action])
-  @@index([resourceId])
-  @@index([archivedAt])
+  @@unique([startLedger, endLedger])
+  @@index([startLedger])
+  @@index([endLedger])
 }
 
 model Job {
@@ -619,4 +605,41 @@ model OracleDeadLetter {
   @@index([resolved])
   @@index([lastFailedAt(sort: Desc)])
   @@map("oracle_dead_letters")
+}
+
+/// Two-factor authentication configuration per user (#1079).
+/// Supports TOTP (authenticator app) and email OTP.
+model TwoFactorAuth {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  enabled           Boolean   @default(false)
+
+  /// Base32-encoded TOTP secret — store encrypted in production
+  totpSecret        String?
+  totpVerified      Boolean   @default(false)
+
+  /// Email OTP support
+  emailEnabled      Boolean   @default(false)
+  emailOtp          String?         // bcrypt hash of current OTP
+  emailOtpExpiry    DateTime?
+  emailOtpAttempts  Int       @default(0)
+
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+/// One-time recovery codes for 2FA account lockout (#1079).
+/// Each user gets 10 codes on 2FA setup; each code is single-use.
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String             // bcrypt hash of the plaintext code
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([userId, usedAt])
 }

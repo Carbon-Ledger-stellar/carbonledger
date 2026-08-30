@@ -229,9 +229,10 @@ export default function ProjectRegistrationForm() {
           <Field label="Project Name" error={errors.name}>
             <input style={inputStyle(!!errors.name)} value={form.name} onChange={set("name")}
               onBlur={() => handleBlur('name')}
+              autoComplete="organization"
               placeholder="Amazon Reforestation Initiative" />
           </Field>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Methodology" error={errors.methodology}>
               <select style={inputStyle(!!errors.methodology)} value={form.methodology} onChange={set("methodology")}
                 onBlur={() => handleBlur('methodology')}>
@@ -247,7 +248,7 @@ export default function ProjectRegistrationForm() {
               </select>
             </Field>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Country" error={errors.country}>
               <select style={inputStyle(!!errors.country)} value={form.country} onChange={set("country")}
                 onBlur={() => handleBlur('country')}>
@@ -263,16 +264,16 @@ export default function ProjectRegistrationForm() {
               </select>
             </Field>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Latitude" error={errors.latitude}>
               <input style={inputStyle(!!errors.latitude)} value={form.latitude} onChange={set("latitude")}
                 onBlur={() => handleBlur('latitude')}
-                placeholder="-3.4653" type="number" step="any" />
+                placeholder="-3.4653" type="number" inputMode="decimal" step="any" />
             </Field>
             <Field label="Longitude" error={errors.longitude}>
               <input style={inputStyle(!!errors.longitude)} value={form.longitude} onChange={set("longitude")}
                 onBlur={() => handleBlur('longitude')}
-                placeholder="-62.2159" type="number" step="any" />
+                placeholder="-62.2159" type="number" inputMode="decimal" step="any" />
             </Field>
           </div>
           <Field label="Description" error={errors.description}>
@@ -283,16 +284,25 @@ export default function ProjectRegistrationForm() {
           </Field>
           <Field label="Contact Email" error={errors.contactEmail}>
             <input style={inputStyle(!!errors.contactEmail)} type="email"
+              inputMode="email"
+              autoComplete="email"
               value={form.contactEmail} onChange={set("contactEmail")}
               onBlur={() => handleBlur('contactEmail')}
               placeholder="you@example.com" />
           </Field>
           <Field label="Developer Stellar Public Key" error={errors.developerPublicKey}>
             <input style={inputStyle(!!errors.developerPublicKey)}
+              autoComplete="off"
+              inputMode="text"
               value={form.developerPublicKey} onChange={set("developerPublicKey")}
               onBlur={() => handleBlur('developerPublicKey')}
               placeholder="G..." />
           </Field>
+          <style>{`
+            @media (max-width: 639px) {
+              .prf-grid-2 { grid-template-columns: 1fr !important; }
+            }
+          `}</style>
         </div>
       )}
 
@@ -437,7 +447,7 @@ const cardStyle: React.CSSProperties = {
   background: colors.surface,
   border: `1px solid ${colors.neutral[200]}`,
   borderRadius: borderRadius.xl,
-  padding: "2rem",
+  padding: "1.5rem 1rem", // smaller padding on mobile (#1035)
   boxShadow: shadows.md,
   maxWidth: 640,
   margin: "0 auto",
@@ -452,10 +462,17 @@ const headingStyle: React.CSSProperties = {
 };
 
 const inputStyle = (hasError: boolean): React.CSSProperties => ({
-  width: "100%", padding: "0.5rem 0.75rem", boxSizing: "border-box",
+  width: "100%",
+  padding: "0.6rem 0.75rem",
+  boxSizing: "border-box",
   border: `1px solid ${hasError ? colors.suspended.border : colors.neutral[300]}`,
-  borderRadius: borderRadius.md, fontSize: "0.875rem", color: colors.neutral[800],
-  background: colors.surface, outline: "none",
+  borderRadius: borderRadius.md,
+  // 1rem = 16px: prevents iOS Safari auto-zoom on focus (#1035)
+  fontSize: "1rem",
+  color: colors.neutral[800],
+  background: colors.surface,
+  outline: "none",
+  minHeight: "48px", // 48px touch target (#1035)
 });
 
 const btnStyle = (bg: string): React.CSSProperties => ({
