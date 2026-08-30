@@ -183,4 +183,38 @@ export class CacheService {
   async clearAll(): Promise<boolean> {
     return this.redis.delByPattern('*');
   }
+
+  /**
+   * Invalidate a single marketplace listing detail cache entry.
+   * Called after a purchase partially fills or fully sells a listing.
+   */
+  async invalidateListingDetail(listingId: string): Promise<void> {
+    try {
+      await this.redis.del(marketplaceListingDetailCacheKey(listingId));
+      this.logger.debug(`Listing detail cache invalidated for: ${listingId}`);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to invalidate listing detail cache for ${listingId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Invalidate all stats caches (platform stats, aggregate stats, leaderboard).
+   * Called on credit mint, retire, and purchase events.
+   */
+  async invalidateStats(): Promise<void> {
+    try {
+      await Promise.all([
+        this.redis.del(STATS_CACHE_KEY),
+        this.redis.del(STATS_AGGREGATE_CACHE_KEY),
+        this.redis.delByPattern(`${STATS_LEADERBOARD_CACHE_KEY_PREFIX}*`),
+      ]);
+      this.logger.debug('Stats caches invalidated');
+    } catch (err) {
+      this.logger.warn(
+        `Failed to invalidate stats caches: ${(err as Error).message}`,
+      );
+    }
+  }
 }

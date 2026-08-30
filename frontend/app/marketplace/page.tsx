@@ -20,7 +20,22 @@ import Toast, { useToast } from "../../components/Toast";
 import Highlight from "../../components/Highlight";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import MarketplaceError from "../../components/MarketplaceError";
-import OrderBookChart from "../../components/OrderBookChart";
+
+// Heavy components — loaded only when the page renders, not at initial bundle time.
+// OrderBookChart uses Recharts (chart library) — ssr: false because Recharts reads
+// window dimensions on mount.
+const OrderBookChart = dynamic(() => import("../../components/OrderBookChart"), {
+  loading: () => <LoadingSkeleton variant="MarketplaceItem" />,
+  ssr: false,
+});
+
+// MarketplaceFilter is a large multi-select form (16KB); defer its load until
+// the page is interactive. The default export (React component) is lazy-loaded;
+// the named utility exports (EMPTY_FILTERS, filtersFromParams, FilterState) are
+// imported statically above because they're used in non-render logic.
+const MarketplaceFilter = dynamic(() => import("../../components/MarketplaceFilter"), {
+  loading: () => <div style={{ height: "80px" }} aria-busy="true" />,
+});
 
 // Leaflet touches `window` at import time, so it must never be pulled into
 // the server bundle — ssr: false keeps it out entirely.
