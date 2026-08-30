@@ -286,6 +286,16 @@ export class CreditsService {
       amount: retirement.amount,
     });
 
+    // Track retirement event
+    this.analytics.track(dto.holderPublicKey, AnalyticsEvent.RETIREMENT_COMPLETED, {
+      retirementId: retirement.retirementId,
+      batchId: dto.batchId,
+      projectId: batch.projectId,
+      amount: dto.amount,
+      vintageYear: batch.vintageYear,
+      beneficiary: dto.beneficiary,
+    });
+
     return {
       ...retirement,
       certificateUrl: retirement.certificateCid 

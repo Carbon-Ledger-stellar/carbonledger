@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
+import { AccountLockoutService } from './account-lockout.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
@@ -73,13 +74,22 @@ export class AuthService {
   ): Promise<{ access_token: string; refresh_token: string }> {
     this.validatePublicKey(publicKey);
 
+    // 0. Check account lockout before doing anything else
+    if (this.lockout.isLockedOut(publicKey)) {
+      throw new UnauthorizedException(
+        'Account temporarily locked. Too many failed attempts.',
+      );
+    }
+
     // 1. Validate nonce
     const stored = nonceStore.get(publicKey);
     if (!stored || stored.nonce !== nonce) {
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Invalid or expired challenge');
     }
     if (Date.now() > stored.expiresAt) {
       nonceStore.delete(publicKey);
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Challenge expired');
     }
     nonceStore.delete(publicKey); // single-use
@@ -87,6 +97,7 @@ export class AuthService {
     // 2. Verify signature
     const message = `carbonledger:${nonce}`;
     if (!this.verifySignature(publicKey, message, signature)) {
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Signature verification failed');
     }
 

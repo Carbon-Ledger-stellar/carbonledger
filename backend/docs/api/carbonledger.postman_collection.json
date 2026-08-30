@@ -1,0 +1,4461 @@
+{
+  "info": {
+    "name": "CarbonLedger API",
+    "description": "Consolidated Postman collection generated from the OpenAPI spec.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "item": [
+    {
+      "name": "GET /api/v1/admin/abuse-log",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/abuse-log",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "abuse-log"
+          ],
+          "query": []
+        },
+        "description": "List abuse log (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/admin/audit-logs",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/audit-logs",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "audit-logs"
+          ],
+          "query": []
+        },
+        "description": "List audit logs (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/admin/credits/{batchId}",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/credits/:batchId",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "credits",
+            "{batchId}"
+          ],
+          "query": []
+        },
+        "description": "Soft-delete credit batch (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/credits/{batchId}/restore",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/credits/:batchId/restore",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "credits",
+            "{batchId}",
+            "restore"
+          ],
+          "query": []
+        },
+        "description": "Restore credit batch (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/admin/oracle/health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/oracle/health",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "oracle",
+            "health"
+          ],
+          "query": []
+        },
+        "description": "Oracle health (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/admin/projects/{projectId}",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/projects/:projectId",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "projects",
+            "{projectId}"
+          ],
+          "query": []
+        },
+        "description": "Soft-delete project (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/projects/{projectId}/restore",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/projects/:projectId/restore",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "projects",
+            "{projectId}",
+            "restore"
+          ],
+          "query": []
+        },
+        "description": "Restore project (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/admin/purge",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/purge",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "purge"
+          ],
+          "query": []
+        },
+        "description": "Purge soft-deleted records (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/reindex",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/reindex",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "reindex"
+          ],
+          "query": []
+        },
+        "description": "Trigger reindex (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/admin/retirements/{retirementId}",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/retirements/:retirementId",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "retirements",
+            "{retirementId}"
+          ],
+          "query": []
+        },
+        "description": "Soft-delete retirement (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/retirements/{retirementId}/restore",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/retirements/:retirementId/restore",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "retirements",
+            "{retirementId}",
+            "restore"
+          ],
+          "query": []
+        },
+        "description": "Restore retirement (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/admin/satellite/quarantine",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/satellite/quarantine",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "satellite",
+            "quarantine"
+          ],
+          "query": []
+        },
+        "description": "List quarantined records (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/admin/satellite/quarantine/depth",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/satellite/quarantine/depth",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "satellite",
+            "quarantine",
+            "depth"
+          ],
+          "query": []
+        },
+        "description": "Quarantine depth (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/admin/satellite/quarantine/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/satellite/quarantine/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "satellite",
+            "quarantine",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get quarantined record (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/satellite/quarantine/{id}/review",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/satellite/quarantine/:id/review",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "satellite",
+            "quarantine",
+            "{id}",
+            "review"
+          ],
+          "query": []
+        },
+        "description": "Review quarantined record (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/admin/treasury",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/treasury",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "treasury"
+          ],
+          "query": []
+        },
+        "description": "Get treasury (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/treasury",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/treasury",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "treasury"
+          ],
+          "query": []
+        },
+        "description": "Update treasury (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/users/{publicKey}/role",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/users/:publicKey/role",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "users",
+            "{publicKey}",
+            "role"
+          ],
+          "query": []
+        },
+        "description": "Set user role (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/admin/verifiers",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/verifiers",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "verifiers"
+          ],
+          "query": []
+        },
+        "description": "List verifiers (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/admin/verifiers",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/verifiers",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "verifiers"
+          ],
+          "query": []
+        },
+        "description": "Create verifier (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/admin/verifiers",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/verifiers",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "verifiers"
+          ],
+          "query": []
+        },
+        "description": "Delete verifier (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/admin/verifiers/{address}",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/admin/verifiers/:address",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "admin",
+            "verifiers",
+            "{address}"
+          ],
+          "query": []
+        },
+        "description": "Delete verifier by address"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/audit",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/audit",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "audit"
+          ],
+          "query": []
+        },
+        "description": "List audit records (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/audit/verify",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/audit/verify",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "audit",
+            "verify"
+          ],
+          "query": []
+        },
+        "description": "Verify audit trail (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/auth/challenge",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/auth/challenge",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "challenge"
+          ],
+          "query": []
+        },
+        "description": "Get signing challenge"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/auth/logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/auth/logout",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "logout"
+          ],
+          "query": []
+        },
+        "description": "Logout / revoke refresh token"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/auth/refresh",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/auth/refresh",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "refresh"
+          ],
+          "query": []
+        },
+        "description": "Refresh access token"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/auth/verify",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/auth/verify",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "verify"
+          ],
+          "query": []
+        },
+        "description": "Verify challenge and obtain tokens",
+        "body": {
+          "mode": "raw",
+          "raw": "{}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/certificates/{cid}/verify",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/certificates/:cid/verify",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "certificates",
+            "{cid}",
+            "verify"
+          ],
+          "query": []
+        },
+        "description": "Verify certificate by cid"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/certificates/{retirementId}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/certificates/:retirementId",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "certificates",
+            "{retirementId}"
+          ],
+          "query": []
+        },
+        "description": "Get certificate by retirement"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/certificates/{retirementId}/pdf",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/certificates/:retirementId/pdf",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "certificates",
+            "{retirementId}",
+            "pdf"
+          ],
+          "query": []
+        },
+        "description": "Download certificate PDF"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/certificates/{retirementId}/status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/certificates/:retirementId/status",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "certificates",
+            "{retirementId}",
+            "status"
+          ],
+          "query": []
+        },
+        "description": "Certificate status"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/credits/batch-mint",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/batch-mint",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "batch-mint"
+          ],
+          "query": []
+        },
+        "description": "Batch mint credits"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/credits/batch-retire",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/batch-retire",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "batch-retire"
+          ],
+          "query": []
+        },
+        "description": "Batch retire credits"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/credits/batch/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/batch/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "batch",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get credit batch"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/credits/bulk-retire",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/bulk-retire",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "bulk-retire"
+          ],
+          "query": []
+        },
+        "description": "Bulk retire credits (alias)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/credits/lookup/{serial}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/lookup/:serial",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "lookup",
+            "{serial}"
+          ],
+          "query": []
+        },
+        "description": "Lookup credit by serial number"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/credits/mint",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/mint",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "mint"
+          ],
+          "query": []
+        },
+        "description": "Mint credits",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"projectId\": \"proj_123\",\n  \"amount\": 100,\n  \"vintageYear\": 2024\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/credits/project/{projectId}/batches",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/project/:projectId/batches",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "project",
+            "{projectId}",
+            "batches"
+          ],
+          "query": []
+        },
+        "description": "List credit batches for project"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/credits/provenance/{serial}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/provenance/:serial",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "provenance",
+            "{serial}"
+          ],
+          "query": []
+        },
+        "description": "Get credit provenance trail"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/credits/retire",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/retire",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "retire"
+          ],
+          "query": []
+        },
+        "description": "Retire credits",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"batchId\": \"batch_abc\",\n  \"amount\": 5,\n  \"beneficiary\": \"Acme Corp\",\n  \"purpose\": \"offset\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/credits/retirement/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/credits/retirement/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "credits",
+            "retirement",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get retirement record"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/health",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "health"
+          ],
+          "query": []
+        },
+        "description": "Service health"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/health/pool",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/health/pool",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "health",
+            "pool"
+          ],
+          "query": []
+        },
+        "description": "Database pool status"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/key-rotation",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/key-rotation",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "key-rotation"
+          ],
+          "query": []
+        },
+        "description": "List key rotations"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/key-rotation/admin",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/key-rotation/admin",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "key-rotation",
+            "admin"
+          ],
+          "query": []
+        },
+        "description": "Rotate admin key"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/key-rotation/jwt",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/key-rotation/jwt",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "key-rotation",
+            "jwt"
+          ],
+          "query": []
+        },
+        "description": "Rotate JWT signing key"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/key-rotation/oracle",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/key-rotation/oracle",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "key-rotation",
+            "oracle"
+          ],
+          "query": []
+        },
+        "description": "Rotate oracle key"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/key-rotation/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/key-rotation/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "key-rotation",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get key rotation by id"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/logs",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/logs",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "logs"
+          ],
+          "query": []
+        },
+        "description": "Ingest client log (204)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/logs/by-correlation-id",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/logs/by-correlation-id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "logs",
+            "by-correlation-id"
+          ],
+          "query": []
+        },
+        "description": "Logs by correlation id (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/marketplace/bulk-purchase",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/bulk-purchase",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "bulk-purchase"
+          ],
+          "query": []
+        },
+        "description": "Bulk purchase"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/marketplace/listings",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/listings",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "listings"
+          ],
+          "query": []
+        },
+        "description": "List marketplace listings"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/marketplace/listings",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/listings",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "listings"
+          ],
+          "query": []
+        },
+        "description": "Create listing",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"batchId\": \"batch_abc\",\n  \"pricePerCredit\": \"12.50\",\n  \"amount\": 10\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/marketplace/listings/batch",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/listings/batch",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "listings",
+            "batch"
+          ],
+          "query": []
+        },
+        "description": "Batch create listings"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/marketplace/listings/search",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/listings/search",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "listings",
+            "search"
+          ],
+          "query": []
+        },
+        "description": "Search listings"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/marketplace/listings/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/listings/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "listings",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get listing"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/marketplace/listings/{id}",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/listings/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "listings",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Remove listing"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/marketplace/purchase",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/marketplace/purchase",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "marketplace",
+            "purchase"
+          ],
+          "query": []
+        },
+        "description": "Purchase credits",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"listingId\": \"listing_xyz\",\n  \"amount\": 2\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/observability/metrics",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/observability/metrics",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "observability",
+            "metrics"
+          ],
+          "query": []
+        },
+        "description": "Observability metrics"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/ingest/batch-monitoring",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/ingest/batch-monitoring",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "ingest",
+            "batch-monitoring"
+          ],
+          "query": []
+        },
+        "description": "Ingest batch monitoring (oracle)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/ingest/batch-price",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/ingest/batch-price",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "ingest",
+            "batch-price"
+          ],
+          "query": []
+        },
+        "description": "Ingest batch price (oracle)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/ingest/flag",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/ingest/flag",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "ingest",
+            "flag"
+          ],
+          "query": []
+        },
+        "description": "Flag project (oracle)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/ingest/monitoring",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/ingest/monitoring",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "ingest",
+            "monitoring"
+          ],
+          "query": []
+        },
+        "description": "Ingest monitoring data (oracle)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/ingest/price",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/ingest/price",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "ingest",
+            "price"
+          ],
+          "query": []
+        },
+        "description": "Ingest price (oracle)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/oracle/price-approvals",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/price-approvals",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "price-approvals"
+          ],
+          "query": []
+        },
+        "description": "List price approvals (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/price-approvals/hold",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/price-approvals/hold",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "price-approvals",
+            "hold"
+          ],
+          "query": []
+        },
+        "description": "Hold price approval (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/price-approvals/{id}/approve",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/price-approvals/:id/approve",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "price-approvals",
+            "{id}",
+            "approve"
+          ],
+          "query": []
+        },
+        "description": "Approve price (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/oracle/price-approvals/{id}/reject",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/price-approvals/:id/reject",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "price-approvals",
+            "{id}",
+            "reject"
+          ],
+          "query": []
+        },
+        "description": "Reject price (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/oracle/services/health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/services/health",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "services",
+            "health"
+          ],
+          "query": []
+        },
+        "description": "Oracle services health"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/oracle/status/{projectId}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/oracle/status/:projectId",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "oracle",
+            "status",
+            "{projectId}"
+          ],
+          "query": []
+        },
+        "description": "Oracle status for project"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/portfolio/metrics",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/portfolio/metrics",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "portfolio",
+            "metrics"
+          ],
+          "query": []
+        },
+        "description": "Portfolio metrics"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/portfolio/refresh-views",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/portfolio/refresh-views",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "portfolio",
+            "refresh-views"
+          ],
+          "query": []
+        },
+        "description": "Refresh portfolio views"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/projects",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects"
+          ],
+          "query": []
+        },
+        "description": "List projects"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/projects",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects"
+          ],
+          "query": []
+        },
+        "description": "Create a project (developer/admin)",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Mangrove Restoration\",\n  \"country\": \"Kenya\",\n  \"methodology\": \"VM001\",\n  \"projectType\": \"afforestation\",\n  \"vintageYear\": 2024\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/projects/batch-create",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/batch-create",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "batch-create"
+          ],
+          "query": []
+        },
+        "description": "Batch-create projects"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/projects/batch-update-status",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/batch-update-status",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "batch-update-status"
+          ],
+          "query": []
+        },
+        "description": "Batch update project status"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/projects/register",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/register",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "register"
+          ],
+          "query": []
+        },
+        "description": "Register project",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Mangrove Restoration\",\n  \"country\": \"Kenya\",\n  \"methodology\": \"VM001\",\n  \"projectType\": \"afforestation\",\n  \"vintageYear\": 2024\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/projects/search",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/search",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "search"
+          ],
+          "query": []
+        },
+        "description": "Search projects"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/projects/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get project by id"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/projects/{id}/reject",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/:id/reject",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "{id}",
+            "reject"
+          ],
+          "query": []
+        },
+        "description": "Reject project"
+      },
+      "response": []
+    },
+    {
+      "name": "PATCH /api/v1/projects/{id}/status",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/:id/status",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "{id}",
+            "status"
+          ],
+          "query": []
+        },
+        "description": "Update project status",
+        "body": {
+          "mode": "raw",
+          "raw": "{}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/projects/{id}/verify",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/projects/:id/verify",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "projects",
+            "{id}",
+            "verify"
+          ],
+          "query": []
+        },
+        "description": "Verify project"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/public/projects",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/public/projects",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "public",
+            "projects"
+          ],
+          "query": []
+        },
+        "description": "List public approved projects"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/public/serial/{number}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/public/serial/:number",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "public",
+            "serial",
+            "{number}"
+          ],
+          "query": []
+        },
+        "description": "Public serial lookup"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/public/serials",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/public/serials",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "public",
+            "serials"
+          ],
+          "query": []
+        },
+        "description": "Bulk public serial lookup"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/queue/jobs",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/queue/jobs",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "queue",
+            "jobs"
+          ],
+          "query": []
+        },
+        "description": "Enqueue job (admin)",
+        "body": {
+          "mode": "raw",
+          "raw": "{}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/queue/jobs/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/queue/jobs/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "queue",
+            "jobs",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get job by id"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/queue/stats",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/queue/stats",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "queue",
+            "stats"
+          ],
+          "query": []
+        },
+        "description": "Queue stats (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements"
+          ],
+          "query": []
+        },
+        "description": "List retirements (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/retirements",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements"
+          ],
+          "query": []
+        },
+        "description": "Create retirement",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"batchId\": \"batch_abc\",\n  \"amount\": 5,\n  \"beneficiary\": \"Acme Corp\",\n  \"purpose\": \"offset\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/retirements/bulk",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/bulk",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "bulk"
+          ],
+          "query": []
+        },
+        "description": "Bulk retirement (async)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/retirements/bulk/csv",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/bulk/csv",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "bulk",
+            "csv"
+          ],
+          "query": []
+        },
+        "description": "Upload bulk retirement CSV (async)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/bulk/csv/{jobId}/status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/bulk/csv/:jobId/status",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "bulk",
+            "csv",
+            "{jobId}",
+            "status"
+          ],
+          "query": []
+        },
+        "description": "Check bulk CSV job status"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/export/csv",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/export/csv",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "export",
+            "csv"
+          ],
+          "query": []
+        },
+        "description": "Export retirements as CSV"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/export/pdf",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/export/pdf",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "export",
+            "pdf"
+          ],
+          "query": []
+        },
+        "description": "Export retirements as PDF"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/retirements/generate-pdf",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/generate-pdf",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "generate-pdf"
+          ],
+          "query": []
+        },
+        "description": "Generate retirement PDF certificate"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/search",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/search",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "search"
+          ],
+          "query": []
+        },
+        "description": "Search retirements"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/retirements/verify-integrity",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/verify-integrity",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "verify-integrity"
+          ],
+          "query": []
+        },
+        "description": "Verify credit integrity proof"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/retirements/verify-signature",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/verify-signature",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "verify-signature"
+          ],
+          "query": []
+        },
+        "description": "Verify retirement signature"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get retirement by id"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/{id}/certificate",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/:id/certificate",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "{id}",
+            "certificate"
+          ],
+          "query": []
+        },
+        "description": "Get retirement certificate"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/{id}/certificate-status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/:id/certificate-status",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "{id}",
+            "certificate-status"
+          ],
+          "query": []
+        },
+        "description": "Certificate generation status"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/retirements/{id}/zk-proof",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/:id/zk-proof",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "{id}",
+            "zk-proof"
+          ],
+          "query": []
+        },
+        "description": "Get zk-proof for retirement"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/retirements/{id}/zk-proof",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/retirements/:id/zk-proof",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "retirements",
+            "{id}",
+            "zk-proof"
+          ],
+          "query": []
+        },
+        "description": "Submit zk-proof for retirement"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/stats",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/stats",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "stats"
+          ],
+          "query": []
+        },
+        "description": "Global stats"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/stats/aggregate",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/stats/aggregate",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "stats",
+            "aggregate"
+          ],
+          "query": []
+        },
+        "description": "Aggregate stats"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/stats/cache",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/stats/cache",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "stats",
+            "cache"
+          ],
+          "query": []
+        },
+        "description": "Cache stats"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/stats/leaderboard",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/stats/leaderboard",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "stats",
+            "leaderboard"
+          ],
+          "query": []
+        },
+        "description": "Leaderboard"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/uploads/certificate/{retirementId}/certificate",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/uploads/certificate/:retirementId/certificate",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "uploads",
+            "certificate",
+            "{retirementId}",
+            "certificate"
+          ],
+          "query": []
+        },
+        "description": "Upload certificate"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/uploads/files",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/uploads/files",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "uploads",
+            "files"
+          ],
+          "query": []
+        },
+        "description": "List uploaded files (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/uploads/files/{cid}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/uploads/files/:cid",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "uploads",
+            "files",
+            "{cid}"
+          ],
+          "query": []
+        },
+        "description": "Get uploaded file by cid"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/uploads/project/{projectId}/documents",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/uploads/project/:projectId/documents",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "uploads",
+            "project",
+            "{projectId}",
+            "documents"
+          ],
+          "query": []
+        },
+        "description": "Upload project documents"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/uploads/webhook/pinata",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/uploads/webhook/pinata",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "uploads",
+            "webhook",
+            "pinata"
+          ],
+          "query": []
+        },
+        "description": "Pinata webhook callback"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/v1/api-keys",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/v1/api-keys",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "v1",
+            "api-keys"
+          ],
+          "query": []
+        },
+        "description": "Provision API key"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/v1/certificates/{retirementId}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/v1/certificates/:retirementId",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "v1",
+            "certificates",
+            "{retirementId}"
+          ],
+          "query": []
+        },
+        "description": "Public: certificate"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/v1/credits/batch/{batchId}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/v1/credits/batch/:batchId",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "v1",
+            "credits",
+            "batch",
+            "{batchId}"
+          ],
+          "query": []
+        },
+        "description": "Public: credit batch"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/v1/projects",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Api-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/v1/projects",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "v1",
+            "projects"
+          ],
+          "query": []
+        },
+        "description": "Public: list projects"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/verifiers",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers"
+          ],
+          "query": []
+        },
+        "description": "List verifiers (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/verifiers/apply",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers/apply",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers",
+            "apply"
+          ],
+          "query": []
+        },
+        "description": "Apply to be a verifier"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/verifiers/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get verifier"
+      },
+      "response": []
+    },
+    {
+      "name": "PATCH /api/v1/verifiers/{id}/review",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers/:id/review",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers",
+            "{id}",
+            "review"
+          ],
+          "query": []
+        },
+        "description": "Review verifier application (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/verifiers/{publicKey}/fees",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers/:publicKey/fees",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers",
+            "{publicKey}",
+            "fees"
+          ],
+          "query": []
+        },
+        "description": "Verifier fees"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/verifiers/{publicKey}/fees/export",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers/:publicKey/fees/export",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers",
+            "{publicKey}",
+            "fees",
+            "export"
+          ],
+          "query": []
+        },
+        "description": "Export verifier fees (CSV)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/verifiers/{publicKey}/history",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers/:publicKey/history",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers",
+            "{publicKey}",
+            "history"
+          ],
+          "query": []
+        },
+        "description": "Verification history"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/verifiers/{publicKey}/pending-projects",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/verifiers/:publicKey/pending-projects",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "verifiers",
+            "{publicKey}",
+            "pending-projects"
+          ],
+          "query": []
+        },
+        "description": "Pending projects for verifier"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/webhooks",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/webhooks",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhooks"
+          ],
+          "query": []
+        },
+        "description": "List webhooks"
+      },
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/webhooks",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/webhooks",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhooks"
+          ],
+          "query": []
+        },
+        "description": "Register webhook"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/webhooks/deliveries",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/webhooks/deliveries",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhooks",
+            "deliveries"
+          ],
+          "query": []
+        },
+        "description": "List deliveries (admin)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/webhooks/{id}",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/webhooks/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhooks",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Get webhook"
+      },
+      "response": []
+    },
+    {
+      "name": "DELETE /api/v1/webhooks/{id}",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/webhooks/:id",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhooks",
+            "{id}"
+          ],
+          "query": []
+        },
+        "description": "Delete webhook"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /api/v1/webhooks/{id}/logs",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{bearerToken}}"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/api/v1/webhooks/:id/logs",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "webhooks",
+            "{id}",
+            "logs"
+          ],
+          "query": []
+        },
+        "description": "Webhook delivery logs"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/health",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "health"
+          ],
+          "query": []
+        },
+        "description": "Liveness probe"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /health/ready",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/health/ready",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "health",
+            "ready"
+          ],
+          "query": []
+        },
+        "description": "Readiness probe (db/redis/stellar)"
+      },
+      "response": []
+    },
+    {
+      "name": "GET /metrics",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "https://api.carbonledger.io/metrics",
+          "host": [
+            "api",
+            "carbonledger",
+            "io"
+          ],
+          "path": [
+            "metrics"
+          ],
+          "query": []
+        },
+        "description": "Prometheus metrics"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "host",
+      "value": "https://api.carbonledger.io",
+      "type": "string"
+    },
+    {
+      "key": "bearerToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
