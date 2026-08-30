@@ -11,6 +11,7 @@ import { useLocaleFormatters } from "../../lib/i18n/format";
 import { joinListingsWithProjects } from "../../lib/map-utils";
 import { colors } from "../../styles/design-system";
 import MarketplaceFilter, { FilterState, EMPTY_FILTERS, filtersFromParams } from "../../components/MarketplaceFilter";
+import RefinementPanel, { RefinementState, EMPTY_REFINEMENTS, refinementsFromParams, isRefinementsEmpty } from "../../components/RefinementPanel";
 import MarketplaceSortControls from "../../components/MarketplaceSortControls";
 import ComparisonTray, { MAX_COMPARISON_ITEMS } from "../../components/ComparisonTray";
 import VirtualizedList from "../../components/VirtualizedList";
@@ -19,7 +20,22 @@ import Toast, { useToast } from "../../components/Toast";
 import Highlight from "../../components/Highlight";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import MarketplaceError from "../../components/MarketplaceError";
-import OrderBookChart from "../../components/OrderBookChart";
+
+// Heavy components — loaded only when the page renders, not at initial bundle time.
+// OrderBookChart uses Recharts (chart library) — ssr: false because Recharts reads
+// window dimensions on mount.
+const OrderBookChart = dynamic(() => import("../../components/OrderBookChart"), {
+  loading: () => <LoadingSkeleton variant="MarketplaceItem" />,
+  ssr: false,
+});
+
+// MarketplaceFilter is a large multi-select form (16KB); defer its load until
+// the page is interactive. The default export (React component) is lazy-loaded;
+// the named utility exports (EMPTY_FILTERS, filtersFromParams, FilterState) are
+// imported statically above because they're used in non-render logic.
+const MarketplaceFilter = dynamic(() => import("../../components/MarketplaceFilter"), {
+  loading: () => <div style={{ height: "80px" }} aria-busy="true" />,
+});
 
 // Leaflet touches `window` at import time, so it must never be pulled into
 // the server bundle — ssr: false keeps it out entirely.
@@ -36,6 +52,7 @@ function MarketplaceContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [filters, setFilters] = useState<FilterState>(() => filtersFromParams(searchParams));
+  const [refinements, setRefinements] = useState<RefinementState>(() => refinementsFromParams(searchParams));
 
   // Sort state lives in the URL so sorted views are shareable/bookmarkable.
   const rawSort = searchParams.get("sort");
@@ -54,8 +71,8 @@ function MarketplaceContent() {
     methodology:  filters.methodology  || undefined,
     vintage:      filters.vintageYear  ? Number(filters.vintageYear) : undefined,
     country:      filters.country      || undefined,
-    minPrice:     filters.minPrice     || undefined,
-    maxPrice:     filters.maxPrice     || undefined,
+    minPrice:     refinements.priceMin !== 0   ? refinements.priceMin   : (filters.minPrice || undefined),
+    maxPrice:     refinements.priceMax !== 1000 ? refinements.priceMax  : (filters.maxPrice || undefined),
     projectType:  filters.projectType  || undefined,
     search:       filters.search       || undefined,
     sortBy:       sortBy || undefined,
@@ -77,11 +94,39 @@ function MarketplaceContent() {
     return Array.from(terms);
   }, [listings]);
 
-  // "Available now" isn't a backend query param — applied client-side here so
-  // it's a single source of truth shared by both the listings grid and the map.
-  const visibleListings = listings.filter(
-    l => filters.availableOnly !== "true" || l.amountAvailable > 0
-  );
+  // Client-side refinement filtering applied on top of API results.
+  // This lets sliders and verifier chips respond instantly without a round-trip.
+  const visibleListings = useMemo(() => {
+    let result = listings;
+
+    // Available only
+    if (filters.availableOnly === "true") {
+      result = result.filter(l => l.amountAvailable > 0);
+    }
+
+    // Carbon reduction range (amountAvailable used as proxy for carbon reduction)
+    if (refinements.carbonMin !== 0 || refinements.carbonMax !== 1_000_000) {
+      result = result.filter(
+        l => l.amountAvailable >= refinements.carbonMin && l.amountAvailable <= refinements.carbonMax
+      );
+    }
+
+    // Vintage year range
+    if (refinements.vintageMin !== 2015 || refinements.vintageMax !== new Date().getFullYear()) {
+      result = result.filter(
+        l => l.vintageYear >= refinements.vintageMin && l.vintageYear <= refinements.vintageMax
+      );
+    }
+
+    // Verifier filter (methodology used as verifier proxy since listings include methodology)
+    if (refinements.verifiers.length > 0) {
+      result = result.filter(l =>
+        refinements.verifiers.some(v => l.methodology?.toLowerCase().includes(v.toLowerCase()))
+      );
+    }
+
+    return result;
+  }, [listings, filters.availableOnly, refinements]);
 
   // GET /marketplace/listings doesn't include project coordinates, so they're
   // fetched separately and joined client-side for the map (see lib/map-utils.ts).
@@ -91,8 +136,8 @@ function MarketplaceContent() {
     projectsData?.projects ?? []
   );
 
-  // Check if any filters are active
-  const hasActiveFilters = Object.values(filters).some(v => v !== "");
+  // Check if any filters or refinements are active
+  const hasActiveFilters = Object.values(filters).some(v => v !== "") || !isRefinementsEmpty(refinements);
 
   useEffect(() => {
     if (error) console.error("[Marketplace] listings fetch failed:", error);
@@ -123,9 +168,15 @@ function MarketplaceContent() {
 
   const cartCount = items.length;
 
+  function handleClearAllFilters() {
+    setFilters(EMPTY_FILTERS);
+    setRefinements(EMPTY_REFINEMENTS);
+    router.push("?", { scroll: false });
+  }
+
   return (
     <ErrorBoundary>
-      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+      <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 2rem" }}>
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
           <div>
@@ -157,159 +208,178 @@ function MarketplaceContent() {
           <OrderBookChart />
         </div>
 
-        {!isLoading && !error && (
-          <div style={{ marginTop: "1.5rem" }}>
-            <h2 style={{ fontSize: "1.125rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 0.75rem" }}>
-              {t("browseByLocation")}
-            </h2>
-            <ProjectMap pins={pins} />
-            {missingCoordinatesCount > 0 && (
-              <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.5rem 0 0" }}>
-                {t("missingCoordinates", { count: missingCoordinatesCount })}
-              </p>
-            )}
-          </div>
-        )}
+        {/* Two-column layout: refinement sidebar + main results */}
+        <div className="marketplace-layout" style={{ marginTop: "1.5rem", display: "grid", gridTemplateColumns: "240px 1fr", gap: "1.5rem", alignItems: "start" }}>
 
-        <div aria-live="polite">
-          {error ? (
-            <MarketplaceError error={error} onRetry={() => mutate()} />
-          ) : isLoading ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
-              <LoadingSkeleton variant="MarketplaceItem" count={6} />
-            </div>
-          ) : !visibleListings.length ? (
-            <div style={{ textAlign: "center", padding: "4rem 2rem", background: colors.surfaceAlt, borderRadius: "1rem", marginTop: "1.5rem" }}>
-              <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔍</div>
-              <p style={{ color: colors.neutral[900], fontWeight: 700, fontSize: "1.25rem", margin: "0 0 0.5rem" }}>
-                {hasActiveFilters ? t("noMatchTitle") : t("noListingsTitle")}
-              </p>
-              <p style={{ color: colors.neutral[500], fontSize: "0.875rem", marginBottom: "2rem" }}>
-                {hasActiveFilters ? t("noMatchMessage") : t("noListingsMessage")}
-              </p>
-              {hasActiveFilters && (
-                <button
-                  onClick={() => setFilters(EMPTY_FILTERS)}
-                  style={{
-                    padding: "0.75rem 1.5rem",
-                    border: "none",
-                    borderRadius: "0.5rem",
-                    background: colors.primary[600],
-                    color: "#fff",
-                    fontSize: "0.875rem",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  {t("clearFilters")}
-                </button>
+          {/* Sidebar: RefinementPanel */}
+          <RefinementPanel refinements={refinements} onChange={setRefinements} />
+
+          {/* Main content */}
+          <div>
+            {!isLoading && !error && (
+              <div style={{ marginBottom: "1.5rem" }}>
+                <h2 style={{ fontSize: "1.125rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 0.75rem" }}>
+                  {t("browseByLocation")}
+                </h2>
+                <ProjectMap pins={pins} />
+                {missingCoordinatesCount > 0 && (
+                  <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: "0.5rem 0 0" }}>
+                    {t("missingCoordinates", { count: missingCoordinatesCount })}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div aria-live="polite">
+              {error ? (
+                <MarketplaceError error={error} onRetry={() => mutate()} />
+              ) : isLoading ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                  <LoadingSkeleton variant="MarketplaceItem" count={6} />
+                </div>
+              ) : !visibleListings.length ? (
+                <div style={{ textAlign: "center", padding: "4rem 2rem", background: colors.surfaceAlt, borderRadius: "1rem" }}>
+                  <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🔍</div>
+                  <p style={{ color: colors.neutral[900], fontWeight: 700, fontSize: "1.25rem", margin: "0 0 0.5rem" }}>
+                    {hasActiveFilters ? t("noMatchTitle") : t("noListingsTitle")}
+                  </p>
+                  <p style={{ color: colors.neutral[500], fontSize: "0.875rem", marginBottom: "2rem" }}>
+                    {hasActiveFilters ? t("noMatchMessage") : t("noListingsMessage")}
+                  </p>
+                  {hasActiveFilters && (
+                    <button
+                      onClick={handleClearAllFilters}
+                      style={{
+                        padding: "0.75rem 1.5rem",
+                        border: "none",
+                        borderRadius: "0.5rem",
+                        background: colors.primary[600],
+                        color: "#fff",
+                        fontSize: "0.875rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {t("clearFilters")}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                    <MarketplaceSortControls sortBy={sortBy} sortOrder={sortOrder} onChange={handleSortChange} />
+                    <span style={{ fontSize: "0.8rem", color: colors.neutral[500] }}>
+                      {t("resultsCount", { count: visibleListings.length })}
+                    </span>
+                  </div>
+
+                  <VirtualizedList
+                    items={visibleListings}
+                    itemHeight={LISTING_ROW_HEIGHT}
+                    height={LISTING_VIEWPORT_HEIGHT}
+                    getKey={(listing) => listing.listingId}
+                    renderItem={(listing) => {
+                      const inCart = items.some(i => i.listing.listingId === listing.listingId);
+                      const inComparison = comparisonIds.includes(listing.listingId);
+                      const comparisonDisabled = !inComparison && comparisonIds.length >= MAX_COMPARISON_ITEMS;
+                      return (
+                        <div style={{
+                          display: "grid",
+                          gridTemplateColumns: "auto 1fr auto auto",
+                          alignItems: "center",
+                          gap: "1rem",
+                          background: colors.surface,
+                          border: `1px solid ${inCart ? colors.primary[300] : colors.neutral[200]}`,
+                          borderRadius: "0.75rem",
+                          padding: "1rem 1.25rem",
+                          height: LISTING_ROW_HEIGHT - 12,
+                          marginBottom: "0.75rem",
+                          boxSizing: "border-box",
+                          overflow: "hidden",
+                        }}>
+                          <label
+                            style={{ display: "flex", alignItems: "center", cursor: comparisonDisabled ? "not-allowed" : "pointer" }}
+                            title={t("compareCheckboxLabel")}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={inComparison}
+                              disabled={comparisonDisabled}
+                              onChange={() => toggleComparison(listing.listingId)}
+                              aria-label={t("compareCheckboxAria", { project: listing.projectName || listing.projectId })}
+                            />
+                          </label>
+
+                          {/* Project info */}
+                          <div style={{ overflow: "hidden" }}>
+                            <p style={{ fontWeight: 700, fontSize: "0.95rem", color: colors.neutral[900], margin: "0 0 0.2rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              <Highlight text={listing.projectName || listing.projectId} query={filters.search} />
+                            </p>
+                            <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              <Highlight text={listing.country} query={filters.search} /> · <Highlight text={listing.methodology} query={filters.search} /> · {t("vintageLabel", { year: listing.vintageYear })} · {t("availableLabel", { amount: formatTonnes(listing.amountAvailable) })}
+                            </p>
+                          </div>
+
+                          {/* Price */}
+                          <div style={{ textAlign: "right" }}>
+                            <p style={{ fontWeight: 700, color: colors.primary[700], fontSize: "1rem", margin: 0 }}>
+                              ${formatCurrency(listing.pricePerCredit)}
+                            </p>
+                            <p style={{ fontSize: "0.7rem", color: colors.neutral[400], margin: 0 }}>{t("perTonne")}</p>
+                          </div>
+
+                          {/* Actions */}
+                          <div style={{ display: "flex", gap: "0.5rem" }}>
+                            <a
+                              href={`/buy?listing=${listing.listingId}`}
+                              style={{
+                                padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
+                                border: `1px solid ${colors.primary[300]}`, borderRadius: "0.375rem",
+                                color: colors.primary[700], textDecoration: "none", background: colors.primary[50],
+                              }}
+                            >
+                              {t("buyNow")}
+                            </a>
+                            <button
+                              onClick={() => handleAddToCart(listing)}
+                              disabled={inCart}
+                              style={{
+                                padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
+                                border: "none", borderRadius: "0.375rem", cursor: inCart ? "default" : "pointer",
+                                background: inCart ? colors.primary[100] : colors.primary[600],
+                                color: inCart ? colors.primary[700] : "#fff",
+                              }}
+                            >
+                              {inCart ? t("inCart") : t("addToCart")}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+
+                  <ComparisonTray
+                    selected={comparisonListings}
+                    onRemove={(id) => setComparisonIds(prev => prev.filter(x => x !== id))}
+                    onClear={() => setComparisonIds([])}
+                  />
+                </div>
               )}
             </div>
-          ) : (
-            <div style={{ marginTop: "1.5rem" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
-                <MarketplaceSortControls sortBy={sortBy} sortOrder={sortOrder} onChange={handleSortChange} />
-                <span style={{ fontSize: "0.8rem", color: colors.neutral[500] }}>
-                  {t("resultsCount", { count: visibleListings.length })}
-                </span>
-              </div>
-
-              <VirtualizedList
-                items={visibleListings}
-                itemHeight={LISTING_ROW_HEIGHT}
-                height={LISTING_VIEWPORT_HEIGHT}
-                getKey={(listing) => listing.listingId}
-                renderItem={(listing) => {
-                  const inCart = items.some(i => i.listing.listingId === listing.listingId);
-                  const inComparison = comparisonIds.includes(listing.listingId);
-                  const comparisonDisabled = !inComparison && comparisonIds.length >= MAX_COMPARISON_ITEMS;
-                  return (
-                    <div style={{
-                      display: "grid",
-                      gridTemplateColumns: "auto 1fr auto auto",
-                      alignItems: "center",
-                      gap: "1rem",
-                      background: colors.surface,
-                      border: `1px solid ${inCart ? colors.primary[300] : colors.neutral[200]}`,
-                      borderRadius: "0.75rem",
-                      padding: "1rem 1.25rem",
-                      height: LISTING_ROW_HEIGHT - 12,
-                      marginBottom: "0.75rem",
-                      boxSizing: "border-box",
-                      overflow: "hidden",
-                    }}>
-                      <label
-                        style={{ display: "flex", alignItems: "center", cursor: comparisonDisabled ? "not-allowed" : "pointer" }}
-                        title={t("compareCheckboxLabel")}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={inComparison}
-                          disabled={comparisonDisabled}
-                          onChange={() => toggleComparison(listing.listingId)}
-                          aria-label={t("compareCheckboxAria", { project: listing.projectName || listing.projectId })}
-                        />
-                      </label>
-
-                      {/* Project info */}
-                      <div style={{ overflow: "hidden" }}>
-                        <p style={{ fontWeight: 700, fontSize: "0.95rem", color: colors.neutral[900], margin: "0 0 0.2rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          <Highlight text={listing.projectName || listing.projectId} query={filters.search} />
-                        </p>
-                        <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          <Highlight text={listing.country} query={filters.search} /> · <Highlight text={listing.methodology} query={filters.search} /> · {t("vintageLabel", { year: listing.vintageYear })} · {t("availableLabel", { amount: formatTonnes(listing.amountAvailable) })}
-                        </p>
-                      </div>
-
-                      {/* Price */}
-                      <div style={{ textAlign: "right" }}>
-                        <p style={{ fontWeight: 700, color: colors.primary[700], fontSize: "1rem", margin: 0 }}>
-                          ${formatCurrency(listing.pricePerCredit)}
-                        </p>
-                        <p style={{ fontSize: "0.7rem", color: colors.neutral[400], margin: 0 }}>{t("perTonne")}</p>
-                      </div>
-
-                      {/* Actions */}
-                      <div style={{ display: "flex", gap: "0.5rem" }}>
-                        <a
-                          href={`/buy?listing=${listing.listingId}`}
-                          style={{
-                            padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
-                            border: `1px solid ${colors.primary[300]}`, borderRadius: "0.375rem",
-                            color: colors.primary[700], textDecoration: "none", background: colors.primary[50],
-                          }}
-                        >
-                          {t("buyNow")}
-                        </a>
-                        <button
-                          onClick={() => handleAddToCart(listing)}
-                          disabled={inCart}
-                          style={{
-                            padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
-                            border: "none", borderRadius: "0.375rem", cursor: inCart ? "default" : "pointer",
-                            background: inCart ? colors.primary[100] : colors.primary[600],
-                            color: inCart ? colors.primary[700] : "#fff",
-                          }}
-                        >
-                          {inCart ? t("inCart") : t("addToCart")}
-                        </button>
-                      </div>
-                    </div>
-                  );
-                }}
-              />
-
-              <ComparisonTray
-                selected={comparisonListings}
-                onRemove={(id) => setComparisonIds(prev => prev.filter(x => x !== id))}
-                onClear={() => setComparisonIds([])}
-              />
-            </div>
-          )}
+          </div>
         </div>
 
         <Toast toasts={toasts} onDismiss={dismiss} />
       </div>
+
+      {/* Responsive: collapse sidebar below 768px */}
+      <style>{`
+        @media (max-width: 767px) {
+          .marketplace-layout {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
     </ErrorBoundary>
   );
 }

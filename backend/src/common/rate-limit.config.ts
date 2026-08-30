@@ -46,18 +46,22 @@ function readRouteOverrides(): RouteTierOverride[] {
 const routeOverrides = readRouteOverrides();
 
 export const RATE_LIMIT_TIERS: Record<RateLimitTierName, RateLimitTierConfig> = {
+  // #1076: 10 req/sec per IP for unauthenticated (public) traffic.
+  // windowMs=1000 enforces a strict per-second sliding window.
   unauthenticated: {
     name: 'unauthenticated',
-    limit: readNumberEnv('RATE_LIMIT_UNAUTHENTICATED_LIMIT', 60),
-    windowMs: readNumberEnv('RATE_LIMIT_UNAUTHENTICATED_WINDOW_MS', 60_000),
-    burstAllowance: readNumberEnv('RATE_LIMIT_UNAUTHENTICATED_BURST_ALLOWANCE', 10),
+    limit: readNumberEnv('RATE_LIMIT_UNAUTHENTICATED_LIMIT', 10),
+    windowMs: readNumberEnv('RATE_LIMIT_UNAUTHENTICATED_WINDOW_MS', 1_000),
+    burstAllowance: readNumberEnv('RATE_LIMIT_UNAUTHENTICATED_BURST_ALLOWANCE', 2),
   },
+  // #1076: 100 req/sec for authenticated users.
   authenticated: {
     name: 'authenticated',
-    limit: readNumberEnv('RATE_LIMIT_AUTHENTICATED_LIMIT', 300),
-    windowMs: readNumberEnv('RATE_LIMIT_AUTHENTICATED_WINDOW_MS', 60_000),
-    burstAllowance: readNumberEnv('RATE_LIMIT_AUTHENTICATED_BURST_ALLOWANCE', 50),
+    limit: readNumberEnv('RATE_LIMIT_AUTHENTICATED_LIMIT', 100),
+    windowMs: readNumberEnv('RATE_LIMIT_AUTHENTICATED_WINDOW_MS', 1_000),
+    burstAllowance: readNumberEnv('RATE_LIMIT_AUTHENTICATED_BURST_ALLOWANCE', 10),
   },
+  // Financial endpoints keep their own conservative window (unchanged).
   financial: {
     name: 'financial',
     limit: readNumberEnv('RATE_LIMIT_FINANCIAL_LIMIT', 20),
