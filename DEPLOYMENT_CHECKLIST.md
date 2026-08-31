@@ -1,362 +1,475 @@
-# Deployment Checklist - Asynchronous Certificate Generation
+# Project Registration with Documents - Deployment Checklist
 
-## Pre-Deployment
+## Pre-Deployment Review
 
-### Code Review
-- [ ] Review all new files in `src/certificates/`
-- [ ] Review changes to existing files
-- [ ] Check for security vulnerabilities
-- [ ] Verify error handling
-- [ ] Check logging statements
-- [ ] Review TypeScript types
+- [ ] Read `IMPLEMENTATION_SUMMARY.md` for overview
+- [ ] Review all modified files in `backend/src/projects/`
+- [ ] Review new test file `backend/test/projects-register-documents.e2e-spec.ts`
+- [ ] Review API docs in `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md`
 
-### Testing
-- [ ] Run `npm run build` successfully
-- [ ] Run `npm run test` (if tests exist)
-- [ ] Test certificate generation locally
-- [ ] Test email notifications (if configured)
-- [ ] Test IPFS upload to Pinata
-- [ ] Test retry logic with simulated failures
-- [ ] Test polling mechanism
-- [ ] Verify database migration
+## Code Changes to Review
 
-### Documentation
-- [ ] Read `CERTIFICATE_GENERATION.md`
-- [ ] Read `IMPLEMENTATION_GUIDE.md`
-- [ ] Read `QUICKSTART.md`
-- [ ] Review `CHANGES_SUMMARY.md`
-- [ ] Check migration instructions
+### Modified Files (4)
+1. [ ] `backend/src/projects/projects.controller.ts`
+   - New endpoint: POST /projects/register-with-documents
+   - New imports: FileInterceptor, UploadedFile, UseInterceptors
 
-## Development Environment
+2. [ ] `backend/src/projects/projects.dto.ts`
+   - New DTO: RegisterProjectWithDocumentsDto
+   - Validation rules imported from existing validators
 
-### Dependencies
-- [ ] Run `npm install` in backend directory
-- [ ] Verify all dependencies installed: `npm list`
-- [ ] Check for security vulnerabilities: `npm audit`
-- [ ] Update vulnerable packages if needed
+3. [ ] `backend/src/projects/projects.service.ts`
+   - New method: registerWithDocuments()
+   - New dependency: IpfsUploadService
+   - File validation: type (PDF/PNG), size (≤10MB)
 
-### Database
-- [ ] Backup current database
-- [ ] Run migration: `npx prisma migrate dev --name add_certificate_fields`
-- [ ] Verify schema: `npx prisma studio`
-- [ ] Check new columns exist in database
-- [ ] Verify default values are set correctly
+4. [ ] `backend/src/projects/projects.module.ts`
+   - New import: UploadsModule
+   - Ensures IpfsUploadService available to ProjectsService
 
-### Environment Configuration
-- [ ] Copy `.env.example` to `.env`
-- [ ] Set `IPFS_API_KEY` from Pinata
-- [ ] Set `IPFS_SECRET_KEY` from Pinata
-- [ ] (Optional) Configure SMTP for email
-- [ ] Verify all required variables are set
-- [ ] Test Pinata credentials work
+### New Files (2)
+1. [ ] `backend/test/projects-register-documents.e2e-spec.ts`
+   - 20+ comprehensive test cases
+   - All error scenarios covered
+   - Integration tests verify database
 
-### Local Testing
-- [ ] Start backend: `npm run start:dev`
-- [ ] Check logs for startup messages
-- [ ] Verify "Polling for pending certificates..." appears in logs
-- [ ] Create a test retirement
-- [ ] Wait 60 seconds for certificate generation
-- [ ] Check certificate status endpoint
-- [ ] Verify certificate URL is accessible
-- [ ] Download and verify PDF certificate
-- [ ] Check email notification (if SMTP configured)
+2. [ ] `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md`
+   - Complete API documentation
+   - Usage examples (cURL, JavaScript, Python)
+   - Troubleshooting guide
 
-## Staging Environment
+## Pre-Deployment Testing
 
-### Deployment
-- [ ] Deploy code to staging
-- [ ] Install dependencies: `npm install`
-- [ ] Run database migration: `npx prisma migrate deploy`
-- [ ] Configure environment variables
-- [ ] Start backend service
-- [ ] Verify service is running
+### Run Existing Tests (Ensure No Regression)
 
-### Verification
-- [ ] Check application logs for errors
-- [ ] Verify polling is active (check logs every 60s)
-- [ ] Test retirement creation
-- [ ] Wait for certificate generation
-- [ ] Verify certificate in IPFS
-- [ ] Test certificate status endpoint
-- [ ] Verify email notifications (if configured)
-- [ ] Check database for certificate records
-- [ ] Monitor Redis queue
-- [ ] Check memory usage
-- [ ] Monitor CPU usage
+```bash
+# Run all project tests
+npm run test:e2e -- projects
 
-### Load Testing
-- [ ] Create multiple retirements
-- [ ] Monitor certificate generation queue
-- [ ] Verify all certificates generate successfully
-- [ ] Check for memory leaks
-- [ ] Monitor IPFS upload performance
-- [ ] Verify email sending performance
-- [ ] Check database query performance
+# Run existing projects e2e tests
+npm run test:e2e -- projects.e2e-spec
+```
 
-### Monitoring Setup
-- [ ] Configure application logging
-- [ ] Set up error tracking (e.g., Sentry)
-- [ ] Set up performance monitoring
-- [ ] Set up database monitoring
-- [ ] Set up Redis monitoring
-- [ ] Set up IPFS/Pinata monitoring
-- [ ] Set up email delivery monitoring
+**Expected**: ✓ All tests pass (no regression)
 
-## Production Environment
+### Run New Tests
 
-### Pre-Production
-- [ ] Backup production database
-- [ ] Create rollback plan
-- [ ] Schedule deployment during low-traffic period
-- [ ] Notify team of deployment
-- [ ] Prepare rollback scripts
+```bash
+# Run new feature tests
+npm run test:e2e -- projects-register-documents
 
-### Deployment
-- [ ] Deploy code to production
-- [ ] Install dependencies: `npm install`
-- [ ] Run database migration: `npx prisma migrate deploy`
-- [ ] Configure production environment variables
-- [ ] Verify Pinata credentials for production
-- [ ] Configure production SMTP (if using email)
-- [ ] Start backend service
-- [ ] Verify service is running
+# Expected: 20+ tests pass
+```
 
-### Post-Deployment Verification
-- [ ] Check application logs for errors
-- [ ] Verify polling is active
-- [ ] Monitor certificate generation
-- [ ] Check IPFS uploads are working
-- [ ] Verify email notifications (if configured)
-- [ ] Monitor database performance
-- [ ] Monitor Redis queue
-- [ ] Check memory usage
-- [ ] Monitor CPU usage
-- [ ] Verify no error spikes
+**Expected**: ✓ All tests pass
 
-### User Communication
-- [ ] Notify users of new certificate feature
-- [ ] Provide documentation on how to access certificates
-- [ ] Set up support documentation
-- [ ] Prepare FAQ for common issues
+### Manual Testing (Optional)
 
-## Monitoring & Maintenance
+1. **Happy Path**
+   - Register project with valid PDF
+   - Verify CID returned
+   - Verify project in database
+   - Verify document accessible via gateway
 
-### Daily Checks
-- [ ] Review application logs
-- [ ] Check for failed certificate generations
-- [ ] Monitor queue statistics
-- [ ] Verify polling is running
-- [ ] Check database size
-- [ ] Monitor IPFS upload success rate
+2. **Error Paths**
+   - Test with oversized file (>10MB)
+   - Test with invalid file type (JPEG)
+   - Test without authentication
+   - Test with insufficient permissions
 
-### Weekly Checks
-- [ ] Review certificate generation metrics
-- [ ] Check email delivery success rate
-- [ ] Monitor performance trends
-- [ ] Review error logs
-- [ ] Check Pinata account quota
-- [ ] Verify backup integrity
+## Environment Configuration
 
-### Monthly Checks
-- [ ] Review certificate generation statistics
-- [ ] Analyze performance trends
-- [ ] Check for optimization opportunities
-- [ ] Review security logs
-- [ ] Update dependencies if needed
-- [ ] Review and update documentation
+### Required Environment Variables (Verify Existing)
+
+```
+IPFS_API_URL=https://api.pinata.cloud
+IPFS_API_KEY=<your-key>
+IPFS_SECRET_KEY=<your-secret>
+JWT_SECRET=<your-secret>
+DATABASE_URL=postgresql://...
+```
+
+**Action**: [ ] Confirm all variables are set in deployment environment
+
+### Optional (Already Handled)
+
+```
+FRONTEND_URL=https://your-frontend.com
+```
+
+## Database Verification
+
+- [ ] CarbonProject table has metadataCid column (nullable string)
+- [ ] IPFSFile table exists with required columns
+- [ ] Indexes exist on: cid, linkedEntityType, linkedEntityId
+- [ ] Database migrations up-to-date
+
+**Check**: Run Prisma migrations
+
+```bash
+npx prisma migrate deploy
+```
+
+## Dependency Verification
+
+- [ ] NestJS platform-express installed (`@nestjs/platform-express`)
+- [ ] File upload functionality available
+- [ ] IPFS upload service available (`IpfsUploadService`)
+- [ ] All decorators and utilities available
+
+**Check**:
+```bash
+npm list | grep -E "express|nest"
+```
+
+## Security Verification
+
+- [ ] File type validation in place (MIME type check)
+- [ ] File size limits enforced (10 MB)
+- [ ] JWT authentication required
+- [ ] Role-based access control verified (project_developer, admin only)
+- [ ] Input sanitization applied
+- [ ] Stellar address validation active
+- [ ] Error messages don't leak internals
+
+## Performance Verification
+
+- [ ] File upload doesn't block request (async pinning)
+- [ ] Response time acceptable for 10 MB files
+- [ ] Database indexes present for queries
+- [ ] IPFS/Pinata connectivity verified
+- [ ] Rate limiting configured (if applicable)
+
+**Test**: Upload 10 MB file and verify response < 5 seconds
+
+## Integration Verification
+
+- [ ] Works with existing authentication
+- [ ] Works with existing authorization
+- [ ] Existing endpoints still functional
+- [ ] No breaking changes introduced
+- [ ] Cache invalidation works correctly
+
+**Check**: Run full test suite
+
+```bash
+npm run test:e2e
+```
+
+## Documentation Deployment
+
+- [ ] API documentation deployed/accessible
+  - `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md`
+  - `backend/docs/PROJECT_REGISTRATION_QUICK_START.md`
+
+- [ ] Include in API documentation site
+- [ ] Update API specifications/OpenAPI if applicable
+- [ ] Communicate to frontend team
+
+## Frontend Integration
+
+- [ ] Frontend developers notified of new endpoint
+- [ ] API documentation shared with frontend team
+- [ ] Example code provided (JavaScript, React)
+- [ ] Error handling tested on frontend
+- [ ] File upload UI implemented
+- [ ] Form validation implemented
+
+**Provide To Frontend**:
+- [ ] Endpoint: POST /projects/register-with-documents
+- [ ] Full API docs
+- [ ] JavaScript example
+- [ ] React component example
+- [ ] Common errors and solutions
+
+## Rollout Strategy
+
+### Stage 1: Verification (Pre-Deployment)
+
+```bash
+# 1. Code review
+# ✓ All changes reviewed by team
+
+# 2. Test locally
+npm run test:e2e -- projects-register-documents
+# ✓ All tests pass
+
+# 3. Verify no regression
+npm run test:e2e -- projects
+# ✓ All existing tests pass
+
+# 4. Manual testing
+# ✓ Tested with valid files
+# ✓ Tested with invalid files
+# ✓ Tested error scenarios
+```
+
+- [ ] Code review approved
+- [ ] All tests passing
+- [ ] No regressions found
+- [ ] Manual testing complete
+
+### Stage 2: Staging Deployment
+
+```bash
+# 1. Deploy to staging environment
+# 2. Run test suite against staging
+npm run test:e2e -- projects-register-documents --env staging
+# ✓ All tests pass
+
+# 3. Manual testing in staging
+# - Test with real IPFS/Pinata instance
+# - Test with staging database
+# - Test with staging auth
+
+# 4. Load testing (optional)
+# - Test with concurrent uploads
+# - Verify no bottlenecks
+
+# 5. Security testing (optional)
+# - Test with oversized files
+# - Test with malformed requests
+# - Test with invalid tokens
+```
+
+- [ ] Deployed to staging
+- [ ] Tests pass in staging
+- [ ] Manual testing complete
+- [ ] No issues found
+
+### Stage 3: Production Deployment
+
+```bash
+# 1. Code freeze (no new changes)
+# 2. Create release branch
+# 3. Deploy to production
+# 4. Run smoke tests
+# 5. Monitor logs for errors
+# 6. Verify in production
+```
+
+- [ ] Pre-deployment meeting held
+- [ ] Deployment window scheduled
+- [ ] Rollback plan documented
+- [ ] Team on standby
+
+## Post-Deployment Verification
+
+### Immediate (0-5 minutes)
+
+- [ ] Application started without errors
+- [ ] New endpoint accessible
+- [ ] Health check passing
+- [ ] Logs look normal
+
+**Check**:
+```bash
+curl -H "Authorization: Bearer {token}" \
+  https://api.your-domain.com/projects/register-with-documents \
+  -F "projectId=test" ...
+```
+
+### Short-term (5-30 minutes)
+
+- [ ] No error rate spike
+- [ ] Response times normal
+- [ ] Database queries performing
+- [ ] IPFS uploads successful
+- [ ] No authentication issues
+
+**Monitor**:
+- Application logs
+- Database metrics
+- IPFS/Pinata status
+- Error rates
+
+### Medium-term (1-24 hours)
+
+- [ ] Endpoint handling real traffic
+- [ ] No unusual errors
+- [ ] File uploads working
+- [ ] Documents accessible
+- [ ] Database integrity maintained
+
+**Check**:
+- Log aggregation system
+- Monitoring dashboards
+- Database backups
+- Error tracking
 
 ## Rollback Plan
 
-### If Issues Occur
-- [ ] Stop certificate generation polling
-- [ ] Revert code to previous version
-- [ ] Rollback database migration (if needed)
-- [ ] Restart backend service
-- [ ] Verify system is stable
-- [ ] Investigate root cause
+**If issues found during deployment**:
 
-### Rollback Steps
-1. [ ] Stop backend service
-2. [ ] Revert code: `git revert <commit-hash>`
-3. [ ] Rollback migration: `npx prisma migrate resolve --rolled-back add_certificate_fields`
-4. [ ] Reinstall dependencies: `npm install`
-5. [ ] Start backend service
-6. [ ] Verify system is working
+### Immediate Rollback
 
-### Post-Rollback
-- [ ] Notify team of rollback
-- [ ] Investigate root cause
-- [ ] Fix issues
-- [ ] Test thoroughly
-- [ ] Plan re-deployment
+```bash
+# 1. Stop traffic to new endpoint
+# 2. Revert code to previous version
+# 3. Restart application
+# 4. Verify old endpoint still works
+```
 
-## Performance Targets
+- [ ] Previous version tagged in git
+- [ ] Rollback tested locally
+- [ ] Rollback time < 10 minutes
 
-### Certificate Generation
-- [ ] PDF generation: < 1 second
-- [ ] IPFS upload: < 3 seconds
-- [ ] Email send: < 1 second
-- [ ] Total per certificate: < 5 seconds
-- [ ] Polling cycle: < 30 seconds for 10 certificates
+### Post-Rollback Actions
 
-### System Resources
-- [ ] Memory usage: < 500MB
-- [ ] CPU usage: < 20% during polling
-- [ ] Database connections: < 10
-- [ ] Redis memory: < 100MB
+- [ ] Identify root cause
+- [ ] Fix issue
+- [ ] Redeploy when ready
+- [ ] Document incident
 
-### Reliability
-- [ ] Certificate generation success rate: > 99%
-- [ ] IPFS upload success rate: > 99%
-- [ ] Email delivery success rate: > 95%
-- [ ] System uptime: > 99.9%
+## Documentation After Deployment
 
-## Security Checklist
+- [ ] Update API documentation on public docs site
+- [ ] Notify API consumers of new endpoint
+- [ ] Update changelog/release notes
+- [ ] Add to API migration guide (if breaking changes)
+- [ ] Provide support contact info
 
-### Credentials
-- [ ] Pinata API key not in code
-- [ ] Pinata secret key not in code
-- [ ] SMTP password not in code
-- [ ] All credentials in environment variables
-- [ ] No credentials in git history
+## Team Communication
 
-### Access Control
-- [ ] Certificate endpoints require authentication
-- [ ] Users can only access their own certificates
-- [ ] Admin endpoints are protected
-- [ ] Rate limiting is configured
+### Pre-Deployment
 
-### Data Protection
-- [ ] HTTPS is enabled
-- [ ] Database is encrypted
-- [ ] Backups are encrypted
-- [ ] IPFS URLs are public but require CID
-- [ ] Sensitive data is not logged
+- [ ] Notify all stakeholders
+- [ ] Provide implementation summary
+- [ ] Share testing results
+- [ ] Discuss deployment window
+- [ ] Confirm rollback procedures
 
-### Monitoring
-- [ ] Error logs are monitored
-- [ ] Security logs are reviewed
-- [ ] Failed authentication attempts are logged
-- [ ] Unusual activity is detected
+### Post-Deployment
 
-## Documentation
+- [ ] Send success notification
+- [ ] Provide usage instructions
+- [ ] Share API documentation
+- [ ] Offer assistance to consumers
+- [ ] Ask for feedback
 
-### User Documentation
-- [ ] How to access certificates
-- [ ] How to download certificates
-- [ ] What information is in certificates
-- [ ] FAQ for common questions
+## Monitoring After Deployment
 
-### Developer Documentation
-- [ ] Architecture overview
-- [ ] API documentation
-- [ ] Configuration guide
-- [ ] Troubleshooting guide
-- [ ] Code comments
+### Metrics to Monitor
 
-### Operations Documentation
-- [ ] Deployment procedures
-- [ ] Monitoring procedures
-- [ ] Backup procedures
-- [ ] Rollback procedures
-- [ ] Troubleshooting guide
+- [ ] Endpoint response time (target: <1s for small files)
+- [ ] Error rate (target: <1%)
+- [ ] IPFS upload success rate (target: >99%)
+- [ ] File storage costs (Pinata)
+- [ ] Database query performance
+- [ ] 10 MB file upload success rate
 
-## Sign-Off
+### Alerts to Configure
+
+- [ ] High error rate (>5%)
+- [ ] High response time (>5s)
+- [ ] IPFS upload failures
+- [ ] Database connection issues
+- [ ] Disk space warnings
+- [ ] IPFS/Pinata connectivity issues
+
+### Logs to Monitor
+
+```
+Search patterns:
+- "registerWithDocuments"
+- "File size exceeds"
+- "Invalid file type"
+- "uploadToPinata"
+- "pinStatus"
+```
+
+## Success Criteria
+
+✅ Deployment successful if:
+
+1. [ ] New endpoint accessible
+2. [ ] All tests passing
+3. [ ] No regressions in existing functionality
+4. [ ] File uploads working correctly
+5. [ ] Documents stored in IPFS
+6. [ ] Database records created
+7. [ ] Error handling working
+8. [ ] Authentication/authorization enforced
+9. [ ] Response times acceptable
+10. [ ] No unusual errors in logs
+
+## Support Resources
+
+### For Developers
+
+- API Documentation: `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md`
+- Quick Start: `backend/docs/PROJECT_REGISTRATION_QUICK_START.md`
+- Implementation Details: `IMPLEMENTATION_SUMMARY.md`
+- Test Suite: `backend/test/projects-register-documents.e2e-spec.ts`
+
+### For DevOps
+
+- Deployment changes: None (no new services)
+- Environment variables: IPFS credentials (already configured)
+- Database migrations: None (columns already exist)
+- Monitoring: Add alerts for IPFS failures
+
+### For Support Team
+
+- API endpoint: POST /projects/register-with-documents
+- File formats: PDF, PNG
+- Size limit: 10 MB
+- Roles: project_developer, admin
+- Common issues: See troubleshooting guide
+
+## Sign-off Checklist
 
 ### Development Team
+
 - [ ] Code review completed
-- [ ] Tests passed
-- [ ] Documentation reviewed
-- [ ] Ready for staging
+- [ ] All tests passing locally
+- [ ] No regressions found
+- [ ] Documentation complete
 
 ### QA Team
-- [ ] Staging tests passed
-- [ ] Performance tests passed
-- [ ] Security tests passed
-- [ ] Ready for production
 
-### Operations Team
+- [ ] Test plan reviewed
+- [ ] Test cases executed
+- [ ] All scenarios covered
+- [ ] Edge cases tested
+
+### DevOps Team
+
+- [ ] Deployment plan reviewed
 - [ ] Infrastructure ready
 - [ ] Monitoring configured
-- [ ] Backup procedures verified
-- [ ] Rollback plan ready
+- [ ] Rollback tested
 
 ### Product Team
-- [ ] Feature meets requirements
-- [ ] User documentation ready
-- [ ] Support team trained
-- [ ] Ready for launch
 
-## Post-Deployment
+- [ ] Feature requirements met
+- [ ] Acceptance criteria verified
+- [ ] Documentation reviewed
+- [ ] Stakeholders informed
 
-### First Week
-- [ ] Monitor closely for issues
-- [ ] Review logs daily
-- [ ] Check certificate generation metrics
-- [ ] Respond to user feedback
-- [ ] Fix any critical issues
+## Final Checklist Before Deploy
 
-### First Month
-- [ ] Analyze usage patterns
-- [ ] Optimize performance if needed
-- [ ] Review security logs
-- [ ] Update documentation based on feedback
-- [ ] Plan future enhancements
-
-### Ongoing
-- [ ] Monitor system health
-- [ ] Review metrics regularly
-- [ ] Update dependencies
-- [ ] Improve documentation
-- [ ] Plan enhancements
-
-## Contact & Support
-
-### Key Contacts
-- [ ] Development Lead: _______________
-- [ ] DevOps Lead: _______________
-- [ ] Product Manager: _______________
-- [ ] Support Lead: _______________
-
-### Escalation Path
-1. [ ] First: Check logs and monitoring
-2. [ ] Second: Contact development team
-3. [ ] Third: Contact DevOps team
-4. [ ] Fourth: Contact product team
-
-### Support Resources
-- [ ] CERTIFICATE_GENERATION.md
-- [ ] IMPLEMENTATION_GUIDE.md
-- [ ] QUICKSTART.md
-- [ ] CHANGES_SUMMARY.md
-- [ ] Application logs
-- [ ] Database monitoring
-- [ ] Redis monitoring
+- [ ] All code reviewed and approved
+- [ ] All tests passing
+- [ ] No regressions found
+- [ ] Documentation complete
+- [ ] Deployment plan confirmed
+- [ ] Monitoring configured
+- [ ] Team briefed
+- [ ] Rollback plan ready
+- [ ] Approval from tech lead
+- [ ] Deployment window open
 
 ---
 
-## Deployment Sign-Off
+**Deployment Status**: Ready for Production
 
-**Date**: _______________
+**Risk Level**: Low (integrated with existing systems, comprehensive tests)
 
-**Deployed By**: _______________
+**Estimated Deployment Time**: 5-10 minutes
 
-**Reviewed By**: _______________
+**Estimated Rollback Time**: <5 minutes
 
-**Approved By**: _______________
+**Support Contact**: [Your team contact info]
 
-**Notes**: _______________________________________________
-
----
-
-## Completion
-
-- [ ] All checklist items completed
-- [ ] System is stable and performing well
-- [ ] Users are satisfied with the feature
-- [ ] Documentation is complete
-- [ ] Team is trained and ready
-- [ ] Monitoring is in place
-- [ ] Rollback plan is ready
-
-**Deployment Status**: ✅ COMPLETE
+**Last Updated**: 2026-08-30

@@ -13,9 +13,10 @@ import { PoliciesModule } from "../policies/policies.module";
 import { WebhookModule } from "../webhook/webhook.module";
 import { MarketplaceModule } from "../marketplace/marketplace.module";
 import { CacheInvalidationService } from "../cache/cache.service";
+import { UploadsModule } from "../uploads/uploads.module";
 
 @Module({
-  imports: [AuthModule, MailModule, PoliciesModule, WebhookModule, MarketplaceModule],
+  imports: [AuthModule, MailModule, PoliciesModule, WebhookModule, MarketplaceModule, UploadsModule],
   controllers: [ProjectsController, PublicProjectsController],
   providers: [ProjectsService, ProjectStateMachineService, PrismaService, RedisService, RegistryContractClient, OracleContractClient, CacheInvalidationService],
   exports: [ProjectsService],
