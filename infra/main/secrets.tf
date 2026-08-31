@@ -244,7 +244,8 @@ resource "aws_lambda_permission" "rotate_jwt_invoke" {
 resource "aws_secretsmanager_secret_rotation" "jwt" {
   secret_id           = aws_secretsmanager_secret.jwt.id
   rotation_lambda_arn = aws_lambda_function.rotate_jwt.arn
-  rotation_rules { automatically_after_days = 30 }
+  # Quarterly rotation per issue #1066 acceptance criteria (rotate secrets quarterly)
+  rotation_rules { automatically_after_days = 90 }
   depends_on = [aws_lambda_permission.rotate_jwt_invoke]
 }
 
@@ -289,7 +290,8 @@ resource "aws_lambda_permission" "rotate_redis_invoke" {
 resource "aws_secretsmanager_secret_rotation" "redis" {
   secret_id           = aws_secretsmanager_secret.redis.id
   rotation_lambda_arn = aws_lambda_function.rotate_redis.arn
-  rotation_rules { automatically_after_days = 30 }
+  # Quarterly rotation per issue #1066 acceptance criteria (rotate secrets quarterly)
+  rotation_rules { automatically_after_days = 90 }
   depends_on = [aws_lambda_permission.rotate_redis_invoke]
 }
 
@@ -323,5 +325,6 @@ resource "aws_lambda_permission" "rotate_postgres_invoke" {
 resource "aws_secretsmanager_secret_rotation" "postgres" {
   secret_id           = aws_secretsmanager_secret.postgres.id
   rotation_lambda_arn = aws_serverlessapplicationrepository_cloudformation_stack.rotate_postgres.outputs["RotationLambdaARN"]
-  rotation_rules { automatically_after_days = 30 }
+  # Quarterly rotation per issue #1066 acceptance criteria (rotate secrets quarterly)
+  rotation_rules { automatically_after_days = 90 }
 }

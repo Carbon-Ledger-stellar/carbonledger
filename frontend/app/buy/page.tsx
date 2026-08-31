@@ -150,7 +150,7 @@ function BuyPageContent() {
 
   return (
     <ErrorBoundary>
-      <div style={{ maxWidth: "700px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+      <div style={{ maxWidth: "700px", margin: "0 auto", padding: "2.5rem 1rem" }}>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
         <a
           href="/marketplace"
@@ -290,6 +290,7 @@ function BuyPageContent() {
                   <input
                     id="buy-amount"
                     type="number"
+                    inputMode="decimal"
                     min={0.01}
                     max={listing.amountAvailable}
                     step={0.01}
@@ -314,6 +315,7 @@ function BuyPageContent() {
                       fontWeight: 700,
                       color: colors.neutral[900],
                       boxSizing: "border-box",
+                      minHeight: "48px",
                     }}
                   />
                   <div

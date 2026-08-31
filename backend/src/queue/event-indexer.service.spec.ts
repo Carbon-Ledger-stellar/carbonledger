@@ -13,10 +13,19 @@ jest.mock('@stellar/stellar-sdk', () => ({
 /** In-memory SyncMetadata singleton backing the prisma syncMetadata mock. */
 let syncMeta: { id: string; lastIndexedLedger: number } | null = null;
 
+/** In-memory ProcessedLedgerRange store backing the prisma range mock. */
+type RangeRow = { id: number; startLedger: number; endLedger: number };
+let rangeRows: RangeRow[] = [];
+let rangeSeq = 0;
+
 function makePrismaMock() {
   syncMeta = null;
+  rangeRows = [];
+  rangeSeq = 0;
   const mock: Record<string, any> = {};
   mock.$transaction = jest.fn(async (fn: (tx: any) => Promise<unknown>) => fn(mock));
+  // Postgres advisory lock used for poll-window isolation (#564).
+  mock.$queryRaw = jest.fn().mockResolvedValue([]);
   mock.syncMetadata = {
     findUnique: jest.fn(async () => syncMeta),
     upsert: jest.fn(
@@ -33,6 +42,31 @@ function makePrismaMock() {
       },
     ),
   };
+  mock.processedLedgerRange = {
+    findMany: jest.fn(async () => [...rangeRows].sort((a, b) => a.startLedger - b.startLedger)),
+    create: jest.fn(async (args: { data: { startLedger: number; endLedger: number } }) => {
+      const row: RangeRow = {
+        id: ++rangeSeq,
+        startLedger: args.data.startLedger,
+        endLedger: args.data.endLedger,
+      };
+      rangeRows.push(row);
+      return row;
+    }),
+    deleteMany: jest.fn(async (args: any) => {
+      const ids = new Set(args?.where?.id?.in ?? []);
+      rangeRows = rangeRows.filter((r) => !ids.has(r.id));
+      return { count: 0 };
+    }),
+  };
+  // Convenience helpers for tests to seed/read recorded ranges.
+  (mock._ranges = {
+    rows: () => rangeRows,
+    seed: (startLedger: number, endLedger: number) => {
+      const row: RangeRow = { id: ++rangeSeq, startLedger, endLedger };
+      rangeRows.push(row);
+    },
+  }),
   mock.creditBatch = {
     upsert: jest.fn().mockResolvedValue({}),
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -284,6 +318,74 @@ describe('EventIndexerService (#893)', () => {
   describe('SOROBAN_RPC_CLIENT token', () => {
     it('is exported for QueueModule wiring', () => {
       expect(SOROBAN_RPC_CLIENT).toBe('SOROBAN_RPC_CLIENT');
+    });
+  });
+
+  describe('ledger-range tracking & backfill (#564)', () => {
+    beforeEach(() => {
+      rpcMock.getEvents.mockImplementation(async (req: { endLedger?: number; startLedger?: number }) => ({
+        events: [],
+        latestLedger: req.endLedger ?? 10_000,
+      }));
+    });
+
+    it('records the processed window as a ProcessedLedgerRange row', async () => {
+      rpcMock.getLatestLedger.mockResolvedValue({ sequence: 10_000, protocolVersion: 20 });
+
+      await service.poll();
+
+      expect(prismaMock.processedLedgerRange.create).toHaveBeenCalledWith({
+        data: { startLedger: 9_000, endLedger: 10_000 },
+      });
+    });
+
+    it('acquires the Postgres advisory lock for transaction isolation', async () => {
+      await service.poll();
+      expect(prismaMock.$queryRaw).toHaveBeenCalled();
+    });
+
+    it('backfills missing sequences left by an already-processed tail (post-downtime)', async () => {
+      // A previous (concurrent) poller recorded the tail; the checkpoint was
+      // never advanced because of RPC downtime. The poller must detect the gap
+      // [5501..7999] and backfill it before touching the covered tail.
+      prismaMock._ranges.seed(8_000, 10_000);
+      await service.setCheckpoint(5_500);
+      rpcMock.getLatestLedger.mockResolvedValue({ sequence: 10_000, protocolVersion: 20 });
+
+      await service.poll();
+
+      expect(rpcMock.getEvents).toHaveBeenCalledWith(
+        expect.objectContaining({ startLedger: 5_501, endLedger: 7_999 }),
+      );
+      // Checkpoint advances to the end of the backfilled gap.
+      expect(await service.getCheckpoint()).toBe(7_999);
+      // The backfilled gap [5501..7999] now touches the tail and they coalesce
+      // into a single [5501..10000] range.
+      const rows = prismaMock._ranges.rows();
+      expect(rows.length).toBe(1);
+      expect(rows[0].startLedger).toBe(5_501);
+      expect(rows[0].endLedger).toBe(10_000);
+    });
+
+    it('is a no-op when every ledger up to head is already covered', async () => {
+      prismaMock._ranges.seed(1, 10_000);
+      const result = await service.poll();
+      expect(result).toBeNull();
+      expect(rpcMock.getEvents).not.toHaveBeenCalled();
+    });
+
+    it('replays window atomically under the same transaction (rollback on failure)', async () => {
+      prismaMock.carbonProject.updateMany.mockRejectedValueOnce(new Error('db down'));
+      rpcMock.getLatestLedger.mockResolvedValue({ sequence: 10_000, protocolVersion: 20 });
+      rpcMock.getEvents.mockResolvedValue({
+        events: [evt(9_500, 'verified', ['proj-1'])],
+        latestLedger: 10_000,
+      });
+
+      await expect(service.poll()).rejects.toThrow('db down');
+      // Neither checkpoint nor range was advanced on failure.
+      expect(await service.getCheckpoint()).toBeNull();
+      expect(prismaMock._ranges.rows().length).toBe(0);
     });
   });
 });

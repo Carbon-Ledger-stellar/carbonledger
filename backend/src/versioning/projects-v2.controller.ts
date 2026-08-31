@@ -90,7 +90,7 @@ export class ProjectsV2Controller {
     @Body() dto: UpdateProjectStatusDto,
     @Request() req: any,
   ) {
-    return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin');
+    return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin', req);
   }
 
   @Post(':id/verify')

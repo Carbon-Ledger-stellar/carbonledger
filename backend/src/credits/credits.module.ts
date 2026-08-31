@@ -8,9 +8,17 @@ import { IpfsService } from "../common/ipfs.service";
 import { PoliciesModule } from "../policies/policies.module";
 import { WebhookModule } from "../webhook/webhook.module";
 import { QueueModule } from "../queue/queue.module";
+import { RetirementsModule } from "../retirements/retirements.module";
 
 @Module({
-  imports: [AuthModule, MailModule, PoliciesModule, WebhookModule, forwardRef(() => QueueModule)],
+  imports: [
+    AuthModule,
+    MailModule,
+    PoliciesModule,
+    WebhookModule,
+    forwardRef(() => QueueModule),
+    forwardRef(() => RetirementsModule),
+  ],
   controllers: [CreditsController],
   providers: [CreditsService, PrismaService, IpfsService],
   exports: [CreditsService],

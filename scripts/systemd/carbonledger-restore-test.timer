@@ -1,0 +1,10 @@
+[Unit]
+Description=CarbonLedger PostgreSQL Monthly Restore Test — first day of month at 03:00 UTC
+
+[Timer]
+OnCalendar=*-*-01 03:00:00 UTC
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

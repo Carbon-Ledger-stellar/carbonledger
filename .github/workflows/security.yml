@@ -1,0 +1,326 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run full security scan every Monday at 08:00 UTC
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  # ── 1. Dependency audit: npm + cargo + pip ──────────────────────────────────
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Rust: cargo audit ──────────────────────────────────────────────────
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.91.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo advisory DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: cargo-advisory-db-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: cargo-advisory-db-
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --quiet 2>/dev/null || true
+
+      - name: Run cargo audit (HIGH + CRITICAL)
+        id: cargo_audit
+        working-directory: contracts
+        run: |
+          cargo audit \
+            --deny warnings \
+            --deny unsound \
+            2>&1 | tee /tmp/cargo-audit.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      # ── Node: npm audit ────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache backend node_modules
+        uses: actions/cache@v4
+        with:
+          path: backend/node_modules
+          key: npm-backend-${{ hashFiles('backend/package-lock.json') }}
+          restore-keys: npm-backend-
+
+      - name: Cache frontend node_modules
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: npm-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-frontend-
+
+      - name: npm audit — backend (fail on high+)
+        id: npm_audit_backend
+        working-directory: backend
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high 2>&1 | tee /tmp/npm-audit-backend.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: npm audit — frontend (fail on high+)
+        id: npm_audit_frontend
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high 2>&1 | tee /tmp/npm-audit-frontend.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      # ── Python: pip-audit ─────────────────────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('oracle/requirements.txt') }}
+          restore-keys: pip-
+
+      - name: Run pip-audit (oracle dependencies)
+        id: pip_audit
+        working-directory: oracle
+        run: |
+          pip install pip-audit --quiet
+          pip-audit -r requirements.txt --format markdown 2>&1 | tee /tmp/pip-audit.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      # ── Upload audit logs ──────────────────────────────────────────────────
+      - name: Upload audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-logs-${{ github.run_id }}
+          path: |
+            /tmp/cargo-audit.txt
+            /tmp/npm-audit-backend.txt
+            /tmp/npm-audit-frontend.txt
+            /tmp/pip-audit.txt
+          retention-days: 30
+
+      # ── PR comment ────────────────────────────────────────────────────────
+      - name: Post audit summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          CARGO_EXIT: ${{ steps.cargo_audit.outputs.exit_code }}
+          NPM_BACK_EXIT: ${{ steps.npm_audit_backend.outputs.exit_code }}
+          NPM_FRONT_EXIT: ${{ steps.npm_audit_frontend.outputs.exit_code }}
+          PIP_EXIT: ${{ steps.pip_audit.outputs.exit_code }}
+        with:
+          script: |
+            const fs = require('fs');
+            const icon = (code) => code === '0' ? '✅' : '⚠️';
+            const snippet = (file) => {
+              try {
+                return fs.readFileSync(file, 'utf8').slice(0, 2000);
+              } catch { return '(log not available)'; }
+            };
+
+            const cargoExit  = process.env.CARGO_EXIT;
+            const npmBExit   = process.env.NPM_BACK_EXIT;
+            const npmFExit   = process.env.NPM_FRONT_EXIT;
+            const pipExit    = process.env.PIP_EXIT;
+
+            const allClear = [cargoExit, npmBExit, npmFExit, pipExit].every(c => c === '0');
+
+            let body = `## 🔒 Security Audit Results\n\n`;
+            body += `| Tool | Status |\n|------|--------|\n`;
+            body += `| cargo audit (Rust) | ${icon(cargoExit)} ${cargoExit === '0' ? 'No issues' : 'Issues found'} |\n`;
+            body += `| npm audit (backend) | ${icon(npmBExit)} ${npmBExit === '0' ? 'No issues' : 'Issues found'} |\n`;
+            body += `| npm audit (frontend) | ${icon(npmFExit)} ${npmFExit === '0' ? 'No issues' : 'Issues found'} |\n`;
+            body += `| pip-audit (oracle) | ${icon(pipExit)} ${pipExit === '0' ? 'No issues' : 'Issues found'} |\n\n`;
+
+            if (!allClear) {
+              const sections = [
+                ['cargo audit', '/tmp/cargo-audit.txt', cargoExit],
+                ['npm audit (backend)', '/tmp/npm-audit-backend.txt', npmBExit],
+                ['npm audit (frontend)', '/tmp/npm-audit-frontend.txt', npmFExit],
+                ['pip-audit', '/tmp/pip-audit.txt', pipExit],
+              ];
+              for (const [label, file, code] of sections) {
+                if (code !== '0') {
+                  body += `<details><summary>⚠️ ${label} output</summary>\n\n\`\`\`\n${snippet(file)}\n\`\`\`\n\n</details>\n\n`;
+                }
+              }
+            }
+
+            body += `\n> Commit \`${context.sha.slice(0,7)}\` · [Workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      # ── Gate: fail on high-severity findings ──────────────────────────────
+      - name: Fail on high-severity vulnerabilities
+        run: |
+          FAILED=0
+          [ "${{ steps.cargo_audit.outputs.exit_code }}"        != "0" ] && \
+            echo "::error::cargo audit: unsafe crates or high-severity advisories found" && FAILED=1
+          [ "${{ steps.npm_audit_backend.outputs.exit_code }}"  != "0" ] && \
+            echo "::error::npm audit (backend): high or critical vulnerabilities found"  && FAILED=1
+          [ "${{ steps.npm_audit_frontend.outputs.exit_code }}" != "0" ] && \
+            echo "::error::npm audit (frontend): high or critical vulnerabilities found" && FAILED=1
+          [ "${{ steps.pip_audit.outputs.exit_code }}"          != "0" ] && \
+            echo "::error::pip-audit: vulnerabilities found in oracle dependencies"      && FAILED=1
+          exit $FAILED
+
+  # ── 2. SAST: CodeQL static analysis ───────────────────────────────────────
+  sast-codeql:
+    name: SAST — CodeQL
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, python]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Setup Node.js (for JS/TS analysis)
+        if: matrix.language == 'javascript-typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend dependencies (for JS/TS analysis)
+        if: matrix.language == 'javascript-typescript'
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      - name: Install frontend dependencies (for JS/TS analysis)
+        if: matrix.language == 'javascript-typescript'
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql-${{ matrix.language }}
+
+  # ── 3. Container scanning: Trivy ─────────────────────────────────────────
+  container-scan:
+    name: Trivy Container Scan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: backend/Dockerfile
+            name: backend
+          - dockerfile: frontend/Dockerfile
+            name: frontend
+          - dockerfile: oracle/Dockerfile
+            name: oracle
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          CONTEXT=$(dirname "${{ matrix.dockerfile }}")
+          docker build \
+            -f "${{ matrix.dockerfile }}" \
+            -t "carbonledger-${{ matrix.name }}:${{ github.sha }}" \
+            "$CONTEXT"
+
+      - name: Trivy scan — SARIF upload
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "carbonledger-${{ matrix.name }}:${{ github.sha }}"
+          format: sarif
+          output: "trivy-${{ matrix.name }}.sarif"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: "trivy-${{ matrix.name }}.sarif"
+          category: "trivy-${{ matrix.name }}"
+
+      - name: Trivy scan — fail on HIGH+CRITICAL
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "carbonledger-${{ matrix.name }}:${{ github.sha }}"
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Generate JSON report
+        if: always()
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --format json \
+            --output "trivy-${{ matrix.name }}-report.json" \
+            "carbonledger-${{ matrix.name }}:${{ github.sha }}"
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ matrix.name }}-${{ github.run_id }}
+          path: "trivy-${{ matrix.name }}-report.json"
+          retention-days: 30
+
+  # ── 4. Secret scanning: Gitleaks ─────────────────────────────────────────
+  secret-scan:
+    name: Secret Scanning — Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
