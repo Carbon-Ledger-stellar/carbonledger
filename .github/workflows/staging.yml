@@ -203,16 +203,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Wait for staging to be ready
         run: sleep 30
 
-      - name: Health check — backend
+      - name: Health check — backend (pre-flight)
         run: |
           curl --fail --retry 5 --retry-delay 5 \
             "${{ secrets.STAGING_API_URL }}/health" \
             -H "Accept: application/json"
 
-      - name: Health check — frontend
+      - name: Health check — frontend (pre-flight)
         run: |
           curl --fail --retry 5 --retry-delay 5 \
             "${{ secrets.STAGING_URL }}"
@@ -222,11 +224,91 @@ jobs:
           curl --fail --retry 5 --retry-delay 5 \
             "${{ secrets.STORYBOOK_STAGING_URL }}"
 
-      - name: Verify Testnet contract IDs are set
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: smoke-tests/package-lock.json
+
+      - name: Install smoke test dependencies
+        working-directory: smoke-tests
+        run: npm install
+
+      # ── Full smoke test suite (closes #1057) ────────────────────────────
+
+      - name: Smoke — Database health (no DB errors)
+        working-directory: smoke-tests
+        env:
+          SMOKE_API_URL: ${{ secrets.STAGING_API_URL }}/api/v1
+          SMOKE_API_RAW_URL: ${{ secrets.STAGING_API_URL }}
         run: |
-          RESPONSE=$(curl -s "${{ secrets.STAGING_API_URL }}/health")
-          echo "$RESPONSE" | grep -q '"stellar_network":"testnet"' || \
-            (echo "Staging is not pointing at testnet!" && exit 1)
+          npx jest --config jest.smoke.json --testPathPattern='smoke-db' \
+            --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Smoke — Backend API health checks
+        working-directory: smoke-tests
+        env:
+          SMOKE_API_URL: ${{ secrets.STAGING_API_URL }}/api/v1
+          SMOKE_API_RAW_URL: ${{ secrets.STAGING_API_URL }}
+        run: |
+          npx jest --config jest.smoke.json --testPathPattern='smoke-backend' \
+            --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Smoke — Mint/retire transaction lifecycle
+        working-directory: smoke-tests
+        env:
+          SMOKE_API_URL: ${{ secrets.STAGING_API_URL }}/api/v1
+          SMOKE_API_TOKEN: ${{ secrets.SMOKE_API_TOKEN || '' }}
+          SMOKE_SEED_BATCH_ID: ${{ secrets.SMOKE_SEED_BATCH_ID || '' }}
+        run: |
+          npx jest --config jest.smoke.json --testPathPattern='smoke-mint-retire' \
+            --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Smoke — Audit trail lookup
+        working-directory: smoke-tests
+        env:
+          SMOKE_API_URL: ${{ secrets.STAGING_API_URL }}/api/v1
+          SMOKE_SEED_BATCH_ID: ${{ secrets.SMOKE_SEED_BATCH_ID || '' }}
+          SMOKE_SEED_SERIAL: ${{ secrets.SMOKE_SEED_SERIAL || '' }}
+        run: |
+          npx jest --config jest.smoke.json --testPathPattern='smoke-audit-trail' \
+            --forceExit --reporters=default --reporters=jest-junit
+
+      - name: Install Playwright chromium
+        working-directory: smoke-tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke — Frontend pages
+        working-directory: smoke-tests
+        env:
+          SMOKE_FRONTEND_URL: ${{ secrets.STAGING_URL }}
+        run: |
+          npx playwright test --config playwright.smoke.config.ts --reporter=list,html,junit
+
+      # ── Upload smoke test artifacts ──────────────────────────────────────
+
+      - name: Upload smoke test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-smoke-results-${{ github.run_id }}
+          path: |
+            smoke-tests/smoke-junit.xml
+            smoke-tests/smoke-playwright-junit.xml
+            smoke-tests/smoke-playwright-report/
+          retention-days: 7
+
+      - name: Annotate smoke test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "Staging Smoke Tests"
+          path: smoke-tests/smoke-junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+
+      # ── Log aggregation verification ─────────────────────────────────────
 
       - name: Verify log aggregation system
         run: |
@@ -234,7 +316,7 @@ jobs:
           curl --fail --retry 3 --retry-delay 5 \
             "https://grafana-staging.carbonledger.com/api/datasources/proxy/loki/ready" || \
             echo "Warning: Loki health check failed"
-          
+
           # Check Grafana is accessible
           curl --fail --retry 3 --retry-delay 5 \
             "https://grafana-staging.carbonledger.com/api/health" || \
@@ -246,10 +328,10 @@ jobs:
           curl -X POST "${{ secrets.STAGING_API_URL }}/health" \
             -H "Content-Type: application/json" \
             -d '{"test": "staging_deployment_verification"}'
-          
+
           # Wait for log ingestion
           sleep 15
-          
+
           # Query logs via Loki API (basic test)
           echo "Log aggregation system deployed successfully"
 
@@ -259,3 +341,9 @@ jobs:
           echo "Alerting rules configured for >10 errors/minute threshold"
           echo "30-day log retention policy active"
           echo "Staging deployment verification complete"
+
+      - name: Fail staging deployment on smoke test failure
+        if: failure()
+        run: |
+          echo "::error::Staging smoke tests failed. Rolling back is recommended."
+          exit 1

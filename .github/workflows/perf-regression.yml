@@ -1,0 +1,325 @@
+name: Performance Regression Tracking
+
+# Runs on every PR and push to main.
+# Also runnable manually with optional parameter overrides.
+#
+# Acceptance criteria (#1056):
+#   ✓ Baseline metrics established   (benchmarks/baseline.json committed)
+#   ✓ Metrics tracked in CI          (this workflow)
+#   ✓ Fail on >10% regression        (run_perf_benchmarks.py --run)
+#   ✓ Historical tracking in artifacts (retention-days: 90 + history.csv)
+#   ✓ Dashboard for trend analysis   (scripts/perf_dashboard.py)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Allow manual runs with custom targets (e.g. against staging)
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Backend API base URL (default: in-workflow service)"
+        required: false
+        default: ""
+      skip_contract:
+        description: "Skip Soroban contract benchmarks (true/false)"
+        required: false
+        default: "false"
+      bench_samples:
+        description: "Number of samples per endpoint (default: 50)"
+        required: false
+        default: "50"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 1. Contract benchmarks — cpu_instructions regression gate
+  # ─────────────────────────────────────────────────────────────────────────────
+  contract-benchmarks:
+    name: Contract Performance Benchmarks
+    runs-on: ubuntu-latest
+    if: inputs.skip_contract != 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.86.0
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-bench-
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run contract benchmarks and compare to baseline
+        id: bench
+        run: |
+          python3 scripts/run_perf_benchmarks.py \
+            --run \
+            --skip-api \
+            --skip-db
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        continue-on-error: true
+
+      - name: Upload contract benchmark artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-contract-${{ github.run_id }}
+          path: |
+            benchmarks/current.json
+            benchmark-report.md
+          retention-days: 90
+
+      - name: Post contract regression report to job summary
+        if: always() && hashFiles('benchmark-report.md') != ''
+        run: cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on contract regression
+        if: steps.bench.outcome == 'failure'
+        run: |
+          echo "::error::Contract performance regression detected — see benchmark-report.md"
+          exit 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 2. API + DB benchmarks — response time regression gate
+  #    Runs the NestJS backend + PostgreSQL as service containers
+  # ─────────────────────────────────────────────────────────────────────────────
+  api-db-benchmarks:
+    name: API & DB Performance Benchmarks
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carbonledger_perf
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: perfpassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          pip install psycopg2-binary --quiet || true
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:perfpassword@localhost:5432/carbonledger_perf
+        run: npx prisma generate
+
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:perfpassword@localhost:5432/carbonledger_perf
+        run: npx prisma migrate deploy
+
+      - name: Seed performance test data
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:perfpassword@localhost:5432/carbonledger_perf
+        run: |
+          # Seed minimal data so API queries return rows (not empty responses)
+          npx ts-node -e "
+          const { PrismaClient } = require('@prisma/client');
+          const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
+          async function main() {
+            // Create 10 projects
+            for (let i = 0; i < 10; i++) {
+              await prisma.carbonProject.upsert({
+                where: { projectId: 'perf-project-' + i },
+                create: {
+                  projectId: 'perf-project-' + i,
+                  name: 'Perf Test Project ' + i,
+                  methodology: i % 2 === 0 ? 'VCS' : 'GS',
+                  country: 'BR',
+                  status: 'Verified',
+                  vintageYear: 2023,
+                  ownerAddress: 'GTEST' + i.toString().padStart(51, '0'),
+                },
+                update: {},
+              });
+            }
+            // Create 20 market listings
+            for (let i = 0; i < 20; i++) {
+              const pid = 'perf-project-' + (i % 10);
+              await prisma.marketListing.upsert({
+                where: { listingId: 'perf-listing-' + i },
+                create: {
+                  listingId: 'perf-listing-' + i,
+                  projectId: pid,
+                  price: (5 + i * 0.5).toFixed(2),
+                  amountAvailable: 100,
+                  methodology: i % 2 === 0 ? 'VCS' : 'GS',
+                  vintage: 2023,
+                  status: 'Active',
+                  sellerAddress: 'GTEST' + i.toString().padStart(51, '0'),
+                },
+                update: {},
+              });
+            }
+            console.log('Seeding complete');
+          }
+          main().catch(console.error).finally(() => prisma.\$disconnect());
+          " || echo "Seeding skipped (schema mismatch — running unseed)"
+        continue-on-error: true
+
+      - name: Start NestJS backend
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:perfpassword@localhost:5432/carbonledger_perf
+          JWT_SECRET: perf-benchmark-secret
+          REDIS_HOST: localhost
+          REDIS_PORT: "6379"
+          PORT: "3001"
+          NODE_ENV: test
+          STELLAR_NETWORK: testnet
+          LOG_LEVEL: error
+        run: |
+          npm run build
+          node dist/main.js &
+          echo $! > /tmp/backend.pid
+          # Wait for the backend to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/health > /dev/null 2>&1; then
+              echo "Backend ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:3001/health || (echo "Backend did not start" && exit 1)
+
+      - name: Run API + DB performance benchmarks
+        id: bench
+        env:
+          PERF_API_URL: ${{ inputs.api_url || 'http://localhost:3001/api/v1' }}
+          PERF_API_RAW_URL: http://localhost:3001
+          DATABASE_URL: postgresql://carbonledger:perfpassword@localhost:5432/carbonledger_perf
+          BENCH_SAMPLES: ${{ inputs.bench_samples || '50' }}
+          BENCH_WARMUP: "5"
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: |
+          python3 scripts/run_perf_benchmarks.py \
+            --run \
+            --skip-contract
+        continue-on-error: true
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f /tmp/backend.pid ]; then
+            kill $(cat /tmp/backend.pid) 2>/dev/null || true
+          fi
+
+      - name: Upload API/DB benchmark artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-api-db-${{ github.run_id }}
+          path: |
+            benchmarks/current.json
+            benchmarks/api_current.json
+            benchmarks/db_current.json
+            benchmark-report.md
+            benchmarks/history.csv
+          retention-days: 90
+
+      - name: Post API/DB regression report to job summary
+        if: always() && hashFiles('benchmark-report.md') != ''
+        run: cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on API/DB regression
+        if: steps.bench.outcome == 'failure'
+        run: |
+          echo "::error::API/DB performance regression detected — see benchmark-report.md"
+          exit 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 3. Historical artifact — upload the full history.csv + dashboard snapshot
+  # ─────────────────────────────────────────────────────────────────────────────
+  history-artifact:
+    name: Historical Performance Snapshot
+    runs-on: ubuntu-latest
+    needs: [api-db-benchmarks]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download api-db benchmark artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: perf-api-db-${{ github.run_id }}
+          path: benchmarks/
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate trend dashboard
+        run: |
+          python3 scripts/perf_dashboard.py \
+            --history benchmarks/history.csv \
+            --out benchmarks/dashboard.html
+        continue-on-error: true
+
+      - name: Upload historical snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-history-${{ github.run_number }}
+          path: |
+            benchmarks/history.csv
+            benchmarks/current.json
+            benchmarks/dashboard.html
+          retention-days: 365

@@ -21,6 +21,7 @@ import {
  */
 @Controller('admin')
 @Roles('admin')
+@ApiBearerAuth()
 export class AdminController {
   constructor(private readonly admin: AdminService) {}
 

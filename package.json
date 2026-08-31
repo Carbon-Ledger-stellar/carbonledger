@@ -1,4 +1,11 @@
 {
+  "scripts": {
+    "load-test": "k6 run load-tests/load-test.js",
+    "load-test:baseline": "k6 run --env BASE_URL=${BASE_URL:-http://localhost:3001} load-tests/load-test.js",
+    "load-test:ci": "k6 run --out json=load-tests/results/run-ci-$(date +%Y%m%d-%H%M%S).json load-tests/load-test.js",
+    "load-test:marketplace": "k6 run load-tests/marketplace.k6.js",
+    "load-test:bulk-purchase": "k6 run load-tests/marketplace-bulk-purchase.k6.js"
+  },
   "dependencies": {
     "json2csv": "^6.0.0-alpha.2"
   }

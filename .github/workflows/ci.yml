@@ -691,7 +691,10 @@ jobs:
   fuzz:
     name: Property-Based Fuzz Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Run on PRs (5-min budget for issue #1054) and on scheduled / manual runs.
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Hard 5-minute wall-clock timeout for PR runs (issue #1054).
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -752,6 +755,16 @@ jobs:
         env:
           PROPTEST_CASES: 1000
         run: "cargo test -p carbon_credit --test proptest -- --nocapture"
+
+      # Issue #1054: dedicated fuzz suite for mint / retire / transfer with
+      # 10,000 iterations and seed saving.  On PRs the job-level timeout-minutes
+      # (5 min) acts as the wall-clock limit; nightly runs use PROPTEST_CASES
+      # to drive the full 10k count.
+      - name: Run fuzz_credit_ops (carbon_credit, issue #1054)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 10000
+        run: "cargo test -p carbon_credit --test fuzz_credit_ops -- --nocapture"
 
       - name: Run fuzz tests (carbon_marketplace)
         working-directory: contracts

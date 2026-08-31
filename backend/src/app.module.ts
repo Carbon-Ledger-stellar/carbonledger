@@ -1,5 +1,6 @@
 import { AdminModule } from "./admin/admin.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { StellarModule } from "./stellar/stellar.module";
 import { BlockchainModule } from './blockchain/blockchain.module';
 import { WebhookModule } from "./webhook/webhook.module";
 import { GraphqlModule } from "./graphql/graphql.module";

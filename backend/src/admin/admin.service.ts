@@ -4,6 +4,7 @@ import { IndexerService } from '../indexer/indexer.service';
 import { OracleService } from '../oracle/oracle.service';
 import { RedisService } from '../redis.service';
 import { StellarNetworkService } from '../common/stellar-network.service';
+import { DlqService } from '../queue/dlq.service';
 import { UpdateCanaryDto } from './admin.dto';
 import { ProjectsService } from '../projects/projects.service';
 import { CreditsService } from '../credits/credits.service';

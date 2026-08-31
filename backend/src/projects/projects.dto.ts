@@ -22,6 +22,8 @@ import {
   IsVintageYear,
   IsIpfsCid,
   IsMethodologyScore,
+  IsSafeString,
+  IsMethodologyId,
 } from '../common/validators';
 
 /**
@@ -52,16 +54,19 @@ export class CreateProjectDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
+  @IsSafeString()
   name: string;
 
   @IsString()
   @IsNotEmpty()
   @MaxLength(64)
+  @IsMethodologyId()
   methodology: string;
 
   @IsString()
   @IsNotEmpty()
   @MaxLength(1024)
+  @IsSafeString()
   description: string;
 
   @IsObject()
@@ -118,15 +123,18 @@ export class RegisterProjectDto {
 
   @IsString()
   @Length(1, 128)
+  @IsSafeString()
   name: string;
 
   @IsString()
   @IsOptional()
   @MaxLength(1024)
+  @IsSafeString()
   description?: string;
 
   @IsString()
   @Length(1, 64)
+  @IsMethodologyId()
   methodology: string;
 
   @IsString()
