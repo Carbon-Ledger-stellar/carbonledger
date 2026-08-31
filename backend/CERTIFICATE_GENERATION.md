@@ -1,8 +1,8 @@
-# Asynchronous Retirement Certificate Generation
+# Asynchronous Retirement Certificate PDF Generation
 
 ## Overview
 
-This implementation provides asynchronous generation and storage of retirement certificates on IPFS, preventing API timeouts and improving user experience. Certificates are generated as background jobs and stored on Pinata (IPFS gateway).
+This implementation provides asynchronous generation and storage of retirement certificate PDFs on IPFS via Pinata, preventing API timeouts and improving user experience. Certificates are generated as BullMQ background jobs with professional PDF layouts including QR codes linking to on-chain audit records.
 
 ## Architecture
 
@@ -10,13 +10,16 @@ This implementation provides asynchronous generation and storage of retirement c
 
 1. **CertificateService** (`src/certificates/certificate.service.ts`)
    - Generates PDF certificates using PDFKit
-   - Renders certificate with retirement details, QR code, and styling
+   - Renders certificate with retirement details, QR code, and professional styling
+   - Includes: project name, vintage year, tonnes retired, beneficiary, retirement date, serial number range, Stellar transaction hash
+   - QR code encodes `https://carbonledger.io/audit/retirement/{retirementId}` for on-chain verification
    - Returns PDF as Buffer for upload
 
 2. **PinataService** (`src/certificates/pinata.service.ts`)
    - Uploads PDF files to Pinata (IPFS)
    - Returns IPFS CID and public gateway URL
-   - Verifies pin status
+   - Verifies pin status via Pinata SDK
+   - Provides `getPublicUrl(cid)` helper
 
 3. **NotificationService** (`src/certificates/notification.service.ts`)
    - Sends email notifications when certificate is ready
@@ -25,63 +28,70 @@ This implementation provides asynchronous generation and storage of retirement c
 
 4. **CertificateProcessor** (`src/certificates/certificate.processor.ts`)
    - Orchestrates the entire certificate generation workflow
-   - Handles retries (up to 3 attempts)
+   - Handles retries (up to 3 attempts with exponential backoff)
    - Polls for pending certificates every 60 seconds
    - Updates retirement record with certificate status and IPFS details
+   - Invoked via BullMQ job from QueueProcessor
 
-5. **QueueProcessor** (`src/queue/queue.processor.ts`)
-   - Processes BullMQ jobs
-   - Routes certificate generation jobs to CertificateProcessor
+5. **CertificatesController** (`src/certificates/certificates.controller.ts`)
+   - `GET /certificates/{retirementId}` — Public certificate metadata (JSON)
+   - `GET /certificates/{retirementId}/pdf` — Returns PDF from IPFS or generates on demand
+   - `GET /certificates/{retirementId}/status` — Returns certificate generation status
+
+6. **QueueProcessor** (`src/queue/queue.processor.ts`)
+   - Processes BullMQ jobs including `certificate_generation`
+   - Delegates to CertificateProcessor for certificate generation jobs
 
 ## Database Schema
 
-### RetirementRecord Updates
+### RetirementRecord Fields
 
 ```prisma
 model RetirementRecord {
   // ... existing fields ...
   
   // Certificate fields
-  certificateStatus     String   @default("pending_certificate")
-  certificateCid        String?  // IPFS CID from Pinata
-  certificateUrl        String?  // Public IPFS gateway URL
-  certificateRetries    Int      @default(0)
-  certificateFailedAt   DateTime?
-  certificateGeneratedAt DateTime?
+  certificateCid           String?
+  certificateUrl           String?
+  certificateStatus        String    @default("pending_certificate")
+  certificateRetries       Int       @default(0)
+  certificateFailedAt      DateTime?
+  certificateGeneratedAt   DateTime?
 }
 ```
 
 ### Certificate Status States
 
-- `pending_certificate` - Waiting to be processed
-- `generating` - Currently generating PDF and uploading to IPFS
-- `completed` - Successfully generated and stored
-- `failed` - Failed after 3 retry attempts
+- `pending_certificate` — Waiting to be processed by polling
+- `generating` — Currently generating PDF and uploading to IPFS
+- `completed` — Successfully generated and stored on IPFS
+- `failed` — Failed after 3 retry attempts
 
 ## Workflow
 
 ### 1. Retirement Creation
 
-When a user retires credits via `POST /credits/retire`:
+When a user retires credits:
 
 ```
 1. RetirementRecord created with certificateStatus = "pending_certificate"
-2. Batch and project totals updated
-3. API returns immediately (no blocking)
+2. BullMQ job enqueued via QueueService for async certificate generation
+3. API returns immediately (non-blocking)
 ```
 
 ### 2. Certificate Generation (Polling)
 
-Every 60 seconds, the system polls for pending certificates:
+Every 60 seconds, QueueModule polls for pending certificates:
 
 ```
 1. Query RetirementRecord where certificateStatus = "pending_certificate"
 2. For each pending retirement:
    a. Update status to "generating"
-   b. Generate PDF certificate
-   c. Upload to Pinata
+   b. Generate PDF certificate with QR code
+   c. Upload PDF to Pinata (IPFS)
    d. Update record with CID and URL
-   e. Send success email
+   e. Mark status as "completed"
+   f. Send success email notification
 3. On failure:
    a. Increment retry counter
    b. If retries < 3: reset to "pending_certificate"
@@ -90,40 +100,92 @@ Every 60 seconds, the system polls for pending certificates:
 
 ### 3. Certificate Retrieval
 
-Users can check certificate status via:
-
+**PDF Download (from IPFS or on-demand):**
 ```
-GET /retirements/certificate-status/:id
+GET /certificates/{retirementId}/pdf
+→ Tries IPFS gateway first (if CID exists)
+→ Falls back to on-demand generation
+→ Returns PDF with proper caching headers
+```
+
+**Generation Status:**
+```
+GET /certificates/{retirementId}/status
+→ Returns "pending" | "ready" | "error"
+→ Includes CID, URL, retry count, and timestamps
+```
+
+**Certificate Metadata (JSON):**
+```
+GET /certificates/{retirementId}
+→ Returns full retirement and project metadata
+→ Includes verification URL for on-chain audit
+```
+
+## API Endpoints
+
+### Get Certificate Metadata (Public)
+```
+GET /certificates/{retirementId}
 ```
 
 Response:
 ```json
 {
-  "retirementId": "ret-batch-123-1234567890",
-  "status": "completed",
-  "cid": "QmXxxx...",
-  "url": "https://gateway.pinata.cloud/ipfs/QmXxxx...",
-  "generatedAt": "2024-05-30T10:30:00Z",
-  "failedAt": null,
-  "retries": 0
+  "retirementId": "uuid",
+  "amount": "100",
+  "retiredBy": "GXXXXXX",
+  "beneficiary": "Company XYZ",
+  "retirementReason": "Carbon offset",
+  "vintageYear": 2024,
+  "serialNumbers": ["KE-001-2024-001", "..."],
+  "serialStart": "KE-001-2024-001",
+  "serialEnd": "KE-001-2024-100",
+  "txHash": "abc123...",
+  "retiredAt": "2024-05-30T10:30:00Z",
+  "projectId": "PROJ001",
+  "batchId": "BATCH001",
+  "certificateCid": "QmXxxx...",
+  "certificateStatus": "completed",
+  "certificateUrl": "https://gateway.pinata.cloud/ipfs/QmXxxx...",
+  "verificationUrl": "https://stellar.expert/explorer/testnet/tx/abc123...",
+  "ipfsUrl": "https://gateway.pinata.cloud/ipfs/QmXxxx...",
+  "project": {
+    "name": "Solar Farm Project",
+    "country": "KE",
+    "methodology": "ACM0002"
+  }
 }
 ```
 
-## API Endpoints
+### Get Certificate PDF
+```
+GET /certificates/{retirementId}/pdf
+```
+
+Returns: `application/pdf` with `Content-Disposition: inline`
+
+Response headers:
+- `X-Certificate-Source: ipfs` (cached) or `generated` (on-demand)
+- `Cache-Control: public, max-age=86400, s-maxage=86400, stale-while-revalidate=3600`
 
 ### Get Certificate Status
 ```
-GET /retirements/certificate-status/:id
+GET /certificates/{retirementId}/status
 ```
 
-Returns certificate generation status and IPFS URL.
-
-### Get Full Retirement Record
+Response:
+```json
+{
+  "retirementId": "uuid",
+  "status": "pending",
+  "cid": null,
+  "url": null,
+  "retries": 0,
+  "generatedAt": null,
+  "failedAt": null
+}
 ```
-GET /retirements/:id
-```
-
-Returns complete retirement record including certificate fields.
 
 ## Configuration
 
@@ -134,7 +196,7 @@ Returns complete retirement record including certificate fields.
 IPFS_API_KEY=your_pinata_api_key
 IPFS_SECRET_KEY=your_pinata_secret_key
 
-# Email (optional - mock mode if not configured)
+# Email (optional — mock mode if not configured)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
@@ -148,16 +210,14 @@ REDIS_PORT=6379
 REDIS_PASSWORD=
 ```
 
-## Dependencies Added
+## Dependencies
 
-```json
-{
-  "pdfkit": "^0.13.0",        // PDF generation
-  "pinata": "^2.1.0",         // IPFS/Pinata client
-  "qrcode": "^1.5.3",         // QR code generation
-  "nodemailer": "^6.9.7"      // Email notifications
-}
-```
+- `pdfkit` — PDF generation
+- `qrcode` — QR code generation (PNG buffers)
+- `pinata` — IPFS/Pinata SDK
+- `nodemailer` — Email notifications
+- `bullmq` + `@nestjs/bullmq` — Job queue
+- `@prisma/client` — Database ORM
 
 ## Error Handling
 
@@ -165,83 +225,49 @@ REDIS_PASSWORD=
 
 - **Max Retries**: 3 attempts
 - **Backoff**: Exponential (5s, 10s, 20s)
-- **Failure Handling**: After 3 failed attempts, certificate marked as failed and user notified
+- **Failure Handling**: After 3 failed attempts, certificate marked as "failed" and user notified
 
 ### Failure Scenarios
 
-1. **PDF Generation Fails**
-   - Logged and retried
-   - User notified after 3 attempts
+1. **PDF Generation Fails** — Logged and retried; user notified after 3 attempts
+2. **Pinata Upload Fails** — Network error or quota exceeded; retried automatically
+3. **Email Notification Fails** — Does not block certificate generation; logged as warning
 
-2. **Pinata Upload Fails**
-   - Network error or quota exceeded
-   - Retried automatically
-   - User notified if persistent
+## Performance
 
-3. **Email Notification Fails**
-   - Does not block certificate generation
-   - Logged as warning
-   - Can be retried manually
-
-## Monitoring
-
-### Queue Statistics
-
-```
-GET /queue/stats
-```
-
-Returns:
-```json
-{
-  "waiting": 5,
-  "active": 2,
-  "completed": 150,
-  "failed": 3,
-  "delayed": 0
-}
-```
-
-### Job Status
-
-```
-GET /queue/jobs/:jobId
-```
-
-Returns job details including state, attempts, and failure reason.
-
-## Performance Considerations
-
-1. **Polling Interval**: 60 seconds (configurable in `queue.module.ts`)
-2. **Batch Processing**: Max 10 certificates per poll cycle
-3. **Async Processing**: Non-blocking, doesn't impact retirement API response time
-4. **IPFS Gateway**: Uses Pinata's public gateway for immediate access
+- **PDF Generation**: ~500ms per certificate
+- **IPFS Upload**: ~1-2 seconds per certificate
+- **Polling Cycle**: Every 60 seconds, max 10 certificates per cycle
+- **On-demand PDF**: Generates in real-time (cached via IPFS when available)
 
 ## Testing
 
+### E2E Tests (`backend/test/certificate.e2e-spec.ts`)
+
+```bash
+npm run test:e2e -- certificate.e2e-spec.ts
+```
+
+Covers:
+- Certificate metadata retrieval
+- PDF generation and download
+- Certificate status endpoint
+- Full generate → status → PDF retrieval lifecycle
+- Data integrity validation
+
 ### Manual Testing
 
-1. Create a retirement:
 ```bash
-curl -X POST http://localhost:3001/api/v1/credits/retire \
-  -H "Authorization: Bearer $JWT_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "batchId": "batch-123",
-    "amount": 100,
-    "beneficiary": "Company XYZ",
-    "retirementReason": "Carbon offset",
-    "holderPublicKey": "GXXXXXX"
-  }'
-```
+# 1. Check certificate metadata
+curl http://localhost:3001/api/v1/certificates/RET001
 
-2. Check certificate status:
-```bash
-curl http://localhost:3001/api/v1/retirements/certificate-status/ret-batch-123-1234567890
-```
+# 2. Check certificate status
+curl http://localhost:3001/api/v1/certificates/RET001/status
 
-3. Monitor queue:
-```bash
+# 3. Download PDF
+curl -o certificate.pdf http://localhost:3001/api/v1/certificates/RET001/pdf
+
+# 4. Monitor queue stats
 curl http://localhost:3001/api/v1/queue/stats
 ```
 
@@ -254,7 +280,7 @@ curl http://localhost:3001/api/v1/queue/stats
 
 2. **Run Prisma Migration**
    ```bash
-   npx prisma migrate dev --name add_certificate_fields
+   npx prisma migrate dev --name add_certificate_status_fields
    ```
 
 3. **Configure Environment**
@@ -270,49 +296,31 @@ curl http://localhost:3001/api/v1/queue/stats
    - Check logs for "Polling for pending certificates..."
    - Should appear every 60 seconds
 
-## Future Enhancements
+## File Structure
 
-1. **Webhook Notifications**: Instead of polling, use Pinata webhooks
-2. **Batch Processing**: Process multiple certificates in parallel
-3. **Certificate Customization**: Allow users to customize certificate design
-4. **Blockchain Verification**: Store certificate CID on-chain for immutability
-5. **Certificate Revocation**: Support certificate revocation if needed
-6. **Analytics**: Track certificate generation metrics and performance
-
-## Troubleshooting
-
-### Certificates Not Generating
-
-1. Check Redis connection: `redis-cli ping`
-2. Check Pinata credentials in `.env`
-3. Review logs for errors: `npm run start:dev`
-4. Verify database migration ran: `npx prisma migrate status`
-
-### Email Not Sending
-
-1. Verify SMTP credentials
-2. Check firewall/network access to SMTP server
-3. Review email logs in application output
-4. Test with mock mode (no SMTP configured)
-
-### IPFS Upload Fails
-
-1. Verify Pinata API key and secret
-2. Check Pinata account quota
-3. Verify network connectivity
-4. Check file size (PDFs should be < 10MB)
+```
+backend/src/certificates/
+├── certificate.service.ts       # PDF generation with PDFKit + QR code
+├── pinata.service.ts            # IPFS/Pinata upload
+├── notification.service.ts      # Email notifications
+├── certificate.processor.ts     # Orchestration, polling, retries
+├── certificates.controller.ts   # REST endpoints (metadata, PDF, status)
+├── certificates.module.ts       # NestJS module definition
+└── README.md                    # Module documentation
+```
 
 ## Security Considerations
 
-1. **API Keys**: Store Pinata credentials in environment variables only
+1. **API Keys**: Pinata credentials stored in environment variables only
 2. **Email Credentials**: Use app-specific passwords, not account passwords
-3. **IPFS URLs**: Public gateway URLs are accessible to anyone with the CID
+3. **IPFS URLs**: Public gateway URLs accessible to anyone with the CID
 4. **Retirement Data**: Sensitive data (beneficiary, reason) stored in PDF
-5. **Rate Limiting**: Consider adding rate limits to certificate endpoints
+5. **QR Code**: Links to public audit page on carbonledger.io
 
 ## References
 
 - [PDFKit Documentation](http://pdfkit.org/)
 - [Pinata API Documentation](https://docs.pinata.cloud/)
 - [BullMQ Documentation](https://docs.bullmq.io/)
-- [Nodemailer Documentation](https://nodemailer.com/)
+- [NestJS BullMQ Integration](https://docs.nestjs.com/techniques/queues)
+- [QRCode npm](https://www.npmjs.com/package/qrcode)

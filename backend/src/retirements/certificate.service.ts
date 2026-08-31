@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { IpfsUploadService } from "../uploads/ipfs-upload.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
 import * as https from "https";
 import * as http from "http";
 
@@ -18,6 +19,7 @@ export class CertificateService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ipfsUpload: IpfsUploadService,
+    private readonly certificateSigning: CertificateSigningService,
   ) {}
 
   /**
@@ -143,7 +145,11 @@ export class CertificateService {
       }
     }
 
-    const certificateData = {
+    // Every field here is covered by the issuer signature below — do not add
+    // fields that are only known post-hoc (e.g. the certificate's own IPFS
+    // CID, filled in separately by #600) or the signature won't verify.
+    const signableContent = {
+      "@type": "CarbonRetirementCertificate",
       retirement_id: retirement.retirementId,
       credit_batch_id: retirement.batchId,
       project_id: retirement.projectId,
@@ -152,10 +158,11 @@ export class CertificateService {
       beneficiary: retirement.beneficiary,
       retirement_reason: retirement.retirementReason,
       vintage_year: retirement.vintageYear,
+      serial_start: retirement.serialStart,
+      serial_end: retirement.serialEnd,
       serial_numbers: serialNumbers, // Match Vec<u64> representation exactly
       retired_at: Math.floor(retirement.retiredAt.getTime() / 1000), // Unix timestamp on-chain
       tx_hash: retirement.txHash,
-      certificate_cid: "", // To be filled if we had it, but we are generating it now
 
       // Additional metadata for accessibility/UI
       metadata: {
@@ -166,6 +173,22 @@ export class CertificateService {
         issuer: "CarbonLedger",
         generatedAt: new Date().toISOString(),
       },
+    };
+
+    // Ed25519-sign the content hash so third parties (regulators, ESG
+    // auditors) can verify authenticity using only the public key published
+    // in Stellar.toml — no trust in this backend required (#594).
+    const { signature, publicKey, contentHash } = this.certificateSigning.sign(signableContent);
+
+    const certificateData = {
+      // JSON-LD framing so the certificate is a self-describing linked-data
+      // document, not just an opaque JSON blob.
+      "@context": ["https://schema.org", { cl: "https://carbonledger.io/ns#" }],
+      ...signableContent,
+      certificate_cid: "", // Filled in by #600 once the certificate is pinned to IPFS
+      content_hash: contentHash,
+      issuer_signature: signature,
+      issuer_public_key: publicKey,
     };
 
     const jsonBuffer = Buffer.from(JSON.stringify(certificateData, null, 2));

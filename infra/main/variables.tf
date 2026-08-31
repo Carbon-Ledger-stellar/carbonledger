@@ -45,6 +45,9 @@ variable "redis_num_cache_clusters" {
     Overridden by enable_redis_sentinel: when true, always 3 nodes.
   EOT
   default     = 2
+
+}
+
 }
 
 variable "enable_redis_sentinel" {
@@ -89,3 +92,4 @@ variable "enable_cloudwatch_alarms" {
   type        = bool
   default     = true
 }
+

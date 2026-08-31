@@ -2,18 +2,17 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import VerifierConfirmDialog, { REJECT_MIN_LENGTH } from "../../../../components/VerifierConfirmDialog";
 import TransactionStatus, { TxStatus } from "../../../../components/TransactionStatus";
 import Toast, { useToast } from "../../../../components/Toast";
 import {
   useProject,
-  syncProjectVerification,
-  syncProjectRejection,
   invalidateVerifierCaches,
   type PendingVerifierProject,
 } from "../../../../lib/api";
 import { breakdownMethodologyScore, RUBRIC_DIMENSIONS } from "../../../../lib/methodology-scoring";
+import { getAttestationChecklist } from "../../../../lib/attestation-checklist";
 import { useVerifierAuth } from "../../../../lib/use-verifier-auth";
 import {
   verifyProjectOnChain,
@@ -22,6 +21,12 @@ import {
 } from "../../../../lib/soroban";
 import { getContractErrorMessage } from "../../../../lib/wallet-errors";
 import { colors } from "../../../../styles/design-system";
+import {
+  saveDraftReport,
+  hasPendingDraft,
+  getPendingDraftCount,
+} from "../../../../lib/offline-report-queue";
+import { OFFLINE_SYNC_EVENT } from "../../../../lib/offline-sync";
 
 type PendingAction = { decision: "verify" | "reject" };
 
@@ -45,11 +50,106 @@ export default function VerifierProjectReviewPage() {
   const [txMessage, setTxMessage] = useState<string | undefined>();
   const [pollProgress, setPollProgress] = useState<{ current: number; max: number } | undefined>();
   const [submitting, setSubmitting] = useState(false);
+  const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [pendingDraft, setPendingDraft] = useState<boolean>(false);
+  const [draftCount, setDraftCount] = useState<number>(0);
+
+  // Detect online/offline state changes
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    updateOnline();
+    window.addEventListener("online", updateOnline);
+    window.addEventListener("offline", updateOnline);
+    return () => {
+      window.removeEventListener("online", updateOnline);
+      window.removeEventListener("offline", updateOnline);
+    };
+  }, []);
+
+  // Check whether this project already has a pending offline draft
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+    hasPendingDraft(project.projectId).then((draft) => {
+      if (!cancelled) setPendingDraft(Boolean(draft));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
+
+  // Refresh the global pending-draft count when the sync event fires
+  useEffect(() => {
+    const refresh = () => {
+      getPendingDraftCount().then(setDraftCount).catch(() => {});
+    };
+    window.addEventListener(OFFLINE_SYNC_EVENT, refresh);
+    return () => window.removeEventListener(OFFLINE_SYNC_EVENT, refresh);
+  }, []);
+
+  const saveOfflineDraft = useCallback(
+    async (decision: "verify" | "reject") => {
+      if (!project) return;
+      try {
+        await saveDraftReport({
+          projectId: project.projectId,
+          projectName: project.name,
+          decision,
+          rejectReason: decision === "reject" ? rejectReason.trim() : "",
+          checkedItems: Array.from(checkedItems),
+        });
+        setPendingDraft(true);
+        await getPendingDraftCount().then(setDraftCount);
+        setPending(null);
+        addToast({
+          type: "success",
+          title: "Review saved offline",
+          message:
+            "You're offline. Your decision was queued and will be synced automatically when connectivity returns.",
+        });
+      } catch (err) {
+        console.error("[offline] Failed to save draft:", err);
+        addToast({
+          type: "error",
+          title: "Could not save draft",
+          message:
+            err instanceof Error ? err.message : "IndexedDB unavailable in this browser.",
+        });
+      }
+    },
+    [project, checkedItems, rejectReason, addToast],
+  );
+
+  const onConfirmReview = useCallback(() => {
+    if (!pending) return;
+    if (!isOnline) {
+      saveOfflineDraft(pending.decision);
+      return;
+    }
+    runOnChainReview();
+  }, [pending, isOnline, saveOfflineDraft]);
 
   const breakdown = useMemo(
     () => (project ? breakdownMethodologyScore(project.methodologyScore) : null),
     [project],
   );
+
+  const checklist = useMemo(
+    () => (project ? getAttestationChecklist(project.methodology) : []),
+    [project],
+  );
+  const checklistComplete = checklist.length > 0 && checklist.every(item => checkedItems.has(item.key));
+
+  function toggleChecklistItem(key: string) {
+    setCheckedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const docCid = projectDocCid(project);
 
@@ -77,12 +177,10 @@ export default function VerifierProjectReviewPage() {
       let hash: string;
       if (decision === "verify") {
         hash = await verifyProjectOnChain(publicKey, project.projectId, onProgress);
-        await syncProjectVerification(project.id, publicKey, token);
         addToast({ type: "success", title: "Project verified", message: "On-chain attestation recorded.", txHash: hash });
       } else {
         const reason = rejectReason.trim();
         hash = await rejectProjectOnChain(publicKey, project.projectId, reason, onProgress);
-        await syncProjectRejection(project.id, publicKey, reason, token);
         addToast({ type: "success", title: "Project rejected", message: "Rejection recorded on-chain.", txHash: hash });
       }
 
@@ -124,6 +222,59 @@ export default function VerifierProjectReviewPage() {
 
   return (
     <main style={mainStyle}>
+      {/* Offline banner */}
+      {!isOnline && (
+        <div
+          style={{
+            background: "#fef3c7",
+            border: "1px solid #f59e0b",
+            borderRadius: 6,
+            padding: "0.75rem 1rem",
+            marginBottom: "1rem",
+            fontSize: "0.875rem",
+            color: "#92400e",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+          role="alert"
+        >
+          <span style={{ fontSize: "1.1rem" }}>📡</span>
+          <span>
+            You are offline. Your review decisions will be saved locally and
+            submitted when connectivity is restored.
+          </span>
+        </div>
+      )}
+
+      {/* Pending drafts indicator */}
+      {draftCount > 0 && isOnline && (
+        <div
+          style={{
+            background: "#e0f2fe",
+            border: "1px solid #38bdf8",
+            borderRadius: 6,
+            padding: "0.75rem 1rem",
+            marginBottom: "1rem",
+            fontSize: "0.875rem",
+            color: "#075985",
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+          role="status"
+        >
+          <span style={{ fontSize: "1.1rem" }}>📋</span>
+          <span>
+            You have{" "}
+            <strong>
+              {draftCount} pending offline review{draftCount !== 1 ? "s" : ""}
+            </strong>
+            . Reopen them to submit on-chain.
+          </span>
+        </div>
+      )}
+
       <Link href="/verifier/dashboard" style={{ color: colors.primary[700], fontSize: "0.875rem" }}>
         ← Pending projects
       </Link>
@@ -197,6 +348,31 @@ export default function VerifierProjectReviewPage() {
         </section>
       )}
 
+      <section style={sectionStyle}>
+        <h2 style={h2Style}>Attestation checklist — {project.methodology}</h2>
+        <p style={{ fontSize: "0.8rem", color: colors.neutral[500], marginTop: 0 }}>
+          Every item must be confirmed before an on-chain attestation can be submitted.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+          {checklist.map(item => (
+            <label key={item.key} style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", fontSize: "0.875rem", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={checkedItems.has(item.key)}
+                onChange={() => toggleChecklistItem(item.key)}
+                style={{ marginTop: "0.2rem" }}
+              />
+              <span>{item.label}</span>
+            </label>
+          ))}
+        </div>
+        {!checklistComplete && (
+          <p style={{ fontSize: "0.75rem", color: colors.neutral[500], marginTop: "0.75rem" }}>
+            {checkedItems.size}/{checklist.length} confirmed
+          </p>
+        )}
+      </section>
+
       {txStatus && (
         <div style={{ marginBottom: "1rem" }}>
           <TransactionStatus
@@ -212,9 +388,10 @@ export default function VerifierProjectReviewPage() {
       <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || !checklistComplete}
+          title={!checklistComplete ? "Complete the attestation checklist first" : undefined}
           onClick={() => setPending({ decision: "verify" })}
-          style={{ ...actionBtn, background: "#16a34a" }}
+          style={{ ...actionBtn, background: "#16a34a", opacity: submitting || !checklistComplete ? 0.5 : 1 }}
         >
           Approve
         </button>
@@ -243,7 +420,7 @@ export default function VerifierProjectReviewPage() {
               setRejectReason("");
             }
           }}
-          onConfirm={runOnChainReview}
+          onConfirm={onConfirmReview}
           confirmDisabled={submitting || (pending.decision === "reject" && rejectReason.trim().length < REJECT_MIN_LENGTH)}
         />
       )}

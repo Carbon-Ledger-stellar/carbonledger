@@ -34,7 +34,7 @@ body {
   }
 }
 
-/* Touch target sizing - minimum 44x44px for all interactive elements */
+/* Touch target sizing - minimum 48x48px for all interactive elements (WCAG 2.5.5, issue #1035) */
 button,
 a,
 [role="button"],
@@ -43,8 +43,8 @@ input[type="button"],
 .clickable,
 .nav-link,
 .menu-item {
-  min-height: 44px;
-  min-width: 44px;
+  min-height: 48px;
+  min-width: 48px;
   padding: 12px 16px;
   touch-action: manipulation;
   display: inline-flex;
@@ -226,6 +226,27 @@ input[type="button"],
   border: 0;
 }
 
+/* ESG Dashboard responsive grids */
+.esg-kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+.esg-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .esg-kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .esg-charts-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 /* Skip link */
 .skip-link {
   position: absolute;
@@ -240,4 +261,130 @@ input[type="button"],
 
 .skip-link:focus {
   top: 0;
+}
+
+/* ── Mobile form optimizations (issue #1035) ─────────────────────────────── */
+
+/* Prevent iOS Safari auto-zoom on inputs (16px min font size) */
+@media (max-width: 767px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="number"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="search"],
+  input[type="url"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Mobile-optimized inputs: larger touch targets, better tap area */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    min-height: 48px;
+    padding: 12px 14px;
+    width: 100%;
+    border-radius: 8px;
+  }
+}
+
+/* Form stacking on small screens */
+@media (max-width: 639px) {
+  .form-row {
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+  .form-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+}
+
+/* ── Responsive page padding (issue #1035) ───────────────────────────────── */
+@media (max-width: 639px) {
+  .page-container,
+  [style*="max-width: 1200px"],
+  [style*="max-width: 1100px"],
+  [style*="max-width: 1000px"] {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
+
+/* ── Lazy image utility class (issue #1035) ──────────────────────────────── */
+img.lazy {
+  content-visibility: auto;
+}
+
+/* ── Responsive two-column grid helpers (issue #1035) ───────────────────── */
+.responsive-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+@media (max-width: 639px) {
+  .responsive-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.responsive-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+@media (max-width: 767px) {
+  .responsive-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+@media (min-width: 640px) and (max-width: 1023px) {
+  .responsive-grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ── Mobile hero text scaling (issue #1035) ──────────────────────────────── */
+@media (max-width: 767px) {
+  .hero-title {
+    font-size: 1.75rem !important;
+    line-height: 1.25 !important;
+  }
+  .hero-subtitle {
+    font-size: 1rem !important;
+  }
+}
+
+/* ── Overscroll behaviour for mobile drawers (issue #1035) ───────────────── */
+.drawer-scroll {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Mobile-safe fixed bottom bar (issue #1035) ──────────────────────────── */
+.mobile-bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--color-surface, #fff);
+  border-top: 1px solid var(--color-neutral-200, #e5e7eb);
+  padding: 0.75rem 1rem;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+/* ── Safe-area padding for iPhone notch/home bar (issue #1035) ───────────── */
+@supports (padding: max(0px)) {
+  .mobile-bottom-bar {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+  nav {
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
 }

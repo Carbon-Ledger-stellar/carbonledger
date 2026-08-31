@@ -9,11 +9,13 @@ import { OracleContractClient } from './oracle-contract.client';
 import { PrismaService } from '../prisma.service';
 import { AuthModule } from '../auth/auth.module';
 import { QUEUE_NAME } from '../queue/queue.constants';
+import { PoliciesModule } from '../policies/policies.module';
 
 @Module({
   imports: [
     AuthModule,
     BullModule.registerQueue({ name: QUEUE_NAME }),
+    PoliciesModule,
   ],
   controllers: [OracleController],
   providers: [OracleService, OracleGuard, OracleSyncService, OracleSchedulerService, OracleContractClient, PrismaService],
