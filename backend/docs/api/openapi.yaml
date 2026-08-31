@@ -1,0 +1,2513 @@
+openapi: 3.1.0
+info:
+  title: CarbonLedger API
+  version: 1.0.0
+  description: "Verified carbon credits. Permanent retirement. Full provenance.\n\n\
+    ## Authentication\n- **JWT** (Bearer) \u2014 obtain via `POST /api/v1/auth/verify`.\n\
+    - **API Key** (`X-Api-Key`) \u2014 for public API gateway endpoints.\n\n## Versioning\n\
+    All routes are served under `/api/v1/`.\n\n## CarbonError codes\n| Code | Name\
+    \ |\n|------|------|\n| 1 | ProjectNotFound |\n| 2 | ProjectNotVerified |\n| 3\
+    \ | ProjectSuspended |\n| 4 | InsufficientCredits |\n| 5 | AlreadyRetired |\n\
+    | 6 | SerialNumberConflict |\n| 7 | UnauthorizedVerifier |\n| 8 | UnauthorizedOracle\
+    \ |\n| 9 | InvalidVintageYear |\n| 10 | ListingNotFound |\n| 11 | InsufficientLiquidity\
+    \ |\n| 12 | PriceNotSet |\n| 13 | MonitoringDataStale |\n| 14 | DoubleCountingDetected\
+    \ |\n| 15 | RetirementIrreversible |\n| 16 | ZeroAmountNotAllowed |\n| 17 | ProjectAlreadyExists\
+    \ |\n| 18 | InvalidSerialRange |"
+  contact:
+    name: CarbonLedger
+    url: https://carbonledger.io
+servers:
+- url: https://api.carbonledger.io
+  description: Production
+- url: http://localhost:3001
+  description: Local development
+tags:
+- name: health
+- name: auth
+- name: key-rotation
+- name: projects
+- name: credits
+- name: retirements
+- name: certificates
+- name: marketplace
+- name: oracle
+- name: stats
+- name: queue
+- name: uploads
+- name: audit
+- name: verifiers
+- name: admin
+- name: public-api
+- name: webhooks
+- name: portfolio
+- name: logs
+paths:
+  /api/v1/health:
+    get:
+      tags:
+      - health
+      summary: Service health
+      operationId: health_get_service
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+      security: &id001 []
+  /api/v1/health/pool:
+    get:
+      tags:
+      - health
+      summary: Database pool status
+      operationId: health_get_database
+      responses:
+        '200': &id002
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400': &id003
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401': &id004
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404': &id005
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500': &id006
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: *id001
+  /health:
+    get:
+      tags:
+      - health
+      summary: Liveness probe
+      operationId: health_get_liveness
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /health/ready:
+    get:
+      tags:
+      - health
+      summary: Readiness probe (db/redis/stellar)
+      operationId: health_get_readiness
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /metrics:
+    get:
+      tags:
+      - health
+      summary: Prometheus metrics
+      operationId: health_get_prometheus
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/auth/challenge:
+    get:
+      tags:
+      - auth
+      summary: Get signing challenge
+      operationId: auth_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/auth/verify:
+    post:
+      tags:
+      - auth
+      summary: Verify challenge and obtain tokens
+      operationId: auth_post_verify
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+      security: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginDto'
+            example: {}
+  /api/v1/auth/refresh:
+    post:
+      tags:
+      - auth
+      summary: Refresh access token
+      operationId: auth_post_refresh
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: Logout / revoke refresh token
+      operationId: auth_post_logout
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/key-rotation/oracle:
+    post:
+      tags:
+      - key-rotation
+      summary: Rotate oracle key
+      operationId: key_rotation_post_rotate
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: &id007
+      - bearer: []
+  /api/v1/key-rotation/admin:
+    post:
+      tags:
+      - key-rotation
+      summary: Rotate admin key
+      operationId: key_rotation_post_rotate
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/key-rotation/jwt:
+    post:
+      tags:
+      - key-rotation
+      summary: Rotate JWT signing key
+      operationId: key_rotation_post_rotate
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/key-rotation/{id}:
+    get:
+      tags:
+      - key-rotation
+      summary: Get key rotation by id
+      operationId: key_rotation_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/key-rotation:
+    get:
+      tags:
+      - key-rotation
+      summary: List key rotations
+      operationId: key_rotation_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/projects:
+    get:
+      tags:
+      - projects
+      summary: List projects
+      operationId: projects_get_list
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pagination'
+      security: *id001
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+    post:
+      tags:
+      - projects
+      summary: Create a project (developer/admin)
+      operationId: projects_post_create
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterProjectDto'
+            example: &id008
+              name: Mangrove Restoration
+              country: Kenya
+              methodology: VM001
+              projectType: afforestation
+              vintageYear: 2024
+  /api/v1/projects/search:
+    get:
+      tags:
+      - projects
+      summary: Search projects
+      operationId: projects_get_search
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: name
+        in: query
+        required: false
+        schema:
+          type: string
+  /api/v1/projects/batch-create:
+    post:
+      tags:
+      - projects
+      summary: Batch-create projects
+      operationId: projects_post_batch-create
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: &id009
+      - bearer: []
+  /api/v1/projects/register:
+    post:
+      tags:
+      - projects
+      summary: Register project
+      operationId: projects_post_register
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterProjectDto'
+            example: *id008
+  /api/v1/projects/batch-update-status:
+    post:
+      tags:
+      - projects
+      summary: Batch update project status
+      operationId: projects_post_batch
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/projects/{id}:
+    get:
+      tags:
+      - projects
+      summary: Get project by id
+      operationId: projects_get_get
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+      security: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/projects/{id}/status:
+    patch:
+      tags:
+      - projects
+      summary: Update project status
+      operationId: projects_patch_update
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectStatusDto'
+            example: {}
+  /api/v1/projects/{id}/verify:
+    post:
+      tags:
+      - projects
+      summary: Verify project
+      operationId: projects_post_verify
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/projects/{id}/reject:
+    post:
+      tags:
+      - projects
+      summary: Reject project
+      operationId: projects_post_reject
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/public/projects:
+    get:
+      tags:
+      - projects
+      summary: List public approved projects
+      operationId: projects_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/credits/project/{projectId}/batches:
+    get:
+      tags:
+      - credits
+      summary: List credit batches for project
+      operationId: credits_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/credits/batch/{id}:
+    get:
+      tags:
+      - credits
+      summary: Get credit batch
+      operationId: credits_get_get
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditBatch'
+      security: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/credits/retirement/{id}:
+    get:
+      tags:
+      - credits
+      summary: Get retirement record
+      operationId: credits_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/credits/lookup/{serial}:
+    get:
+      tags:
+      - credits
+      summary: Lookup credit by serial number
+      operationId: credits_get_lookup
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: serial
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/credits/provenance/{serial}:
+    get:
+      tags:
+      - credits
+      summary: Get credit provenance trail
+      operationId: credits_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: serial
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/credits/mint:
+    post:
+      tags:
+      - credits
+      summary: Mint credits
+      operationId: credits_post_mint
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MintCreditsDto'
+            example:
+              projectId: proj_123
+              amount: 100
+              vintageYear: 2024
+  /api/v1/credits/batch-mint:
+    post:
+      tags:
+      - credits
+      summary: Batch mint credits
+      operationId: credits_post_batch
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/credits/retire:
+    post:
+      tags:
+      - credits
+      summary: Retire credits
+      operationId: credits_post_retire
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetireCreditsDto'
+            example: &id010
+              batchId: batch_abc
+              amount: 5
+              beneficiary: Acme Corp
+              purpose: offset
+  /api/v1/credits/batch-retire:
+    post:
+      tags:
+      - credits
+      summary: Batch retire credits
+      operationId: credits_post_batch
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/credits/bulk-retire:
+    post:
+      tags:
+      - credits
+      summary: Bulk retire credits (alias)
+      operationId: credits_post_bulk
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/retirements:
+    get:
+      tags:
+      - retirements
+      summary: List retirements (admin)
+      operationId: retirements_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+    post:
+      tags:
+      - retirements
+      summary: Create retirement
+      operationId: retirements_post_create
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetireCreditsDto'
+            example: *id010
+  /api/v1/retirements/search:
+    get:
+      tags:
+      - retirements
+      summary: Search retirements
+      operationId: retirements_get_search
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: beneficiary
+        in: query
+        required: false
+        schema:
+          type: string
+  /api/v1/retirements/bulk:
+    post:
+      tags:
+      - retirements
+      summary: Bulk retirement (async)
+      operationId: retirements_post_bulk
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/retirements/bulk/csv:
+    post:
+      tags:
+      - retirements
+      summary: Upload bulk retirement CSV (async)
+      operationId: retirements_post_upload
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/retirements/bulk/csv/{jobId}/status:
+    get:
+      tags:
+      - retirements
+      summary: Check bulk CSV job status
+      operationId: retirements_get_check
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/retirements/{id}/certificate-status:
+    get:
+      tags:
+      - retirements
+      summary: Certificate generation status
+      operationId: retirements_get_certificate
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/retirements/{id}:
+    get:
+      tags:
+      - retirements
+      summary: Get retirement by id
+      operationId: retirements_get_get
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetirementRecord'
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/retirements/{id}/certificate:
+    get:
+      tags:
+      - retirements
+      summary: Get retirement certificate
+      operationId: retirements_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/retirements/generate-pdf:
+    post:
+      tags:
+      - retirements
+      summary: Generate retirement PDF certificate
+      operationId: retirements_post_generate
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/retirements/export/csv:
+    get:
+      tags:
+      - retirements
+      summary: Export retirements as CSV
+      operationId: retirements_get_export
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/retirements/export/pdf:
+    get:
+      tags:
+      - retirements
+      summary: Export retirements as PDF
+      operationId: retirements_get_export
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/retirements/verify-integrity:
+    post:
+      tags:
+      - retirements
+      summary: Verify credit integrity proof
+      operationId: retirements_post_verify
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/retirements/verify-signature:
+    post:
+      tags:
+      - retirements
+      summary: Verify retirement signature
+      operationId: retirements_post_verify
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/retirements/{id}/zk-proof:
+    get:
+      tags:
+      - retirements
+      summary: Get zk-proof for retirement
+      operationId: retirements_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    post:
+      tags:
+      - retirements
+      summary: Submit zk-proof for retirement
+      operationId: retirements_post_submit
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/certificates/{retirementId}:
+    get:
+      tags:
+      - certificates
+      summary: Get certificate by retirement
+      operationId: certificates_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: retirementId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/certificates/{retirementId}/pdf:
+    get:
+      tags:
+      - certificates
+      summary: Download certificate PDF
+      operationId: certificates_get_download
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: retirementId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/certificates/{retirementId}/status:
+    get:
+      tags:
+      - certificates
+      summary: Certificate status
+      operationId: certificates_get_certificate
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: retirementId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/certificates/{cid}/verify:
+    get:
+      tags:
+      - certificates
+      summary: Verify certificate by cid
+      operationId: certificates_get_verify
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: cid
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/marketplace/listings:
+    get:
+      tags:
+      - marketplace
+      summary: List marketplace listings
+      operationId: marketplace_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+    post:
+      tags:
+      - marketplace
+      summary: Create listing
+      operationId: marketplace_post_create
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateListingDto'
+            example:
+              batchId: batch_abc
+              pricePerCredit: '12.50'
+              amount: 10
+  /api/v1/marketplace/listings/search:
+    get:
+      tags:
+      - marketplace
+      summary: Search listings
+      operationId: marketplace_get_search
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+  /api/v1/marketplace/listings/{id}:
+    get:
+      tags:
+      - marketplace
+      summary: Get listing
+      operationId: marketplace_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+      - marketplace
+      summary: Remove listing
+      operationId: marketplace_delete_remove
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/marketplace/listings/batch:
+    post:
+      tags:
+      - marketplace
+      summary: Batch create listings
+      operationId: marketplace_post_batch
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/marketplace/purchase:
+    post:
+      tags:
+      - marketplace
+      summary: Purchase credits
+      operationId: marketplace_post_purchase
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseDto'
+            example:
+              listingId: listing_xyz
+              amount: 2
+  /api/v1/marketplace/bulk-purchase:
+    post:
+      tags:
+      - marketplace
+      summary: Bulk purchase
+      operationId: marketplace_post_bulk
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/oracle/status/{projectId}:
+    get:
+      tags:
+      - oracle
+      summary: Oracle status for project
+      operationId: oracle_get_oracle
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/oracle/services/health:
+    get:
+      tags:
+      - oracle
+      summary: Oracle services health
+      operationId: oracle_get_oracle
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/oracle/ingest/monitoring:
+    post:
+      tags:
+      - oracle
+      summary: Ingest monitoring data (oracle)
+      operationId: oracle_post_ingest
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: &id011
+      - X-Api-Key: []
+  /api/v1/oracle/ingest/batch-monitoring:
+    post:
+      tags:
+      - oracle
+      summary: Ingest batch monitoring (oracle)
+      operationId: oracle_post_ingest
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id011
+  /api/v1/oracle/ingest/price:
+    post:
+      tags:
+      - oracle
+      summary: Ingest price (oracle)
+      operationId: oracle_post_ingest
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id011
+  /api/v1/oracle/ingest/batch-price:
+    post:
+      tags:
+      - oracle
+      summary: Ingest batch price (oracle)
+      operationId: oracle_post_ingest
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id011
+  /api/v1/oracle/ingest/flag:
+    post:
+      tags:
+      - oracle
+      summary: Flag project (oracle)
+      operationId: oracle_post_flag
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id011
+  /api/v1/oracle/price-approvals/hold:
+    post:
+      tags:
+      - oracle
+      summary: Hold price approval (admin)
+      operationId: oracle_post_hold
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/oracle/price-approvals:
+    get:
+      tags:
+      - oracle
+      summary: List price approvals (admin)
+      operationId: oracle_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/oracle/price-approvals/{id}/approve:
+    post:
+      tags:
+      - oracle
+      summary: Approve price (admin)
+      operationId: oracle_post_approve
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/oracle/price-approvals/{id}/reject:
+    post:
+      tags:
+      - oracle
+      summary: Reject price (admin)
+      operationId: oracle_post_reject
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/stats:
+    get:
+      tags:
+      - stats
+      summary: Global stats
+      operationId: stats_get_global
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/stats/aggregate:
+    get:
+      tags:
+      - stats
+      summary: Aggregate stats
+      operationId: stats_get_aggregate
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/stats/cache:
+    get:
+      tags:
+      - stats
+      summary: Cache stats
+      operationId: stats_get_cache
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/stats/leaderboard:
+    get:
+      tags:
+      - stats
+      summary: Leaderboard
+      operationId: stats_get_leaderboard
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/queue/jobs:
+    post:
+      tags:
+      - queue
+      summary: Enqueue job (admin)
+      operationId: queue_post_enqueue
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnqueueJobDto'
+            example: {}
+  /api/v1/queue/jobs/{id}:
+    get:
+      tags:
+      - queue
+      summary: Get job by id
+      operationId: queue_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/queue/stats:
+    get:
+      tags:
+      - queue
+      summary: Queue stats (admin)
+      operationId: queue_get_queue
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/uploads/project/{projectId}/documents:
+    post:
+      tags:
+      - uploads
+      summary: Upload project documents
+      operationId: uploads_post_upload
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/uploads/certificate/{retirementId}/certificate:
+    post:
+      tags:
+      - uploads
+      summary: Upload certificate
+      operationId: uploads_post_upload
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: retirementId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/uploads/webhook/pinata:
+    post:
+      tags:
+      - uploads
+      summary: Pinata webhook callback
+      operationId: uploads_post_pinata
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/uploads/files:
+    get:
+      tags:
+      - uploads
+      summary: List uploaded files (admin)
+      operationId: uploads_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/uploads/files/{cid}:
+    get:
+      tags:
+      - uploads
+      summary: Get uploaded file by cid
+      operationId: uploads_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: cid
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/audit:
+    get:
+      tags:
+      - audit
+      summary: List audit records (admin)
+      operationId: audit_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/audit/verify:
+    get:
+      tags:
+      - audit
+      summary: Verify audit trail (admin)
+      operationId: audit_get_verify
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/verifiers/apply:
+    post:
+      tags:
+      - verifiers
+      summary: Apply to be a verifier
+      operationId: verifiers_post_apply
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/verifiers:
+    get:
+      tags:
+      - verifiers
+      summary: List verifiers (admin)
+      operationId: verifiers_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+  /api/v1/verifiers/{id}:
+    get:
+      tags:
+      - verifiers
+      summary: Get verifier
+      operationId: verifiers_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/verifiers/{id}/review:
+    patch:
+      tags:
+      - verifiers
+      summary: Review verifier application (admin)
+      operationId: verifiers_patch_review
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/verifiers/{publicKey}/pending-projects:
+    get:
+      tags:
+      - verifiers
+      summary: Pending projects for verifier
+      operationId: verifiers_get_pending
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: publicKey
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/verifiers/{publicKey}/history:
+    get:
+      tags:
+      - verifiers
+      summary: Verification history
+      operationId: verifiers_get_verification
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: publicKey
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/verifiers/{publicKey}/fees:
+    get:
+      tags:
+      - verifiers
+      summary: Verifier fees
+      operationId: verifiers_get_verifier
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: publicKey
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/verifiers/{publicKey}/fees/export:
+    get:
+      tags:
+      - verifiers
+      summary: Export verifier fees (CSV)
+      operationId: verifiers_get_export
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: publicKey
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/users/{publicKey}/role:
+    post:
+      tags:
+      - admin
+      summary: Set user role (admin)
+      operationId: admin_post_set
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: publicKey
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/verifiers:
+    get:
+      tags:
+      - admin
+      summary: List verifiers (admin)
+      operationId: admin_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+    post:
+      tags:
+      - admin
+      summary: Create verifier (admin)
+      operationId: admin_post_create
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+    delete:
+      tags:
+      - admin
+      summary: Delete verifier (admin)
+      operationId: admin_delete_delete
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/verifiers/{address}:
+    delete:
+      tags:
+      - admin
+      summary: Delete verifier by address
+      operationId: admin_delete_delete
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: address
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/treasury:
+    get:
+      tags:
+      - admin
+      summary: Get treasury (admin)
+      operationId: admin_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+    post:
+      tags:
+      - admin
+      summary: Update treasury (admin)
+      operationId: admin_post_update
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/oracle/health:
+    get:
+      tags:
+      - admin
+      summary: Oracle health (admin)
+      operationId: admin_get_oracle
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/reindex:
+    post:
+      tags:
+      - admin
+      summary: Trigger reindex (admin)
+      operationId: admin_post_trigger
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/projects/{projectId}:
+    delete:
+      tags:
+      - admin
+      summary: Soft-delete project (admin)
+      operationId: admin_delete_soft-delete
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/projects/{projectId}/restore:
+    post:
+      tags:
+      - admin
+      summary: Restore project (admin)
+      operationId: admin_post_restore
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/credits/{batchId}:
+    delete:
+      tags:
+      - admin
+      summary: Soft-delete credit batch (admin)
+      operationId: admin_delete_soft-delete
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: batchId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/credits/{batchId}/restore:
+    post:
+      tags:
+      - admin
+      summary: Restore credit batch (admin)
+      operationId: admin_post_restore
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: batchId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/retirements/{retirementId}:
+    delete:
+      tags:
+      - admin
+      summary: Soft-delete retirement (admin)
+      operationId: admin_delete_soft-delete
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: retirementId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/retirements/{retirementId}/restore:
+    post:
+      tags:
+      - admin
+      summary: Restore retirement (admin)
+      operationId: admin_post_restore
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: retirementId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/purge:
+    delete:
+      tags:
+      - admin
+      summary: Purge soft-deleted records (admin)
+      operationId: admin_delete_purge
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/audit-logs:
+    get:
+      tags:
+      - admin
+      summary: List audit logs (admin)
+      operationId: admin_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/abuse-log:
+    get:
+      tags:
+      - admin
+      summary: List abuse log (admin)
+      operationId: admin_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/satellite/quarantine:
+    get:
+      tags:
+      - admin
+      summary: List quarantined records (admin)
+      operationId: admin_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/satellite/quarantine/depth:
+    get:
+      tags:
+      - admin
+      summary: Quarantine depth (admin)
+      operationId: admin_get_quarantine
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/admin/satellite/quarantine/{id}:
+    get:
+      tags:
+      - admin
+      summary: Get quarantined record (admin)
+      operationId: admin_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/admin/satellite/quarantine/{id}/review:
+    post:
+      tags:
+      - admin
+      summary: Review quarantined record (admin)
+      operationId: admin_post_review
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/v1/projects:
+    get:
+      tags:
+      - public-api
+      summary: 'Public: list projects'
+      operationId: 'public_api_get_public:'
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id011
+  /api/v1/v1/credits/batch/{batchId}:
+    get:
+      tags:
+      - public-api
+      summary: 'Public: credit batch'
+      operationId: 'public_api_get_public:'
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id011
+      parameters:
+      - name: batchId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/v1/certificates/{retirementId}:
+    get:
+      tags:
+      - public-api
+      summary: 'Public: certificate'
+      operationId: 'public_api_get_public:'
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id011
+      parameters:
+      - name: retirementId
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/v1/api-keys:
+    post:
+      tags:
+      - public-api
+      summary: Provision API key
+      operationId: public_api_post_provision
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/public/serial/{number}:
+    get:
+      tags:
+      - public-api
+      summary: Public serial lookup
+      operationId: public_api_get_public
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+      parameters:
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/public/serials:
+    post:
+      tags:
+      - public-api
+      summary: Bulk public serial lookup
+      operationId: public_api_post_bulk
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id001
+  /api/v1/webhooks:
+    get:
+      tags:
+      - webhooks
+      summary: List webhooks
+      operationId: webhooks_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+    post:
+      tags:
+      - webhooks
+      summary: Register webhook
+      operationId: webhooks_post_register
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/webhooks/deliveries:
+    get:
+      tags:
+      - webhooks
+      summary: List deliveries (admin)
+      operationId: webhooks_get_list
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+  /api/v1/webhooks/{id}:
+    get:
+      tags:
+      - webhooks
+      summary: Get webhook
+      operationId: webhooks_get_get
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      tags:
+      - webhooks
+      summary: Delete webhook
+      operationId: webhooks_delete_delete
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/webhooks/{id}/logs:
+    get:
+      tags:
+      - webhooks
+      summary: Webhook delivery logs
+      operationId: webhooks_get_webhook
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/v1/portfolio/metrics:
+    get:
+      tags:
+      - portfolio
+      summary: Portfolio metrics
+      operationId: portfolio_get_portfolio
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/portfolio/refresh-views:
+    get:
+      tags:
+      - portfolio
+      summary: Refresh portfolio views
+      operationId: portfolio_get_refresh
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id007
+  /api/v1/logs:
+    post:
+      tags:
+      - logs
+      summary: Ingest client log (204)
+      operationId: logs_post_ingest
+      responses:
+        '204':
+          description: No content
+      security: *id001
+  /api/v1/logs/by-correlation-id:
+    get:
+      tags:
+      - logs
+      summary: Logs by correlation id (admin)
+      operationId: logs_get_logs
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+      parameters:
+      - name: correlationId
+        in: query
+        required: true
+        schema:
+          type: string
+  /api/v1/observability/metrics:
+    get:
+      tags:
+      - logs
+      summary: Observability metrics
+      operationId: logs_get_observability
+      responses:
+        '200': *id002
+        '400': *id003
+        '401': *id004
+        '404': *id005
+        '500': *id006
+      security: *id009
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    X-Api-Key:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+  schemas:
+    Ok:
+      type: object
+      description: Generic success payload. Shape varies per endpoint.
+      additionalProperties: true
+    Error:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          properties:
+            code:
+              type: integer
+              description: Machine-readable CarbonError code
+            name:
+              type: string
+            message:
+              type: string
+      examples:
+        notFound:
+          value:
+            error:
+              code: 1
+              name: ProjectNotFound
+              message: Project does not exist
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - degraded
+        checks:
+          type: object
+          additionalProperties:
+            type:
+            - string
+            - object
+        timestamp:
+          type: string
+          format: date-time
+    Pagination:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+        name:
+          type: string
+        country:
+          type: string
+        methodology:
+          type: string
+        methodologyScore:
+          type: number
+        projectType:
+          type: string
+        vintageYear:
+          type: integer
+        status:
+          type: string
+          enum:
+          - pending
+          - verified
+          - suspended
+          - rejected
+        metadataCid:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    CreditBatch:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        batchId:
+          type: string
+        serialNumber:
+          type: string
+        projectId:
+          type: string
+        amount:
+          type: string
+        status:
+          type: string
+          enum:
+          - minted
+          - retired
+        createdAt:
+          type: string
+          format: date-time
+    RetirementRecord:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        retirementId:
+          type: string
+        batchId:
+          type: string
+        amount:
+          type: string
+        beneficiary:
+          type: string
+        status:
+          type: string
+        certificateCid:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    ApiKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    LoginDto:
+      type: object
+      required:
+      - publicKey
+      - signature
+      properties:
+        publicKey:
+          type: string
+          description: Stellar public key
+        signature:
+          type: string
+          description: Stellar signature of the challenge
+    RegisterProjectDto:
+      type: object
+      properties:
+        name:
+          type: string
+        country:
+          type: string
+        methodology:
+          type: string
+        projectType:
+          type: string
+        vintageYear:
+          type: integer
+    MintCreditsDto:
+      type: object
+      properties:
+        projectId:
+          type: string
+        amount:
+          type: integer
+        vintageYear:
+          type: integer
+    RetireCreditsDto:
+      type: object
+      properties:
+        batchId:
+          type: string
+        amount:
+          type: integer
+        beneficiary:
+          type: string
+        purpose:
+          type: string
+    CreateListingDto:
+      type: object
+      properties:
+        batchId:
+          type: string
+        pricePerCredit:
+          type: string
+        amount:
+          type: integer
+    PurchaseDto:
+      type: object
+      properties:
+        listingId:
+          type: string
+        amount:
+          type: integer
+    UpdateProjectStatusDto:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - pending
+          - verified
+          - suspended
+          - rejected
+    EnqueueJobDto:
+      type: object
+      properties:
+        queue:
+          type: string
+        name:
+          type: string
+        data:
+          type: object

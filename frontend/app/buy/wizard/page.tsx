@@ -1,9 +1,28 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useListings } from "../../../lib/api";
-import BulkPurchaseWizard from "../../../components/BulkPurchaseWizard";
 import { colors } from "../../../styles/design-system";
+
+// BulkPurchaseWizard (32KB) is a multi-step wizard — lazy-load it so the
+// page shell and loading indicator appear immediately on navigation.
+const BulkPurchaseWizard = dynamic(
+  () => import("../../../components/BulkPurchaseWizard"),
+  {
+    loading: () => (
+      <div
+        style={{
+          padding: "4rem",
+          textAlign: "center",
+          color: colors.neutral[400],
+        }}
+      >
+        Loading wizard…
+      </div>
+    ),
+  }
+);
 
 export default function BulkWizardPage() {
   const router = useRouter();

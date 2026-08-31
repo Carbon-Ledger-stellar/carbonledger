@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Header, Res, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, Header, Res, BadRequestException, Request } from '@nestjs/common';
 import { Response } from 'express';
 import {
   OracleService,
@@ -15,6 +15,7 @@ import { OracleSchedulerService } from './oracle-scheduler.service';
 import { OracleGuard } from './oracle.guard';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, OracleDataSubject } from '../policies';
+import { SubmitMonitoringDataDto } from './monitoring.dto';
 
 /** Cache TTL for the services health endpoint (30 seconds). */
 const HEALTH_CACHE_TTL_S = 30;
@@ -98,6 +99,17 @@ export class OracleController {
   @UseGuards(OracleGuard)
   flagProject(@Body() dto: FlagProjectDto) {
     return this.oracleService.flagProject(dto);
+  }
+
+  // ── Verifier-facing monitoring submission ─────────────────────────────────
+  // JWT-authenticated; requires role=verifier.  Distinct from the oracle-
+  // keypair ingest endpoint: enforces strict duplicate rejection and timestamp
+  // freshness checks suitable for human-submitted satellite data.
+
+  @Post('monitoring')
+  @Roles('verifier')
+  async submitMonitoringData(@Body() dto: SubmitMonitoringDataDto, @Request() req: any) {
+    return this.oracleService.submitMonitoringData(dto, req.user.publicKey);
   }
 
   // ── Admin: price approval workflow ───────────────────────────────────────

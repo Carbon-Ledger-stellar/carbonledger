@@ -16,11 +16,14 @@ export interface FilterState {
   search:       string;
   /** "true" when the "Available now" checkbox is checked, "" otherwise (kept as a string like the other fields for URL-param round-tripping). */
   availableOnly: string;
+  /** Comma-separated verifier names when multi-select verifier chip filter is active, "" otherwise. */
+  verifiers: string;
 }
 
 export const EMPTY_FILTERS: FilterState = {
   methodology: "", vintageYear: "", country: "",
   minPrice: "", maxPrice: "", projectType: "", search: "", availableOnly: "",
+  verifiers: "",
 };
 
 export function filtersFromParams(params: URLSearchParams): FilterState {
@@ -33,6 +36,7 @@ export function filtersFromParams(params: URLSearchParams): FilterState {
     projectType: params.get("projectType")  ?? "",
     search:      params.get("search")       ?? "",
     availableOnly: params.get("availableOnly") ?? "",
+    verifiers:   params.get("verifiers")    ?? "",
   };
 }
 

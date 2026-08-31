@@ -1,223 +1,267 @@
-# Implementation Summary: DR, E2E Testing & Performance Optimization
-
-**Branch:** `feature/dr-testing-performance`  
-**Status:** ✅ Complete  
-**Date:** August 28, 2026
-
----
+# Issue #1014: Project Registration with Document Upload - Implementation Summary
 
 ## Overview
 
-Successfully implemented three critical initiatives for the Carbon Ledger platform:
+Successfully implemented multipart form-based project registration endpoint with verification document upload capability for Carbon Ledger. Documents are validated, stored in IPFS via Pinata, and linked in the database.
 
-1. **Disaster Recovery Plan** - Formal RTO/RPO targets with tested failover procedures
-2. **End-to-End Integration Testing** - Complete user journey tests with test database
-3. **Query Performance Optimization** - Prisma middleware caching for 40%+ improvement
+## Acceptance Criteria - All Met ✓
 
----
+| Criteria | Status | Details |
+|----------|--------|---------|
+| Multipart form parsing implemented | ✓ | `FileInterceptor('verification_documents')` in controller |
+| File type validation (PDF, PNG only) | ✓ | Validated at controller and service layers |
+| File size limit 10 MB | ✓ | Enforced at service layer (10 * 1024 * 1024 bytes) |
+| Cloud storage link returned and saved in DB | ✓ | CID returned in response, stored in CarbonProject.metadataCid |
+| Tests cover valid/invalid file types and sizes | ✓ | 20+ test cases covering all scenarios |
 
-## Task 1: Disaster Recovery (Complete ✅)
+## Implementation Details
 
-### Documents Created
+### Files Created/Modified
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `docs/DISASTER_RECOVERY_PLAN.md` | Comprehensive DR strategy with RTO/RPO targets | ✅ Complete |
-| `docs/INCIDENT_RESPONSE.md` | Incident response procedures and escalation | ✅ Complete |
-| `docs/FAILOVER_RUNBOOKS.md` | Detailed step-by-step failover procedures | ✅ Complete |
-| `docs/DR_TESTING_SCHEDULE.md` | Quarterly testing schedule with procedures | ✅ Complete |
-| `docs/FAILOVER_CHECKLIST.md` | Quick reference operational checklist | ✅ Complete |
+#### 1. **Backend Files**
 
-### Key Targets Established
+**Modified Files:**
+- `backend/src/projects/projects.controller.ts`
+  - Added imports: `FileInterceptor`, `UploadedFile`, `UseInterceptors`
+  - Added new endpoint: `POST /projects/register-with-documents`
+  - Decorators: `@UseInterceptors(FileInterceptor('verification_documents'))`
 
-- **RTO (Recovery Time Objective):** < 1 hour (aggregate)
-  - Database failover: < 15 minutes
-  - Cache failover: < 5 minutes
-  - API recovery: < 10 minutes
-  
-- **RPO (Recovery Point Objective):** < 30 minutes
-  - Database backup: 5-minute RPO with WAL archiving
-  - PITR available for 7 days
+- `backend/src/projects/projects.dto.ts`
+  - Added new DTO: `RegisterProjectWithDocumentsDto`
+  - Includes validation for all project fields plus document handling
 
-### Failover Procedures Documented
+- `backend/src/projects/projects.service.ts`
+  - Added import: `IpfsUploadService`, `HttpException`, `HttpStatus`
+  - Added constructor dependency: `IpfsUploadService`
+  - Added method: `async registerWithDocuments(dto, file, ownerAddress?)`
+  - File validation: type (PDF/PNG), size (≤10MB)
+  - Project creation with document CID as metadata
 
-1. **Database Failover** (15 min)
-   - Primary to read replica promotion
-   - Connection pool updates
-   - Data consistency verification
+- `backend/src/projects/projects.module.ts`
+  - Added import: `UploadsModule`
+  - Included in module imports for dependency injection
 
-2. **Redis Cache Failover** (2-5 min)
-   - Sentinel promotion (or manual)
-   - Connection string updates
-   - Cache warming
+#### New Files:
+- `backend/test/projects-register-documents.e2e-spec.ts`
+  - Comprehensive e2e test suite (20+ test cases)
+  - Tests valid uploads, file validation, size limits
+  - Tests authentication, authorization, data validation
+  - Tests database integrity and IPFS integration
 
-3. **API Backend Recovery** (2-5 min)
-   - Pod restart/rollout
-   - Feature flag rollback
-   - Emergency deployment
+- `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md`
+  - Complete API documentation
+  - Request/response examples
+  - Usage examples (cURL, JavaScript, Python)
+  - Troubleshooting guide
 
-4. **Frontend Failover** (5-15 min)
-   - CDN edge failover (automatic)
-   - DNS secondary CDN failover
-   - Cache purging
+### Architecture
 
-5. **Stellar Account Recovery** (5-30 min)
-   - Key compromise response
-   - Signer revocation
-   - Key rotation procedures
-
-6. **Network Failover** (5-15 min)
-   - BGP failover procedures
-   - DNS failover
-   - ISP circuit switching
-
-### Testing Schedule
-
-**Q1 2026:** Database Failover Test (March 15)
-**Q2 2026:** Full System Failover (June 10)
-**Q3 2026:** Data Integrity & PITR (September 5)
-**Q4 2026:** Full Production Simulation (December 8)
-
----
-
-## Task 2: End-to-End Integration Testing (Complete ✅)
-
-### Test Infrastructure Created
-
-| File | Purpose | Status |
-|------|---------|--------|
-| `backend/test/e2e/setup.ts` | Test database initialization & fixtures | ✅ Complete |
-| `backend/test/e2e/user-journeys.spec.ts` | Complete user workflow tests | ✅ Complete |
-| `.github/workflows/e2e-tests.yml` | CI/CD pipeline for E2E tests | ✅ Complete |
-
-### Test Coverage
-
-**Project Registration Flow**
-- ✅ Project creation with validation
-- ✅ Verifier approval workflow
-- ✅ Status transitions
-- ✅ Audit logging
-
-**Credit Lifecycle Flow**
-- ✅ Credit minting (admin only)
-- ✅ Batch creation and retrieval
-- ✅ Credit retirement
-- ✅ Bulk operations
-- ✅ Database state verification
-
-**Error Scenarios**
-- ✅ Authorization failures
-- ✅ Invalid input validation
-- ✅ Resource not found
-- ✅ Insufficient credits
-- ✅ Over-retirement prevention
-
-**Performance & Concurrency**
-- ✅ Response time assertions
-- ✅ Concurrent request handling
-- ✅ Query performance validation
-
-### CI/CD Integration
-
-```yaml
-# Automated on every PR
-- E2E tests run in isolated Docker environment
-- PostgreSQL test database provisioned
-- Redis cache for testing
-- Results uploaded to Codecov
-- Failure screenshots captured
-- Performance metrics tracked
+#### Request Flow
+```
+1. Client submits multipart form with project data + file
+   ↓
+2. NestJS FileInterceptor extracts file into Express.Multer.File
+   ↓
+3. RolesGuard validates JWT and sets req.user
+   ↓
+4. PoliciesGuard validates CASL permissions
+   ↓
+5. Controller receives: DTO (form fields) + File (binary)
+   ↓
+6. Service layer validation:
+   - File type check (PDF/PNG only)
+   - File size check (≤10MB)
+   - DTO sanitization
+   - Duplicate projectId check
+   - Methodology score check (≥70)
+   ↓
+7. IPFS upload via IpfsUploadService:
+   - Upload to Pinata
+   - Receive CID
+   - Create IPFSFile record
+   ↓
+8. Create CarbonProject record with CID as metadataCid
+   ↓
+9. Return project + document metadata with gateway URL
 ```
 
-### Test Execution
+### Key Features
 
+#### File Validation
+- **Type Validation**: Only `application/pdf` and `image/png` MIME types accepted
+- **Size Validation**: Maximum 10 MB enforced
+- **Both layers**: Validation at controller message parsing and service logic
+
+#### Error Handling
+- **400 Bad Request**: Invalid file type, missing file, validation failures
+- **409 Conflict**: Duplicate projectId, low methodology score
+- **413 Payload Too Large**: File exceeds 10 MB
+- **401 Unauthorized**: Missing/invalid JWT
+- **403 Forbidden**: Insufficient role permissions
+- **500 Internal Server Error**: IPFS upload failures
+
+#### Security
+- File type MIME validation
+- File size limits prevent storage exhaustion
+- Data sanitization via `sanitizeProjectPayload()`
+- Stellar address validation (IsStellarAddress decorator)
+- Role-based access control (project_developer, admin only)
+- Resource scoping via CASL policies
+- Token blacklist checking
+
+#### Response Format
+Follows CarbonLedger standard response envelope:
+```json
+{
+  "success": true,
+  "message": "Project registered successfully...",
+  "data": {
+    "projectId": "...",
+    "id": "...",
+    "name": "...",
+    "status": "Pending",
+    "document": {
+      "id": "...",
+      "cid": "Qm...",
+      "fileName": "...",
+      "fileType": "application/pdf",
+      "fileSize": 1024000,
+      "pinStatus": "pending",
+      "uploadedAt": "2026-08-30T10:00:00Z",
+      "ipfsGatewayUrl": "https://gateway.pinata.cloud/ipfs/Qm..."
+    }
+  }
+}
+```
+
+### Database Schema
+
+#### CarbonProject Record
+- `projectId`: Unique identifier provided by client
+- `name`, `description`, `methodology`, `country`, `projectType`: Project metadata
+- `ownerAddress`, `verifierAddress`: Stellar public keys
+- `vintageYear`, `methodologyScore`: Project parameters
+- **`metadataCid`**: IPFS CID of verification document (NEW)
+- `status`: Set to 'Pending' for new registrations
+- `createdAt`, `updatedAt`: Timestamps
+
+#### IPFSFile Record (linked)
+- `cid`: IPFS content hash
+- `fileName`: Original filename
+- `fileType`: MIME type (application/pdf or image/png)
+- `fileSize`: Size in bytes
+- `pinStatus`: 'pending' | 'pinned' | 'failed'
+- `linkedEntityType`: 'project'
+- `linkedEntityId`: projectId
+- `uploadedAt`, `pinnedAt`: Timestamps
+
+### Testing
+
+#### Test File: `backend/test/projects-register-documents.e2e-spec.ts`
+
+**Test Coverage: 20+ test cases**
+
+**Happy Path (3 tests)**
+- ✓ Valid PDF upload with all required fields
+- ✓ Valid PNG upload
+- ✓ IPFS gateway URL format validation
+- ✓ Admin role support
+
+**File Validation (5 tests)**
+- ✓ Rejects request without file
+- ✓ Rejects invalid file type (text/plain)
+- ✓ Rejects unsupported type (DOCX)
+- ✓ Rejects unsupported type (JPEG)
+- ✓ Rejects missing file
+
+**File Size Validation (3 tests)**
+- ✓ Rejects file exceeding 10MB
+- ✓ Accepts file at exactly 10MB
+- ✓ Accepts file just under 10MB
+
+**Project Data Validation (3 tests)**
+- ✓ Rejects duplicate projectId
+- ✓ Rejects methodology score below 70
+- ✓ Validates all Stellar address formats
+
+**Authentication & Authorization (2 tests)**
+- ✓ Requires authentication (401 without token)
+- ✓ Restricts to project_developer and admin roles (403 for other roles)
+
+**Database Integrity (2 tests)**
+- ✓ Saves project in database with document link
+- ✓ Document CID matches returned value and is stored in project
+
+**Error Response Validation**
+- ✓ All error responses follow standard format
+- ✓ Error messages are actionable and descriptive
+- ✓ HTTP status codes are semantically correct
+
+#### Running Tests
 ```bash
-npm run test:e2e                  # Run all E2E tests
-npm run test:e2e:watch          # Watch mode
-npm run test:integration:ci     # CI mode with JUnit output
+# Run all project registration document tests
+npm run test:e2e -- projects-register-documents
+
+# Run with coverage
+npm run test:e2e -- projects-register-documents --coverage
+
+# Run specific test
+npm run test:e2e -- projects-register-documents -t "happy"
 ```
 
----
+## Endpoint Specification
 
-## Task 3: Query Performance Optimization (Complete ✅)
+### POST /projects/register-with-documents
 
-### Caching Implementation
+**Authentication**: Required (Bearer JWT)
+**Roles**: project_developer, admin
+**RBAC**: Scoped by CASL policies
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `backend/src/cache/cache-invalidation.ts` | Automatic cache invalidation service | ✅ Complete |
-| `backend/src/config/cache.config.ts` | Cache configuration management | ✅ Complete |
-| `backend/src/monitoring/cache-metrics.ts` | Cache performance metrics collection | ✅ Complete |
-| `.github/workflows/cache-performance-test.yml` | Cache performance testing | ✅ Complete |
-| `backend/docs/QUERY_CACHING.md` | Comprehensive caching guide | ✅ Complete |
+**Request**:
+```
+Method: POST
+Path: /projects/register-with-documents
+Content-Type: multipart/form-data
+Authorization: Bearer {jwt_token}
 
-### Caching Architecture
+Form Fields:
+- projectId (string, 1-64 chars, required)
+- name (string, 1-128 chars, required)
+- description (string, 0-1024 chars, optional)
+- methodology (string, 1-64 chars, required)
+- country (string, 1-64 chars, required)
+- projectType (string, 1-64 chars, required)
+- verifierAddress (string, valid Stellar address, required)
+- ownerAddress (string, valid Stellar address, required)
+- vintageYear (number, 1990-current+1, required)
+- methodologyScore (number, 0-100 min 70, required)
 
-**Middleware Layers:**
-1. **Connection Pool Metrics** - Tracks active queries, pool health
-2. **Prisma Cache Middleware** - Automatic query result caching
-
-**Cache Configuration:**
-- **Default TTL:** 5 minutes (configurable)
-- **Cacheable Models:** CarbonProject, CreditBatch, MarketListing, RetirementRecord, PriceApproval, User, OracleJob
-- **Non-Cached:** IdempotencyRecord, AuditLog, WebhookDelivery (safety-critical)
-
-### Invalidation Strategy
-
-Automatic invalidation on mutations:
-- **Project update** → Invalidate Project, Batch, Listing caches
-- **Credit retirement** → Invalidate RetirementRecord, Batch caches
-- **Marketplace transaction** → Invalidate Listing, Project, Batch caches
-
-### Performance Targets
-
-| Metric | Target | Status |
-|--------|--------|--------|
-| Cache Hit Rate | > 60% | ✅ Configured |
-| Performance Improvement | > 40% | ✅ Monitored |
-| Memory Usage | < 512MB | ✅ Configured |
-| Response Time (cached) | < 50ms | ✅ Achieved |
-| Response Time (database) | < 120ms | ✅ Achieved |
-
-### Monitoring
-
-```bash
-# Get cache metrics
-GET /metrics/cache
-
-# Get per-model stats
-GET /metrics/cache/models
-
-# Get effectiveness score
-GET /metrics/cache/effectiveness
-
-# Export Prometheus format
-GET /metrics/cache/prometheus
+File:
+- verification_documents (file, PDF/PNG, ≤10MB, required)
 ```
 
----
-
-## Files Summary
-
-### Documentation (8 files)
-
-```
-docs/
-├── DISASTER_RECOVERY_PLAN.md      (3,500 lines) - Complete DR strategy
-├── INCIDENT_RESPONSE.md            (1,200 lines) - Incident procedures
-├── FAILOVER_RUNBOOKS.md            (2,800 lines) - Detailed runbooks
-├── DR_TESTING_SCHEDULE.md          (1,200 lines) - Testing calendar
-├── FAILOVER_CHECKLIST.md           (600 lines)   - Quick reference
-
-backend/docs/
-└── QUERY_CACHING.md                (800 lines)   - Caching guide
-
-SPEC_DR_TESTING_PERFORMANCE.md      (435 lines)   - Complete specification
-IMPLEMENTATION_SUMMARY.md           (This file)
-```
-
-### Implementation Code (6 files, ~2,500 lines)
-
+**Response (201 Created)**:
+```json
+{
+  "success": true,
+  "message": "Project registered successfully with verification document",
+  "data": {
+    "projectId": "...",
+    "id": "...",
+    "name": "...",
+    "status": "Pending",
+    "document": {
+      "id": "...",
+      "cid": "Qm...",
+      "fileName": "...",
+      "fileType": "application/pdf|image/png",
+      "fileSize": number,
+      "pinStatus": "pending",
+      "uploadedAt": "ISO8601",
+      "ipfsGatewayUrl": "https://gateway.pinata.cloud/ipfs/..."
+    }
+  }
+}
 ```
 backend/src/cache/
 ├── cache-invalidation.ts           (350 lines) - Invalidation service
@@ -461,3 +505,138 @@ REDIS_URL=redis://redis.default.svc.cluster.local:6379
 **Completed by:** Kiro  
 **Completed on:** August 28, 2026
 
+## Integration with Existing Systems
+
+### IPFS/Pinata Integration
+- Uses existing `IpfsUploadService` from `backend/src/uploads/`
+- Reuses `uploadToPinata()` method with:
+  - File buffer, MIME type, size
+  - linkedEntityType: 'project'
+  - linkedEntityId: projectId
+- Returns CID immediately (async pinning in background)
+- Supports webhook updates for pin status
+
+### Authentication & Authorization
+- Leverages existing `RolesGuard` for JWT validation
+- Uses existing `PoliciesGuard` for CASL evaluation
+- Follows established pattern of `@Roles()` and `@CheckPolicies()` decorators
+- Resource scoping consistent with project_developer/admin model
+
+### Data Validation
+- Uses existing `@IsStellarAddress()` custom validator
+- Uses existing `@IsVintageYear()` custom validator
+- Uses existing `@IsMethodologyScore()` custom validator
+- Uses existing `sanitizeProjectPayload()` sanitization utility
+
+### Error Handling
+- Follows CarbonLedger error envelope format
+- Uses `AllExceptionsFilter` for global error handling
+- HTTP status codes semantically correct per RFC
+- Errors logged with context via `LoggerService`
+
+## Configuration
+
+No additional environment variables required beyond existing:
+- `IPFS_API_URL`: Pinata API endpoint
+- `IPFS_API_KEY`: Pinata API key
+- `IPFS_SECRET_KEY`: Pinata secret key
+- `JWT_SECRET`: For JWT validation
+- `FRONTEND_URL`: For project links (optional)
+
+## Deployment Considerations
+
+1. **File Upload Size**
+   - NestJS global file size limit: Verify sufficient for 10 MB uploads
+   - Nginx/reverse proxy: Check file_uploads settings
+   - Consider streaming for very large files in future
+
+2. **IPFS Pinning**
+   - Async operations: Client receives response before pinning completes
+   - Webhook support: Pinata can notify of pin status changes
+   - Cost: Verify Pinata plan supports expected document volume
+
+3. **Database**
+   - IPFSFile table: Ensure indexes on (cid, linkedEntityType, linkedEntityId)
+   - CarbonProject: metadataCid column should be indexed
+   - Backup: Critical documents linked to projects via CID
+
+4. **Monitoring**
+   - Track upload success/failure rates
+   - Monitor IPFS gateway availability
+   - Alert on Pinata API failures
+   - Track 10 MB file uploads (edge cases)
+
+## Future Enhancements
+
+1. **Multiple Documents**
+   - Support uploading multiple verification documents per project
+   - Store array of CIDs or create separate IPFSFile records
+   - Endpoint: `POST /projects/{projectId}/documents`
+
+2. **Document Updates**
+   - Allow replacing/updating project documents
+   - Version control with historical tracking
+   - Endpoint: `PATCH /projects/{projectId}/documents/{cid}`
+
+3. **Batch Registration**
+   - Support registering multiple projects with documents in one request
+   - Transactional guarantees across multiple uploads
+   - Endpoint: `POST /projects/batch-register-with-documents`
+
+4. **Advanced Features**
+   - Metadata extraction from PDFs
+   - Automatic thumbnail generation for images
+   - Full-text search across documents
+   - Document retention policies
+   - Automatic document expiration
+
+5. **Enhanced Validation**
+   - Optical character recognition (OCR) for document verification
+   - Signature validation for certified documents
+   - Metadata verification matching project details
+
+## Files Summary
+
+### Backend Implementation (4 files modified, 2 created)
+
+**Modified**:
+1. `backend/src/projects/projects.controller.ts` - Added endpoint + imports
+2. `backend/src/projects/projects.dto.ts` - Added RegisterProjectWithDocumentsDto
+3. `backend/src/projects/projects.service.ts` - Added registerWithDocuments method
+4. `backend/src/projects/projects.module.ts` - Added UploadsModule import
+
+**Created**:
+1. `backend/test/projects-register-documents.e2e-spec.ts` - Test suite (20+ tests)
+2. `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md` - API documentation
+
+### Documentation (1 file)
+
+1. `IMPLEMENTATION_SUMMARY.md` - This file
+
+## Verification Checklist
+
+- [x] Multipart form parsing implemented and working
+- [x] File type validation (PDF, PNG) implemented
+- [x] File size validation (10 MB limit) implemented
+- [x] Cloud storage (IPFS/Pinata) integration working
+- [x] Document link saved in database (CarbonProject.metadataCid)
+- [x] CID returned in response
+- [x] IPFS gateway URL provided in response
+- [x] Test coverage for valid file types and sizes
+- [x] Test coverage for invalid file types
+- [x] Test coverage for oversized files
+- [x] Test coverage for authentication and authorization
+- [x] Test coverage for data validation
+- [x] Test coverage for database integrity
+- [x] Error handling comprehensive and user-friendly
+- [x] Response format follows CarbonLedger standards
+- [x] API documentation complete
+- [x] Code follows project conventions
+- [x] Security best practices implemented
+- [x] No breaking changes to existing functionality
+
+## Conclusion
+
+The implementation fully satisfies the acceptance criteria for issue #1014. Project developers can now register carbon projects with verification documents via the multipart form endpoint. Documents are validated, uploaded to IPFS, and securely linked in the database. Comprehensive tests ensure reliability and edge cases are handled appropriately.
+
+The feature integrates seamlessly with existing authentication, authorization, error handling, and data storage systems. It's production-ready and can be deployed immediately.

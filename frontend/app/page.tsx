@@ -100,15 +100,15 @@ export default function HomePage() {
         }}>
           Built on Stellar · Zero fraud · Full provenance
         </div>
-        <h1 style={{ fontSize: "3.5rem", fontWeight: 900, color: colors.neutral[900], margin: "0 0 1rem", lineHeight: 1.1 }}>
+        <h1 className="hero-title" style={{ fontSize: "3.5rem", fontWeight: 900, color: colors.neutral[900], margin: "0 0 1rem", lineHeight: 1.1 }}>
           Verified Carbon Credits.<br />
           <span style={{ color: colors.primary[600] }}>Permanent Retirement.</span>
         </h1>
-        <p style={{ fontSize: "1.1rem", color: colors.neutral[600], maxWidth: "600px", margin: "0 auto 2rem" }}>
+        <p className="hero-subtitle" style={{ fontSize: "1.1rem", color: colors.neutral[600], maxWidth: "600px", margin: "0 auto 2rem" }}>
           Every carbon credit has a complete audit trail from project registration to satellite monitoring to retirement.
           No fraud. No double-counting. No greenwashing.
         </p>
-        <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+        <div className="hero-cta" style={{ display: "flex", gap: "1rem", justifyContent: "center", flexWrap: "wrap" }}>
           <a href="/marketplace" style={{
             background: colors.primary[600], color: "#fff",
             borderRadius: "0.5rem", padding: "0.875rem 2rem",
@@ -127,8 +127,8 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1.5rem", marginBottom: "4rem" }}>
+      {/* Stats — responsive: 2 cols on mobile, 4 on desktop */}
+      <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "1.5rem", marginBottom: "4rem" }}>
         {statsLoading ? (
           Array.from({ length: 4 }).map((_, i) => <LoadingSkeleton key={i} variant="PoolStats" />)
         ) : (
@@ -143,6 +143,23 @@ export default function HomePage() {
           </>
         )}
       </div>
+
+      <style>{`
+        @media (max-width: 767px) {
+          .stats-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+          }
+          .hero-cta a {
+            width: 100%;
+            text-align: center;
+          }
+        }
+        @media (max-width: 479px) {
+          .stats-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
 
       {/* Real-time retirement feed */}
       <div>

@@ -52,4 +52,11 @@ export class NotificationsController {
     }
     return this.service.updatePreferences(publicKey, dto);
   }
+
+  /** Unsubscribe from all non-critical emails. Accessible without a wallet (used from email links). */
+  @Public()
+  @Patch('unsubscribe/:publicKey')
+  unsubscribe(@Param('publicKey') publicKey: string) {
+    return this.service.unsubscribe(publicKey);
+  }
 }

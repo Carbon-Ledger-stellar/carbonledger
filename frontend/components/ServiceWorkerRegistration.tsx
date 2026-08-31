@@ -3,12 +3,15 @@
 /**
  * ServiceWorkerRegistration
  *
- * Registers the CarbonLedger audit service worker on first mount
- * and starts the auto-sync mechanism for offline draft reports.
- * Renders nothing — side-effect only.
+ * Registers both CarbonLedger service workers on first mount:
  *
- * Placed in the root layout so the SW is available across all pages,
- * but audit caching only activates for routes matching the SW's patterns.
+ *   1. /sw.js          — primary SW: app shell, general asset caching,
+ *                        background sync (all routes)
+ *   2. /audit-sw.js    — secondary SW: audit-specific data caching and
+ *                        stale-while-revalidate for audit API routes
+ *
+ * Renders nothing — side-effect only.
+ * Placed in the root layout so both SWs are available across all pages.
  */
 
 import { useEffect } from "react";
@@ -19,12 +22,12 @@ export default function ServiceWorkerRegistration() {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
 
-    const register = async () => {
+    // ── Register a single service worker ──────────────────────────────────
+    const registerSw = async (path: string, label: string) => {
       try {
-        const registration = await navigator.serviceWorker.register(
-          "/audit-sw.js",
-          { scope: "/" }
-        );
+        const registration = await navigator.serviceWorker.register(path, {
+          scope: "/",
+        });
 
         registration.addEventListener("updatefound", () => {
           const installing = registration.installing;
@@ -35,30 +38,37 @@ export default function ServiceWorkerRegistration() {
               installing.state === "installed" &&
               navigator.serviceWorker.controller
             ) {
-              // New SW is ready — ask it to activate immediately
+              // New SW version is waiting — activate it immediately.
               installing.postMessage({ type: "SKIP_WAITING" });
             }
           });
         });
 
-        // Tell a waiting SW to activate now (handles page refresh case)
+        // If a SW was already waiting from a previous page load, activate it.
         if (registration.waiting) {
           registration.waiting.postMessage({ type: "SKIP_WAITING" });
         }
       } catch (err) {
-        // SW registration failure is non-fatal — app works without it
-        console.warn("[SW] Registration failed:", err);
+        // SW registration failure is non-fatal — the app works without it.
+        console.warn(`[SW] ${label} registration failed:`, err);
       }
     };
 
-    // Defer registration until after the page is interactive
+    const registerAll = async () => {
+      // Register primary SW first, then the audit-specific SW.
+      await registerSw("/sw.js", "Primary SW");
+      await registerSw("/audit-sw.js", "Audit SW");
+    };
+
+    // Defer registration until the page is fully loaded to avoid
+    // competing with critical resource fetches.
     if (document.readyState === "complete") {
-      register();
+      registerAll();
     } else {
-      window.addEventListener("load", register, { once: true });
+      window.addEventListener("load", registerAll, { once: true });
     }
 
-    // Start the auto-sync mechanism for offline drafts
+    // Start the auto-sync mechanism for offline draft reports.
     const stopSync = startAutoSync();
 
     return () => {
