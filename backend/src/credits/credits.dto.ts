@@ -1,8 +1,9 @@
-import { IsString, Length, Validate, IsArray, ArrayMinSize, ArrayMaxSize, ValidateNested } from 'class-validator';
+import { IsString, Length, Validate, IsArray, ArrayMinSize, ArrayMaxSize, ValidateNested, IsOptional } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
   IsStellarAddress,
   IsSerialNumber,
+  IsValidSerial,
   ValidateSerialRange,
   IsVintageYear,
   IsCreditAmount,
@@ -44,12 +45,14 @@ export class MintCreditsDto {
   amount: number;
 
   /** First serial number in the batch range (non-negative integer string). */
+  @IsValidSerial()
   @IsSerialNumber()
   @IsString()
   @Length(1, 16)
   serialStart: string;
 
   /** Last serial number in the batch range (must be ≥ serialStart). */
+  @IsValidSerial()
   @IsSerialNumber()
   @IsString()
   @Length(1, 16)
@@ -105,6 +108,15 @@ export class BatchMintCreditsDto {
   items: MintCreditsDto[];
 }
 
+export class BulkMintCreditsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MintCreditsDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  items: MintCreditsDto[];
+}
+
 export class BatchRetireCreditsDto {
   @IsArray()
   @ValidateNested({ each: true })
@@ -130,3 +142,18 @@ export interface BatchOperationResult<T = any> {
   results: BatchItemStatus<T>[];
 }
 
+
+/**
+ * DTO for searching credit batches by serial identifier (#1019).
+ *
+ * The `serial` query param is matched case-insensitively against batchId and
+ * projectId, and as a substring match against serialStart / serialEnd values.
+ * Example: "VCS-123" returns all batches whose batchId or projectId contains
+ * that string.
+ */
+export class SearchCreditsDto {
+  @IsString()
+  @Length(1, 100)
+  @IsOptional()
+  serial?: string;
+}

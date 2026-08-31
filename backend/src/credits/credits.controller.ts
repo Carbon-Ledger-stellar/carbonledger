@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Param, Body, Request, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, Body, Request, UseGuards, BadRequestException, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { CreditsService } from './credits.service';
-import { MintCreditsDto, RetireCreditsDto, BatchMintCreditsDto, BatchRetireCreditsDto } from './credits.dto';
+import { MintCreditsDto, RetireCreditsDto, BatchMintCreditsDto, BatchRetireCreditsDto, BulkMintCreditsDto } from './credits.dto';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, CreditBatchSubject, RetirementSubject } from '../policies';
 
@@ -27,6 +28,54 @@ export class CreditsController {
   @Public()
   getRetirement(@Param('id') id: string) {
     return this.creditsService.getRetirement(id);
+  }
+
+  /**
+   * GET /credits/search?serial=VCS-123
+   *
+   * Full-text serial number search. Supports partial match — "VCS" returns
+   * all credits whose batchId or projectId contains "VCS".
+   *
+   * Uses indexed serialStart / serialEnd / batchId columns for fast lookup
+   * on datasets of 100k+ records.
+   *
+   * Public — no authentication required.
+   */
+  @Get('search')
+  @Public()
+  search(@Query('serial') serial: string) {
+    return this.creditsService.searchBySerial(serial);
+  }
+
+  /**
+   * GET /credits/:id/certificate
+   *
+   * Returns the retirement certificate for the given retirementId.
+   *
+   * - If the PDF has already been generated, it is streamed directly to the
+   *   caller with Content-Type: application/pdf and a 30-day cache header.
+   * - If the PDF has not yet been generated, it is created on demand and the
+   *   same response is returned.
+   * - If the PDF service is unavailable, a JSON response containing the
+   *   permanent certificate URL is returned instead.
+   *
+   * Public — no authentication required.
+   * Returns 404 when the retirement record is not found.
+   */
+  @Get(':id/certificate')
+  @Public()
+  async getCertificate(@Param('id') id: string, @Res() res: Response) {
+    const result = await this.creditsService.getCertificate(id);
+    if (result.pdfBuffer) {
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="certificate-${id}.pdf"`,
+        'Cache-Control': 'public, max-age=2592000', // 30 days
+      });
+      res.send(result.pdfBuffer);
+    } else {
+      res.json({ certificate_url: result.certificateUrl, retirementId: id });
+    }
   }
 
   @Get('lookup/:serial')
@@ -73,6 +122,14 @@ export class CreditsController {
       throw new BadRequestException('Request body must be an array of MintCreditsDto or contain an items array');
     }
     return this.creditsService.batchMintCredits(items, req.user?.publicKey);
+  }
+
+  @Post('bulk-mint')
+  @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('mint', CreditBatchSubject))
+  bulkMint(@Body() dto: BulkMintCreditsDto, @Request() req: any) {
+    return this.creditsService.queueBulkMint(dto.items, req.user?.publicKey);
   }
 
   // ── Corporation: retire credits ──────────────────────────────────────────

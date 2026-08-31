@@ -629,6 +629,18 @@ jobs:
           npx playwright test tests/checkout.spec.ts \
             --project=chromium \
             --reporter=list,html,junit
+      # Issue #1049: full browse → search → buy → retire → certificate journey
+      # with a per-transaction performance baseline. Screenshots/traces on
+      # failure are uploaded with the report below.
+      - name: Run marketplace flow E2E tests (#1049)
+        if: always()
+        env:
+          CI: "true"
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+        run: |
+          npx playwright test tests/e2e/marketplace-flow.spec.ts \
+            --project=chromium \
+            --reporter=list,html,junit
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
@@ -679,7 +691,10 @@ jobs:
   fuzz:
     name: Property-Based Fuzz Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Run on PRs (5-min budget for issue #1054) and on scheduled / manual runs.
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Hard 5-minute wall-clock timeout for PR runs (issue #1054).
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -732,6 +747,24 @@ jobs:
         env:
           PROPTEST_CASES: 1000
         run: "cargo test -p carbon_credit 'proptest_invariant_tests::' -- --nocapture"
+
+      # Issue #1051: dedicated property-based test target — supply-conservation
+      # and ownership-consistency invariants against the public contract API.
+      - name: Run property-based test target (carbon_credit, cargo test --test proptest)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 1000
+        run: "cargo test -p carbon_credit --test proptest -- --nocapture"
+
+      # Issue #1054: dedicated fuzz suite for mint / retire / transfer with
+      # 10,000 iterations and seed saving.  On PRs the job-level timeout-minutes
+      # (5 min) acts as the wall-clock limit; nightly runs use PROPTEST_CASES
+      # to drive the full 10k count.
+      - name: Run fuzz_credit_ops (carbon_credit, issue #1054)
+        working-directory: contracts
+        env:
+          PROPTEST_CASES: 10000
+        run: "cargo test -p carbon_credit --test fuzz_credit_ops -- --nocapture"
 
       - name: Run fuzz tests (carbon_marketplace)
         working-directory: contracts
