@@ -1,27 +1,28 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
 import { CorrelationIdContext } from './correlation-id.context';
+import { getTraceId } from '../telemetry/tracing';
 
 /**
  * Middleware to generate and propagate correlation IDs across requests.
- *
- * Per-request it:
- *  1. Extracts or generates a correlation ID (from X-Correlation-ID header)
- *  2. Seeds the AsyncLocalStorage context with the correlation ID, HTTP method,
- *     path, actor ID and role (extracted from the parsed JWT when present)
- *  3. Makes the initial sampling decision (10% normal; 100% error — upgraded
- *     later by the logging interceptor when an error is detected)
- *  4. Sets X-Correlation-ID on the response so clients can correlate
+ * Extracts trace ID from OpenTelemetry active span or request headers.
+ * Sets the trace ID and correlation ID in response headers and AsyncLocalStorage context.
  */
 @Injectable()
 export class CorrelationIdMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
+    const traceId = getTraceId();
     const correlationId =
       (req.headers['x-correlation-id'] as string) ||
-      CorrelationIdContext.generateCorrelationId();
+      (req.headers['x-trace-id'] as string) ||
+      (traceId ? traceId : CorrelationIdContext.generateCorrelationId());
 
     // Attach to request object for downstream access
     (req as any).correlationId = correlationId;
+    if (traceId) {
+      (req as any).traceId = traceId;
+      res.setHeader('X-Trace-ID', traceId);
+    }
 
     // Echo back in response
     res.setHeader('X-Correlation-ID', correlationId);
@@ -33,6 +34,7 @@ export class CorrelationIdMiddleware implements NestMiddleware {
 
     CorrelationIdContext.setContext({
       correlationId,
+      traceId: traceId || correlationId,
       method: req.method,
       path: req.path,
       actorId: user?.id ?? user?.sub,
@@ -43,3 +45,4 @@ export class CorrelationIdMiddleware implements NestMiddleware {
     next();
   }
 }
+

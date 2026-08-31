@@ -291,8 +291,91 @@ docker run -it --rm -v $(pwd):/work -w /work/frontend node:18 \
 - **Parallel execution**: 4 workers on CI
 - **Browsers tested**: Chromium, Firefox, WebKit
 
+## Storybook Component Library
+
+CarbonLedger uses Storybook for component documentation, visual testing, and automated accessibility auditing.
+
+### Running Storybook
+
+```bash
+cd frontend
+npm run storybook          # Start dev server on http://localhost:6006
+npm run build-storybook    # Build static Storybook
+```
+
+### Storybook Features
+
+- **Component Documentation**: Every component has stories documenting all states (loading, error, empty, populated, disabled)
+- **Dark Mode Toggle**: Use the Theme toolbar to switch between Light, Dark, and System themes
+- **Design Tokens**: Access design tokens (colors, typography, spacing, shadows) in the Storybook controls panel
+- **Accessibility Audit**: `@storybook/addon-a11y` runs axe-core checks on every story — violations appear in the A11y panel
+- **Interaction Testing**: Play functions using `@storybook/test` for interactive components (BulkPurchaseCart, MarketplaceFilter, RetireConfirmModal)
+
+### Accessibility Testing
+
+Every story is automatically audited by axe-core for WCAG 2.1 compliance:
+
+1. Open any story in Storybook
+2. Click the **A11y** tab in the bottom panel
+3. View violations, incomplete checks, and passing rules
+4. Violations are flagged as errors that block merge in CI
+
+### Running A11y Audit in CI
+
+The CI pipeline (`.github/workflows/ci.yml`) runs `@storybook/test-runner` against a built Storybook to catch accessibility regressions before merge:
+
+```bash
+# Local: build Storybook and run test-runner
+npm run build-storybook
+npx test-storybook --url http://localhost:6006
+```
+
+### Component Story Coverage
+
+| Component | File | States |
+|-----------|------|--------|
+| CreditCard | `CreditCard.stories.tsx` | Active, Delisted, StaleOracle, Methodologies, PriceRanges |
+| LoadingSkeleton | `LoadingSkeleton.stories.tsx` | 7 variants with counts |
+| Toast | `Toast.stories.tsx` | Success, Error, Warning, Info, Multiple, LongMessage |
+| ProvenanceTrail | `ProvenanceTrail.stories.tsx` | Populated, Partial, Single, Empty, Recent, Long |
+| RetirementCertificate | `RetirementCertificate.stories.tsx` | Populated, LargeAmount, SmallAmount, VariousBeneficiaries |
+| ProjectMap | `ProjectMap.stories.tsx` | Empty, Single, Clustered, Filtered |
+| Highlight | `Highlight.stories.tsx` | Default, NoMatch, EmptyQuery, CaseInsensitive, MultipleMatches |
+| TransactionStatus | `TransactionStatus.stories.tsx` | All 8 statuses with retry |
+| TransactionHistory | `TransactionHistory.stories.tsx` | Populated, Loading, Empty, Single |
+| MarketplaceError | `MarketplaceError.stories.tsx` | Default, NetworkError, ServerError |
+| Tooltip | `Tooltip.stories.tsx` | Default, LongContent, MultiLine, Disabled |
+| ThemeToggle | `ThemeToggle.stories.tsx` | Default |
+| WalletPrompt | `WalletPrompt.stories.tsx` | NotInstalled, NotConnected, WrongNetwork, Loading, Ready |
+| NetworkStatusIndicator | `NetworkStatusIndicator.stories.tsx` | Online, Offline, Syncing, Conflict, Error, BackOnline |
+| MapFallbackTable | `MapFallbackTable.stories.tsx` | Populated, Empty, SingleProject |
+| RetirementSuccessState | `RetirementSuccessState.stories.tsx` | Default, SmallAmount, LargeAmount |
+| RetireConfirmModal | `RetireConfirmModal.stories.tsx` | Default, WithoutOptionalFields, LargeAmount, KeyboardNavigation |
+| ErrorBoundary | `ErrorBoundary.stories.tsx` | NoError, WithError, CustomFallback, DevMode |
+| BulkPurchaseCart | `BulkPurchaseCart.stories.tsx` | Empty, WithItems, MultipleItems |
+| MarketplaceFilter | `MarketplaceFilter.stories.tsx` | Default, WithActiveFilters, WithSearch, Interaction |
+| SerialNumberLookup | `SerialNumberLookup.stories.tsx` | Default |
+| AuditExplorer | `AuditExplorer.stories.tsx` | Default |
+| EsgBarChart | `EsgBarChart.stories.tsx` | Populated, Empty, SingleYear |
+| EsgPieChart | `EsgPieChart.stories.tsx` | Populated, Empty, SingleMethodology |
+| EsgKpiCards | `EsgKpiCards.stories.tsx` | Default, HighValues, ZeroValues |
+| EsgDateRangeFilter | `EsgDateRangeFilter.stories.tsx` | Default, CustomRange, EmptyRange |
+| Navbar | `Navbar.stories.tsx` | Default, WithWallet |
+
+### Design Token Reference
+
+Design tokens from `frontend/styles/design-system.ts` are exposed in Storybook controls:
+
+- **Colors**: Primary (green palette), Neutral (gray palette), Semantic (verified, pending, suspended, rejected, completed)
+- **Typography**: Font families (Inter, JetBrains Mono), font sizes (xs-5xl), font weights
+- **Spacing**: 0-24 scale in rem
+- **Border Radius**: sm-full scale
+- **Shadows**: sm-xl + certificate shadow
+
 ## References
 
 - [Playwright Visual Comparisons](https://playwright.dev/docs/test-snapshots)
 - [Best Practices](https://playwright.dev/docs/best-practices)
 - [Debugging Tests](https://playwright.dev/docs/debug)
+- [Storybook Accessibility Addon](https://storybook.js.org/addons/@storybook/addon-a11y)
+- [Storybook Test Runner](https://storybook.js.org/docs/writing-tests/test-runner)

@@ -1,7 +1,19 @@
 "use client";
 
 import { Component, ReactNode, useState } from "react";
-import { getContractErrorMessage, getWalletErrorMessage } from "../lib/wallet-errors";
+import {
+  getContractErrorMessage,
+  getWalletErrorMessage,
+  isSigningCancellation,
+  getShortfall,
+  formatShortfallMessage,
+} from "../lib/wallet-errors";
+import { captureException } from "../lib/sentry";
+
+const STELLAR_FUNDING_HREF =
+  process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet"
+    ? "https://stellar.org/lumens/exchanges"
+    : "https://friendbot.stellar.org";
 
 // ─── Error Type Classification ────────────────────────────────────────────────
 
@@ -21,6 +33,8 @@ export interface ClassifiedError {
   recoveryLabel: string;
   /** Secondary action label (optional) */
   secondaryLabel?: string;
+  /** Overrides the default type-based secondary href when set (e.g. a funding prompt link). */
+  secondaryHref?: string;
   icon: string;
 }
 
@@ -95,12 +109,16 @@ export function classifyError(error: Error | null): ClassifiedError {
   const test = (patterns: RegExp[]) => patterns.some((p) => p.test(combined));
 
   if (test(INSUFFICIENT_FUNDS_PATTERNS)) {
+    const shortfall = getShortfall(error);
     return {
       type: "insufficient_funds",
       title: "Insufficient Funds",
-      message: getWalletErrorMessage(error) || "You don't have enough balance to complete this transaction.",
+      message: shortfall
+        ? formatShortfallMessage(shortfall)
+        : getWalletErrorMessage(error) || "You don't have enough balance to complete this transaction.",
       recoveryLabel: "View Account Balance",
-      secondaryLabel: "Contact Support",
+      secondaryLabel: shortfall ? `Add ${shortfall.asset}` : "Contact Support",
+      secondaryHref: shortfall ? STELLAR_FUNDING_HREF : undefined,
       icon: "💳",
     };
   }
@@ -163,7 +181,7 @@ export function classifyError(error: Error | null): ClassifiedError {
   return {
     type: "generic",
     title: "Something Went Wrong",
-    message: error?.message || "An unexpected error occurred. Please try again.",
+    message: "An unexpected error occurred. Please try again or contact support if the issue continues.",
     recoveryLabel: "Try Again",
     secondaryLabel: "Contact Support",
     icon: "⚠️",
@@ -361,7 +379,7 @@ const TYPE_STYLES: Record<
 
 function ErrorUI({ classified, error, componentStack, onRetry, isDev }: ErrorUIProps) {
   const style = TYPE_STYLES[classified.type];
-  const secondaryHref = getRecoveryHref(classified.type, false);
+  const secondaryHref = classified.secondaryHref ?? getRecoveryHref(classified.type, false);
 
   // Primary action: for wallet-not-installed, open freighter.app; otherwise retry
   const isPrimaryExternal = classified.type === "wallet" && /not found|not installed/i.test(classified.title);
@@ -519,14 +537,23 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
+    // Signing cancellations are an expected user action, not a failure — swallow
+    // silently and fall back to rendering children again (no error UI, no log).
+    if (isSigningCancellation(error)) return { hasError: false, error: null };
     return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
+    if (isSigningCancellation(error)) return;
+
     // Capture component stack for dev panel
     this.setState({ componentStack: info.componentStack });
 
     console.error("ErrorBoundary caught:", error, info);
+    captureException(error, {
+      componentStack: info.componentStack,
+      errorType: classifyError(error).type,
+    });
     import("../lib/logger").then(({ clientLogger }) => {
       clientLogger.error(error.message, {
         stack: error.stack,

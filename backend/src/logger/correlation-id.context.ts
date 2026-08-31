@@ -1,18 +1,16 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { v4 as uuidv4 } from 'uuid';
+import { getTraceId } from '../telemetry/tracing';
 
 export interface CorrelationContext {
   correlationId: string;
+  traceId?: string;
   method?: string;
   path?: string;
   statusCode?: number;
   duration?: number;
-  /** Authenticated user ID (from JWT sub) */
-  actorId?: string;
-  /** Authenticated user role (from JWT role claim) */
-  actorRole?: string;
-  /** Sampling decision: true = emit log, false = suppress (info/debug level) */
-  sampled?: boolean;
+  actor?: string;
+  ip?: string;
 }
 
 /**
@@ -35,7 +33,11 @@ export class CorrelationIdContext {
   }
 
   static getCorrelationId(): string {
-    return this.storage.getStore()?.correlationId ?? '';
+    return this.storage.getStore()?.correlationId || getTraceId();
+  }
+
+  static getTraceId(): string {
+    return this.storage.getStore()?.traceId || getTraceId();
   }
 
   /** Patch specific fields without replacing the full context */
@@ -78,3 +80,4 @@ export class CorrelationIdContext {
     this.patchContext({ sampled: true });
   }
 }
+

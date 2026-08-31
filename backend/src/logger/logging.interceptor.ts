@@ -9,45 +9,53 @@ import { LoggerService } from "../logger/logger.service";
 import { CorrelationIdContext } from "./correlation-id.context";
 
 /**
- * LoggingInterceptor — fires after passport middleware has parsed the JWT,
- * so actorId and actorRole are reliably available here.
+ * Requests exceeding this duration (ms) are logged at WARN level with a
+ * SLOW_QUERY tag so they can be filtered in Grafana / CloudWatch.
  *
- * Per-request it:
- *  1. Patches the AsyncLocalStorage context with actor identity
- *  2. Logs the incoming request (subject to sampling)
- *  3. On completion: logs the outgoing response with duration / status code
- *  4. On error: force-enables sampling and logs the error with full context
+ * Configurable via the SLOW_QUERY_THRESHOLD_MS environment variable.
+ * Default: 500 ms.  Set to 0 to warn on every request; omit / set very high
+ * to effectively disable slow-request detection.
  */
+const SLOW_QUERY_THRESHOLD_MS = parseInt(
+  process.env.SLOW_QUERY_THRESHOLD_MS ?? "500",
+  10,
+);
+
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   constructor(private readonly logger: LoggerService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
-    const req = context.switchToHttp().getRequest();
-    const res = context.switchToHttp().getResponse();
-
+    const req         = context.switchToHttp().getRequest();
+    const res         = context.switchToHttp().getResponse();
+    const method      = req.method as string;
+    const path        = req.path  as string;
     const correlationId = (req as any).correlationId as string | undefined;
-    const method = req.method as string;
-    const path   = req.path   as string;
 
-    // Passport has run by now — extract actor fields from JWT payload
-    const user     = req.user as { id?: string; sub?: string; role?: string } | undefined;
-    const actorId  = user?.id ?? user?.sub;
-    const actorRole = user?.role;
+    // Domain context from JWT payload (attached by passport/roles guard)
+    const user     = req.user as { id?: string; publicKey?: string; role?: string } | undefined;
+    const actor    = user?.publicKey ?? user?.id;
+    const role     = user?.role;
     const contractId = (req.headers["x-contract-id"] as string) ?? undefined;
 
-    // Patch correlation context so actorId / actorRole are available to all
-    // downstream log calls within this request (oracle, DB helpers, etc.)
-    CorrelationIdContext.patchContext({ actorId, actorRole });
+    const store = CorrelationIdContext.getContext();
+    if (store) {
+      store.actor = actor;
+      store.ip = req.ip;
+    }
 
     const start = Date.now();
 
     this.logger.log(`→ ${method} ${path}`, {
       correlationId,
-      actorId,
-      actorRole,
-      contractId,
-      ip: req.ip,
+      actor,
+      role,
+      endpoint:    `${method} ${path}`,
+      contract_id: contractId,
+      ip:          req.ip,
+      params:      req.params,
+      query:       req.query,
+      body:        req.body,
     });
 
     return next.handle().pipe(
@@ -56,13 +64,36 @@ export class LoggingInterceptor implements NestInterceptor {
           const duration   = Date.now() - start;
           const statusCode = res.statusCode as number;
 
-          CorrelationIdContext.patchContext({ statusCode, duration });
+          // Update context so downstream code/logs see the final status
+          CorrelationIdContext.setContext({
+            correlationId: correlationId ?? "",
+            method,
+            path,
+            statusCode,
+            duration,
+          });
 
-          this.logger.log(`← ${method} ${path} ${statusCode}`, {
+          // Emit a structured warning for slow requests so they can be
+          // filtered independently from normal traffic in log aggregation.
+          if (duration >= SLOW_QUERY_THRESHOLD_MS) {
+            this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold`, {
+              correlationId,
+              user_id: actor,
+              contract_id: contractId,
+              statusCode,
+              duration,
+              threshold_ms: SLOW_QUERY_THRESHOLD_MS,
+              event: "SLOW_QUERY",
+            });
+          }
+
+          // Log successful response with structured fields
+          this.logger.log(`${method} ${path} completed`, {
             correlationId,
-            actorId,
-            actorRole,
-            contractId,
+            actor,
+            role,
+            endpoint:    `${method} ${path}`,
+            contract_id: contractId,
             statusCode,
             duration,
           });
@@ -71,17 +102,39 @@ export class LoggingInterceptor implements NestInterceptor {
           const duration   = Date.now() - start;
           const statusCode = (res.statusCode as number) || 500;
 
-          // Errors always emit — forceSample() is called inside logger.error()
-          CorrelationIdContext.patchContext({ statusCode, duration });
-
-          this.logger.error(`← ${method} ${path} ${statusCode} ERROR`, err.stack, {
-            correlationId,
-            actorId,
-            actorRole,
-            contractId,
+          CorrelationIdContext.setContext({
+            correlationId: correlationId ?? "",
+            method,
+            path,
             statusCode,
             duration,
-            errorMessage: err.message,
+          });
+
+          // Emit slow-request warning even on error paths — a timeout that
+          // eventually errors is still a slow request worth alerting on.
+          if (duration >= SLOW_QUERY_THRESHOLD_MS) {
+            this.logger.warn(`SLOW_QUERY ${method} ${path} exceeded ${SLOW_QUERY_THRESHOLD_MS}ms threshold (error)`, {
+              correlationId,
+              user_id: actor,
+              contract_id: contractId,
+              statusCode,
+              duration,
+              threshold_ms: SLOW_QUERY_THRESHOLD_MS,
+              event: "SLOW_QUERY",
+              error: err.message,
+            });
+          }
+
+          // Log error with structured fields
+          this.logger.error(`${method} ${path} failed`, err.stack, {
+            correlationId,
+            actor,
+            role,
+            endpoint:    `${method} ${path}`,
+            contract_id: contractId,
+            statusCode,
+            duration,
+            error:       err.message,
           });
         },
       }),

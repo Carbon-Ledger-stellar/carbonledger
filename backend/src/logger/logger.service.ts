@@ -6,30 +6,23 @@ import { CorrelationIdContext } from "./correlation-id.context";
 export interface LogContext {
   /** Correlation ID for the current request (auto-injected if not supplied) */
   correlationId?: string;
-  /** Authenticated actor ID */
-  actorId?: string;
-  /** Authenticated actor role */
-  actorRole?: string;
-  /** Soroban contract ID involved in this operation */
-  contractId?: string;
-  /** Any extra structured fields */
+  user_id?: string;
+  actor?: string;
+  role?: string;
+  endpoint?: string;
+  contract_id?: string;
   [key: string]: unknown;
 }
 
 /**
- * Structured JSON logger for CarbonLedger backend.
+ * Sampling strategy (issue #767):
+ * - Errors / warnings: always captured (100%)
+ * - Normal info / debug: sampled at SAMPLE_RATE (default 10%)
  *
- * Every log line is a JSON object with at minimum:
- *   { timestamp, level, service, correlationId, message }
- *
- * Sampling strategy:
- *   - ERROR / WARN: always emitted (100%)
- *   - INFO / DEBUG / VERBOSE: emitted only when the request is sampled (10%)
- *     OR when called outside a request context (background jobs, startup)
- *
- * The sampling decision is stored per-request in AsyncLocalStorage so it
- * is consistent across all log calls for a single request.
+ * Set LOG_SAMPLE_RATE env var (0.0–1.0) to override.
  */
+const SAMPLE_RATE = parseFloat(process.env.LOG_SAMPLE_RATE ?? "0.1");
+
 @Injectable()
 export class LoggerService implements NestLoggerService {
   private readonly logger: winston.Logger;
@@ -53,8 +46,11 @@ export class LoggerService implements NestLoggerService {
       );
     }
 
+    const configuredLevel = (process.env.LOG_LEVEL ?? "info").toLowerCase();
+    const moduleLevel = process.env.LOG_LEVEL_FINANCIAL ?? configuredLevel;
+
     this.logger = winston.createLogger({
-      level: process.env.LOG_LEVEL ?? "info",
+      level: configuredLevel,
       format: winston.format.combine(
         winston.format.timestamp(),
         winston.format.errors({ stack: true }),
@@ -65,51 +61,39 @@ export class LoggerService implements NestLoggerService {
     });
   }
 
-  // ── Context enrichment ──────────────────────────────────────────────────────
-
-  /**
-   * Merge caller-supplied context with the correlation context from
-   * AsyncLocalStorage so every log line carries the full request envelope.
-   */
-  private enrichContext(context?: LogContext | string): LogContext {
-    const base =
-      typeof context === "string" ? { context } : { ...(context ?? {}) };
-
-    const asyncCtx = CorrelationIdContext.getContext();
+  private getContextWithCorrelationId(context?: LogContext | string): LogContext {
+    const baseContext = typeof context === "string" ? { context } : (context ?? {});
+    const correlationId = CorrelationIdContext.getCorrelationId();
+    const sanitizedContext = this.sanitizeContext(baseContext);
 
     return {
-      correlationId: base.correlationId || asyncCtx?.correlationId || undefined,
-      actorId:       base.actorId       || asyncCtx?.actorId        || undefined,
-      actorRole:     base.actorRole     || asyncCtx?.actorRole      || undefined,
-      endpoint:      asyncCtx ? `${asyncCtx.method} ${asyncCtx.path}` : undefined,
-      ...base,
+      ...sanitizedContext,
+      correlationId: sanitizedContext.correlationId || correlationId,
     };
   }
 
-  // ── Sampling gate ───────────────────────────────────────────────────────────
-
-  /**
-   * Returns true for log levels that should bypass sampling (errors always log).
-   */
-  private isHighPriority(level: string): boolean {
-    return level === "error" || level === "warn";
-  }
-
-  /**
-   * Apply the sampling decision.
-   * High-priority levels always pass. Normal levels are gated at 10%.
-   */
-  private shouldEmit(level: string): boolean {
-    if (this.isHighPriority(level)) {
-      // Errors upgrade the sampling decision so subsequent info logs in the
-      // same request are also emitted for full context
-      CorrelationIdContext.forceSample();
-      return true;
+  private sanitizeContext(context: any): any {
+    if (context == null || typeof context !== "object") {
+      return context;
     }
-    return CorrelationIdContext.shouldSample();
-  }
 
-  // ── Write helpers ───────────────────────────────────────────────────────────
+    if (Array.isArray(context)) {
+      return context.map((item) => this.sanitizeContext(item));
+    }
+
+    const sanitized: any = { ...context };
+    const secretKeys = ["password", "secret", "token", "key", "api_key", "private_key", "authorization"];
+
+    for (const key of Object.keys(sanitized)) {
+      if (secretKeys.some((secretKey) => key.toLowerCase().includes(secretKey))) {
+        sanitized[key] = "[REDACTED]";
+      } else {
+        sanitized[key] = this.sanitizeContext(sanitized[key]);
+      }
+    }
+
+    return sanitized;
+  }
 
   private write(level: string, message: string, context?: LogContext | string) {
     if (!this.shouldEmit(level)) return;
@@ -117,28 +101,27 @@ export class LoggerService implements NestLoggerService {
     this.logger.log(level, message, meta);
   }
 
-  // ── NestJS LoggerService interface ─────────────────────────────────────────
-
-  log(message: string, context?: LogContext | string) {
+  log(message: string, context?: LogContext | string): void {
     this.write("info", message, context);
   }
 
-  error(message: string, trace?: string, context?: LogContext | string) {
-    // Errors always emit
-    const meta = this.enrichContext(context);
-    CorrelationIdContext.forceSample();
+  error(message: string, trace?: string, context?: LogContext | string): void {
+    // Errors are always captured — skip shouldSample
+    const meta = this.enrich(context);
     this.logger.error(message, { ...meta, trace });
   }
 
-  warn(message: string, context?: LogContext | string) {
-    this.write("warn", message, context);
+  warn(message: string, context?: LogContext | string): void {
+    // Warnings are always captured
+    const meta = this.enrich(context);
+    this.logger.warn(message, meta);
   }
 
-  debug(message: string, context?: LogContext | string) {
+  debug(message: string, context?: LogContext | string): void {
     this.write("debug", message, context);
   }
 
-  verbose(message: string, context?: LogContext | string) {
+  verbose(message: string, context?: LogContext | string): void {
     this.write("verbose", message, context);
   }
 

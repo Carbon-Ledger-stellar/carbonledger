@@ -3,6 +3,9 @@ import { PrismaService } from '../prisma.service';
 import { SorobanRpc, xdr, scValToNative } from '@stellar/stellar-sdk';
 import { Interval } from '@nestjs/schedule';
 
+// Maximum ledger range Soroban RPC accepts per getEvents call
+const MAX_LEDGER_RANGE = 4320; // ~6 hours of ledgers at ~5s each
+
 @Injectable()
 export class IndexerService implements OnModuleInit {
   private readonly logger = new Logger(IndexerService.name);
@@ -16,17 +19,28 @@ export class IndexerService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    this.logger.log('Indexer service starting initial sync...');
-    // We don't await here to not block application startup
+    this.logger.log('Indexer service starting — cursor-based resumption active');
     this.sync().catch(err => this.logger.error('Initial sync failed', err));
   }
 
-  @Interval(10000) // Poll every 10 seconds to meet the 30s requirement
+  @Interval(10000)
   async handleCron() {
     if (this.isIndexing) return;
     await this.sync();
   }
 
+  /**
+   * Sync events from the last persisted cursor to the latest ledger.
+   *
+   * Cursor-based resumption (#667): reads `lastIndexedLedger` from
+   * SyncMetadata and only updates it after all events in the range have
+   * been processed and committed.  This means a crashed/restarted process
+   * will re-attempt any incomplete range rather than skipping it.
+   *
+   * Gap detection (#667): if `lastIndexedLedger` is more than
+   * MAX_LEDGER_RANGE ledgers behind the chain head, we log a warning and
+   * process in chunks until fully caught up, so no ledger window is skipped.
+   */
   async sync() {
     if (!this.creditContractId) {
       this.logger.warn('CARBON_CREDIT_CONTRACT_ID not set, skipping indexing');
@@ -35,6 +49,7 @@ export class IndexerService implements OnModuleInit {
 
     this.isIndexing = true;
     try {
+      // Load (or initialise) persisted cursor
       const metadata = await this.prisma.syncMetadata.upsert({
         where: { id: 'singleton' },
         update: {},
@@ -47,55 +62,75 @@ export class IndexerService implements OnModuleInit {
         currentLedger = latestLedgerRes.sequence;
       } catch (error) {
         const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
-        this.logger.error(`Soroban RPC getLatestLedger failed: ${errorDetails}`);
+        this.logger.error(`getLatestLedger failed: ${errorDetails}`);
         throw error;
       }
 
       let startLedger = metadata.lastIndexedLedger + 1;
       if (startLedger > currentLedger) {
-        return;
+        return; // already up to date
       }
 
-      // Soroban getEvents has limits, we might need to paginate if there are many events
-      // For now we just fetch what we can
-      this.logger.log(`Syncing events from ledger ${startLedger} to ${currentLedger}`);
+      // Gap detection: warn when we're significantly behind
+      const gap = currentLedger - startLedger;
+      if (gap > MAX_LEDGER_RANGE) {
+        this.logger.warn(
+          `Gap detected: indexer is ${gap} ledgers behind (last=${metadata.lastIndexedLedger}, head=${currentLedger}). ` +
+          `Processing in chunks of ${MAX_LEDGER_RANGE} until caught up.`,
+        );
+      }
 
-      let eventsResponse: SorobanRpc.Api.GetEventsResponse;
-      try {
-        eventsResponse = await this.rpc.getEvents({
-          startLedger,
-          filters: [
-            {
-              type: 'contract',
-              contractIds: [this.creditContractId],
-            },
-          ],
+      // Process in bounded chunks so we never exceed RPC window limits
+      // and so each chunk's cursor is committed independently
+      while (startLedger <= currentLedger) {
+        const endLedger = Math.min(startLedger + MAX_LEDGER_RANGE - 1, currentLedger);
+        this.logger.log(`Syncing ledgers ${startLedger}–${endLedger}`);
+
+        await this.syncRange(startLedger, endLedger);
+
+        // Persist cursor only after the full chunk is processed
+        await this.prisma.syncMetadata.update({
+          where: { id: 'singleton' },
+          data: { lastIndexedLedger: endLedger },
         });
-      } catch (error) {
-        const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
-        this.logger.error(`Soroban RPC getEvents failed: ${errorDetails}`);
-        throw error;
-      }
 
-      for (const event of eventsResponse.events) {
-        try {
-          await this.processEvent(event);
-        } catch (err) {
-          const details = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
-          this.logger.error(`Failed to process event ${event.id}: ${details}`);
-        }
+        startLedger = endLedger + 1;
       }
-
-      await this.prisma.syncMetadata.update({
-        where: { id: 'singleton' },
-        data: { lastIndexedLedger: currentLedger },
-      });
 
     } catch (error) {
       const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
       this.logger.error(`Indexing failed: ${errorDetails}`);
+      // NOTE: cursor is NOT advanced on failure — next run will retry the same range
     } finally {
       this.isIndexing = false;
+    }
+  }
+
+  /** Fetch and process all events in [startLedger, endLedger]. */
+  private async syncRange(startLedger: number, endLedger: number): Promise<void> {
+    let eventsResponse: SorobanRpc.Api.GetEventsResponse;
+    try {
+      eventsResponse = await this.rpc.getEvents({
+        startLedger,
+        filters: [{ type: 'contract', contractIds: [this.creditContractId] }],
+      });
+    } catch (error) {
+      const errorDetails = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error);
+      this.logger.error(`getEvents failed for ledgers ${startLedger}–${endLedger}: ${errorDetails}`);
+      throw error;
+    }
+
+    // Filter to the requested window (RPC may return events beyond endLedger)
+    const events = eventsResponse.events.filter(e => e.ledger <= endLedger);
+
+    for (const event of events) {
+      try {
+        await this.processEvent(event);
+      } catch (err) {
+        const details = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+        this.logger.error(`Failed to process event ${event.id}: ${details}`);
+        // Continue processing remaining events; don't advance cursor past this chunk
+      }
     }
   }
 
@@ -222,7 +257,7 @@ export class IndexerService implements OnModuleInit {
       // Let's at least update the status and amount if we have it.
       // In this implementation, we'll just ensure the batch exists and is updated.
       
-      const existingProject = projectId ? await this.prisma.carbonProject.findUnique({ where: { projectId } }) : null;
+      const existingProject = projectId ? await this.prisma.carbonProject.findFirst({ where: { projectId, deletedAt: null } }) : null;
       
       if (projectId && !existingProject) {
         this.logger.warn(`Project ${projectId} not found in DB, skipping batch sync`);

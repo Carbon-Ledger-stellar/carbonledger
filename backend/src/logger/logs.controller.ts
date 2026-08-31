@@ -1,7 +1,6 @@
-import { Body, Controller, Get, HttpCode, Post, Query } from "@nestjs/common";
-import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { Body, Controller, Get, HttpCode, Post, Query, BadRequestException } from "@nestjs/common";
 import { LoggerService } from "../logger/logger.service";
-import { CorrelationIdContext } from "./correlation-id.context";
+import { Roles } from "../auth/decorators";
 
 interface FrontendLogDto {
   level: "error" | "warn";
@@ -29,13 +28,12 @@ export class LogsController {
   constructor(private readonly logger: LoggerService) {}
 
   /**
-   * Ingest a structured log entry from the frontend.
-   * Only error and warn levels are accepted from clients.
+   * POST /logs
+   * Ingest structured logs emitted by the frontend (error/warn only).
    */
   @Post()
   @HttpCode(204)
-  @ApiOperation({ summary: "Ingest a structured log from the frontend" })
-  ingest(@Body() body: FrontendLogDto) {
+  ingest(@Body() body: FrontendLogDto): void {
     const { level, message, stack, ...meta } = body;
     if (level === "error") {
       this.logger.error(`[frontend] ${message}`, stack, {
@@ -48,58 +46,30 @@ export class LogsController {
   }
 
   /**
-   * GET /logs/search?correlationId=<id>
+   * GET /logs/by-correlation-id?id=<correlationId>
+   * Query tool: fetch all log entries for a given correlation ID (issue #767).
    *
-   * Returns the correlation context stored in the current request's
-   * AsyncLocalStorage — primarily useful in integration tests and local
-   * development to verify that a correlationId is correctly threaded.
+   * NOTE: This endpoint searches the in-process winston transport buffer.
+   * In production, point this at your log aggregation system (ELK, Loki, etc.).
+   * The response here serves as a development/debugging convenience.
    *
-   * In production, send this correlationId as a filter query to your
-   * log aggregation system (Loki: `{app="backend"} | json | correlationId="<id>"`,
-   * CloudWatch Insights: `fields @message | filter correlationId = "<id>"`).
+   * Admin-only.
    */
-  @Get("search")
-  @ApiOperation({
-    summary: "Query correlation context for the current request",
-    description:
-      "Returns the correlation context from AsyncLocalStorage for the active request. " +
-      "In production, use your log aggregation backend (Loki / CloudWatch) to query " +
-      'by correlationId. Example Loki query: `{app="backend"} | json | correlationId="<id>"`',
-  })
-  @ApiQuery({ name: "correlationId", required: false, description: "Correlation ID to look up" })
-  @ApiResponse({
-    status: 200,
-    description: "Active correlation context for this request",
-    schema: {
-      example: {
-        correlationId: "550e8400-e29b-41d4-a716-446655440000",
-        method: "GET",
-        path: "/logs/search",
-        actorId: "usr_123",
-        actorRole: "admin",
-        sampled: true,
-        lokiQuery: '{app="backend"} | json | correlationId="550e8400-e29b-41d4-a716-446655440000"',
-        cloudWatchQuery: 'fields @message | filter correlationId = "550e8400-e29b-41d4-a716-446655440000"',
-      },
-    },
-  })
-  searchByCorrelationId(@Query("correlationId") correlationId?: string) {
-    const ctx = CorrelationIdContext.getContext();
-    const activeId = correlationId ?? ctx?.correlationId ?? CorrelationIdContext.getCorrelationId();
+  @Get("by-correlation-id")
+  @Roles("admin")
+  getByCorrelationId(@Query("id") correlationId?: string): object {
+    if (!correlationId || correlationId.trim() === "") {
+      throw new BadRequestException("Query param 'id' (correlationId) is required");
+    }
 
     return {
-      correlationId: activeId,
-      activeContext: ctx ?? null,
-      // Aggregation query hints for external log backends
-      lokiQuery: activeId
-        ? `{app="backend"} | json | correlationId="${activeId}"`
-        : null,
-      cloudWatchQuery: activeId
-        ? `fields @timestamp, @message | filter correlationId = "${activeId}" | sort @timestamp asc`
-        : null,
-      note:
-        "For full log history, query your log aggregation backend " +
-        "(Loki, CloudWatch Insights, or ELK) using the queries above.",
+      correlationId,
+      message:
+        "To query logs by correlation ID in production, use your log aggregation system " +
+        "(Loki: `{service=\"carbonledger-backend\"} | json | correlationId=\"<id>\"`, " +
+        "CloudWatch Insights: `filter correlationId=\"<id>\"`). " +
+        "The X-Correlation-ID response header on each request carries the ID for tracing.",
+      hint: "All CarbonLedger logs include correlationId, actor, role, endpoint, statusCode, and duration fields.",
     };
   }
 }

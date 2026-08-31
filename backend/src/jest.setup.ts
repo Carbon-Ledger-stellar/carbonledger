@@ -1,5 +1,10 @@
+// Required for class-validator / class-transformer decorators
+import 'reflect-metadata';
+
 // Set required environment variables before any module is loaded
-process.env.DATABASE_URL = "postgresql://carbonledger:testpass@localhost:5433/carbonledger_test";
+// Matches docker-compose.test.yml / .env.test — do not override an already-set
+// DATABASE_URL (e.g. from .env.test) so `npm run test:e2e` and friends keep working.
+process.env.DATABASE_URL ??= "postgresql://testuser:testpass@localhost:5433/carbonledger_test";
 process.env.JWT_SECRET = "dev-secret-change-in-production";
 process.env.REDIS_HOST = "localhost";
 process.env.REDIS_PORT = "6379";
@@ -71,27 +76,19 @@ jest.mock("@nestjs/bullmq", () => {
   };
 });
 
-jest.mock("@nestjs/schedule", () => ({
-  ScheduleModule: {
-    forRoot: () => ({ module: class ScheduleRootModule {} }),
-  },
-  Interval: () => () => undefined,
-  Cron: () => () => undefined,
-  Timeout: () => () => undefined,
-}));
-
-jest.mock("@stellar/stellar-sdk", () => {
-  const actual = jest.requireActual("@stellar/stellar-sdk");
+jest.mock("@nestjs/schedule", () => {
+  const actual = jest.requireActual("@nestjs/schedule");
   return {
     ...actual,
-    Server: jest.fn().mockImplementation(() => ({
-      root: jest.fn().mockResolvedValue({}),
-    })),
-    SorobanRpc: {
-      ...actual.SorobanRpc,
-      Server: jest.fn().mockImplementation(() => ({
-        getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1 }),
-      })),
+    ScheduleModule: {
+      forRoot: () => ({ module: class ScheduleRootModule {} }),
     },
+    Interval: () => () => undefined,
+    Cron: () => () => undefined,
+    Timeout: () => () => undefined,
   };
 });
+
+// In-memory Soroban/Horizon mock — see src/__mocks__/stellar.provider.ts.
+// Ensures no backend test ever depends on a live Stellar network connection.
+jest.mock("@stellar/stellar-sdk", () => require("./__mocks__/stellar.provider").stellarSdkMock);

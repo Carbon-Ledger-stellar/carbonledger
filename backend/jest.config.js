@@ -3,15 +3,15 @@ module.exports = {
   moduleFileExtensions: ['js', 'json', 'ts'],
   rootDir: 'src',
   testRegex: '.*\\.spec\\.ts$',
-  setupFiles: ['<rootDir>/jest.setup.ts'],   // ← ADD THIS LINE
   transform: {
-    '^.+\\.(t|j)s$': ['ts-jest', {
+    '^.+\\.(t|j)s$': [require.resolve('ts-jest'), {
       diagnostics: false,
     }],
   },
   moduleNameMapper: {
     '^uuid$': '<rootDir>/../node_modules/uuid/dist-node/index.js',
   },
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   collectCoverageFrom: [
     '**/*.(t|j)s',
     '!**/*.spec.ts',
@@ -29,8 +29,5 @@ module.exports = {
       statements: 80,
     },
   },
-};
-
-  setupFiles: ['<rootDir>/jest.setup.ts'],
 };
 

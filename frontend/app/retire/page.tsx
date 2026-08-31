@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { retireCredits } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
-import { connectFreighter } from "../../lib/freighter";
-import { getWalletErrorMessage, getContractErrorMessage } from "../../lib/wallet-errors";
+import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionPreview from "../../components/TransactionPreview";
+import { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
@@ -17,6 +19,8 @@ import {
   useTransactionPoller,
   TRANSACTION_MAX_POLLS,
 } from "../../hooks/useTransactionPoller";
+import { simulateRetirementPreview } from "../../lib/soroban";
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface RetireFormState {
@@ -32,8 +36,6 @@ interface ValidationErrors {
   amount?: string;
 }
 
-type Step = 1 | 2 | 3 | 4 | 5;
-
 // ── Validation Constants ──────────────────────────────────────────────────────
 
 const VALIDATION_LIMITS = {
@@ -44,51 +46,51 @@ const VALIDATION_LIMITS = {
 
 // ── Validation helpers ────────────────────────────────────────────────────────
 
-function validateBeneficiary(value: string): string | undefined {
+type Translator = (key: string, values?: Record<string, string | number>) => string;
+
+function validateBeneficiary(value: string, t: Translator): string | undefined {
   const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return "Beneficiary name is required";
-  }
-  if (trimmed.length > VALIDATION_LIMITS.beneficiary.max) {
-    return `Beneficiary name must not exceed ${VALIDATION_LIMITS.beneficiary.max} characters`;
-  }
+  if (trimmed.length === 0) return t("beneficiaryRequired");
+  if (trimmed.length > VALIDATION_LIMITS.beneficiary.max)
+    return t("beneficiaryTooLong", { max: VALIDATION_LIMITS.beneficiary.max });
   return undefined;
 }
 
-function validateReason(value: string): string | undefined {
+function validateReason(value: string, t: Translator): string | undefined {
   const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return "Retirement reason is required";
-  }
-  if (trimmed.length > VALIDATION_LIMITS.reason.max) {
-    return `Retirement reason must not exceed ${VALIDATION_LIMITS.reason.max} characters`;
-  }
+  if (trimmed.length === 0) return t("reasonRequired");
+  if (trimmed.length > VALIDATION_LIMITS.reason.max)
+    return t("reasonTooLong", { max: VALIDATION_LIMITS.reason.max });
   return undefined;
 }
 
-function validateAmount(value: number, userBalance?: number): string | undefined {
-  if (value < VALIDATION_LIMITS.amount.min) {
-    return `Amount must be at least ${VALIDATION_LIMITS.amount.min} tCO₂e`;
-  }
-  if (!Number.isInteger(value * 100)) {
-    return "Amount must have at most 2 decimal places";
-  }
-  if (userBalance !== undefined && value > userBalance) {
-    return `Amount cannot exceed your balance of ${userBalance} tCO₂e`;
-  }
+function validateAmount(
+  value: number,
+  t: Translator,
+  userBalance?: number,
+): string | undefined {
+  if (value < VALIDATION_LIMITS.amount.min)
+    return t("amountTooSmall", { min: VALIDATION_LIMITS.amount.min });
+  if (!Number.isInteger(value * 100)) return t("amountTooPrecise");
+  if (userBalance !== undefined && value > userBalance)
+    return t("amountExceedsBalance", { balance: userBalance });
   return undefined;
 }
 
-function validateForm(form: RetireFormState, userBalance?: number): ValidationErrors {
+function validateForm(
+  form: RetireFormState,
+  t: Translator,
+  userBalance?: number,
+): ValidationErrors {
   return {
-    beneficiary: validateBeneficiary(form.beneficiary),
-    reason: validateReason(form.reason),
-    amount: validateAmount(form.amount, userBalance),
+    beneficiary: validateBeneficiary(form.beneficiary, t),
+    reason: validateReason(form.reason, t),
+    amount: validateAmount(form.amount, t, userBalance),
   };
 }
 
 function hasErrors(errors: ValidationErrors): boolean {
-  return Object.values(errors).some(error => error !== undefined);
+  return Object.values(errors).some((error) => error !== undefined);
 }
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
@@ -98,14 +100,15 @@ const inputStyle: React.CSSProperties = {
   border: `1px solid ${colors.neutral[300]}`,
   borderRadius: "0.5rem",
   padding: "0.75rem 1rem",
-  fontSize: "0.9rem",
+  fontSize: "1rem", // 16px prevents iOS Safari auto-zoom (#1035)
   color: colors.neutral[900],
   boxSizing: "border-box",
+  minHeight: "48px",
 };
 
 const inputErrorStyle: React.CSSProperties = {
   ...inputStyle,
-  border: `1px solid #dc2626`,
+  border: "1px solid #dc2626",
 };
 
 const errorTextStyle: React.CSSProperties = {
@@ -114,109 +117,172 @@ const errorTextStyle: React.CSSProperties = {
   margin: "0.3rem 0 0",
 };
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Inner page component ──────────────────────────────────────────────────────
 
-export default function RetirePage() {
+function RetirePageContent() {
+  const t = useTranslations("retirePage");
   const searchParams = useSearchParams();
-  const batchId      = searchParams.get("batch") ?? "";
+  const batchId = searchParams.get("batch") ?? "";
 
-  const [amount, setAmount]           = useState(1);
+  const [amount, setAmount] = useState(1);
   const [beneficiary, setBeneficiary] = useState("");
-  const [reason, setReason]         = useState("");
-  const [txStatus, setTxStatus]     = useState<TxStatus | null>(null);
-  const [txHash, setTxHash]         = useState<string | null>(null);
-  const [pollHash, setPollHash]     = useState<string | null>(null);
-  const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
-    txHash: pollHash,
-  });
+  const [reason, setReason] = useState("");
+  const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [pollHash, setPollHash] = useState<string | null>(null);
+  const {
+    pollCount,
+    state: pollState,
+    errorMessage: pollError,
+  } = useTransactionPoller({ txHash: pollHash });
   const [retirementId, setRetirementId] = useState<string | null>(null);
-  const [showModal, setShowModal]     = useState(false);
+  const [showModal, setShowModal] = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
-  const [touched, setTouched] = useState({ beneficiary: false, reason: false, amount: false });
+  const [touched, setTouched] = useState({
+    beneficiary: false,
+    reason: false,
+    amount: false,
+  });
   const { toasts, addToast, dismiss } = useToast();
-  const { status: walletStatus, address: walletKey, refresh: refreshWallet } = useWalletStatus();
+  const { status: walletStatus, address: walletKey, refresh: refreshWallet } =
+    useWalletStatus();
 
-  async function handleConnect(key: string) {
-    addToast({ type: "success", title: "Wallet connected", message: key.slice(0, 8) + "…" });
+  // ── Simulation state ─────────────────────────────────────────────────────────
+  const [preview, setPreview] = useState<PreviewState>({
+    loading: false,
+    ready: false,
+    effects: [],
+  });
+  const [showPreview, setShowPreview] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  // ── Simulation ────────────────────────────────────────────────────────────────
+
+  const runSimulation = useCallback(async () => {
+    if (!walletKey || !batchId) return;
+
+    const contractId = process.env.NEXT_PUBLIC_CREDIT_CONTRACT_ID;
+    if (!contractId) {
+      // No contract configured; skip simulation and allow retirement directly
+      setPreview({ loading: false, ready: true, effects: [] });
+      return;
+    }
+
+    setPreview({ loading: true, ready: false, effects: [] });
+    const result = await simulateRetirementPreview({
+      contractId,
+      sourcePublicKey: walletKey,
+      batchId,
+      amount,
+      beneficiary: beneficiary || "preview",
+      reason: reason || "preview",
+    });
+    setPreview(result);
+  }, [walletKey, batchId, amount, beneficiary, reason]);
+
+  // Run simulation when preview step becomes visible
+  useEffect(() => {
+    if (showPreview) {
+      runSimulation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPreview]);
+
+  // ── Wallet connection handler ─────────────────────────────────────────────────
+
+  function handleConnect(key: string) {
+    addToast({
+      type: "success",
+      title: t("walletConnectedTitle"),
+      message: key.slice(0, 8) + "…",
+    });
   }
 
-  const handleBlur = (field: 'beneficiary' | 'reason' | 'amount') => {
-    setTouched(prev => ({ ...prev, [field]: true }));
-    
-    // Validate the specific field
-    if (field === 'beneficiary') {
-      const error = validateBeneficiary(beneficiary);
-      setValidationErrors(prev => ({ ...prev, beneficiary: error }));
-    } else if (field === 'reason') {
-      const error = validateReason(reason);
-      setValidationErrors(prev => ({ ...prev, reason: error }));
-    } else if (field === 'amount') {
-      const error = validateAmount(amount);
-      setValidationErrors(prev => ({ ...prev, amount: error }));
+  // ── Field change / validation handlers ───────────────────────────────────────
+
+  const handleBlur = (field: "beneficiary" | "reason" | "amount") => {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    if (field === "beneficiary") {
+      setValidationErrors((prev) => ({
+        ...prev,
+        beneficiary: validateBeneficiary(beneficiary, t),
+      }));
+    } else if (field === "reason") {
+      setValidationErrors((prev) => ({
+        ...prev,
+        reason: validateReason(reason, t),
+      }));
+    } else if (field === "amount") {
+      setValidationErrors((prev) => ({
+        ...prev,
+        amount: validateAmount(amount, t),
+      }));
     }
   };
 
-  const handleFieldChange = (field: 'beneficiary' | 'reason', value: string) => {
-    if (field === 'beneficiary') {
-      setBeneficiary(value);
-    } else if (field === 'reason') {
-      setReason(value);
-    }
-    
-    // Clear error when user starts typing
+  const handleFieldChange = (field: "beneficiary" | "reason", value: string) => {
+    if (field === "beneficiary") setBeneficiary(value);
+    else setReason(value);
     if (touched[field]) {
-      setValidationErrors(prev => ({ ...prev, [field]: undefined }));
+      setValidationErrors((prev) => ({ ...prev, [field]: undefined }));
     }
   };
 
   const handleAmountChange = (value: number) => {
     setAmount(value);
-    
-    // Clear error when user changes value
     if (touched.amount) {
-      setValidationErrors(prev => ({ ...prev, amount: undefined }));
+      setValidationErrors((prev) => ({ ...prev, amount: undefined }));
     }
   };
 
-  const handleShowModal = () => {
-    // Validate all fields before showing modal
-    const errors = validateForm({ batchId, amount, beneficiary, reason });
-    
+  // ── Show preview (validate first) ────────────────────────────────────────────
+
+  const handleShowPreview = () => {
+    const errors = validateForm({ batchId, amount, beneficiary, reason }, t);
     setValidationErrors(errors);
     setTouched({ beneficiary: true, reason: true, amount: true });
-    
-    // Only show modal if no validation errors
     if (!hasErrors(errors)) {
-      setShowModal(true);
+      setShowPreview(true);
     }
+  };
+
+  const handlePreviewCancel = () => {
+    setShowPreview(false);
+    setPreview({ loading: false, ready: false, effects: [] });
+  };
+
+  // ── Confirm (opens the safety modal, then retires) ────────────────────────────
+
+  const handlePreviewConfirm = () => {
+    setShowModal(true);
   };
 
   async function handleRetire() {
     if (!walletKey || !batchId || !beneficiary || !reason) return;
-    
-    // Final validation before signing
-    const errors = validateForm({ batchId, amount, beneficiary, reason });
+
+    const errors = validateForm({ batchId, amount, beneficiary, reason }, t);
     if (hasErrors(errors)) {
-      addToast({ 
-        type: "error", 
-        title: "Validation failed", 
-        message: "Please correct the form errors before proceeding" 
+      addToast({
+        type: "error",
+        title: t("validationFailedTitle"),
+        message: t("validationFailedMessage"),
       });
       return;
     }
-    
+
+    setConfirming(true);
     setTxStatus("building");
     try {
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 500));
       setTxStatus("signing");
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 1000));
       setTxStatus("submitting");
       const result = await retireCredits({
         batchId,
         amount,
         beneficiary,
         retirementReason: reason,
-        holderPublicKey:  walletKey,
+        holderPublicKey: walletKey,
       });
       setTxStatus("polling");
       setTxHash(result.txHash);
@@ -225,236 +291,402 @@ export default function RetirePage() {
     } catch (e: any) {
       setTxStatus("failed");
       setPollHash(null);
-      addToast({ type: "error", title: "Retirement failed", message: getContractErrorMessage(e) });
+      addToast({
+        type: "error",
+        title: t("retirementFailedTitle"),
+        message: getContractErrorMessage(e),
+      });
+    } finally {
+      setConfirming(false);
     }
   }
 
+  // ── Poll state effect ─────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!pollHash || pollState === "idle" || pollState === "polling") return;
-
     if (pollState === "SUCCESS") {
       setTxStatus("confirmed");
       addToast({
-        type:    "success",
-        title:   "Credits permanently retired",
-        message: `${formatTonnes(amount)} retired on behalf of ${beneficiary}`,
-        txHash:  pollHash,
+        type: "success",
+        title: t("retiredSuccessTitle"),
+        message: t("retiredSuccessMessage", {
+          tonnes: formatTonnes(amount),
+          beneficiary,
+        }),
+        txHash: pollHash,
       });
       setPollHash(null);
     } else if (pollState === "FAILED") {
       setTxStatus("failed");
       addToast({
         type: "error",
-        title: "Retirement failed",
-        message: pollError ?? "Transaction failed on-chain",
+        title: t("retirementFailedTitle"),
+        message: pollError ?? t("transactionFailedOnChain"),
       });
       setPollHash(null);
     } else if (pollState === "TIMED_OUT") {
       setTxStatus("timed_out");
       setPollHash(null);
     }
-  }, [pollState, pollHash, pollError, addToast, amount, beneficiary]);
+  }, [pollState, pollHash, pollError, addToast, amount, beneficiary, t]);
 
-  const busy = txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
+  // ── Derived state ─────────────────────────────────────────────────────────────
+
+  const busy =
+    txStatus && !["confirmed", "failed", "timed_out"].includes(txStatus);
   const hasValidationErrors = hasErrors(validationErrors);
   const isDisabled = hasValidationErrors || !!busy || txStatus === "confirmed";
-  
+
   const beneficiaryLength = beneficiary.length;
   const reasonLength = reason.length;
   const showBeneficiaryError = touched.beneficiary && validationErrors.beneficiary;
   const showReasonError = touched.reason && validationErrors.reason;
   const showAmountError = touched.amount && validationErrors.amount;
 
+  // ── Render ────────────────────────────────────────────────────────────────────
+
   return (
     <ErrorBoundary>
-    <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 2rem" }}>
-      <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
-        Retire Carbon Credits
-      </h1>
-      <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
-        Retirement is permanent and irreversible. A verifiable certificate will be issued for ESG reporting.
-      </p>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-        <div>
-          <label style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Amount to Retire (tonnes CO₂e) — minimum 0.01 tCO₂e
-          </label>
-          <input
-            type="number" 
-            min={0.01} 
-            step={0.01} 
-            value={amount}
-            onChange={e => {
-              const v = parseFloat(parseFloat(e.target.value).toFixed(2));
-              handleAmountChange(Math.max(0.01, v || 0.01));
-            }}
-            onBlur={() => handleBlur("amount")}
-            style={showAmountError ? inputErrorStyle : inputStyle}
-            aria-invalid={showAmountError ? "true" : "false"}
-            aria-describedby={showAmountError ? "amount-error" : undefined}
-          />
-          {showAmountError && (
-            <p id="amount-error" style={errorTextStyle}>
-              {validationErrors.amount}
-            </p>
-          )}
-        </div>
-
-        <div>
-          <label htmlFor="retire-beneficiary" style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Beneficiary Name <span style={{ color: "#dc2626" }}>*</span>
-          </label>
-          <input
-            id="retire-beneficiary"
-            type="text"
-            placeholder="e.g. Acme Corporation"
-            value={beneficiary}
-            onChange={e => handleFieldChange("beneficiary", e.target.value)}
-            onBlur={() => handleBlur("beneficiary")}
-            maxLength={VALIDATION_LIMITS.beneficiary.max}
-            style={showBeneficiaryError ? inputErrorStyle : inputStyle}
-            aria-invalid={showBeneficiaryError ? "true" : "false"}
-            aria-describedby={showBeneficiaryError ? "beneficiary-error-main" : undefined}
-          />
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            {showBeneficiaryError ? (
-              <p id="beneficiary-error-main" style={errorTextStyle}>
-                {validationErrors.beneficiary}
-              </p>
-            ) : (
-              <p style={{ fontSize: "0.75rem", color: colors.neutral[400], margin: "0.3rem 0 0" }}>
-                Appears on certificate
-              </p>
-            )}
-            <p style={{ 
-              fontSize: "0.75rem", 
-              color: beneficiaryLength > VALIDATION_LIMITS.beneficiary.max * 0.9 ? "#dc2626" : colors.neutral[400],
-              margin: "0.3rem 0 0",
-              fontWeight: beneficiaryLength > VALIDATION_LIMITS.beneficiary.max * 0.9 ? 600 : 400,
-            }}>
-              {beneficiaryLength}/{VALIDATION_LIMITS.beneficiary.max}
-            </p>
-          </div>
-        </div>
-
-        <div>
-          <label htmlFor="retire-reason" style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Retirement Reason <span style={{ color: "#dc2626" }}>*</span>
-          </label>
-          <textarea
-            id="retire-reason"
-            placeholder="e.g. Offsetting 2023 Scope 1 and 2 emissions"
-            value={reason}
-            onChange={e => handleFieldChange("reason", e.target.value)}
-            onBlur={() => handleBlur("reason")}
-            maxLength={VALIDATION_LIMITS.reason.max}
-            rows={3}
-            style={{ 
-              ...(showReasonError ? inputErrorStyle : inputStyle), 
-              resize: "vertical" 
-            }}
-            aria-invalid={showReasonError ? "true" : "false"}
-            aria-describedby={showReasonError ? "reason-error-main" : undefined}
-          />
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            {showReasonError && (
-              <p id="reason-error-main" style={errorTextStyle}>
-                {validationErrors.reason}
-              </p>
-            )}
-            <p style={{ 
-              fontSize: "0.75rem", 
-              color: reasonLength > VALIDATION_LIMITS.reason.max * 0.9 ? "#dc2626" : colors.neutral[400],
-              margin: "0.3rem 0 0",
-              marginLeft: "auto",
-              fontWeight: reasonLength > VALIDATION_LIMITS.reason.max * 0.9 ? 600 : 400,
-            }}>
-              {reasonLength}/{VALIDATION_LIMITS.reason.max}
-            </p>
-          </div>
-        </div>
-
-        {/* Warning */}
-        <div
-          id="retire-warning"
-          role="note"
+      <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 1rem" }}>
+        <h1
           style={{
-            background: "#fef9c3", border: "1px solid #fde047",
-            borderRadius: "0.5rem", padding: "0.875rem 1rem",
-            display: "flex", gap: "0.75rem",
+            fontSize: "2rem",
+            fontWeight: 800,
+            color: colors.neutral[900],
+            margin: "0 0 0.5rem",
           }}
         >
-          <span aria-hidden="true">⚠️</span>
-          <p style={{ fontSize: "0.8rem", color: "#854d0e", margin: 0 }}>
-            Retirement is <strong>permanent and irreversible</strong>. Once retired, these credits cannot be transferred, resold, or retired again.
-          </p>
+          {t("title")}
+        </h1>
+        <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
+          {t("subtitle")}
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          {/* Form fields — hidden once preview step is active */}
+          {!showPreview && (
+            <>
+              {/* Amount */}
+              <div>
+                <label
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: colors.neutral[700],
+                    display: "block",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  {t("amountLabel")}
+                </label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0.01}
+                  step={0.01}
+                  value={amount}
+                  onChange={(e) => {
+                    const v = parseFloat(
+                      parseFloat(e.target.value).toFixed(2),
+                    );
+                    handleAmountChange(Math.max(0.01, v || 0.01));
+                  }}
+                  onBlur={() => handleBlur("amount")}
+                  style={showAmountError ? inputErrorStyle : inputStyle}
+                  aria-invalid={showAmountError ? "true" : "false"}
+                  aria-describedby={showAmountError ? "amount-error" : undefined}
+                />
+                {showAmountError && (
+                  <p id="amount-error" style={errorTextStyle}>
+                    {validationErrors.amount}
+                  </p>
+                )}
+              </div>
+
+              {/* Beneficiary */}
+              <div>
+                <label
+                  htmlFor="retire-beneficiary"
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: colors.neutral[700],
+                    display: "block",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  {t("beneficiaryLabel")}{" "}
+                  <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <input
+                  id="retire-beneficiary"
+                  type="text"
+                  placeholder={t("beneficiaryPlaceholder")}
+                  value={beneficiary}
+                  onChange={(e) =>
+                    handleFieldChange("beneficiary", e.target.value)
+                  }
+                  onBlur={() => handleBlur("beneficiary")}
+                  maxLength={VALIDATION_LIMITS.beneficiary.max}
+                  style={showBeneficiaryError ? inputErrorStyle : inputStyle}
+                  aria-invalid={showBeneficiaryError ? "true" : "false"}
+                  aria-describedby={
+                    showBeneficiaryError
+                      ? "beneficiary-error-main"
+                      : undefined
+                  }
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  {showBeneficiaryError ? (
+                    <p id="beneficiary-error-main" style={errorTextStyle}>
+                      {validationErrors.beneficiary}
+                    </p>
+                  ) : (
+                    <p
+                      style={{
+                        fontSize: "0.75rem",
+                        color: colors.neutral[400],
+                        margin: "0.3rem 0 0",
+                      }}
+                    >
+                      {t("appearsOnCertificate")}
+                    </p>
+                  )}
+                  <p
+                    style={{
+                      fontSize: "0.75rem",
+                      color:
+                        beneficiaryLength >
+                        VALIDATION_LIMITS.beneficiary.max * 0.9
+                          ? "#dc2626"
+                          : colors.neutral[400],
+                      margin: "0.3rem 0 0",
+                      fontWeight:
+                        beneficiaryLength >
+                        VALIDATION_LIMITS.beneficiary.max * 0.9
+                          ? 600
+                          : 400,
+                    }}
+                  >
+                    {beneficiaryLength}/{VALIDATION_LIMITS.beneficiary.max}
+                  </p>
+                </div>
+              </div>
+
+              {/* Reason */}
+              <div>
+                <label
+                  htmlFor="retire-reason"
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: colors.neutral[700],
+                    display: "block",
+                    marginBottom: "0.4rem",
+                  }}
+                >
+                  {t("reasonLabel")}{" "}
+                  <span style={{ color: "#dc2626" }}>*</span>
+                </label>
+                <textarea
+                  id="retire-reason"
+                  placeholder={t("reasonPlaceholder")}
+                  value={reason}
+                  onChange={(e) => handleFieldChange("reason", e.target.value)}
+                  onBlur={() => handleBlur("reason")}
+                  maxLength={VALIDATION_LIMITS.reason.max}
+                  rows={3}
+                  style={{
+                    ...(showReasonError ? inputErrorStyle : inputStyle),
+                    resize: "vertical",
+                  }}
+                  aria-invalid={showReasonError ? "true" : "false"}
+                  aria-describedby={
+                    showReasonError ? "reason-error-main" : undefined
+                  }
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  {showReasonError && (
+                    <p id="reason-error-main" style={errorTextStyle}>
+                      {validationErrors.reason}
+                    </p>
+                  )}
+                  <p
+                    style={{
+                      fontSize: "0.75rem",
+                      color:
+                        reasonLength > VALIDATION_LIMITS.reason.max * 0.9
+                          ? "#dc2626"
+                          : colors.neutral[400],
+                      margin: "0.3rem 0 0",
+                      marginLeft: "auto",
+                      fontWeight:
+                        reasonLength > VALIDATION_LIMITS.reason.max * 0.9
+                          ? 600
+                          : 400,
+                    }}
+                  >
+                    {reasonLength}/{VALIDATION_LIMITS.reason.max}
+                  </p>
+                </div>
+              </div>
+
+              {/* Irreversibility warning */}
+              <div
+                id="retire-warning"
+                role="note"
+                style={{
+                  background: "#fef9c3",
+                  border: "1px solid #fde047",
+                  borderRadius: "0.5rem",
+                  padding: "0.875rem 1rem",
+                  display: "flex",
+                  gap: "0.75rem",
+                }}
+              >
+                <span aria-hidden="true">⚠️</span>
+                <p style={{ fontSize: "0.8rem", color: "#854d0e", margin: 0 }}>
+                  {t("irreversibleWarningPrefix")}{" "}
+                  <strong>{t("irreversibleWarningEmphasis")}</strong>{" "}
+                  {t("irreversibleWarningSuffix")}
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* ── Preview step ────────────────────────────────────────────────── */}
+          {showPreview && (
+            <TransactionPreview
+              title="Retirement preview"
+              description="Review the effects below before permanently retiring these credits."
+              preview={preview}
+              onConfirm={
+                walletStatus === "ready" ? handlePreviewConfirm : undefined
+              }
+              onCancel={handlePreviewCancel}
+              confirmLabel={t("permanentlyRetire", {
+                tonnes: formatTonnes(amount),
+              })}
+              confirming={confirming}
+            />
+          )}
+
+          {/* Transaction status */}
+          {txStatus && (
+            <TransactionStatus
+              status={txStatus}
+              txHash={txHash ?? undefined}
+              pollProgress={
+                txStatus === "polling"
+                  ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                  : undefined
+              }
+              message={
+                txStatus === "failed" ? pollError ?? undefined : undefined
+              }
+              onRetry={txStatus === "failed" ? handleRetire : undefined}
+            />
+          )}
+
+          {/* View certificate link after success */}
+          {retirementId && txStatus === "confirmed" && (
+            <a
+              href={`/retire/${retirementId}`}
+              style={{
+                display: "block",
+                textAlign: "center",
+                background: colors.primary[50],
+                color: colors.primary[700],
+                border: `1px solid ${colors.primary[200]}`,
+                borderRadius: "0.5rem",
+                padding: "0.875rem",
+                fontSize: "0.9rem",
+                fontWeight: 700,
+                textDecoration: "none",
+              }}
+            >
+              {t("viewCertificate")}
+            </a>
+          )}
+
+          {/* Wallet prompt or CTA */}
+          {walletStatus !== "ready" ? (
+            <WalletPrompt
+              status={walletStatus}
+              onConnect={handleConnect}
+              refresh={refreshWallet}
+            />
+          ) : !showPreview ? (
+            /* Before preview: "Review & Preview" CTA */
+            <button
+              type="button"
+              onClick={handleShowPreview}
+              disabled={isDisabled}
+              aria-disabled={isDisabled}
+              aria-describedby="retire-warning"
+              style={{
+                background: isDisabled ? colors.neutral[300] : "#dc2626",
+                color: "#fff",
+                border: "none",
+                borderRadius: "0.5rem",
+                padding: "0.875rem",
+                fontSize: "1rem",
+                fontWeight: 700,
+                cursor: isDisabled ? "not-allowed" : "pointer",
+              }}
+            >
+              {txStatus === "confirmed"
+                ? t("retiredCheck")
+                : busy
+                  ? t("processing")
+                  : "Review retirement →"}
+            </button>
+          ) : null}
         </div>
 
-        {txStatus && (
-          <TransactionStatus
-            status={txStatus}
-            txHash={txHash ?? undefined}
-            pollProgress={
-              txStatus === "polling"
-                ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
-                : undefined
-            }
-            message={txStatus === "failed" ? pollError ?? undefined : undefined}
-            onRetry={txStatus === "failed" ? handleRetire : undefined}
+        {/* Safety confirmation modal (shown after Confirm in preview) */}
+        {showModal && (
+          <RetireConfirmModal
+            amount={amount}
+            beneficiary={beneficiary}
+            reason={reason}
+            onConfirm={() => {
+              setShowModal(false);
+              handleRetire();
+            }}
+            onCancel={() => setShowModal(false)}
           />
         )}
 
-        {retirementId && txStatus === "confirmed" && (
-          <a
-            href={`/retire/${retirementId}`}
-            style={{
-              display: "block", textAlign: "center",
-              background: colors.primary[50], color: colors.primary[700],
-              border: `1px solid ${colors.primary[200]}`,
-              borderRadius: "0.5rem", padding: "0.875rem",
-              fontSize: "0.9rem", fontWeight: 700, textDecoration: "none",
-            }}
-          >
-            View &amp; Download Certificate →
-          </a>
-        )}
-
-        {walletStatus !== "ready" ? (
-          <WalletPrompt status={walletStatus} onConnect={handleConnect} refresh={refreshWallet} />
-        ) : (
-          <button
-            type="button"
-            onClick={handleShowModal}
-            disabled={isDisabled}
-            aria-disabled={isDisabled}
-            aria-describedby="retire-warning"
-            style={{
-              background: isDisabled ? colors.neutral[300] : "#dc2626",
-              color: "#fff", border: "none", borderRadius: "0.5rem",
-              padding: "0.875rem", fontSize: "1rem", fontWeight: 700,
-              cursor: isDisabled ? "not-allowed" : "pointer",
-            }}
-          >
-            {txStatus === "confirmed" ? "Retired ✓" :
-             busy ? "Processing…" :
-             `Permanently Retire ${formatTonnes(amount)}`}
-          </button>
-        )}
+        <Toast toasts={toasts} onDismiss={dismiss} />
       </div>
-
-      {showModal && (
-        <RetireConfirmModal
-          amount={amount}
-          beneficiary={beneficiary}
-          reason={reason}
-          onConfirm={() => { setShowModal(false); handleRetire(); }}
-          onCancel={() => setShowModal(false)}
-        />
-      )}
-
-      <Toast toasts={toasts} onDismiss={dismiss} />
-    </div>
     </ErrorBoundary>
+  );
+}
+
+// ── Page export ────────────────────────────────────────────────────────────────
+
+export default function RetirePage() {
+  return (
+    <Suspense
+      fallback={
+        <div style={{ padding: "2rem" }}>Loading retirement flow…</div>
+      }
+    >
+      <RetirePageContent />
+    </Suspense>
   );
 }
