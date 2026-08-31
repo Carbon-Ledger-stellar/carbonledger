@@ -23,6 +23,7 @@ import { UploadsModule } from "./uploads/uploads.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuditInterceptor } from "./audit/audit.interceptor";
 import { PrismaService } from "./prisma.service";
+import { PrismaModule } from "./prisma.module";
 import { VerifiersModule } from "./verifiers/verifiers.module";
 import { ThrottlerExceptionFilter, ResponseAlreadySentFilter } from "./common/throttler-exception.filter";
 import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
@@ -148,6 +149,7 @@ class HealthController {
           },
     }),
     LoggerModule,
+    PrismaModule,
     AuthModule,
     ProjectsModule,
     CreditsModule,
@@ -173,7 +175,6 @@ class HealthController {
   ],
   controllers: [HealthController],
   providers: [
-    PrismaService,
     StellarNetworkService,
     {
       provide: APP_FILTER,
