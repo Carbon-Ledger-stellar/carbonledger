@@ -158,7 +158,7 @@ async function bootstrap() {
   });
 
   // Fix mass assignment (API3): strip unknown fields globally.
-  // exceptionFactory passes structured errors so ValidationExceptionFilter
+  // exceptionFactory passes structured errors so ValidationErrorFilter
   // can map them to the CarbonLedger error catalog format.
   app.useGlobalPipes(
     new ValidationPipe({
@@ -177,12 +177,12 @@ async function bootstrap() {
     }),
   );
 
-  // Maps class-validator errors to CarbonLedger validation error catalog format (400 + error codes).
-  app.useGlobalFilters(new ValidationExceptionFilter());
+  // Maps class-validator errors to a field-level response while preserving HTTP 400.
+  app.useGlobalFilters(new ValidationErrorFilter());
 
   // Catch-all fallback (#966): standardizes every response NOT already handled by a
   // more specific filter above (ThrottlerExceptionFilter, StellarUnavailableExceptionFilter,
-  // ValidationExceptionFilter) into the CarbonLedger error envelope, and collapses
+  // ValidationErrorFilter) into the CarbonLedger error envelope, and collapses
   // unexpected 5xx errors to a generic message so internals never leak to callers.
   // Must be registered LAST — global filters are tried in registration order and this
   // one's bare @Catch() matches every exception, so anything registered after it would
