@@ -171,7 +171,10 @@ export class CreditsService {
       const chunkSize = 25; // chunk operations for BullMQ
       for (let i = 0; i < dtos.length; i += chunkSize) {
         const chunk = dtos.slice(i, i + chunkSize);
-        await this.queueService.enqueue(JobType.BULK_MINT, { items: chunk });
+        await this.queueService.enqueue(JobType.BULK_MINT, {
+          items: chunk,
+          alreadyPersisted: true,
+        });
       }
     }
 
@@ -184,12 +187,6 @@ export class CreditsService {
       executionLog,
       durationMs: duration
     };
-  }
-
-  async executeBulkMintJob(items: any[]) {
-    this.logger.log(`Executing bulk mint on Stellar for ${items.length} items`);
-    // Placeholder for actual Stellar SDK bulk operations
-    return { status: 'submitted', itemsCount: items.length };
   }
 
   async getBatch(batchId: string) {
@@ -611,6 +608,53 @@ export class CreditsService {
       totalProcessed: dtos.length,
       successCount: dtos.length,
       errorCount: 0,
+      results,
+    };
+  }
+
+  async queueBulkMint(dtos: MintCreditsDto[], actor?: string) {
+    if (!Array.isArray(dtos) || dtos.length === 0 || dtos.length > 100) {
+      throw new BadRequestException("Bulk minting accepts between 1 and 100 items");
+    }
+
+    const job = await this.queueService?.enqueue(JobType.BULK_MINT, {
+      items: dtos,
+      actor: actor ?? "system",
+      totalItems: dtos.length,
+    });
+
+    if (!job) {
+      throw new BadRequestException("Bulk mint queue is unavailable");
+    }
+
+    await job.updateProgress(0);
+    return {
+      jobId: job.id,
+      status: "queued",
+      totalItems: dtos.length,
+      progress: 0,
+    };
+  }
+
+  async executeBulkMintJob(
+    items: MintCreditsDto[],
+    actor?: string,
+    onProgress?: (progress: number) => Promise<void>,
+  ) {
+    const chunkSize = 25;
+    const results: BatchOperationResult<any>[] = [];
+
+    for (let index = 0; index < items.length; index += chunkSize) {
+      const chunk = items.slice(index, index + chunkSize);
+      const result = await this.batchMintCredits(chunk, actor);
+      results.push(result);
+      await onProgress?.(Math.round(((index + chunk.length) / items.length) * 100));
+    }
+
+    return {
+      status: "completed",
+      totalProcessed: items.length,
+      chunks: results.length,
       results,
     };
   }

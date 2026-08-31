@@ -108,6 +108,15 @@ export class BatchMintCreditsDto {
   items: MintCreditsDto[];
 }
 
+export class BulkMintCreditsDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MintCreditsDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  items: MintCreditsDto[];
+}
+
 export class BatchRetireCreditsDto {
   @IsArray()
   @ValidateNested({ each: true })

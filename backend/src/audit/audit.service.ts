@@ -26,6 +26,9 @@ export class AuditService {
     ipAddress:    string | null | undefined;
     result:       string | null | undefined;
     metadata:     unknown;
+    before:       unknown;
+    after:        unknown;
+    txHash:       string | null | undefined;
     timestamp:    Date;
     previousHash: string | null;
   }): string {
@@ -37,6 +40,9 @@ export class AuditService {
       fields.ipAddress    ?? '',
       fields.result       ?? '',
       JSON.stringify(fields.metadata ?? {}),
+      JSON.stringify(fields.before ?? null),
+      JSON.stringify(fields.after ?? null),
+      fields.txHash       ?? '',
       fields.timestamp.toISOString(),
       fields.previousHash ?? '',
     ].join('|');
@@ -51,6 +57,9 @@ export class AuditService {
     ipAddress?:  string;
     result?:     string;
     metadata?:   any;
+    before?:     any;
+    after?:      any;
+    txHash?:     string;
   }) {
     // Retrieve the most recent entry hash to form the chain link.
     // We use a serialisable transaction so concurrent inserts cannot race and
@@ -74,6 +83,9 @@ export class AuditService {
           ipAddress:    data.ipAddress,
           result:       data.result,
           metadata:     data.metadata ?? {},
+          before:       data.before,
+          after:        data.after,
+          txHash:       data.txHash,
           timestamp:    now,
           previousHash,
           entryHash:    null, // patched below
@@ -88,6 +100,9 @@ export class AuditService {
         ipAddress:    entry.ipAddress,
         result:       entry.result,
         metadata:     entry.metadata,
+        before:       entry.before,
+        after:        entry.after,
+        txHash:       entry.txHash,
         timestamp:    entry.timestamp,
         previousHash,
       });
@@ -96,6 +111,13 @@ export class AuditService {
         where: { id: entry.id },
         data:  { entryHash },
       });
+    });
+  }
+
+  async queryByResource(resourceId: string) {
+    return this.prisma.auditLog.findMany({
+      where: { resourceId },
+      orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
     });
   }
 

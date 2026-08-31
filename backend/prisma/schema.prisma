@@ -312,6 +312,9 @@ model AuditLog {
   ipAddress    String?
   result       String?  // e.g., "Success", "Failure: <error>"
   metadata     Json?    // Optional extra info
+  before       Json?    // State before the operation
+  after        Json?    // State after the operation
+  txHash       String?  // Related blockchain transaction hash
   timestamp    DateTime @default(now())
   /// SHA-256 hex digest of the preceding AuditLog entry's entryHash (null for first entry)
   previousHash String?
@@ -323,6 +326,8 @@ model AuditLog {
   @@index([resourceId])
   @@index([timestamp])
   @@index([entryHash])
+  @@index([resourceId, timestamp])
+  @@index([userId, timestamp])
 }
 
 model SyncMetadata {
@@ -535,6 +540,8 @@ model WebhookSubscription {
   secret       String
   events       String[] // e.g. ["retirement.confirmed", "certificate.ready", "credit.purchased"]
   active       Boolean  @default(true)
+  degraded     Boolean  @default(false)
+  consecutiveFailures Int @default(0)
   createdAt    DateTime @default(now())
 
   deliveryLogs WebhookDeliveryLog[]
