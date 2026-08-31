@@ -1,8 +1,26 @@
 import { SorobanRpc, Contract, scValToNative, xdr } from '@stellar/stellar-sdk';
 import { PrismaClient } from '@prisma/client';
+import Redis from 'ioredis';
+import { StructuredLogger } from './logger/structured-logger';
+import { projectDetailCacheKey } from './cache/cache.constants';
 
 const prisma = new PrismaClient();
+const logger = new StructuredLogger('carbonledger-indexer');
 const server = new SorobanRpc.Server(process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org');
+const redis = new Redis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+  lazyConnect: true,
+  enableOfflineQueue: false,
+  maxRetriesPerRequest: 0,
+});
+redis.connect().catch(() => undefined);
+
+async function invalidateProjectCache(projectId: string) {
+  try {
+    await redis.del(projectDetailCacheKey(projectId));
+  } catch (err) {
+    logger.warn(`Redis invalidation failed for ${projectId}: ${(err as Error).message}`);
+  }
+}
 
 const contracts = {
   registry: process.env.CARBON_REGISTRY_CONTRACT_ID!,
@@ -124,6 +142,7 @@ async function handleVerifyProject(projectId: string) {
     where: { projectId },
     data: { status: 'Verified' },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleRejectProject(projectId: string) {
@@ -131,6 +150,7 @@ async function handleRejectProject(projectId: string) {
     where: { projectId },
     data: { status: 'Rejected' },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleStatusUpdate(projectId: string) {
@@ -139,6 +159,7 @@ async function handleStatusUpdate(projectId: string) {
     where: { projectId },
     data: { status: mapStatus(projectData.status) },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleSuspendProject(projectId: string) {
@@ -146,6 +167,7 @@ async function handleSuspendProject(projectId: string) {
     where: { projectId },
     data: { status: 'Suspended' },
   });
+  await invalidateProjectCache(projectId);
 }
 
 async function handleMinted(batchId: string) {
@@ -267,15 +289,22 @@ function mapStatus(status: any) {
 }
 
 async function main() {
-  console.log('Starting indexer from genesis...');
+  logger.info('Starting indexer from genesis');
   const startTime = Date.now();
   const events = await getAllEvents();
-  console.log(`Fetched ${events.length} events`);
+  logger.info(`Fetched ${events.length} events`, { eventCount: events.length });
   for (const event of events) {
     await indexEvent(event);
   }
   const endTime = Date.now();
-  console.log(`Indexing completed in ${(endTime - startTime) / 1000} seconds`);
+  const duration = (endTime - startTime) / 1000;
+  logger.info(`Indexing completed`, { duration, durationSeconds: duration });
 }
 
-main().catch(console.error).finally(() => prisma.$disconnect());
+main()
+  .catch((error) => {
+    logger.error('Indexer failed', error instanceof Error ? error : new Error(String(error)), {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  })
+  .finally(() => prisma.$disconnect());

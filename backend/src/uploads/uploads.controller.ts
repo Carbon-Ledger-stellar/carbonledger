@@ -10,17 +10,24 @@ import {
   HttpException,
   HttpStatus,
   Req,
+  UseGuards,
 } from "@nestjs/common";
+import { IsString, IsOptional, IsIn, MaxLength, Matches } from "class-validator";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { IpfsUploadService } from "./ipfs-upload.service";
 import { UploadFileDto, UploadResponseDto } from "./uploads.dto";
 import { Request } from "express";
+import { Public, Roles } from "../auth/decorators";
+import { CheckPolicies, PoliciesGuard, UploadSubject } from "../policies";
 
 @Controller("uploads")
 export class UploadsController {
   constructor(private readonly ipfsUploadService: IpfsUploadService) {}
 
   @Post("project/:projectId/documents")
+  @Roles("project_developer", "admin")
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can("create", UploadSubject))
   @UseInterceptors(FileInterceptor("file"))
   async uploadProjectDocument(
     @Param("projectId") projectId: string,
@@ -88,6 +95,9 @@ export class UploadsController {
   }
 
   @Post("certificate/:retirementId/certificate")
+  @Roles("corporation", "admin")
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can("create", UploadSubject))
   @UseInterceptors(FileInterceptor("file"))
   async uploadCertificate(
     @Param("retirementId") retirementId: string,
@@ -151,9 +161,11 @@ export class UploadsController {
   }
 
   @Post("webhook/pinata")
+  @Public()
   async handlePinataWebhook(@Body() data: any) {
+    const safeData = this.sanitizeWebhookPayload(data);
     try {
-      await this.ipfsUploadService.handlePinataWebhook(data);
+      await this.ipfsUploadService.handlePinataWebhook(safeData);
       return { success: true, message: "Webhook processed" };
     } catch (error: any) {
       throw new HttpException(
@@ -163,7 +175,29 @@ export class UploadsController {
     }
   }
 
+  private sanitizeWebhookPayload(data: any): Record<string, unknown> {
+    const normalized: Record<string, unknown> = {};
+
+    if (data && typeof data === "object") {
+      if (typeof data.id === "string") {
+        normalized.id = data.id.replace(/[^a-zA-Z0-9-_]/g, "").slice(0, 128);
+      }
+      if (typeof data.status === "string") {
+        const status = data.status.toLowerCase();
+        normalized.status = ["pinned", "failed", "pending"].includes(status) ? status : "pending";
+      }
+      if (typeof data.pinataApiError === "string") {
+        normalized.pinataApiError = data.pinataApiError.replace(/\r\n/g, " ").slice(0, 1024);
+      }
+    }
+
+    return normalized;
+  }
+
   @Get("files")
+  @Roles("admin")
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can("read", UploadSubject))
   async getFiles(
     @Query("pinStatus") pinStatus?: string,
     @Query("linkedEntityType") linkedEntityType?: string,
@@ -178,6 +212,7 @@ export class UploadsController {
   }
 
   @Get("files/:cid")
+  @Public()
   async getFileByCid(@Param("cid") cid: string) {
     const file = await this.ipfsUploadService.getFileByCid(cid);
     if (!file) {

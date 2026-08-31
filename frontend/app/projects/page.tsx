@@ -1,18 +1,55 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useProjects } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { colors, statusBadge } from "../../styles/design-system";
 import LoadingSkeleton from "../../components/LoadingSkeleton";
+import LazyImage from "../../components/LazyImage";
+import ProjectFilter from "../../components/ProjectFilter";
+import { projectTypeIconUrl } from "../../lib/project-type-icons";
 
-const METHODOLOGIES = ["", "VCS", "Gold Standard", "ACR", "CAR"];
-const COUNTRIES     = ["", "Brazil", "Indonesia", "Kenya", "India", "Colombia"];
 
+/**
+ * Project Browser with Filters (Issue #1025)
+ *
+ * Features:
+ * - Filter by country, methodology, and vintage year
+ * - Search by project name, country, methodology, and project type
+ * - URL parameter synchronization for shareable filtered views
+ * - Client-side filtering with SWR for data fetching
+ * - Responsive grid layout (1 col mobile, 2 col tablet, 3+ col desktop)
+ */
 export default function ProjectsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Initialize filter state from URL params
   const [methodology, setMethodology] = useState("");
   const [country, setCountry]         = useState("");
   const [vintage, setVintage]         = useState("");
+  const [search, setSearch]           = useState("");
+
+  // Sync URL params on first load
+  useEffect(() => {
+    setMethodology(searchParams.get("methodology") || "");
+    setCountry(searchParams.get("country") || "");
+    setVintage(searchParams.get("vintage") || "");
+    setSearch(searchParams.get("search") || "");
+  }, []);
+
+  // Update URL params when filters change
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (methodology) params.set("methodology", methodology);
+    if (country) params.set("country", country);
+    if (vintage) params.set("vintage", vintage);
+    if (search) params.set("search", search);
+
+    const queryString = params.toString();
+    router.push(`/projects${queryString ? `?${queryString}` : ""}`);
+  }, [methodology, country, vintage, search, router]);
 
   const { data: projects, isLoading } = useProjects({
     methodology: methodology || undefined,
@@ -20,46 +57,70 @@ export default function ProjectsPage() {
     vintage:     vintage ? Number(vintage) : undefined,
   });
 
-  const selectStyle: React.CSSProperties = {
-    border: `1px solid ${colors.neutral[300]}`,
-    borderRadius: "0.375rem",
-    padding: "0.5rem 0.75rem",
-    fontSize: "0.875rem",
-    color: colors.neutral[700],
-    background: colors.surface,
-  };
+  // Search suggestions drawn from the currently loaded projects — filtering
+  // itself happens client-side below, so this stays fast even with 1000+ projects.
+  const searchSuggestions = useMemo(() => {
+    const terms = new Set<string>();
+    for (const p of projects ?? []) {
+      terms.add(p.name);
+      terms.add(p.country);
+      terms.add(p.methodology);
+      terms.add(p.projectType);
+    }
+    return Array.from(terms);
+  }, [projects]);
+
+  const visibleProjects = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return projects ?? [];
+    return (projects ?? []).filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      p.country.toLowerCase().includes(q) ||
+      p.methodology.toLowerCase().includes(q) ||
+      p.projectType.toLowerCase().includes(q)
+    );
+  }, [projects, search]);
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 2rem" }}>
-      <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
+    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 1rem" }}>
+      <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}
+          className="hero-title">
         Verified Carbon Projects
       </h1>
       <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
         Every project has been independently verified and is monitored by satellite data.
       </p>
 
-      {/* Filters */}
-      <div style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
-        <select style={selectStyle} value={methodology} onChange={e => setMethodology(e.target.value)}>
-          {METHODOLOGIES.map(m => <option key={m} value={m}>{m || "All Methodologies"}</option>)}
-        </select>
-        <select style={selectStyle} value={country} onChange={e => setCountry(e.target.value)}>
-          {COUNTRIES.map(c => <option key={c} value={c}>{c || "All Countries"}</option>)}
-        </select>
-        <select style={selectStyle} value={vintage} onChange={e => setVintage(e.target.value)}>
-          <option value="">All Vintages</option>
-          {["2020","2021","2022","2023","2024"].map(v => <option key={v} value={v}>{v}</option>)}
-        </select>
-      </div>
+      {/* Project Filter Component */}
+      <ProjectFilter
+        filters={{ methodology, country, vintage, search }}
+        onChange={(filters) => {
+          setMethodology(filters.methodology);
+          setCountry(filters.country);
+          setVintage(filters.vintage);
+          setSearch(filters.search);
+        }}
+        searchSuggestions={searchSuggestions}
+        resultCount={visibleProjects.length}
+      />
 
-      {/* Grid */}
+      {/* Grid — responsive: 1 col mobile, 2 col tablet, 3+ col desktop */}
       {isLoading ? (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
-          {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="CreditCard" />)}
+        <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))", gap: "1.5rem" }}>
+          {Array.from({ length: 6 }).map((_, i) => <LoadingSkeleton key={i} variant="ProjectCard" />)}
+        </div>
+      ) : visibleProjects.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "4rem 1rem", background: colors.surfaceAlt, borderRadius: "1rem" }}>
+          <p style={{ color: colors.neutral[900], fontWeight: 700, fontSize: "1.125rem", margin: "0 0 0.5rem" }}>
+            No projects match your search
+          </p>
+          <p style={{ color: colors.neutral[500], fontSize: "0.875rem", margin: 0 }}>
+            Try a different project name, country, or methodology.
+          </p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
-          {(projects ?? []).map(p => {
+        <div className="projects-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))", gap: "1.5rem" }}>
+          {visibleProjects.map(p => {
             const badge = statusBadge(p.status);
             return (
               <a key={p.projectId} href={`/projects/${p.projectId}`} style={{ textDecoration: "none" }}>
@@ -79,13 +140,23 @@ export default function ProjectsPage() {
                     <span style={{
                       background: badge.bg, color: badge.text, border: `1px solid ${badge.border}`,
                       borderRadius: "9999px", padding: "0.15rem 0.5rem", fontSize: "0.7rem", fontWeight: 600,
+                      whiteSpace: "nowrap",
                     }}>
                       {p.status}
                     </span>
                   </div>
-                  <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
-                    {p.name}
-                  </h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
+                    <LazyImage
+                      src={projectTypeIconUrl(p.projectType)}
+                      alt=""
+                      width={40}
+                      height={40}
+                      borderRadius="9999px"
+                    />
+                    <h3 style={{ fontSize: "1rem", fontWeight: 700, color: colors.neutral[900], margin: 0 }}>
+                      {p.name}
+                    </h3>
+                  </div>
                   <p style={{ fontSize: "0.8rem", color: colors.neutral[500], margin: "0 0 1rem" }}>
                     {p.methodology} · {p.projectType}
                   </p>

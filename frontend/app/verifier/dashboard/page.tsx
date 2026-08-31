@@ -1,181 +1,139 @@
 "use client";
-import { useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
+import Link from "next/link";
+import { useMemo } from "react";
+import OracleStatus from "../../../components/OracleStatus";
+import { useVerifierAuth } from "../../../lib/use-verifier-auth";
+import { usePendingVerifierProjects, type PendingVerifierProject } from "../../../lib/api";
+import { colors } from "../../../styles/design-system";
+import AccessibleDataGrid, { type Column } from "../../../components/AccessibleDataGrid";
 
-interface Project {
-  id: string;
-  projectId: string;
-  name: string;
-  methodology: string;
-  country: string;
-  status: string;
-  methodologyScore: number;
-  createdAt: string;
-}
-
-interface PendingAction {
-  project: Project;
-  decision: "verify" | "reject";
+function projectDocCid(p: PendingVerifierProject): string | undefined {
+  return p.documentCid ?? p.metadataCid;
 }
 
 export default function VerifierDashboardPage() {
-  const [publicKey, setPublicKey] = useState("");
-  const [token, setToken] = useState("");
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState<PendingAction | null>(null);
+  const { publicKey, token } = useVerifierAuth();
+  const { data: projects = [], error, isLoading, mutate } = usePendingVerifierProjects(publicKey, token);
 
-  async function load() {
-    if (!publicKey || !token) return;
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch(`${API}/verifiers/${publicKey}/pending-projects`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(await res.text());
-      setProjects(await res.json());
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function confirmReview() {
-    if (!pending) return;
-    const { project, decision } = pending;
-    setPending(null);
-    await fetch(`${API}/projects/${project.id}/${decision}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ verifierPublicKey: publicKey }),
-    });
-    load();
-  }
+  const columns: Column<PendingVerifierProject>[] = useMemo(() => [
+    {
+      key: "name",
+      label: "Project",
+      sortable: true,
+      render: (p) => (
+        <>
+          <strong>{p.name}</strong>
+          <br />
+          <span style={{ color: "#6b7280", fontSize: "0.8rem" }}>{p.projectId}</span>
+        </>
+      ),
+    },
+    {
+      key: "methodology",
+      label: "Methodology",
+      sortable: true,
+      render: (p) => p.methodology,
+    },
+    {
+      key: "country",
+      label: "Country",
+      sortable: true,
+      render: (p) => p.country,
+    },
+    {
+      key: "methodologyScore",
+      label: "Score",
+      render: (p) => `${p.methodologyScore}/100`,
+    },
+    {
+      key: "createdAt",
+      label: "Submitted",
+      sortable: true,
+      render: (p) => new Date(p.createdAt).toLocaleDateString(),
+    },
+    {
+      key: "docs",
+      label: "Docs",
+      render: (p) =>
+        projectDocCid(p) ? (
+          <a
+            href={`https://ipfs.io/ipfs/${projectDocCid(p)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: colors.primary[700] }}
+          >
+            PDF ↗
+          </a>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      key: "review",
+      label: "Review",
+      render: (p) => (
+        <Link href={`/verifier/projects/${p.id}`} style={{ color: "#7C3AED", fontWeight: 600, textDecoration: "none" }}>
+          Review →
+        </Link>
+      ),
+    },
+  ], []);
 
   return (
-    <main style={{ maxWidth: 800, margin: "4rem auto", padding: "0 1rem" }}>
-      <h1>Verifier Dashboard</h1>
-      <p>Review projects pending your accreditation. Each approved project earns an attestation fee.</p>
-
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
-        <input
-          placeholder="Your Stellar public key (G...)"
-          value={publicKey}
-          onChange={e => setPublicKey(e.target.value)}
-          style={{ flex: 1, padding: "0.5rem" }}
-        />
-        <input
-          placeholder="JWT token"
-          type="password"
-          value={token}
-          onChange={e => setToken(e.target.value)}
-          style={{ flex: 1, padding: "0.5rem" }}
-        />
-        <button onClick={load} style={btnStyle}>Load</button>
-      </div>
-
-      {error && <p style={{ color: "red" }}>{error}</p>}
-      {loading && <p>Loading...</p>}
-
-      {projects.length === 0 && !loading && (
-        <p style={{ color: "#666" }}>No projects pending your review.</p>
-      )}
-
-      {projects.map(p => (
-        <div key={p.id} style={cardStyle}>
-          <div>
-            <strong>{p.name}</strong> <span style={{ color: "#666" }}>({p.projectId})</span>
-            <br />
-            <small>{p.methodology} (Score: {p.methodologyScore}) · {p.country} · submitted {new Date(p.createdAt).toLocaleDateString()}</small>
-          </div>
-          <div style={{ display: "flex", gap: "0.5rem" }}>
-            <button onClick={() => setPending({ project: p, decision: "verify" })} style={approveBtn}>Approve</button>
-            <button onClick={() => setPending({ project: p, decision: "reject" })} style={rejectBtn}>Reject</button>
-          </div>
-        </div>
-      ))}
-
-      <hr style={{ margin: "2rem 0" }} />
-      <p style={{ fontSize: "0.875rem", color: "#666" }}>
-        <strong>Attestation fee:</strong> verifiers earn a fee per approved project as documented in{" "}
-        <a href="/docs/verifier-onboarding.md">docs/verifier-onboarding.md</a>.
+    <main style={{ maxWidth: 960, margin: "3rem auto", padding: "0 1rem" }}>
+      <h1 style={{ marginBottom: "0.35rem" }}>Verifier Dashboard</h1>
+      <p style={{ color: colors.neutral[600], marginTop: 0 }}>
+        Review projects pending your accreditation. Open a project to inspect documentation and submit an on-chain attestation.
       </p>
 
-      {pending && (
-        <div style={overlayStyle} role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-          <div style={dialogStyle}>
-            <h2 id="confirm-title" style={{ margin: "0 0 0.5rem", fontSize: "1.125rem" }}>
-              {pending.decision === "verify" ? "✅ Approve Project" : "❌ Reject Project"}
-            </h2>
-            <p style={{ color: "#6b7280", margin: "0 0 1.25rem", fontSize: "0.875rem" }}>
-              This action will be recorded permanently on-chain and cannot be undone.
-            </p>
+      <div style={{ display: "flex", gap: "1.25rem", marginBottom: "1rem" }}>
+        <Link href="/verifier/history" style={{ fontSize: "0.875rem", color: colors.primary[700] }}>
+          Attestation history →
+        </Link>
+        <Link href="/verifier/fees" style={{ fontSize: "0.875rem", color: colors.primary[700] }}>
+          Fee tracker →
+        </Link>
+      </div>
 
-            <div style={summaryStyle}>
-              <Row label="Project" value={`${pending.project.name} (${pending.project.projectId})`} />
-              <Row label="Methodology" value={pending.project.methodology} />
-              <Row label="Country" value={pending.project.country} />
-              <Row label="Submitted" value={new Date(pending.project.createdAt).toLocaleDateString()} />
-              <Row label="Action" value={pending.decision === "verify" ? "Approve — issue attestation" : "Reject — permanently block issuance"} />
-            </div>
-
-            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end", marginTop: "1.5rem" }}>
-              <button
-                onClick={() => setPending(null)}
-                style={cancelBtn}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmReview}
-                style={pending.decision === "verify" ? approveBtn : rejectBtn}
-              >
-                {pending.decision === "verify" ? "Confirm Approval" : "Confirm Rejection"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {error && (
+        <p role="alert" style={{ color: "#dc2626" }}>
+          {error.message}
+        </p>
       )}
+
+      <AccessibleDataGrid
+        data={projects}
+        columns={columns}
+        rowId={(p) => p.id}
+        defaultSortKey="createdAt"
+        defaultSortDir="desc"
+        pageSize={25}
+        rowHeight={52}
+        maxHeight={480}
+        loading={isLoading}
+        emptyMessage="No projects pending your review."
+        onRowActivate={(p) => window.open(`/verifier/projects/${p.id}`, "_self")}
+      />
+
+      <div style={{ marginTop: "1rem" }}>
+        <button
+          type="button"
+          onClick={() => mutate()}
+          style={{
+            padding: "0.45rem 0.9rem",
+            border: "1px solid #d1d5db",
+            borderRadius: 4,
+            background: "#fff",
+            cursor: "pointer",
+          }}
+        >
+          Refresh list
+        </button>
+      </div>
+
+      <hr style={{ margin: "2rem 0" }} />
+      <OracleStatus />
     </main>
   );
 }
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "0.4rem 0", borderBottom: "1px solid #f3f4f6" }}>
-      <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{label}</span>
-      <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#111827", maxWidth: "60%", textAlign: "right" }}>{value}</span>
-    </div>
-  );
-}
-
-const btnStyle: React.CSSProperties = {
-  padding: "0.5rem 1rem", background: "#7C3AED", color: "#fff",
-  border: "none", borderRadius: 4, cursor: "pointer",
-};
-const approveBtn: React.CSSProperties = { ...btnStyle, background: "#16a34a" };
-const rejectBtn: React.CSSProperties  = { ...btnStyle, background: "#dc2626" };
-const cancelBtn: React.CSSProperties  = {
-  padding: "0.5rem 1rem", background: "#fff", color: "#374151",
-  border: "1px solid #d1d5db", borderRadius: 4, cursor: "pointer",
-};
-const cardStyle: React.CSSProperties = {
-  display: "flex", justifyContent: "space-between", alignItems: "center",
-  padding: "1rem", border: "1px solid #e5e7eb", borderRadius: 6, marginBottom: "0.75rem",
-};
-const overlayStyle: React.CSSProperties = {
-  position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
-  display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50,
-};
-const dialogStyle: React.CSSProperties = {
-  background: "#fff", borderRadius: 8, padding: "1.75rem",
-  width: "100%", maxWidth: 480, boxShadow: "0 20px 25px -5px rgb(0 0 0 / 0.1)",
-};
-const summaryStyle: React.CSSProperties = {
-  background: "#f9fafb", border: "1px solid #e5e7eb",
-  borderRadius: 6, padding: "0.75rem 1rem",
-};
