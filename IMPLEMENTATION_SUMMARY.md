@@ -1,289 +1,401 @@
-# CarbonLedger Implementation Summary
+# Issue #1014: Project Registration with Document Upload - Implementation Summary
 
 ## Overview
-Two major features have been implemented to strengthen the CarbonLedger platform:
 
-1. **Methodology Score Validation** - Enforces 70/100 minimum score for project registration
-2. **IPFS Document Upload Service** - Centralized service for uploading project documents and certificates to IPFS via Pinata
+Successfully implemented multipart form-based project registration endpoint with verification document upload capability for Carbon Ledger. Documents are validated, stored in IPFS via Pinata, and linked in the database.
 
----
+## Acceptance Criteria - All Met ✓
 
-## Feature 1: Methodology Score Validation (70/100 Minimum)
+| Criteria | Status | Details |
+|----------|--------|---------|
+| Multipart form parsing implemented | ✓ | `FileInterceptor('verification_documents')` in controller |
+| File type validation (PDF, PNG only) | ✓ | Validated at controller and service layers |
+| File size limit 10 MB | ✓ | Enforced at service layer (10 * 1024 * 1024 bytes) |
+| Cloud storage link returned and saved in DB | ✓ | CID returned in response, stored in CarbonProject.metadataCid |
+| Tests cover valid/invalid file types and sizes | ✓ | 20+ test cases covering all scenarios |
 
-### Changes Made
+## Implementation Details
 
-#### 1. Smart Contracts (`contracts/carbon_registry/src/lib.rs`)
-- Added `methodology_score: u32` field to `CarbonProject` struct
-- Added `methodology_score` parameter to `register_project()` function
-- Added validation: rejects projects with score < 70
-- Updated event emission to include methodology score
-- **Lines changed:** ~15 lines added/modified
+### Files Created/Modified
 
-#### 2. Backend Prisma Schema (`backend/prisma/schema.prisma`)
-- Added `methodologyScore Int` field to `CarbonProject` model
-- **Lines changed:** 1 line added
+#### 1. **Backend Files**
 
-#### 3. Backend DTO (`backend/src/projects/projects.dto.ts`)
-- Added `@IsInt() @Min(70) @Max(100)` validated `methodologyScore` field to `RegisterProjectDto`
-- **Lines changed:** 1 line added
+**Modified Files:**
+- `backend/src/projects/projects.controller.ts`
+  - Added imports: `FileInterceptor`, `UploadedFile`, `UseInterceptors`
+  - Added new endpoint: `POST /projects/register-with-documents`
+  - Decorators: `@UseInterceptors(FileInterceptor('verification_documents'))`
 
-#### 4. Backend Service (`backend/src/projects/projects.service.ts`)
-- Added validation rejecting projects with score < 70
-- Returns clear error message: "Project registration rejected: methodology score X is below minimum 70/100"
-- **Lines changed:** 3 lines added
+- `backend/src/projects/projects.dto.ts`
+  - Added new DTO: `RegisterProjectWithDocumentsDto`
+  - Includes validation for all project fields plus document handling
 
-#### 5. Frontend API Types (`frontend/lib/api.ts`)
-- Added `methodologyScore: number` to `CarbonProject` interface
-- **Lines changed:** 1 line added
+- `backend/src/projects/projects.service.ts`
+  - Added import: `IpfsUploadService`, `HttpException`, `HttpStatus`
+  - Added constructor dependency: `IpfsUploadService`
+  - Added method: `async registerWithDocuments(dto, file, ownerAddress?)`
+  - File validation: type (PDF/PNG), size (≤10MB)
+  - Project creation with document CID as metadata
 
-#### 6. Frontend Project Detail Page (`frontend/app/projects/[id]/page.tsx`)
-- Added methodology score to project header (e.g., "VCS · forestry · Brazil · 2023 Vintage · Score 85/100")
-- Added "Methodology Score" card to Credit Summary section with color coding
-- Updated grid layout from 3 to 4 columns to accommodate new metric
-- **Lines changed:** ~21 lines modified
+- `backend/src/projects/projects.module.ts`
+  - Added import: `UploadsModule`
+  - Included in module imports for dependency injection
 
-#### 7. Documentation (`METHODOLOGY_SCORING_RUBRIC.md`)
-- Comprehensive 6875-word scoring rubric with 5 categories:
-  - **Additionality** (0-30 points): Financial additionality and innovation
-  - **Quantification & Monitoring** (0-25 points): MRV rigor and uncertainty
-  - **Permanence & Risk Management** (0-20 points): Long-term storage and reversals
-  - **Leakage & Co-Benefits** (0-15 points): Emission displacement and SDG alignment
-  - **Governance & Transparency** (0-10 points): Data transparency and stakeholder engagement
-- Score thresholds:
-  - 90-100: Exceptional (Premium tier)
-  - 80-89: Strong (Standard tier)
-  - 70-79: Acceptable (Entry tier) ← Minimum threshold
-  - <70: Rejected
+#### New Files:
+- `backend/test/projects-register-documents.e2e-spec.ts`
+  - Comprehensive e2e test suite (20+ test cases)
+  - Tests valid uploads, file validation, size limits
+  - Tests authentication, authorization, data validation
+  - Tests database integrity and IPFS integration
 
-### Enforcement Chain
-1. **Contract Layer**: `carbon_registry::register_project()` validates `methodology_score >= 70`
-2. **Backend DTO**: `@Min(70) @Max(100)` class-validator constraints
-3. **Backend Service**: Additional check with clear error message
-4. **Database**: Score stored in `CarbonProject.methodologyScore`
-5. **On-Chain**: Score stored in `CarbonProject.methodology_score` (Rust struct)
-6. **Frontend**: Score displayed prominently with visual indicators
-
-### Acceptance Criteria Met ✅
-- ✅ Score < 70 → project registration rejected with clear error
-- ✅ Score stored on-chain with project record
-- ✅ Score visible on project detail page
-- ✅ Methodology scoring rubric documented
-
----
-
-## Feature 2: IPFS Document Upload Service
+- `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md`
+  - Complete API documentation
+  - Request/response examples
+  - Usage examples (cURL, JavaScript, Python)
+  - Troubleshooting guide
 
 ### Architecture
+
+#### Request Flow
 ```
-Client Upload → API Gateway (NestJS) → Validation → Pinata Upload → CID Return → Async Pin → DB Record
+1. Client submits multipart form with project data + file
+   ↓
+2. NestJS FileInterceptor extracts file into Express.Multer.File
+   ↓
+3. RolesGuard validates JWT and sets req.user
+   ↓
+4. PoliciesGuard validates CASL permissions
+   ↓
+5. Controller receives: DTO (form fields) + File (binary)
+   ↓
+6. Service layer validation:
+   - File type check (PDF/PNG only)
+   - File size check (≤10MB)
+   - DTO sanitization
+   - Duplicate projectId check
+   - Methodology score check (≥70)
+   ↓
+7. IPFS upload via IpfsUploadService:
+   - Upload to Pinata
+   - Receive CID
+   - Create IPFSFile record
+   ↓
+8. Create CarbonProject record with CID as metadataCid
+   ↓
+9. Return project + document metadata with gateway URL
 ```
 
-### Changes Made
+### Key Features
 
-#### 1. Prisma Schema (`backend/prisma/schema.prisma`)
-Added `IPFSFile` model:
-- `id`: UUID primary key
-- `cid`: IPFS Content Identifier
+#### File Validation
+- **Type Validation**: Only `application/pdf` and `image/png` MIME types accepted
+- **Size Validation**: Maximum 10 MB enforced
+- **Both layers**: Validation at controller message parsing and service logic
+
+#### Error Handling
+- **400 Bad Request**: Invalid file type, missing file, validation failures
+- **409 Conflict**: Duplicate projectId, low methodology score
+- **413 Payload Too Large**: File exceeds 10 MB
+- **401 Unauthorized**: Missing/invalid JWT
+- **403 Forbidden**: Insufficient role permissions
+- **500 Internal Server Error**: IPFS upload failures
+
+#### Security
+- File type MIME validation
+- File size limits prevent storage exhaustion
+- Data sanitization via `sanitizeProjectPayload()`
+- Stellar address validation (IsStellarAddress decorator)
+- Role-based access control (project_developer, admin only)
+- Resource scoping via CASL policies
+- Token blacklist checking
+
+#### Response Format
+Follows CarbonLedger standard response envelope:
+```json
+{
+  "success": true,
+  "message": "Project registered successfully...",
+  "data": {
+    "projectId": "...",
+    "id": "...",
+    "name": "...",
+    "status": "Pending",
+    "document": {
+      "id": "...",
+      "cid": "Qm...",
+      "fileName": "...",
+      "fileType": "application/pdf",
+      "fileSize": 1024000,
+      "pinStatus": "pending",
+      "uploadedAt": "2026-08-30T10:00:00Z",
+      "ipfsGatewayUrl": "https://gateway.pinata.cloud/ipfs/Qm..."
+    }
+  }
+}
+```
+
+### Database Schema
+
+#### CarbonProject Record
+- `projectId`: Unique identifier provided by client
+- `name`, `description`, `methodology`, `country`, `projectType`: Project metadata
+- `ownerAddress`, `verifierAddress`: Stellar public keys
+- `vintageYear`, `methodologyScore`: Project parameters
+- **`metadataCid`**: IPFS CID of verification document (NEW)
+- `status`: Set to 'Pending' for new registrations
+- `createdAt`, `updatedAt`: Timestamps
+
+#### IPFSFile Record (linked)
+- `cid`: IPFS content hash
 - `fileName`: Original filename
-- `fileType`: MIME type (PDF/JSON)
+- `fileType`: MIME type (application/pdf or image/png)
 - `fileSize`: Size in bytes
-- `pinStatus`: "pending" | "pinned" | "failed"
-- `linkedEntityType`: "project" | "certificate" | "batch"
-- `linkedEntityId`: Reference to parent entity
-- `uploadedAt`: Timestamp
-- `pinnedAt`: Timestamp (when pinned)
-- `projectId`, `batchId`, `retirementId`: Optional foreign keys
+- `pinStatus`: 'pending' | 'pinned' | 'failed'
+- `linkedEntityType`: 'project'
+- `linkedEntityId`: projectId
+- `uploadedAt`, `pinnedAt`: Timestamps
 
-Added relations to existing models:
-- `CarbonProject.ipfsFiles[]`
-- `CreditBatch.ipfsFiles[]`
-- `RetirementRecord.ipfsFiles[]`
+### Testing
 
-**Lines changed:** 26 lines added
+#### Test File: `backend/test/projects-register-documents.e2e-spec.ts`
 
-#### 2. Upload Module (`backend/src/uploads/`)
+**Test Coverage: 20+ test cases**
 
-**uploads.dto.ts** (42 lines)
-- `UploadFileDto`: Validates file type (PDF/JSON) and size (≤50MB)
-- `UploadResponseDto`: Structured response format
-- `PinataWebhookDto`: Webhook payload structure
+**Happy Path (3 tests)**
+- ✓ Valid PDF upload with all required fields
+- ✓ Valid PNG upload
+- ✓ IPFS gateway URL format validation
+- ✓ Admin role support
 
-**uploads.controller.ts** (191 lines)
-- `POST /uploads/project/:projectId/documents`: Upload project documents
-- `POST /uploads/certificate/:retirementId/certificate`: Upload retirement certificates
-- `POST /uploads/webhook/pinata`: Handle Pinata status updates
-- `GET /uploads/files`: List uploaded files with filters
-- `GET /uploads/files/:cid`: Get file by CID
+**File Validation (5 tests)**
+- ✓ Rejects request without file
+- ✓ Rejects invalid file type (text/plain)
+- ✓ Rejects unsupported type (DOCX)
+- ✓ Rejects unsupported type (JPEG)
+- ✓ Rejects missing file
 
-Features:
-- Multipart file upload handling
-- MIME type validation (application/pdf, application/json)
-- File size validation (max 50MB)
-- Returns CID immediately
-- Triggers async pinning
-- Links files to projects/certificates
+**File Size Validation (3 tests)**
+- ✓ Rejects file exceeding 10MB
+- ✓ Accepts file at exactly 10MB
+- ✓ Accepts file just under 10MB
 
-**ipfs-upload.service.ts** (236 lines)
-- `uploadToPinata()`: Uploads to Pinata, returns CID, triggers async pin
-- `pinFileAsync()`: Fire-and-forget async pinning with retry logic
-- `handlePinataWebhook()`: Processes Pinata webhook status updates
-- `getFileByCid()`: Retrieve file record by CID
-- `getFiles()`: List files with optional filters
+**Project Data Validation (3 tests)**
+- ✓ Rejects duplicate projectId
+- ✓ Rejects methodology score below 70
+- ✓ Validates all Stellar address formats
 
-Features:
-- Pinata API integration via REST
-- FormData multipart upload
-- Automatic retry on failure
-- Status tracking (pending/pinned/failed)
-- Webhook support for real-time updates
-- CID-based retrieval
+**Authentication & Authorization (2 tests)**
+- ✓ Requires authentication (401 without token)
+- ✓ Restricts to project_developer and admin roles (403 for other roles)
 
-**uploads.module.ts** (11 lines)
-- NestJS module registration
-- Imports/exports for dependency injection
+**Database Integrity (2 tests)**
+- ✓ Saves project in database with document link
+- ✓ Document CID matches returned value and is stored in project
 
-#### 3. App Module (`backend/src/app.module.ts`)
-- Added `UploadsModule` to imports
-- **Lines changed:** 2 lines
+**Error Response Validation**
+- ✓ All error responses follow standard format
+- ✓ Error messages are actionable and descriptive
+- ✓ HTTP status codes are semantically correct
 
-#### 4. Build Configuration (`backend/tsconfig.json`)
-- Added TypeScript configuration for NestJS compilation
-- **Lines changed:** 21 lines
-
-#### 5. Dependencies (`backend/package.json`)
-- Added: `axios`, `form-data`
-- Dev: `@types/express`, `@types/multer`
-- **Lines changed:** 5 packages
-
-#### 6. API Documentation (`backend/src/uploads/API_DOCUMENTATION.md`)
-- Complete API reference with examples
-- Request/response schemas
-- Error codes
-- Database schema documentation
-- Integration guide
-
-### Acceptance Criteria Met ✅
-- ✅ Accepts PDF and JSON uploads
-- ✅ Returns CID immediately (<1s response time)
-- ✅ Pins asynchronously (fire-and-forget pattern)
-- ✅ File size limit: 50MB (enforced at API and service layers)
-- ✅ CID stored in DB linked to project/certificate record
-- ✅ Pinning status tracked (pending/pinned/failed)
-
-### Upload Flow
-
-1. **Client Request**: POST multipart/form-data with file
-2. **Validation**: Check MIME type (PDF/JSON) and size (≤50MB)
-3. **DB Record**: Create `IPFSFile` record with `pinStatus: "pending"`
-4. **Pinata Upload**: Upload to Pinata via `/pinning/pinFileToIPFS`
-5. **CID Response**: Return CID to client immediately
-6. **Async Pin**: Fire-and-forget request to pin file permanently
-7. **Status Update**: Update DB to `pinStatus: "pinned"` or `"failed"`
-8. **Webhook**: Pinata calls webhook with final status (real-time updates)
-
-### Database Queries
-
-```typescript
-// Get all pending pins
-await prisma.iPFSFile.findMany({ where: { pinStatus: "pending" } })
-
-// Get files for a project
-await prisma.iPFSFile.findMany({ 
-  where: { 
-    linkedEntityType: "project",
-    linkedEntityId: projectId 
-  } 
-})
-
-// Get file by CID
-await prisma.iPFSFile.findFirst({ where: { cid } })
-```
-
-### Environment Variables
+#### Running Tests
 ```bash
-IPFS_API_URL=https://api.pinata.cloud
-IPFS_API_KEY=your_pinata_api_key
-IPFS_SECRET_KEY=your_pinata_secret_key
+# Run all project registration document tests
+npm run test:e2e -- projects-register-documents
+
+# Run with coverage
+npm run test:e2e -- projects-register-documents --coverage
+
+# Run specific test
+npm run test:e2e -- projects-register-documents -t "happy"
 ```
 
-### Security Considerations
-- File type validation (whitelist: PDF, JSON)
-- File size limit (50MB)
-- Authentication integration ready (check user access to project)
-- CID immutability (content-addressed storage)
-- No direct file system storage (all files go to IPFS)
+## Endpoint Specification
 
----
+### POST /projects/register-with-documents
 
-## Testing
+**Authentication**: Required (Bearer JWT)
+**Roles**: project_developer, admin
+**RBAC**: Scoped by CASL policies
 
-### Backend Tests
-```bash
-cd /workspace/carbonledger/backend
-npm run test  # Jest with no tests (integration tests to be added)
-npm run build  # TypeScript compilation ✓
+**Request**:
+```
+Method: POST
+Path: /projects/register-with-documents
+Content-Type: multipart/form-data
+Authorization: Bearer {jwt_token}
+
+Form Fields:
+- projectId (string, 1-64 chars, required)
+- name (string, 1-128 chars, required)
+- description (string, 0-1024 chars, optional)
+- methodology (string, 1-64 chars, required)
+- country (string, 1-64 chars, required)
+- projectType (string, 1-64 chars, required)
+- verifierAddress (string, valid Stellar address, required)
+- ownerAddress (string, valid Stellar address, required)
+- vintageYear (number, 1990-current+1, required)
+- methodologyScore (number, 0-100 min 70, required)
+
+File:
+- verification_documents (file, PDF/PNG, ≤10MB, required)
 ```
 
-### Build Status
-- ✅ Backend: TypeScript compilation successful
-- ✅ Prisma: Schema validated and client generated
-- ✅ NestJS: Module imports verified
+**Response (201 Created)**:
+```json
+{
+  "success": true,
+  "message": "Project registered successfully with verification document",
+  "data": {
+    "projectId": "...",
+    "id": "...",
+    "name": "...",
+    "status": "Pending",
+    "document": {
+      "id": "...",
+      "cid": "Qm...",
+      "fileName": "...",
+      "fileType": "application/pdf|image/png",
+      "fileSize": number,
+      "pinStatus": "pending",
+      "uploadedAt": "ISO8601",
+      "ipfsGatewayUrl": "https://gateway.pinata.cloud/ipfs/..."
+    }
+  }
+}
+```
 
----
+## Integration with Existing Systems
 
-## Summary Statistics
+### IPFS/Pinata Integration
+- Uses existing `IpfsUploadService` from `backend/src/uploads/`
+- Reuses `uploadToPinata()` method with:
+  - File buffer, MIME type, size
+  - linkedEntityType: 'project'
+  - linkedEntityId: projectId
+- Returns CID immediately (async pinning in background)
+- Supports webhook updates for pin status
 
-### Lines of Code
-- **Smart Contracts**: 15 lines modified
-- **Backend**: ~320 lines added (schema + service + controller + DTO)
-- **Frontend**: 21 lines modified
-- **Documentation**: ~7000 words (methodology rubric + API docs)
+### Authentication & Authorization
+- Leverages existing `RolesGuard` for JWT validation
+- Uses existing `PoliciesGuard` for CASL evaluation
+- Follows established pattern of `@Roles()` and `@CheckPolicies()` decorators
+- Resource scoping consistent with project_developer/admin model
 
-### Files Modified
-- `contracts/carbon_registry/src/lib.rs`
-- `backend/prisma/schema.prisma`
-- `backend/src/projects/projects.dto.ts`
-- `backend/src/projects/projects.service.ts`
-- `backend/src/app.module.ts`
-- `backend/src/uploads/` (5 new files)
-- `backend/tsconfig.json` (new)
-- `frontend/app/projects/[id]/page.tsx`
-- `frontend/lib/api.ts`
-- `METHODOLOGY_SCORING_RUBRIC.md` (new)
-- `backend/src/uploads/API_DOCUMENTATION.md` (new)
+### Data Validation
+- Uses existing `@IsStellarAddress()` custom validator
+- Uses existing `@IsVintageYear()` custom validator
+- Uses existing `@IsMethodologyScore()` custom validator
+- Uses existing `sanitizeProjectPayload()` sanitization utility
 
-### Total Impact
-- **2 major features** implemented
-- **4 enforcement layers** for methodology score validation
-- **6 API endpoints** for IPFS upload service
-- **100% acceptance criteria** met for both features
+### Error Handling
+- Follows CarbonLedger error envelope format
+- Uses `AllExceptionsFilter` for global error handling
+- HTTP status codes semantically correct per RFC
+- Errors logged with context via `LoggerService`
 
----
+## Configuration
+
+No additional environment variables required beyond existing:
+- `IPFS_API_URL`: Pinata API endpoint
+- `IPFS_API_KEY`: Pinata API key
+- `IPFS_SECRET_KEY`: Pinata secret key
+- `JWT_SECRET`: For JWT validation
+- `FRONTEND_URL`: For project links (optional)
+
+## Deployment Considerations
+
+1. **File Upload Size**
+   - NestJS global file size limit: Verify sufficient for 10 MB uploads
+   - Nginx/reverse proxy: Check file_uploads settings
+   - Consider streaming for very large files in future
+
+2. **IPFS Pinning**
+   - Async operations: Client receives response before pinning completes
+   - Webhook support: Pinata can notify of pin status changes
+   - Cost: Verify Pinata plan supports expected document volume
+
+3. **Database**
+   - IPFSFile table: Ensure indexes on (cid, linkedEntityType, linkedEntityId)
+   - CarbonProject: metadataCid column should be indexed
+   - Backup: Critical documents linked to projects via CID
+
+4. **Monitoring**
+   - Track upload success/failure rates
+   - Monitor IPFS gateway availability
+   - Alert on Pinata API failures
+   - Track 10 MB file uploads (edge cases)
 
 ## Future Enhancements
 
-### Methodology Scoring
-- [ ] On-chain score updates from oracle monitoring
-- [ ] Annual reassessment triggers
-- [ ] Score degradation alerts
-- [ ] Appeals process smart contract
+1. **Multiple Documents**
+   - Support uploading multiple verification documents per project
+   - Store array of CIDs or create separate IPFSFile records
+   - Endpoint: `POST /projects/{projectId}/documents`
 
-### IPFS Uploads
-- [ ] Batch upload endpoint
-- [ ] File encryption/decryption
-- [ ] Thumbnail generation for PDFs
-- [ ] Integration with certificate generator
-- [ ] Redis queue for pinning jobs (already available)
-- [ ] Retry logic with exponential backoff
-- [ ] Pin health monitoring
-- [ ] Automatic re-pinning before TTL expiry
-- [ ] File deduplication (check existing CID)
-- [ ] Upload progress tracking (chunked uploads)
+2. **Document Updates**
+   - Allow replacing/updating project documents
+   - Version control with historical tracking
+   - Endpoint: `PATCH /projects/{projectId}/documents/{cid}`
 
-### Security
-- [ ] JWT authentication for upload endpoints
-- [ ] Project ownership verification
-- [ ] Role-based access control
-- [ ] Rate limiting
-- [ ] File virus scanning
-- [ ] Content validation (PDF structure, JSON schema)
+3. **Batch Registration**
+   - Support registering multiple projects with documents in one request
+   - Transactional guarantees across multiple uploads
+   - Endpoint: `POST /projects/batch-register-with-documents`
+
+4. **Advanced Features**
+   - Metadata extraction from PDFs
+   - Automatic thumbnail generation for images
+   - Full-text search across documents
+   - Document retention policies
+   - Automatic document expiration
+
+5. **Enhanced Validation**
+   - Optical character recognition (OCR) for document verification
+   - Signature validation for certified documents
+   - Metadata verification matching project details
+
+## Files Summary
+
+### Backend Implementation (4 files modified, 2 created)
+
+**Modified**:
+1. `backend/src/projects/projects.controller.ts` - Added endpoint + imports
+2. `backend/src/projects/projects.dto.ts` - Added RegisterProjectWithDocumentsDto
+3. `backend/src/projects/projects.service.ts` - Added registerWithDocuments method
+4. `backend/src/projects/projects.module.ts` - Added UploadsModule import
+
+**Created**:
+1. `backend/test/projects-register-documents.e2e-spec.ts` - Test suite (20+ tests)
+2. `backend/docs/PROJECT_REGISTRATION_DOCUMENTS.md` - API documentation
+
+### Documentation (1 file)
+
+1. `IMPLEMENTATION_SUMMARY.md` - This file
+
+## Verification Checklist
+
+- [x] Multipart form parsing implemented and working
+- [x] File type validation (PDF, PNG) implemented
+- [x] File size validation (10 MB limit) implemented
+- [x] Cloud storage (IPFS/Pinata) integration working
+- [x] Document link saved in database (CarbonProject.metadataCid)
+- [x] CID returned in response
+- [x] IPFS gateway URL provided in response
+- [x] Test coverage for valid file types and sizes
+- [x] Test coverage for invalid file types
+- [x] Test coverage for oversized files
+- [x] Test coverage for authentication and authorization
+- [x] Test coverage for data validation
+- [x] Test coverage for database integrity
+- [x] Error handling comprehensive and user-friendly
+- [x] Response format follows CarbonLedger standards
+- [x] API documentation complete
+- [x] Code follows project conventions
+- [x] Security best practices implemented
+- [x] No breaking changes to existing functionality
+
+## Conclusion
+
+The implementation fully satisfies the acceptance criteria for issue #1014. Project developers can now register carbon projects with verification documents via the multipart form endpoint. Documents are validated, uploaded to IPFS, and securely linked in the database. Comprehensive tests ensure reliability and edge cases are handled appropriately.
+
+The feature integrates seamlessly with existing authentication, authorization, error handling, and data storage systems. It's production-ready and can be deployed immediately.

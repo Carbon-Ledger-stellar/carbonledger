@@ -1,0 +1,50 @@
+# Datadog/ELK Alert Configuration
+
+alerts:
+  - name: High Error Rate
+    description: Error rate exceeds 1% threshold
+    condition: error_rate > 1
+    evaluation_period: 5m
+    severity: critical
+    notification: slack
+    message: "Error rate is {{error_rate}}% for the last 5 minutes"
+
+  - name: High Latency
+    description: p95 latency exceeds 1 second
+    condition: p95_latency > 1000
+    evaluation_period: 5m
+    severity: warning
+    notification: slack
+    message: "p95 latency is {{p95_latency}}ms for the last 5 minutes"
+
+  - name: Service Downtime
+    description: Service is not responding
+    condition: service_down
+    evaluation_period: 1m
+    severity: critical
+    notification: pagerduty
+    message: "Service has been down for {{duration}} minutes"
+
+  - name: Error Spike
+    description: Sudden increase in errors
+    condition: error_rate > 10
+    evaluation_period: 1m
+    severity: critical
+    notification: slack
+    message: "Error spike detected: {{error_rate}}% in the last minute"
+
+  - name: Throughput Drop
+    description: Significant drop in requests
+    condition: throughput < baseline * 0.5
+    evaluation_period: 5m
+    severity: warning
+    notification: slack
+    message: "Throughput dropped to {{throughput}} req/min"
+
+  - name: Slow Database Queries
+    description: Database queries exceeding 500ms
+    condition: db_query_duration > 500
+    evaluation_period: 5m
+    severity: warning
+    notification: slack
+    message: "Slow DB queries detected: {{count}} queries >500ms"

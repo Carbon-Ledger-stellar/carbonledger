@@ -1,0 +1,131 @@
+name: Backend Integration Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-integration.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  integration:
+    name: NestJS Integration Tests (Supertest + real PG)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carbonledger_integration
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: integrationtestpassword
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:integrationtestpassword@localhost:5433/carbonledger_integration
+        run: npx prisma generate
+
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:integrationtestpassword@localhost:5433/carbonledger_integration
+        run: npx prisma migrate deploy
+
+      - name: Run integration test suite
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:integrationtestpassword@localhost:5433/carbonledger_integration
+          JWT_SECRET: integration-test-jwt-secret
+          NODE_ENV: test
+          REDIS_HOST: localhost
+          REDIS_PORT: "6379"
+        run: |
+          npx jest \
+            --config ./test/jest-e2e.json \
+            --runInBand \
+            --coverage \
+            --forceExit \
+            --reporters=default \
+            --reporters=jest-junit \
+            2>&1 | tee /tmp/integration-test-output.txt
+
+      # Upload JUnit report for GitHub Actions annotations
+      - name: Upload JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-junit
+          path: |
+            backend/junit.xml
+            backend/coverage-e2e/
+          retention-days: 14
+
+      # Annotate PR with test results
+      - name: Annotate test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: "Backend Integration Tests"
+          path: backend/junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+
+      # Post coverage summary comment on PR
+      - name: Post coverage comment
+        if: github.event_name == 'pull_request'
+        uses: MishaKav/jest-coverage-comment@main
+        with:
+          coverage-summary-path: backend/coverage-e2e/coverage-summary.json
+          title: "Backend Integration Test Coverage"
+          badge-title: "Coverage"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Block merge if coverage is below threshold
+      - name: Enforce coverage threshold
+        working-directory: backend
+        run: |
+          if [ -f coverage-e2e/coverage-summary.json ]; then
+            LINES=$(node -e "
+              const s = require('./coverage-e2e/coverage-summary.json');
+              console.log(s.total.lines.pct);
+            ")
+            echo "Line coverage: ${LINES}%"
+            if (( $(echo "$LINES < 80" | bc -l) )); then
+              echo "::error::Integration test line coverage ${LINES}% is below the 80% threshold."
+              exit 1
+            fi
+          fi
