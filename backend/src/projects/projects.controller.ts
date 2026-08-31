@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, Request, Header, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Query, Request, Header, UseGuards, BadRequestException, UseInterceptors, UploadedFile } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
-import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, CreateProjectDto, BatchCreateProjectsDto, BatchUpdateProjectStatusDto, UpdateProjectStatusItemDto } from './projects.dto';
+import { RegisterProjectDto, UpdateProjectStatusDto, SearchProjectsDto, CreateProjectDto, BatchCreateProjectsDto, BatchUpdateProjectStatusDto, UpdateProjectStatusItemDto, RegisterProjectWithDocumentsDto } from './projects.dto';
 import { IsString } from 'class-validator';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, ProjectSubject } from '../policies';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 class VerifyDto { @IsString() verifierPublicKey: string; }
 class RejectDto { @IsString() verifierPublicKey: string; @IsString() reason: string; }
@@ -80,12 +81,25 @@ export class ProjectsController {
     return this.projectsService.register(dto);
   }
 
+  @Post('register-with-documents')
+  @Roles('project_developer', 'admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('create', ProjectSubject))
+  @UseInterceptors(FileInterceptor('verification_documents'))
+  registerWithDocuments(
+    @Body() dto: RegisterProjectWithDocumentsDto,
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req: any,
+  ) {
+    return this.projectsService.registerWithDocuments(dto, file, req.user?.publicKey);
+  }
+
   @Patch(':id/status')
   @Roles('admin')
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('update', ProjectSubject))
   updateStatus(@Param('id') id: string, @Body() dto: UpdateProjectStatusDto, @Request() req: any) {
-    return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin');
+    return this.projectsService.updateStatus(id, dto, req.user?.publicKey ?? 'admin', req);
   }
 
   @Post('batch-update-status')

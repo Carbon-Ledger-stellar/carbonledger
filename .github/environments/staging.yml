@@ -1,0 +1,4 @@
+name: Staging
+description: Staging environment for testing
+url: https://staging.carbonledger.com
+production: false

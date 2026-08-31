@@ -1,7 +1,9 @@
 import { Resolver, Query, Args, Int } from '@nestjs/graphql';
 import { ProjectType, ProjectsPage } from '../types/project.type';
-import { ProjectsService } from '../../projects/projects.service';
+import { CallerContext, ProjectsService } from '../../projects/projects.service';
 import { Public } from '../../auth/decorators';
+
+const PUBLIC_CALLER: CallerContext = { publicKey: 'public', role: 'corporation' };
 
 @Resolver(() => ProjectType)
 export class ProjectsResolver {
@@ -22,7 +24,7 @@ export class ProjectsResolver {
   ) {
     const result = await this.projectsService.findAll({
       methodology, country, vintage, cursor, limit: limit ?? 20,
-    });
+    }, PUBLIC_CALLER);
     return {
       projects:   result.projects,
       nextCursor: result.next_cursor,
@@ -55,7 +57,7 @@ export class ProjectsResolver {
       vintageYear, cursor, limit: limit ?? 20,
       sortBy:      sortBy as any,
       sortOrder:   sortOrder ?? 'desc',
-    });
+    }, PUBLIC_CALLER);
   }
 
   /**
@@ -65,6 +67,12 @@ export class ProjectsResolver {
   @Query(() => ProjectType, { name: 'project' })
   @Public()
   getProject(@Args('projectId') projectId: string) {
-    return this.projectsService.findOne(projectId);
+    return this.projectsService.findOne(projectId, PUBLIC_CALLER);
+  }
+
+  @Query(() => ProjectType, { name: 'getProject' })
+  @Public()
+  getProjectByName(@Args('projectId') projectId: string) {
+    return this.projectsService.findOne(projectId, PUBLIC_CALLER);
   }
 }

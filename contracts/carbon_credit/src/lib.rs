@@ -60,6 +60,15 @@ pub const DEFAULT_MIN_VINTAGE_YEAR: u32 = 1990;
 pub const DEFAULT_MAX_VINTAGE_YEAR: u32 = 0;
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Role {
+    Admin,
+    Verifier,
+    Oracle,
+    MarketplaceAdmin,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Batch(String),
@@ -70,7 +79,7 @@ pub enum DataKey {
     /// ledger entry. Superseded by the skip-list index in [`serial_index`];
     /// retained so upgraded contracts can drain it via `migrate_serial_index`.
     SerialRegistry,
-    Admin,
+    Role(Address),
     RegistryContract,
     ContractVersion,
     UpgradeHistory,
@@ -277,11 +286,13 @@ impl CarbonCreditContract {
         admin: Address,
         registry_contract: Address,
     ) -> Result<(), CarbonError> {
-        if env.storage().persistent().has(&DataKey::Admin) {
+        if env.storage().persistent().has(&DataKey::Role(admin.clone())) {
             return Err(CarbonError::AlreadyInitialized);
         }
         admin.require_auth();
-        env.storage().persistent().set(&DataKey::Admin, &admin);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Role(admin.clone()), &Role::Admin);
         env.storage()
             .persistent()
             .set(&DataKey::RegistryContract, &registry_contract);
@@ -306,7 +317,7 @@ impl CarbonCreditContract {
         new_wasm_hash: BytesN<32>,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         Self::require_not_paused(&env)?;
 
         let current_version: u32 = env
@@ -424,7 +435,7 @@ impl CarbonCreditContract {
         n: u32,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         Self::require_not_paused(&env)?;
 
         let clamped = core::cmp::max(
@@ -465,7 +476,7 @@ impl CarbonCreditContract {
         oracle: Address,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         Self::require_not_paused(&env)?;
         env.storage().persistent().set(&DataKey::OracleContract, &oracle);
         env.events().publish(
@@ -482,7 +493,7 @@ impl CarbonCreditContract {
         periods: Vec<String>,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         Self::require_not_paused(&env)?;
         env.storage().persistent().set(&DataKey::VerifiedPeriods(project_id.clone()), &periods);
         env.events().publish(
@@ -494,7 +505,7 @@ impl CarbonCreditContract {
 
     pub fn pause_operations(env: Env, admin: Address, until_timestamp: u64) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         let now = env.ledger().timestamp();
         if until_timestamp <= now || until_timestamp > now.saturating_add(72 * 60 * 60) {
             return Err(CarbonError::InvalidPauseWindow);
@@ -506,7 +517,7 @@ impl CarbonCreditContract {
 
     pub fn unpause_operations(env: Env, admin: Address) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         Ok(())
@@ -519,7 +530,7 @@ impl CarbonCreditContract {
         max_year: u32,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         Self::require_not_paused(&env)?;
         if min_year > max_year {
             return Err(CarbonError::InvalidVintageYear);
@@ -621,7 +632,7 @@ impl CarbonCreditContract {
         initial_owner: Address,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         Self::require_not_paused(&env)?;
 
         if project_id.is_empty() || project_id.len() > 64 {
@@ -986,6 +997,33 @@ impl CarbonCreditContract {
         result
     }
 
+    pub fn grant_role(env: Env, admin: Address, target: Address, role: Role) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().set(&DataKey::Role(target), &role);
+        Ok(())
+    }
+
+    pub fn revoke_role(env: Env, admin: Address, target: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage().persistent().remove(&DataKey::Role(target));
+        Ok(())
+    }
+
+    pub fn get_role(env: Env, target: Address) -> Option<Role> {
+        env.storage()
+            .persistent()
+            .get::<DataKey, Role>(&DataKey::Role(target))
+    }
+
+    pub fn has_role(env: Env, target: Address, role: Role) -> bool {
+        match env.storage().persistent().get::<DataKey, Role>(&DataKey::Role(target)) {
+            Some(stored_role) => stored_role == role,
+            None => false,
+        }
+    }
+
     // ============================================
     // Helper Functions
     // ============================================
@@ -1012,17 +1050,23 @@ impl CarbonCreditContract {
         Ok(batch)
     }
 
-    /// Enforce that `caller` holds exactly `required` role.
+    /// Enforce that `caller` holds the required role exactly.
+    /// `DataKey::Role(address)` is the canonical source of truth for RBAC; an
+    /// admin is treated as privileged for all admin-gated actions.
     fn require_role(env: &Env, caller: &Address, required: Role) -> Result<(), CarbonError> {
-        let role: Role = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RoleMap(caller.clone()))
-            .unwrap_or(Role::User);
-        if role != required {
-            return Err(CarbonError::Unauthorized);
+        if Self::has_role(env.clone(), caller.clone(), Role::Admin)
+            || Self::has_role(env.clone(), caller.clone(), required.clone())
+        {
+            return Ok(());
         }
-        Ok(())
+        Err(CarbonError::UnauthorizedVerifier)
+    }
+
+    fn require_admin(env: &Env, caller: &Address) -> Result<(), CarbonError> {
+        match env.storage().persistent().get::<DataKey, Role>(&DataKey::Role(caller.clone())) {
+            Some(Role::Admin) => Ok(()),
+            _ => Err(CarbonError::UnauthorizedVerifier),
+        }
     }
 
     fn active_amount(env: &Env, batch: &CreditBatch) -> i128 {
@@ -1099,7 +1143,7 @@ impl CarbonCreditContract {
         limit: u32,
     ) -> Result<u32, CarbonError> {
         admin.require_auth();
-        Self::require_admin(&env, &admin)?;
+        Self::require_role(&env, &admin, Role::Admin)?;
         Self::require_not_paused(&env)?;
         if limit == 0 {
             return Err(CarbonError::ZeroAmountNotAllowed);
@@ -1703,6 +1747,61 @@ mod tests {
         client.initialize(&admin, &registry);
 
         assert_eq!(client.get_version(), 1);
+    }
+
+    #[test]
+    fn test_role_persistence_and_exact_match() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+
+        assert_eq!(client.get_role(&verifier), Some(Role::Verifier));
+        assert_eq!(client.has_role(&verifier, &Role::Verifier), true);
+        assert_eq!(client.has_role(&verifier, &Role::Admin), false);
+
+        client.revoke_role(&admin, &verifier);
+        assert_eq!(client.get_role(&verifier), None);
+    }
+
+    #[test]
+    fn test_verifier_cannot_upgrade_contract() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+
+        let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+        let result = client.try_upgrade_contract(&verifier, &fake_hash);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
+    }
+
+    #[test]
+    fn test_verifier_cannot_set_oracle_contract() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let verifier = Address::generate(&env);
+        let oracle = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(&env, &id);
+        client.initialize(&admin, &registry);
+        client.grant_role(&admin, &verifier, &Role::Verifier);
+
+        let result = client.try_set_oracle_contract(&verifier, &oracle);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::UnauthorizedVerifier);
     }
 
     // ── Retirement Irreversibility Tests ──────────────────────────────────────
@@ -2723,20 +2822,26 @@ mod serial_benchmark {
 
     #[test]
     fn test_grant_admin_role_allows_mint() {
-        let (env, client, admin) = setup();
+        let env = Env::default();
+        let (client, admin) = setup(&env);
         let second_admin = Address::generate(&env);
         client.grant_role(&admin, &second_admin, &Role::Admin);
+        let project_id = String::from_str(&env, "p1");
+        let batch_id = String::from_str(&env, "b1");
+        let metadata_cid = String::from_str(&env, "cid");
+
         // second_admin now holds Admin role and must be able to mint
         client.mint_credits(
             &second_admin,
-            &s(&env, "p1"),
+            &project_id,
             &100_i128,
             &2023_u32,
-            &s(&env, "b1"),
+            &batch_id,
             &1_u64,
             &100_u64,
-            &s(&env, "cid"),
+            &metadata_cid,
+            &Address::generate(&env),
         );
-        assert_eq!(client.get_credit_batch(&s(&env, "b1")).amount, 100);
+        assert_eq!(client.get_credit_batch(&batch_id).amount, 100);
     }
 }

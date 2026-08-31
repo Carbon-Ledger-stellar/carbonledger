@@ -6,6 +6,7 @@ import ServiceWorkerRegistration from '../components/ServiceWorkerRegistration';
 import AppProviders from '../components/AppProviders';
 import RealtimeNotificationProvider from '../components/RealtimeNotificationProvider';
 import LocaleProvider from '../components/LocaleProvider';
+import ErrorBoundary from '../components/ErrorBoundary';
 import en from '../public/locales/en/common.json';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'),
   title: 'Carbon Ledger',
   description: 'Carbon credit marketplace and tracking platform',
-  viewport: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes',
+  viewport: 'width=device-width, initial-scale=1',
   openGraph: {
     siteName: 'Carbon Ledger',
     type: 'website',
@@ -30,10 +31,21 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes" />
+
+        {/* PWA / Web App Manifest */}
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#7C3AED" />
-        <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
-        <link rel="icon" href="/icons/icon-192.svg" type="image/svg+xml" />
+
+        {/* Theme colour — matches manifest theme_color */}
+        <meta name="theme-color" content="#059669" />
+
+        {/* iOS / Safari PWA support */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="CarbonLedger" />
+        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+        {/* Favicon */}
+        <link rel="icon" href="/icons/icon-192.png" type="image/png" />
         {/*
           Sets data-theme synchronously before first paint (#967). Without
           this, ThemeProvider's useEffect (which reads localStorage) can't
@@ -49,20 +61,22 @@ export default function RootLayout({
         />
       </head>
        <body>
-         <LocaleProvider initialMessages={en}>
-           <a href="#main-content" className="skip-link">Skip to main content</a>
-           <ServiceWorkerRegistration />
-           <ThemeProvider>
-                     <AppProviders>
-                       <RealtimeNotificationProvider>
-                         <Navbar />
-                         <main id="main-content">
-                           {children}
-                         </main>
-                       </RealtimeNotificationProvider>
-                     </AppProviders>
-                   </ThemeProvider>
-         </LocaleProvider>
+         <ErrorBoundary>
+           <LocaleProvider initialMessages={en}>
+             <a href="#main-content" className="skip-link">Skip to main content</a>
+             <ServiceWorkerRegistration />
+             <ThemeProvider>
+               <AppProviders>
+                 <RealtimeNotificationProvider>
+                   <Navbar />
+                   <main id="main-content">
+                     {children}
+                   </main>
+                 </RealtimeNotificationProvider>
+               </AppProviders>
+             </ThemeProvider>
+           </LocaleProvider>
+         </ErrorBoundary>
        </body>
     </html>
   );

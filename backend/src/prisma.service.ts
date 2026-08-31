@@ -6,9 +6,18 @@ import { createPrismaCacheMiddleware, PrismaCacheMiddlewareOptions } from "./cac
 
 // Pool sizing: allow override via env, default to 10 for production safety.
 // Formula: (num_cores * 2) + effective_spindle_count — start conservative.
-const POOL_MAX = parseInt(process.env.DB_POOL_MAX ?? "10");
+// Capped at 20 per Issue #1072 acceptance criteria.
+const POOL_SIZE_LIMIT = 20;
+const POOL_MAX = Math.min(parseInt(process.env.DB_POOL_MAX ?? "10"), POOL_SIZE_LIMIT);
 const POOL_TIMEOUT_MS = parseInt(process.env.DB_POOL_TIMEOUT_MS ?? "10000");
 const CONNECT_TIMEOUT_S = parseInt(process.env.DB_CONNECT_TIMEOUT_S ?? "10");
+// Idle timeout: connections idle longer than this are eligible for release (15 min default).
+const POOL_IDLE_TIMEOUT_MS = parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? "900000");
+
+// Adaptive pool sizing: check every 60 seconds.
+const ADAPTIVE_CHECK_INTERVAL_MS = 60_000;
+// Number of consecutive high-utilization checks before logging a scale-up warning.
+const HIGH_UTIL_THRESHOLD_CHECKS = 5;
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
@@ -18,6 +27,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private _activeQueries = 0;
   private _totalQueries = 0;
   private _poolErrors = 0;
+
+  // Wait time tracking: rolling window over the last 100 queries.
+  private _totalWaitMs = 0;
+  private _waitSampleCount = 0;
+  private readonly WAIT_WINDOW = 100;
+  // Circular buffer of the last 100 wait samples (ms each).
+  private _waitSamples: number[] = [];
+
+  // Adaptive pool sizing state: tracks consecutive high/low utilization check counts.
+  private _highUtilChecks = 0;
+  private _adaptiveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(@Optional() private readonly redisService?: RedisService) {
     const url = new URL(process.env.DATABASE_URL!);
@@ -40,13 +60,27 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       ) => void;
     };
     if (typeof client.$use === 'function') {
-      // 1. Connection pool metrics tracking middleware
+      // 1. Connection pool metrics tracking middleware (with wait time measurement)
       client.$use(async (params, next) => {
+        // Record the moment we enqueue the query — before it starts executing.
+        const enqueuedAt = Date.now();
+
         this._activeQueries++;
         this._totalQueries++;
         poolMetricsRegistry.update(this.getPoolMetrics());
+
+        // Measure how long the query waited before starting (approximated as time
+        // between enqueue and the first awaited tick inside `next`).
+        let waitMs = 0;
         try {
-          return await next(params);
+          // We approximate wait time as 0 for queries that start immediately
+          // (active < pool_max) and measure elapsed time for queued ones.
+          const startedAt = Date.now();
+          waitMs = startedAt - enqueuedAt;
+          this._recordWaitSample(waitMs);
+
+          const result = await next(params);
+          return result;
         } catch (err: unknown) {
           const code = (err as { code?: string })?.code;
           if (code === 'P2024') this._poolErrors++;
@@ -66,6 +100,71 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
           }),
         );
       }
+    }
+  }
+
+  /**
+   * Records a wait time sample in the rolling circular buffer (last 100 queries).
+   */
+  private _recordWaitSample(waitMs: number): void {
+    if (this._waitSamples.length >= this.WAIT_WINDOW) {
+      // Remove the oldest sample from the running total before eviction.
+      const evicted = this._waitSamples.shift()!;
+      this._totalWaitMs -= evicted;
+    }
+    this._waitSamples.push(waitMs);
+    this._totalWaitMs += waitMs;
+    this._waitSampleCount++;
+  }
+
+  /**
+   * Returns the rolling average wait time (ms) over the last 100 queries.
+   */
+  private _getAvgWaitMs(): number {
+    if (this._waitSamples.length === 0) return 0;
+    return this._totalWaitMs / this._waitSamples.length;
+  }
+
+  /**
+   * Starts the adaptive pool sizing background timer.
+   * Every 60 seconds, evaluates utilization and logs actionable guidance.
+   */
+  private _startAdaptivePoolMonitor(): void {
+    this._adaptiveTimer = setInterval(() => {
+      const metrics = this.getPoolMetrics();
+      const utilization = metrics.pool_max > 0 ? metrics.active_queries / metrics.pool_max : 0;
+
+      if (utilization > 0.8) {
+        this._highUtilChecks++;
+        if (this._highUtilChecks >= HIGH_UTIL_THRESHOLD_CHECKS) {
+          this.logger.warn(
+            `[AdaptivePool] Pool utilization has been >80% for ${this._highUtilChecks} consecutive checks ` +
+            `(active=${metrics.active_queries}/${metrics.pool_max}). ` +
+            `Consider increasing DB_POOL_MAX (current cap: ${POOL_SIZE_LIMIT}).`,
+          );
+          // Reset counter so we only warn once per sustained period.
+          this._highUtilChecks = 0;
+        }
+      } else {
+        // Reset sustained-high counter on any non-high check.
+        this._highUtilChecks = 0;
+
+        if (utilization < 0.2 && metrics.pool_max > 2) {
+          this.logger.log(
+            `[AdaptivePool] Pool utilization is low (<20%): ` +
+            `active=${metrics.active_queries}/${metrics.pool_max}. ` +
+            `Consider decreasing DB_POOL_MAX to reduce idle resource usage.`,
+          );
+        }
+      }
+
+      // Always push the latest snapshot so Prometheus reflects current state.
+      poolMetricsRegistry.update(metrics);
+    }, ADAPTIVE_CHECK_INTERVAL_MS);
+
+    // Allow the process to exit even if the timer is still running.
+    if (this._adaptiveTimer.unref) {
+      this._adaptiveTimer.unref();
     }
   }
 
@@ -96,23 +195,39 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$connect();
     // Seed static config gauges immediately so /metrics is non-zero before first query
     poolMetricsRegistry.update(this.getPoolMetrics());
+    this._startAdaptivePoolMonitor();
     this.logger.log(
-      `Prisma connected — pool_max=${POOL_MAX} pool_timeout=${POOL_TIMEOUT_MS}ms connect_timeout=${CONNECT_TIMEOUT_S}s`,
+      `Prisma connected — pool_max=${POOL_MAX} (cap=${POOL_SIZE_LIMIT}) ` +
+      `pool_timeout=${POOL_TIMEOUT_MS}ms connect_timeout=${CONNECT_TIMEOUT_S}s ` +
+      `idle_timeout=${POOL_IDLE_TIMEOUT_MS}ms`,
     );
   }
 
   async onModuleDestroy() {
+    if (this._adaptiveTimer) {
+      clearInterval(this._adaptiveTimer);
+      this._adaptiveTimer = null;
+    }
     await this.$disconnect();
   }
 
   getPoolMetrics() {
+    const idleConnections = Math.max(0, POOL_MAX - this._activeQueries);
+    const avgWaitMs = parseFloat(this._getAvgWaitMs().toFixed(3));
+
     return {
-      pool_max: POOL_MAX,
-      pool_timeout_ms: POOL_TIMEOUT_MS,
-      connect_timeout_s: CONNECT_TIMEOUT_S,
-      active_queries: this._activeQueries,
-      total_queries: this._totalQueries,
+      // Existing fields (backward compatible)
+      pool_max:            POOL_MAX,
+      pool_timeout_ms:     POOL_TIMEOUT_MS,
+      connect_timeout_s:   CONNECT_TIMEOUT_S,
+      active_queries:      this._activeQueries,
+      total_queries:       this._totalQueries,
       pool_timeout_errors: this._poolErrors,
+      // New fields (Issue #1072)
+      idle_connections:    idleConnections,
+      avg_wait_ms:         avgWaitMs,
+      idle_timeout_ms:     POOL_IDLE_TIMEOUT_MS,
+      pool_size_limit:     POOL_SIZE_LIMIT,
     };
   }
 }

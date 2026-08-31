@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ConflictException } from '@nestjs/common';
+import { SubmitMonitoringDataDto } from './monitoring.dto';
 import { InjectQueue } from '@nestjs/bullmq';
 import { enqueueWithTrace } from '../telemetry/tracing';
 import { Queue } from 'bullmq';
@@ -323,6 +324,75 @@ export class OracleService {
 
   async rejectPriceUpdate(id: string, reason?: string) {
     return this.prisma.priceApproval.update({ where: { id }, data: { status: 'Rejected', reason } });
+  }
+
+  /**
+   * POST /oracle/monitoring — verifier-only endpoint.
+   *
+   * Accepts satellite monitoring data from accredited verifiers (JWT-authenticated,
+   * role=verifier).  Unlike the oracle-keypair ingest endpoints this enforces:
+   *   - Timestamp freshness (max 365 days old, max 5 min in future)
+   *   - Strict duplicate rejection (ConflictException instead of upsert)
+   *   - Project existence check before writing
+   */
+  async submitMonitoringData(dto: SubmitMonitoringDataDto, submittedBy: string) {
+    // Validate timestamp freshness
+    const ts = new Date(dto.timestamp);
+    const now = new Date();
+    const ageMs = now.getTime() - ts.getTime();
+    const maxAgeMs = 365 * 24 * 60 * 60 * 1000; // 365 days
+    const futureLimitMs = 5 * 60 * 1000; // 5 minutes
+    if (ageMs > maxAgeMs) {
+      throw new BadRequestException('Timestamp is older than 365 days — data is stale');
+    }
+    if (ts.getTime() > now.getTime() + futureLimitMs) {
+      throw new BadRequestException('Timestamp is in the future');
+    }
+
+    // Derive period from timestamp if not provided (YYYY-MM format)
+    const period = dto.period ?? `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}`;
+
+    // Duplicate check — strict reject (not upsert) for verifier submissions
+    const existing = await this.prisma.monitoringData.findUnique({
+      where: { projectId_period: { projectId: dto.project_id, period } },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `Monitoring data for project ${dto.project_id} period ${period} already exists`,
+      );
+    }
+
+    // Verify project exists and is not soft-deleted
+    const project = await this.prisma.carbonProject.findFirst({
+      where: { projectId: dto.project_id, deletedAt: null },
+    });
+    if (!project) {
+      throw new BadRequestException(`Project ${dto.project_id} not found`);
+    }
+
+    const record = await this.prisma.monitoringData.create({
+      data: {
+        projectId:        dto.project_id,
+        period,
+        tonnesVerified:   dto.co2_reduction_mmt,
+        methodologyScore: dto.methodology_score ?? 0,
+        satelliteCid:     dto.satellite_cid ?? dto.url,
+        submittedBy,
+      },
+    });
+
+    this.logger.log(
+      `Monitoring data submitted: project=${dto.project_id} period=${period} by=${submittedBy}`,
+    );
+
+    return {
+      id:             record.id,
+      projectId:      record.projectId,
+      period:         record.period,
+      tonnesVerified: record.tonnesVerified,
+      submittedAt:    record.submittedAt,
+      submittedBy:    record.submittedBy,
+    };
   }
 
   async submitBatchPrice(dtos: UpdatePriceDto[]) {

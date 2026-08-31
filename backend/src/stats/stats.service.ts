@@ -1,5 +1,14 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
+import { ApiCacheService } from "../cache/api-cache.service";
+import {
+  STATS_CACHE_KEY,
+  STATS_CACHE_TTL_SECONDS,
+  STATS_AGGREGATE_CACHE_KEY,
+  STATS_AGGREGATE_CACHE_TTL_SECONDS,
+  statsLeaderboardCacheKey,
+  STATS_LEADERBOARD_CACHE_TTL_SECONDS,
+} from "../cache/cache.constants";
 
 export interface LeaderboardEntry {
   rank: number;
@@ -16,9 +25,24 @@ export interface AggregateStats {
 
 @Injectable()
 export class StatsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly apiCache?: ApiCacheService,
+  ) {}
 
   async getLeaderboard(year?: number): Promise<LeaderboardEntry[]> {
+    if (this.apiCache) {
+      return this.apiCache.getOrSet(
+        statsLeaderboardCacheKey(year),
+        STATS_LEADERBOARD_CACHE_TTL_SECONDS,
+        'stats:leaderboard',
+        () => this._getLeaderboardDb(year),
+      );
+    }
+    return this._getLeaderboardDb(year);
+  }
+
+  private async _getLeaderboardDb(year?: number): Promise<LeaderboardEntry[]> {
     const where = year
       ? { retiredAt: { gte: new Date(`${year}-01-01`), lt: new Date(`${year + 1}-01-01`) } }
       : {};
@@ -39,6 +63,18 @@ export class StatsService {
   }
 
   async getPlatformStats() {
+    if (this.apiCache) {
+      return this.apiCache.getOrSet(
+        STATS_CACHE_KEY,
+        STATS_CACHE_TTL_SECONDS,
+        'stats:platform',
+        () => this._getPlatformStatsDb(),
+      );
+    }
+    return this._getPlatformStatsDb();
+  }
+
+  private async _getPlatformStatsDb() {
     const [projects, retirements, listings] = await Promise.all([
       this.prisma.carbonProject.aggregate({
         _sum: { totalCreditsIssued: true, totalCreditsRetired: true },
@@ -56,14 +92,23 @@ export class StatsService {
       totalCreditsIssued:  projects._sum.totalCreditsIssued  ?? 0,
       totalCreditsRetired: projects._sum.totalCreditsRetired ?? 0,
       activeProjects:      projects._count._all,
-      marketplaceVolume:   "0", // Would sum completed purchase amounts
+      marketplaceVolume:   "0",
     };
   }
 
   async getAggregateStats(): Promise<AggregateStats> {
-    // Run all four aggregates in a single parallel round-trip.
-    // The USDC volume is computed directly in PostgreSQL using SUM() so we
-    // never pull all sold-listing rows into JS memory (fixes N+1 / full-scan).
+    if (this.apiCache) {
+      return this.apiCache.getOrSet(
+        STATS_AGGREGATE_CACHE_KEY,
+        STATS_AGGREGATE_CACHE_TTL_SECONDS,
+        'stats:aggregate',
+        () => this._getAggregateStatsDb(),
+      );
+    }
+    return this._getAggregateStatsDb();
+  }
+
+  private async _getAggregateStatsDb(): Promise<AggregateStats> {
     const [retirements, listings, projects, volumeResult] = await Promise.all([
       this.prisma.retirementRecord.aggregate({
         _sum: { amount: true },
@@ -74,8 +119,6 @@ export class StatsService {
       this.prisma.carbonProject.count({
         where: { status: "Verified" },
       }),
-      // Compute USDC volume in SQL: SUM(CAST(price_per_credit AS numeric) * amount_available)
-      // This replaces the previous findMany + JS reduce that loaded every sold listing row.
       this.prisma.$queryRaw<[{ total: string | null }]>`
         SELECT SUM(CAST("pricePerCredit" AS numeric) * "amountAvailable")::text AS total
         FROM "MarketListing"
