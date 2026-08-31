@@ -1,183 +1,303 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { connectFreighter } from "../../lib/freighter";
-import { getWalletErrorMessage } from "../../lib/wallet-errors";
+import Link from "next/link";
+import { useState, useCallback } from "react";
+import { useVerifierAuth } from "../../lib/use-verifier-auth";
+import { usePendingVerifierProjects, invalidateVerifierCaches, type PendingVerifierProject } from "../../lib/api";
 import { colors } from "../../styles/design-system";
+import VerifierConfirmDialog, { REJECT_MIN_LENGTH } from "../../components/VerifierConfirmDialog";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import Toast, { useToast } from "../../components/Toast";
-import { useWalletStatus } from "../../hooks/useWalletStatus";
-import WalletPrompt from "../../components/WalletPrompt";
 import {
-  useTransactionPoller,
-  TRANSACTION_MAX_POLLS,
-} from "../../hooks/useTransactionPoller";
+  verifyProjectOnChain,
+  rejectProjectOnChain,
+  SorobanPollTimeoutError,
+} from "../../lib/soroban";
+import { getContractErrorMessage } from "../../lib/wallet-errors";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL!;
+type PendingAction = { decision: "verify" | "reject" };
+
+function projectDocCid(p: PendingVerifierProject): string | undefined {
+  return p.documentCid ?? p.metadataCid;
+}
 
 export default function VerifyPage() {
-  const [projectId, setProjectId] = useState("");
-  const [action, setAction]       = useState<"approve" | "reject">("approve");
-  const [reason, setReason]       = useState("");
-  const [txStatus, setTxStatus]   = useState<TxStatus | null>(null);
-  const [txHash, setTxHash]       = useState<string | null>(null);
-  const [pollHash, setPollHash]   = useState<string | null>(null);
-  const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
-    txHash: pollHash,
-  });
+  const { state: authState, publicKey, token } = useVerifierAuth();
+  const { data: projects = [], error, isLoading, mutate } = usePendingVerifierProjects(publicKey, token);
   const { toasts, addToast, dismiss } = useToast();
-  const { status: walletStatus, address: walletKey, refresh: refreshWallet } = useWalletStatus();
 
-  async function handleConnect(key: string) {
-    addToast({ type: "success", title: "Wallet connected", message: key.slice(0, 8) + "…" });
-  }
+  const [pending, setPending] = useState<PendingAction | null>(null);
+  const [target, setTarget] = useState<PendingVerifierProject | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [txMessage, setTxMessage] = useState<string | undefined>();
+  const [pollProgress, setPollProgress] = useState<{ current: number; max: number } | undefined>();
+  const [submitting, setSubmitting] = useState(false);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!walletKey || !projectId) return;
-    
-    setTxStatus("building");
+  const runOnChainReview = useCallback(async () => {
+    if (!pending || !target || !publicKey || !token) return;
+
+    const { decision } = pending;
+    const projectId = target.projectId;
+    setSubmitting(true);
+    setActiveId(projectId);
+    setTxHash(null);
+    setTxMessage(undefined);
+    setPollProgress(undefined);
+
+    const onProgress = (phase: "building" | "signing" | "submitting" | "polling", poll?: { current: number; max: number }) => {
+      if (phase === "building") setTxStatus("building");
+      if (phase === "signing") setTxStatus("signing");
+      if (phase === "submitting") setTxStatus("submitting");
+      if (phase === "polling") {
+        setTxStatus("polling");
+        setPollProgress(poll);
+      }
+    };
+
     try {
-      // Simulate building phase
-      await new Promise(r => setTimeout(r, 800));
-      
-      setTxStatus("signing");
-      // In a real app, we would sign with Freighter here
-      await new Promise(r => setTimeout(r, 1200));
+      let hash: string;
+      if (decision === "verify") {
+        hash = await verifyProjectOnChain(publicKey, projectId, onProgress);
+        addToast({ type: "success", title: "Project verified", message: "On-chain attestation recorded.", txHash: hash });
+      } else {
+        const reason = rejectReason.trim();
+        hash = await rejectProjectOnChain(publicKey, projectId, reason, onProgress);
+        addToast({ type: "success", title: "Project rejected", message: "Rejection recorded on-chain.", txHash: hash });
+      }
 
-      setTxStatus("submitting");
-      const endpoint = action === "approve" ? "verify" : "reject";
-      const res = await fetch(`${API_URL}/projects/${projectId}/${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verifierPublicKey: walletKey, reason }),
-      });
-      if (!res.ok) throw new Error((await res.json()).message);
-      const data = await res.json();
-      
-      setTxStatus("polling");
-      setTxHash(data.txHash);
-      setPollHash(data.txHash);
-    } catch (e: any) {
-      setTxStatus("failed");
-      setPollHash(null);
-      addToast({ type: "error", title: "Submission failed", message: e.message });
+      setTxHash(hash);
+      setTxStatus("confirmed");
+      setRejectReason("");
+      await invalidateVerifierCaches(publicKey);
+      await mutate();
+    } catch (e: unknown) {
+      if (e instanceof SorobanPollTimeoutError) {
+        setTxHash(e.txHash);
+        setTxStatus("timed_out");
+        setTxMessage(undefined);
+        addToast({ type: "warning", title: "Still confirming", message: "Check Stellar Expert for final status.", txHash: e.txHash });
+      } else {
+        const message = getContractErrorMessage(e);
+        setTxStatus("failed");
+        setTxMessage(message);
+        addToast({ type: "error", title: "Submission failed", message });
+      }
+    } finally {
+      setSubmitting(false);
+      setPending(null);
+      setTarget(null);
+      setActiveId(null);
     }
+  }, [pending, target, publicKey, token, rejectReason, addToast, mutate]);
+
+  const openReview = useCallback((p: PendingVerifierProject, decision: "verify" | "reject") => {
+    setTarget(p);
+    setRejectReason("");
+    setPending({ decision });
+  }, []);
+
+  if (authState === "loading") {
+    return (
+      <main style={mainStyle}>
+        <p style={{ color: colors.neutral[500] }}>Checking verifier access…</p>
+      </main>
+    );
   }
 
-  useEffect(() => {
-    if (!pollHash || pollState === "idle" || pollState === "polling") return;
-
-    if (pollState === "SUCCESS") {
-      setTxStatus("confirmed");
-      addToast({
-        type: "success",
-        title: `Project ${action === "approve" ? "verified" : "rejected"}`,
-        txHash: pollHash,
-      });
-      setPollHash(null);
-    } else if (pollState === "FAILED") {
-      setTxStatus("failed");
-      addToast({
-        type: "error",
-        title: "Submission failed",
-        message: pollError ?? "Transaction failed on-chain",
-      });
-      setPollHash(null);
-    } else if (pollState === "TIMED_OUT") {
-      setTxStatus("timed_out");
-      setPollHash(null);
-    }
-  }, [pollState, pollHash, pollError, action, addToast]);
-
-  const inputStyle: React.CSSProperties = {
-    width: "100%", border: `1px solid ${colors.neutral[300]}`,
-    borderRadius: "0.5rem", padding: "0.75rem 1rem",
-    fontSize: "0.9rem", color: colors.neutral[900], boxSizing: "border-box",
-  };
+  if (authState === "needs_wallet") {
+    return (
+      <main style={mainStyle}>
+        <h1 style={h1Style}>Verifier Review</h1>
+        <p style={{ color: colors.neutral[600] }}>
+          You must be an accredited verifier to review pending projects. Connect your Freighter wallet to continue.
+        </p>
+      </main>
+    );
+  }
 
   return (
-    <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 2rem" }}>
-      <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}>
-        Verifier Portal
-      </h1>
-      <p style={{ color: colors.neutral[500], margin: "0 0 2rem" }}>
-        Accredited verifiers can approve or reject carbon projects. All actions are recorded on-chain.
+    <main style={mainStyle}>
+      <h1 style={h1Style}>Verify Pending Projects</h1>
+      <p style={{ color: colors.neutral[600], marginTop: 0 }}>
+        Projects awaiting your accreditation are shown below. Review the details and verification
+        documentation for each card, then approve or reject. All decisions are recorded on-chain.
       </p>
 
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-        <div>
-          <label style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Project ID
-          </label>
-          <input
-            type="text" placeholder="proj-001" value={projectId}
-            onChange={e => setProjectId(e.target.value)}
-            style={inputStyle} required
-          />
-        </div>
+      <div style={{ display: "flex", gap: "1.25rem", margin: "0 0 1.5rem" }}>
+        <Link href="/verifier/dashboard" style={{ fontSize: "0.875rem", color: colors.primary[700] }}>
+          Dashboard →
+        </Link>
+        <Link href="/verifier/history" style={{ fontSize: "0.875rem", color: colors.primary[700] }}>
+          Attestation history →
+        </Link>
+        <Link href="/verifier/fees" style={{ fontSize: "0.875rem", color: colors.primary[700] }}>
+          Fee tracker →
+        </Link>
+      </div>
 
-        <div>
-          <label style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-            Action
-          </label>
-          <div style={{ display: "flex", gap: "1rem" }}>
-            {(["approve", "reject"] as const).map(a => (
-              <label key={a} style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer" }}>
-                <input
-                  type="radio" name="action" value={a}
-                  checked={action === a} onChange={() => setAction(a)}
-                  style={{ accentColor: a === "approve" ? colors.primary[600] : "#dc2626" }}
-                />
-                <span style={{ fontSize: "0.875rem", fontWeight: 600, color: a === "approve" ? colors.primary[700] : "#dc2626" }}>
-                  {a === "approve" ? "✅ Approve Project" : "❌ Reject Project"}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
+      {error && (
+        <p role="alert" style={{ color: "#dc2626" }}>{error.message}</p>
+      )}
 
-        {action === "reject" && (
-          <div>
-            <label style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700], display: "block", marginBottom: "0.4rem" }}>
-              Rejection Reason
-            </label>
-            <textarea
-              value={reason} onChange={e => setReason(e.target.value)}
-              rows={3} style={{ ...inputStyle, resize: "vertical" }}
-              placeholder="Describe why this project is being rejected…"
-              required
-            />
-          </div>
-        )}
-
-        {txStatus && (
+      {txStatus && (
+        <div style={{ marginBottom: "1.25rem" }}>
           <TransactionStatus
             status={txStatus}
             txHash={txHash ?? undefined}
-            pollProgress={
-              txStatus === "polling"
-                ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
-                : undefined
-            }
-            message={txStatus === "failed" ? pollError ?? undefined : undefined}
+            message={txMessage}
+            pollProgress={pollProgress}
           />
-        )}
+        </div>
+      )}
 
-        {walletStatus !== "ready" ? (
-          <WalletPrompt status={walletStatus} onConnect={handleConnect} refresh={refreshWallet} />
-        ) : (
-          <button type="submit" style={{
-            background: action === "approve" ? colors.primary[600] : "#dc2626",
-            color: "#fff", border: "none", borderRadius: "0.5rem",
-            padding: "0.875rem", fontSize: "1rem", fontWeight: 700, cursor: "pointer",
-          }}>
-            Submit On-Chain Attestation
-          </button>
-        )}
-      </form>
+      {isLoading ? (
+        <p style={{ color: colors.neutral[500] }}>Loading pending projects…</p>
+      ) : projects.length === 0 ? (
+        <p style={{ color: colors.neutral[500] }}>No projects pending your review.</p>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "1.25rem" }}>
+          {projects.map((p) => (
+            <ProjectCard key={p.id} project={p} onReview={openReview} busy={activeId === p.projectId && submitting} />
+          ))}
+        </div>
+      )}
+
+      <div style={{ marginTop: "1.5rem" }}>
+        <button
+          type="button"
+          onClick={() => mutate()}
+          style={{
+            padding: "0.45rem 0.9rem",
+            border: "1px solid #d1d5db",
+            borderRadius: 4,
+            background: "#fff",
+            cursor: "pointer",
+          }}
+        >
+          Refresh list
+        </button>
+      </div>
+
+      {pending && target && (
+        <VerifierConfirmDialog
+          project={target}
+          decision={pending.decision}
+          rejectReason={rejectReason}
+          onRejectReasonChange={setRejectReason}
+          onCancel={() => {
+            if (!submitting) {
+              setPending(null);
+              setTarget(null);
+              setRejectReason("");
+            }
+          }}
+          onConfirm={runOnChainReview}
+          confirmDisabled={submitting || (pending.decision === "reject" && rejectReason.trim().length < REJECT_MIN_LENGTH)}
+        />
+      )}
 
       <Toast toasts={toasts} onDismiss={dismiss} />
-    </div>
+    </main>
   );
 }
+
+function ProjectCard({
+  project,
+  onReview,
+  busy,
+}: {
+  project: PendingVerifierProject;
+  onReview: (p: PendingVerifierProject, decision: "verify" | "reject") => void;
+  busy: boolean;
+}) {
+  const docCid = projectDocCid(project);
+  return (
+    <article
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: 12,
+        padding: "1.25rem",
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.75rem",
+        background: "#fff",
+        boxShadow: "0 1px 2px rgba(16,24,40,0.04)",
+      }}
+    >
+      <header>
+        <h2 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: colors.neutral[900] }}>
+          {project.name}
+        </h2>
+        <span style={{ color: "#6b7280", fontSize: "0.8rem", fontFamily: "monospace" }}>{project.projectId}</span>
+      </header>
+
+      <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "110px 1fr", gap: "0.3rem 1rem", fontSize: "0.875rem" }}>
+        <Meta label="Methodology" value={project.methodology} />
+        <Meta label="Type" value={project.projectType} />
+        <Meta label="Country" value={project.country} />
+        <Meta label="Vintage" value={String(project.vintageYear ?? "—")} />
+        <Meta label="Status" value={project.status} />
+        <Meta label="Score" value={`${project.methodologyScore}/100`} />
+        <Meta label="Submitted" value={new Date(project.createdAt).toLocaleDateString()} />
+      </dl>
+
+      <div style={{ fontSize: "0.875rem" }}>
+        <span style={{ fontWeight: 600, color: colors.neutral[700] }}>Verification docs: </span>
+        {docCid ? (
+          <a
+            href={`https://ipfs.io/ipfs/${docCid}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: colors.primary[700] }}
+          >
+            View documentation ↗
+          </a>
+        ) : (
+          <span style={{ color: colors.neutral[500] }}>None attached</span>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: "0.75rem", marginTop: "auto" }}>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onReview(project, "verify")}
+          style={{ ...actionBtn, background: "#16a34a", flex: 1 }}
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onReview(project, "reject")}
+          style={{ ...actionBtn, background: "#dc2626", flex: 1 }}
+        >
+          Reject
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <dt style={{ fontWeight: 600, color: colors.neutral[700] }}>{label}</dt>
+      <dd style={{ margin: 0 }}>{value}</dd>
+    </>
+  );
+}
+
+const mainStyle: React.CSSProperties = { maxWidth: 1080, margin: "2.5rem auto", padding: "0 1.5rem" };
+const h1Style: React.CSSProperties = { margin: "0 0 0.35rem", fontSize: "2rem", fontWeight: 800, color: colors.neutral[900] };
+const actionBtn: React.CSSProperties = {
+  padding: "0.6rem 1rem",
+  color: "#fff",
+  border: "none",
+  borderRadius: 6,
+  fontWeight: 600,
+  cursor: "pointer",
+};

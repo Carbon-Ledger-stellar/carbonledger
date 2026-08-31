@@ -1,22 +1,55 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useProjects } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { colors, statusBadge } from "../../styles/design-system";
 import LoadingSkeleton from "../../components/LoadingSkeleton";
-import SearchAutocomplete from "../../components/SearchAutocomplete";
 import LazyImage from "../../components/LazyImage";
+import ProjectFilter from "../../components/ProjectFilter";
 import { projectTypeIconUrl } from "../../lib/project-type-icons";
 
-const METHODOLOGIES = ["", "VCS", "Gold Standard", "ACR", "CAR"];
-const COUNTRIES     = ["", "Brazil", "Indonesia", "Kenya", "India", "Colombia"];
 
+/**
+ * Project Browser with Filters (Issue #1025)
+ *
+ * Features:
+ * - Filter by country, methodology, and vintage year
+ * - Search by project name, country, methodology, and project type
+ * - URL parameter synchronization for shareable filtered views
+ * - Client-side filtering with SWR for data fetching
+ * - Responsive grid layout (1 col mobile, 2 col tablet, 3+ col desktop)
+ */
 export default function ProjectsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Initialize filter state from URL params
   const [methodology, setMethodology] = useState("");
   const [country, setCountry]         = useState("");
   const [vintage, setVintage]         = useState("");
   const [search, setSearch]           = useState("");
+
+  // Sync URL params on first load
+  useEffect(() => {
+    setMethodology(searchParams.get("methodology") || "");
+    setCountry(searchParams.get("country") || "");
+    setVintage(searchParams.get("vintage") || "");
+    setSearch(searchParams.get("search") || "");
+  }, []);
+
+  // Update URL params when filters change
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (methodology) params.set("methodology", methodology);
+    if (country) params.set("country", country);
+    if (vintage) params.set("vintage", vintage);
+    if (search) params.set("search", search);
+
+    const queryString = params.toString();
+    router.push(`/projects${queryString ? `?${queryString}` : ""}`);
+  }, [methodology, country, vintage, search, router]);
 
   const { data: projects, isLoading } = useProjects({
     methodology: methodology || undefined,
@@ -48,16 +81,6 @@ export default function ProjectsPage() {
     );
   }, [projects, search]);
 
-  const selectStyle: React.CSSProperties = {
-    border: `1px solid ${colors.neutral[300]}`,
-    borderRadius: "0.375rem",
-    padding: "0.5rem 0.75rem",
-    fontSize: "0.875rem",
-    color: colors.neutral[700],
-    background: colors.surface,
-    minHeight: "48px",
-  };
-
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 1rem" }}>
       <h1 style={{ fontSize: "2rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 0.5rem" }}
@@ -68,57 +91,18 @@ export default function ProjectsPage() {
         Every project has been independently verified and is monitored by satellite data.
       </p>
 
-      {/* Search */}
-      <div style={{ marginBottom: "1.25rem" }}>
-        <label htmlFor="project-search" className="sr-only">Search projects</label>
-        <SearchAutocomplete
-          id="project-search"
-          data-shortcut-target="search"
-          value={search}
-          onChange={setSearch}
-          suggestions={searchSuggestions}
-          placeholder="Search by project name, country, or methodology…"
-          ariaLabel="Search projects"
-          inputStyle={{
-            ...selectStyle,
-            width: "100%",
-            padding: "0.6rem 0.9rem 0.6rem 2.3rem",
-            fontSize: "0.9rem",
-          }}
-          leadingIcon={
-            <span aria-hidden="true" style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)", color: colors.neutral[400], zIndex: 1 }}>🔍</span>
-          }
-        />
-      </div>
-
-      {/* Filters — stacks to single column on mobile */}
-      <div className="projects-filter-row" style={{ display: "flex", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
-        <select
-          style={{ ...selectStyle, flex: "1 1 160px" }}
-          value={methodology}
-          onChange={e => setMethodology(e.target.value)}
-          aria-label="Filter by methodology"
-        >
-          {METHODOLOGIES.map(m => <option key={m} value={m}>{m || "All Methodologies"}</option>)}
-        </select>
-        <select
-          style={{ ...selectStyle, flex: "1 1 160px" }}
-          value={country}
-          onChange={e => setCountry(e.target.value)}
-          aria-label="Filter by country"
-        >
-          {COUNTRIES.map(c => <option key={c} value={c}>{c || "All Countries"}</option>)}
-        </select>
-        <select
-          style={{ ...selectStyle, flex: "1 1 160px" }}
-          value={vintage}
-          onChange={e => setVintage(e.target.value)}
-          aria-label="Filter by vintage year"
-        >
-          <option value="">All Vintages</option>
-          {["2020","2021","2022","2023","2024"].map(v => <option key={v} value={v}>{v}</option>)}
-        </select>
-      </div>
+      {/* Project Filter Component */}
+      <ProjectFilter
+        filters={{ methodology, country, vintage, search }}
+        onChange={(filters) => {
+          setMethodology(filters.methodology);
+          setCountry(filters.country);
+          setVintage(filters.vintage);
+          setSearch(filters.search);
+        }}
+        searchSuggestions={searchSuggestions}
+        resultCount={visibleProjects.length}
+      />
 
       {/* Grid — responsive: 1 col mobile, 2 col tablet, 3+ col desktop */}
       {isLoading ? (
@@ -202,17 +186,6 @@ export default function ProjectsPage() {
           })}
         </div>
       )}
-
-      <style>{`
-        @media (max-width: 639px) {
-          .projects-filter-row {
-            flex-direction: column;
-          }
-          .projects-filter-row select {
-            width: 100%;
-          }
-        }
-      `}</style>
     </div>
   );
 }

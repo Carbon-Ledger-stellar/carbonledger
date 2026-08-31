@@ -13,6 +13,16 @@ interface FrontendLogDto {
   [key: string]: unknown;
 }
 
+/**
+ * LogsController
+ *
+ * Provides:
+ *  - POST /logs          — frontend error ingestion
+ *  - GET  /logs/search   — query tool to fetch logs by correlationId
+ *                          (intended for local dev / ops tooling; in prod
+ *                           this role is filled by Loki/CloudWatch)
+ */
+@ApiTags("Logs")
 @Controller("logs")
 export class LogsController {
   constructor(private readonly logger: LoggerService) {}

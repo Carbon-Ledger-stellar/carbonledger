@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger, Optional } from "@nestjs/common";
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, Logger, Optional, HttpException, HttpStatus } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { RedisService } from "../redis.service";
 import { projectDetailCacheKey, PROJECT_DETAIL_CACHE_TTL_SECONDS } from "../cache/cache.constants";
@@ -13,6 +13,7 @@ import {
   ProjectStatus,
   OracleFreshness,
   CreateProjectDto,
+  RegisterProjectWithDocumentsDto,
 } from "./projects.dto";
 import { MailService } from "../mail/mail.service";
 import { MailEvent } from "../mail/mail.constants";
@@ -21,6 +22,7 @@ import { randomUUID, randomBytes } from "crypto";
 import { sanitizeProjectPayload, sanitizeProjectForResponse } from "../common/sanitization.util";
 import { WebhookService } from "../webhook/webhook.service";
 import { captureAuditBeforeState } from "../audit/audit-context";
+import { IpfsUploadService } from "../uploads/ipfs-upload.service";
 import type { Request } from "express";
 
 /** Flat attestation fee, in stroops (1 XLM = 10,000,000 stroops). */
@@ -59,6 +61,7 @@ export class ProjectsService {
     private readonly stateMachine: ProjectStateMachineService,
     private readonly redisService: RedisService,
     private readonly cacheService: CacheService,
+    private readonly ipfsUploadService: IpfsUploadService,
     @Optional() private readonly cacheInvalidation?: CacheInvalidationService,
     @Optional() private readonly webhookService?: WebhookService,
   ) {}
@@ -401,6 +404,132 @@ export class ProjectsService {
       throw new ConflictException(`Project registration rejected: methodology score ${sanitizedDto.methodologyScore} is below minimum 70/100`);
     }
     return this.prisma.carbonProject.create({ data: sanitizedDto as any });
+  }
+
+  /**
+   * Register a project with verification documents via multipart upload.
+   *
+   * Validates file type (PDF/PNG) and size (10MB max), uploads to IPFS via Pinata,
+   * and links the document to the project in the database.
+   *
+   * @param dto Project registration details
+   * @param file Verification document file (PDF or PNG)
+   * @param ownerAddress Stellar public key of the owner making the request
+   * @returns Project and document upload metadata
+   */
+  async registerWithDocuments(
+    dto: RegisterProjectWithDocumentsDto,
+    file: Express.Multer.File,
+    ownerAddress?: string,
+  ) {
+    // Validate that a file was provided
+    if (!file) {
+      throw new HttpException(
+        'Verification document is required',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Validate file type (PDF or PNG only)
+    const allowedMimeTypes = ['application/pdf', 'image/png'];
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      throw new HttpException(
+        'Invalid file type. Only PDF and PNG files are allowed.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Validate file size (10MB limit)
+    const maxSize = 10 * 1024 * 1024; // 10MB in bytes
+    if (file.size > maxSize) {
+      throw new HttpException(
+        `File size exceeds 10MB limit (${(file.size / 1024 / 1024).toFixed(2)}MB)`,
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Sanitize the DTO
+    const sanitizedDto = sanitizeProjectPayload(dto as unknown as Record<string, unknown>) as unknown as RegisterProjectWithDocumentsDto;
+
+    // Check if project already exists
+    const existing = await this.prisma.carbonProject.findFirst({
+      where: { projectId: sanitizedDto.projectId, deletedAt: null },
+    });
+    if (existing) {
+      throw new ConflictException(`Project ${sanitizedDto.projectId} already exists`);
+    }
+
+    // Validate methodology score
+    if (sanitizedDto.methodologyScore < 70) {
+      throw new ConflictException(
+        `Project registration rejected: methodology score ${sanitizedDto.methodologyScore} is below minimum 70/100`,
+      );
+    }
+
+    try {
+      // Upload document to IPFS
+      const uploadResult = await this.ipfsUploadService.uploadToPinata(
+        file.originalname || 'verification_document',
+        file.mimetype,
+        file.buffer,
+        file.size,
+        'project', // linkedEntityType (not yet created)
+        sanitizedDto.projectId, // linkedEntityId
+      );
+
+      // Create project in database with IPFS metadata CID
+      const projectData = {
+        projectId: sanitizedDto.projectId,
+        name: sanitizedDto.name,
+        methodology: sanitizedDto.methodology,
+        description: sanitizedDto.description,
+        country: sanitizedDto.country,
+        projectType: sanitizedDto.projectType,
+        ownerAddress: ownerAddress ?? sanitizedDto.ownerAddress,
+        verifierAddress: sanitizedDto.verifierAddress,
+        vintageYear: sanitizedDto.vintageYear,
+        methodologyScore: sanitizedDto.methodologyScore,
+        metadataCid: uploadResult.cid, // Store the CID as metadata
+        status: 'Pending',
+      };
+
+      const project = await this.prisma.carbonProject.create({
+        data: projectData,
+      });
+
+      return {
+        success: true,
+        message: 'Project registered successfully with verification document',
+        data: {
+          projectId: project.projectId,
+          id: project.id,
+          name: project.name,
+          status: project.status,
+          document: {
+            id: uploadResult.id,
+            cid: uploadResult.cid,
+            fileName: file.originalname,
+            fileType: file.mimetype,
+            fileSize: file.size,
+            pinStatus: uploadResult.pinStatus,
+            uploadedAt: new Date().toISOString(),
+            ipfsGatewayUrl: `https://gateway.pinata.cloud/ipfs/${uploadResult.cid}`,
+          },
+        },
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(
+        `Project registration with documents failed: ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new HttpException(
+        'Failed to register project with documents. Please try again.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   async createProject(dto: CreateProjectDto, ownerAddress?: string) {

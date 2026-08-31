@@ -434,6 +434,38 @@ model AdminConfig {
   updatedAt DateTime @updatedAt
 }
 
+/// Dead Letter Queue — persists jobs that have exhausted all BullMQ retry
+/// attempts, preserving the full error context for manual inspection and
+/// admin-triggered requeueing.
+model DeadLetterJob {
+  id            String   @id @default(cuid())
+  /// Original BullMQ job ID
+  jobId         String   @unique
+  /// Queue name (e.g. "carbonledger")
+  queueName     String
+  /// Job type / name (e.g. "oracle_submission")
+  jobType       String
+  /// Original job payload (JSON)
+  payload       Json
+  /// Number of attempts made before the job was dead-lettered
+  attempts      Int
+  /// Full error message from the last failed attempt
+  lastError     String   @db.Text
+  /// Full stack trace from the last failed attempt
+  errorStack    String?  @db.Text
+  /// When the job was first enqueued
+  enqueuedAt    DateTime
+  /// When the job was moved to the DLQ
+  failedAt      DateTime @default(now())
+  /// Whether this job has been manually requeued
+  requeued      Boolean  @default(false)
+  requeuedAt    DateTime?
+
+  @@index([queueName, jobType])
+  @@index([failedAt])
+  @@index([requeued])
+}
+
 /// Stores idempotency records for critical mutating endpoints.
 /// A record is keyed by (idempotencyKey, endpoint) to allow the same key
 /// to be reused across different endpoints without collision.
