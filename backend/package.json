@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1096.0",
+    "@casl/ability": "^6.7.3",
     "@nest-lab/throttler-storage-redis": "1.2.0",
     "@nestjs/apollo": "^12.2.2",
     "@nestjs/bullmq": "^11.0.4",

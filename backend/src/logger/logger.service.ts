@@ -4,7 +4,7 @@ import CloudWatchTransport from "winston-cloudwatch";
 import { CorrelationIdContext } from "./correlation-id.context";
 
 export interface LogContext {
-  trace_id?: string;
+  /** Correlation ID for the current request (auto-injected if not supplied) */
   correlationId?: string;
   user_id?: string;
   actor?: string;
@@ -96,7 +96,8 @@ export class LoggerService implements NestLoggerService {
   }
 
   private write(level: string, message: string, context?: LogContext | string) {
-    const meta = this.getContextWithCorrelationId(context);
+    if (!this.shouldEmit(level)) return;
+    const meta = this.enrichContext(context);
     this.logger.log(level, message, meta);
   }
 
@@ -122,5 +123,29 @@ export class LoggerService implements NestLoggerService {
 
   verbose(message: string, context?: LogContext | string): void {
     this.write("verbose", message, context);
+  }
+
+  // ── Oracle / DB tracing helpers ────────────────────────────────────────────
+
+  /**
+   * Log an outbound oracle call with the current correlation context.
+   * Use this in oracle.service.ts before every Soroban RPC call.
+   */
+  logOracleCall(operation: string, params: Record<string, unknown>): void {
+    this.write("info", `oracle_call: ${operation}`, {
+      oracleOperation: operation,
+      oracleParams: params,
+    });
+  }
+
+  /**
+   * Log a database query with the current correlation context.
+   * Use this in prisma.service.ts via the $on('query') event.
+   */
+  logDbQuery(query: string, durationMs: number): void {
+    this.write("debug", "db_query", {
+      dbQuery: query.slice(0, 200), // truncate long queries
+      durationMs,
+    });
   }
 }

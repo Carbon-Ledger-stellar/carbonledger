@@ -7,10 +7,12 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma.service';
+import { AccountLockoutService } from './account-lockout.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { TokenFamilyService } from './token-family.service';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
@@ -44,6 +46,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
     private readonly tokenFamily: TokenFamilyService,
+    private readonly tokenBlacklist: TokenBlacklistService,
     private readonly secretsRefresh: SecretsRefreshService,
   ) { }
 
@@ -73,13 +76,22 @@ export class AuthService {
   ): Promise<{ access_token: string; refresh_token: string }> {
     this.validatePublicKey(publicKey);
 
+    // 0. Check account lockout before doing anything else
+    if (this.lockout.isLockedOut(publicKey)) {
+      throw new UnauthorizedException(
+        'Account temporarily locked. Too many failed attempts.',
+      );
+    }
+
     // 1. Validate nonce
     const stored = nonceStore.get(publicKey);
     if (!stored || stored.nonce !== nonce) {
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Invalid or expired challenge');
     }
     if (Date.now() > stored.expiresAt) {
       nonceStore.delete(publicKey);
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Challenge expired');
     }
     nonceStore.delete(publicKey); // single-use
@@ -87,6 +99,7 @@ export class AuthService {
     // 2. Verify signature
     const message = `carbonledger:${nonce}`;
     if (!this.verifySignature(publicKey, message, signature)) {
+      this.lockout.recordFailedAttempt(publicKey);
       throw new UnauthorizedException('Signature verification failed');
     }
 
@@ -224,7 +237,7 @@ export class AuthService {
     const expiresIn = Math.min(requested, ACCESS_TOKEN_TTL_SECONDS);
 
     return jwt.sign(
-      { sub: publicKey, role, type: 'access' },
+      { sub: publicKey, role, type: 'access', jti: crypto.randomUUID() },
       this.secretsRefresh.getJwtSigningSecret(),
       { expiresIn, issuer },
     );

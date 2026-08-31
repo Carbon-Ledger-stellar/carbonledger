@@ -8,6 +8,7 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { JWTRotationStrategy } from './jwt-rotation.strategy';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
+import { AccountLockoutService } from './account-lockout.service';
 import { RolesGuard } from './roles.guard';
 import { TokenFamilyService } from './token-family.service';
 import { TokenBlacklistService } from './token-blacklist.service';
