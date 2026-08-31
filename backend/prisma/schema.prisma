@@ -23,10 +23,15 @@ model CarbonProject {
   totalCreditsIssued  Decimal  @default(0) @db.Decimal(18, 2)
   totalCreditsRetired Decimal  @default(0) @db.Decimal(18, 2)
   metadataCid         String
+  metadataHash        String?
   verifierAddress     String
   ownerAddress        String
   coordinates         Json?
+  migrationVersion    String?
   lastMonitoringAt    DateTime?
+  deletedAt           DateTime?
+  deletionReason      String?
+  retentionUntil      DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   ipfsFiles           IPFSFile[]
@@ -42,7 +47,14 @@ model CarbonProject {
   @@index([vintageYear])
   @@index([createdAt])
   @@index([methodology, country, status])
+  @@index([migrationVersion])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing queries with ordering
+  @@index([country, status])     // Regional filtering support
+
   @@index([lastMonitoringAt])
+  @@index([deletedAt])
+  @@index([retentionUntil])
 }
 
 model CreditBatch {
@@ -56,6 +68,7 @@ model CreditBatch {
   status      String   @default("Active")
   metadataCid String
   issuedAt    DateTime @default(now()) @db.Timestamptz
+  deletedAt   DateTime?
 
   project     CarbonProject      @relation(fields: [projectId], references: [projectId])
   retirements RetirementRecord[]
@@ -63,6 +76,9 @@ model CreditBatch {
   ipfsFiles   IPFSFile[]
 
   @@index([projectId, vintageYear, status])
+  @@index([deletedAt])
+  // Performance optimization index for batch lookups
+  @@index([projectId, status])  // Optimize batch queries by project and status
 }
 
 model RetirementRecord {
@@ -78,19 +94,41 @@ model RetirementRecord {
   serialStart      String
   serialEnd        String
   serialNumbers    String[]
-  txHash           String   @unique
-  certificateCid   String?
-  isValid          Boolean  @default(true)
-  validatedAt      DateTime?
-  retiredAt        DateTime @default(now())
+  txHash           String
+  certificateCid           String?
+  certificateUrl           String?
+  /// CID of the pinned JSON certificate *content* (distinct from
+  /// certificateCid, which is the pinned PDF's CID) — the retirement PDF
+  /// embeds this CID as a self-referential link (#600).
+  certificateContentCid    String?
+  /// Hex-encoded SHA-256 of the pinned certificate content, computed at
+  /// generation time. Used by GET /certificates/:cid/verify to detect
+  /// tampering: content re-fetched from IPFS must hash to this value.
+  certificateContentHash   String?
+  certificateStatus        String    @default("pending_certificate")
+  certificateRetries       Int       @default(0)
+  certificateFailedAt      DateTime?
+  certificateGeneratedAt   DateTime?
+  legacyStatus             String?
+  isValid                  Boolean   @default(true)
+  validatedAt              DateTime?
+  retiredAt                DateTime  @default(now())
+  deletedAt                DateTime?
 
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   ipfsFiles IPFSFile[]
+
+  @@index([deletedAt])
   certificates RetirementCertificate[]
   zkProofs     ZkRetirementProof[]
 
   @@index([projectId, retiredAt])
+  // Supports scoped list queries: WHERE retiredBy = $1 ORDER BY retiredAt DESC
+  @@index([retiredBy, retiredAt])
+  @@index([legacyStatus])
+  // Supports GET /certificates/:cid/verify lookups (#600)
+  @@index([certificateContentCid])
 }
 
 model ZkRetirementProof {
@@ -123,6 +161,14 @@ model RetirementCertificate {
   publicUrl   String?
   createdAt   DateTime @default(now())
 
+  /// Hex-encoded SHA-256 of the canonicalized, signed certificate content (#594).
+  contentHash     String?
+  /// Hex-encoded Ed25519 signature over contentHash.
+  issuerSignature String?
+  /// Stellar (G...) public key the signature verifies against — must match
+  /// Stellar.toml's CERTIFICATE_SIGNING_KEY (or _PREVIOUS during rotation).
+  issuerPublicKey String?
+
   retirement RetirementRecord @relation(fields: [retirementId], references: [id], onDelete: Cascade)
 
   @@index([retirementId])
@@ -144,11 +190,19 @@ model MarketListing {
   status          String   @default("Active")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
 
   project CarbonProject @relation(fields: [projectId], references: [projectId])
   batch   CreditBatch   @relation(fields: [batchId], references: [batchId])
 
   @@index([methodology, vintageYear, status, pricePerCredit])
+  // Supports queries that filter active/partial listings by seller (My Listings page)
+  @@index([seller, status])
+  @@index([deletedAt])
+  // Supports ORDER BY status, createdAt DESC on the listings browse page
+  @@index([status, createdAt])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing browsing with pagination
 }
 
 model MonitoringData {
@@ -189,14 +243,14 @@ model OracleJob {
 }
 
 model OracleSyncState {
-  id                String   @id @default(cuid())
-  lastSyncedAt      DateTime @default(now())
-  lastSyncedBlock   Int      @default(0)
-  recordsSynced     Int      @default(0)
+  id                String    @id @default(cuid())
+  lastSyncedAt      DateTime  @default(now())
+  lastSyncedBlock   Int       @default(0)
+  recordsSynced     Int       @default(0)
   lastError         String?
   lastErrorAt       DateTime?
-  syncStatus        String   @default("idle")  // idle | syncing | completed | failed
-  updatedAt         DateTime @updatedAt
+  syncStatus        String    @default("idle")  // idle | syncing | completed | failed
+  updatedAt         DateTime  @updatedAt
 
   @@unique([id])
 }
@@ -207,8 +261,14 @@ model User {
   email                   String?                  @unique
   role                    String                   @default("corporation")
   isSubscribed            Boolean                  @default(true)
+  deletedAt               DateTime?
+  deletionReason          String?
+  retentionUntil          DateTime?
   createdAt               DateTime                 @default(now())
   notificationPreferences NotificationPreference?
+
+  @@index([deletedAt])
+  @@index([retentionUntil])
 }
 
 model NotificationPreference {
@@ -266,6 +326,23 @@ model SyncMetadata {
   updatedAt         DateTime @updatedAt
 }
 
+/// Disjoint ledger ranges that the Soroban event poller has fully processed.
+/// Used to detect and backfill missing sequences after RPC downtime.
+/// Ranges are kept non-overlapping/coalesced by the poller under a transaction
+/// advisory lock so concurrent instances cannot record overlapping windows.
+model ProcessedLedgerRange {
+  id          Int      @id @default(autoincrement())
+  /// First ledger of the contiguous processed range (inclusive).
+  startLedger Int
+  /// Last ledger of the contiguous processed range (inclusive).
+  endLedger   Int
+  processedAt DateTime @default(now())
+
+  @@unique([startLedger, endLedger])
+  @@index([startLedger])
+  @@index([endLedger])
+}
+
 model Job {
   id          String    @id @default(cuid())
   queue       String
@@ -319,6 +396,19 @@ model VerifierApplication {
   rejectionReason  String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+}
+
+model VerifierAttestationFee {
+  id                String   @id @default(cuid())
+  verifierPublicKey String
+  projectId         String
+  decision          String   // Verified | Rejected
+  feeStroops        String
+  txHash            String   @unique
+  createdAt         DateTime @default(now())
+
+  @@index([verifierPublicKey, createdAt])
+  @@index([projectId])
 }
 
 model PriceApproval {
@@ -431,6 +521,43 @@ model OracleUpdate {
   @@index([createdAt])
 }
 
+/// Tracks webhook subscriptions for corporate ESG platforms.
+/// Each subscription is tied to an owner address and listens for specified events.
+model WebhookSubscription {
+  id           String   @id @default(cuid())
+  ownerAddress String
+  url          String
+  secret       String
+  events       String[] // e.g. ["retirement.confirmed", "certificate.ready", "credit.purchased"]
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  deliveryLogs WebhookDeliveryLog[]
+
+  @@index([ownerAddress])
+  @@index([active])
+}
+
+/// Logs each webhook delivery attempt, including response details.
+model WebhookDeliveryLog {
+  id             String   @id @default(cuid())
+  subscriptionId String
+  eventType      String
+  url            String
+  statusCode     Int?
+  responseBody   String?  @db.Text
+  success        Boolean  @default(false)
+  attempt        Int      @default(1)
+  error          String?
+  timestamp      DateTime @default(now())
+
+  subscription   WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+  @@index([eventType])
+  @@index([timestamp])
+}
+
 /// Append-only credit event log — never updated or deleted.
 /// Every mutation to a CreditBatch (mint / transfer / retire / list / delist)
 /// produces one row here.  The `signature` field holds an HMAC-SHA256 digest
@@ -448,6 +575,8 @@ model CreditEvent {
 
   @@index([creditBatchId])
   @@index([timestamp])
+  // Covering index for the provenance query: WHERE creditBatchId = $1 ORDER BY timestamp ASC
+  @@index([creditBatchId, timestamp])
 }
 
 model SatelliteWebhookProvider {
@@ -461,4 +590,88 @@ model SatelliteWebhookProvider {
 
   @@index([providerId])
   @@index([isActive])
+}
+
+/// Idempotency ledger for oracle submissions (#578).  One row per logical
+/// submission, keyed by the content-addressed submission id, so a replay
+/// conflicts on insert and never reaches the blockchain.
+///
+/// Written by oracle/retry_submitter.py over raw SQL, hence the snake_case
+/// mapping shared with the other oracle-owned tables.
+model OracleSubmissionNonce {
+  /// sha256(canonical_json(payload)) — identical payloads produce identical ids.
+  submissionId String   @id @map("submission_id") @db.Char(64)
+  service      String   @db.VarChar(50)
+  functionName String   @map("function_name") @db.VarChar(100)
+  payloadHash  String   @map("payload_hash") @db.Char(64)
+  /// Allocated once and reused across every retry: a replay of a submission
+  /// that already landed is rejected on chain with InvalidNonce.
+  nonce        BigInt   @unique
+  status       String   @default("pending") @db.VarChar(20)
+  txHash       String?  @map("tx_hash") @db.VarChar(200)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@map("oracle_submission_nonces")
+}
+
+/// Permanently failed oracle submissions with full failure context (#578).
+/// Alerting fires when the unresolved count exceeds DLQ_ALERT_THRESHOLD.
+model OracleDeadLetter {
+  submissionId   String    @id @map("submission_id") @db.Char(64)
+  service        String    @db.VarChar(50)
+  functionName   String    @map("function_name") @db.VarChar(100)
+  payload        Json
+  nonce          BigInt?
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
+  /// Every error seen across all attempts, oldest first.
+  errorHistory   Json      @default("[]") @map("error_history")
+  resolved       Boolean   @default(false)
+  resolutionNote String?   @map("resolution_note")
+  resolvedAt     DateTime? @map("resolved_at") @db.Timestamptz(6)
+  firstFailedAt  DateTime  @default(now()) @map("first_failed_at") @db.Timestamptz(6)
+  lastFailedAt   DateTime  @default(now()) @map("last_failed_at") @db.Timestamptz(6)
+
+  @@index([resolved])
+  @@index([lastFailedAt(sort: Desc)])
+  @@map("oracle_dead_letters")
+}
+
+/// Two-factor authentication configuration per user (#1079).
+/// Supports TOTP (authenticator app) and email OTP.
+model TwoFactorAuth {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  enabled           Boolean   @default(false)
+
+  /// Base32-encoded TOTP secret — store encrypted in production
+  totpSecret        String?
+  totpVerified      Boolean   @default(false)
+
+  /// Email OTP support
+  emailEnabled      Boolean   @default(false)
+  emailOtp          String?         // bcrypt hash of current OTP
+  emailOtpExpiry    DateTime?
+  emailOtpAttempts  Int       @default(0)
+
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+/// One-time recovery codes for 2FA account lockout (#1079).
+/// Each user gets 10 codes on 2FA setup; each code is single-use.
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String             // bcrypt hash of the plaintext code
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([userId, usedAt])
 }

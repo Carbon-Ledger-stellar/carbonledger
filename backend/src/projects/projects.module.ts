@@ -9,11 +9,15 @@ import { AuthModule } from "../auth/auth.module";
 import { MailModule } from "../mail/mail.module";
 import { RedisService } from "../redis.service";
 import { OracleContractClient } from "../oracle/oracle-contract.client";
+import { PoliciesModule } from "../policies/policies.module";
+import { WebhookModule } from "../webhook/webhook.module";
+import { MarketplaceModule } from "../marketplace/marketplace.module";
+import { CacheInvalidationService } from "../cache/cache.service";
 
 @Module({
-  imports: [AuthModule, MailModule],
+  imports: [AuthModule, MailModule, PoliciesModule, WebhookModule, MarketplaceModule],
   controllers: [ProjectsController, PublicProjectsController],
-  providers: [ProjectsService, ProjectStateMachineService, PrismaService, RedisService, RegistryContractClient, OracleContractClient],
+  providers: [ProjectsService, ProjectStateMachineService, PrismaService, RedisService, RegistryContractClient, OracleContractClient, CacheInvalidationService],
   exports: [ProjectsService],
 })
 export class ProjectsModule {}

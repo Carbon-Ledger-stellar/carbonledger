@@ -78,6 +78,76 @@ Double-counting means the same tonne of CO₂ has been credited more than once. 
 
 ---
 
+## Automated Serial Range Reconciliation Report
+
+The `/api/v1/admin/reconciliation/serial-ranges` endpoint replaces the manual cross-referencing procedure. It:
+
+1. Fetches all `CreditBatch` records from PostgreSQL, sorted by `serialStart` (numeric).
+2. Fetches all `(serialStart, serialEnd)` pairs from the on-chain Soroban `SerialRegistry`.
+3. Computes three discrepancy categories:
+   - **DB-only batches** — exist in Postgres but not on-chain.
+   - **On-chain-only ranges** — present in the Soroban registry but not in Postgres.
+   - **Overlapping ranges** — two or more DB batches whose serial ranges intersect (primary double-counting signal).
+4. Returns a structured `ReconciliationReport` JSON.
+
+### Triggering the report
+
+```bash
+# 1. Enqueue the reconciliation job (returns jobId)
+curl -X POST https://api.carbonledger.io/api/v1/admin/reconciliation/serial-ranges \
+  -H "Authorization: Bearer $ADMIN_JWT"
+
+# Response:
+# { "jobId": "abc123", "message": "Reconciliation job enqueued..." }
+
+# 2. Poll for completion
+curl https://api.carbonledger.io/api/v1/admin/reconciliation/abc123 \
+  -H "Authorization: Bearer $ADMIN_JWT"
+
+# Response when complete:
+# { "jobId": "abc123", "status": "completed", "report": { ... } }
+
+# 3. Download as CSV
+curl https://api.carbonledger.io/api/v1/admin/reconciliation/abc123/export \
+  -H "Authorization: Bearer $ADMIN_JWT" \
+  -o reconciliation-report.csv
+```
+
+### Report JSON structure
+
+```json
+{
+  "generatedAt": "2026-08-28T00:00:00.000Z",
+  "totalBatchesChecked": 1500,
+  "totalOnChainRangesChecked": 1498,
+  "discrepanciesFound": 3,
+  "dbOnlyBatches": [
+    { "batchId": "batch-xyz", "serialStart": "10000", "serialEnd": "19999", "conflictType": "db_only" }
+  ],
+  "onChainOnlyRanges": [],
+  "overlappingRanges": [
+    {
+      "batchId": "batch-abc",
+      "serialStart": "5000",
+      "serialEnd": "9999",
+      "conflictType": "overlap",
+      "overlappingWith": "batch-def",
+      "overlapStart": "5000",
+      "overlapEnd": "7500"
+    }
+  ]
+}
+```
+
+### Nightly automated run
+
+A `@Cron(EVERY_DAY_AT_MIDNIGHT)` job runs the reconciliation automatically. If
+`discrepanciesFound > 0`, an `ERROR`-level log is emitted with the full summary.
+Wire this log to your alerting pipeline (PagerDuty, Slack, etc.) to get paged
+immediately on any discrepancy.
+
+---
+
 ## Post-mortem
 
 - How did the duplicate serial range pass `verify_serial_range()`?
@@ -85,3 +155,4 @@ Double-counting means the same tonne of CO₂ has been credited more than once. 
 - How many credits were sold from the duplicate batch?
 - Buyer notification and remediation plan.
 - Add the specific overlap scenario as a contract unit test.
+- Review the automated reconciliation report for the affected time window.

@@ -6,6 +6,14 @@ import OracleStatus from "../components/OracleStatus";
 import DashboardPage from "../app/dashboard/page";
 import { useOracleStatus, useProjects, useRetirements, useListings } from "../lib/api";
 
+jest.mock("../lib/api", () => ({
+  ...jest.requireActual("../lib/api"),
+  useOracleStatus: jest.fn(),
+  useProjects: jest.fn(),
+  useRetirements: jest.fn(),
+  useListings: jest.fn(),
+}));
+
 const mockUseOracleStatus = useOracleStatus as jest.Mock;
 const mockUseProjects = useProjects as jest.Mock;
 const mockUseRetirements = useRetirements as jest.Mock;
