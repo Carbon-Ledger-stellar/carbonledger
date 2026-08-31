@@ -22,7 +22,10 @@
     "test:throttle": "jest src/throttle --passWithNoTests",
     "pretest:e2e": "npm run test:db:up && npm run test:db:migrate",
     "export:openapi": "npx ts-node --transpile-only src/export-openapi.ts",
-    "verify:certificate": "node scripts/verify-certificate.js"
+    "verify:certificate": "node scripts/verify-certificate.js",
+    "load-test": "k6 run ../load-tests/load-test.js",
+    "load-test:baseline": "k6 run -e BASE_URL=http://localhost:3001 ../load-tests/load-test.js",
+    "load-test:ci": "k6 run --out json=../load-tests/results/run-ci-$(date +%Y%m%d-%H%M%S).json ../load-tests/load-test.js"
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.1096.0",
