@@ -85,18 +85,54 @@ export const ROLE_QUOTAS: Record<string, RoleQuotas> = {
   public: {
     serialLookup: {
       name: 'serialLookup',
+      limit: 10,
+      windowMs: 60 * 1000, // 1 minute (issue #1017)
+    },
+    read: {
+      name: 'read',
+      limit: 10,
+      windowMs: 60 * 1000, // 1 minute (issue #1017)
+    },
+    default: {
+      name: 'default',
+      limit: 10,
+      windowMs: 60 * 1000, // 1 minute (issue #1017)
+    },
+  },
+
+  // ── Issue #1017: per-minute role buckets ───────────────────────────────
+  user: {
+    default: {
+      name: 'default',
       limit: 100,
-      windowMs: 60 * 60 * 1000, // 1 hour
+      windowMs: 60 * 1000, // 1 minute
     },
     read: {
       name: 'read',
       limit: 100,
-      windowMs: 60 * 60 * 1000, // 1 hour
+      windowMs: 60 * 1000,
     },
+    write: {
+      name: 'write',
+      limit: 100,
+      windowMs: 60 * 1000,
+    },
+  },
+  premium: {
     default: {
       name: 'default',
-      limit: 100,
-      windowMs: 60 * 60 * 1000, // 1 hour
+      limit: 1000,
+      windowMs: 60 * 1000, // 1 minute
+    },
+    read: {
+      name: 'read',
+      limit: 1000,
+      windowMs: 60 * 1000,
+    },
+    write: {
+      name: 'write',
+      limit: 1000,
+      windowMs: 60 * 1000,
     },
   },
 };
