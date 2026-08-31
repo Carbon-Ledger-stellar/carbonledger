@@ -100,9 +100,10 @@ const inputStyle: React.CSSProperties = {
   border: `1px solid ${colors.neutral[300]}`,
   borderRadius: "0.5rem",
   padding: "0.75rem 1rem",
-  fontSize: "0.9rem",
+  fontSize: "1rem", // 16px prevents iOS Safari auto-zoom (#1035)
   color: colors.neutral[900],
   boxSizing: "border-box",
+  minHeight: "48px",
 };
 
 const inputErrorStyle: React.CSSProperties = {
@@ -347,7 +348,7 @@ function RetirePageContent() {
 
   return (
     <ErrorBoundary>
-      <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+      <div style={{ maxWidth: "600px", margin: "0 auto", padding: "2.5rem 1rem" }}>
         <h1
           style={{
             fontSize: "2rem",
@@ -381,6 +382,7 @@ function RetirePageContent() {
                 </label>
                 <input
                   type="number"
+                  inputMode="decimal"
                   min={0.01}
                   step={0.01}
                   value={amount}

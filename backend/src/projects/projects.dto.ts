@@ -296,3 +296,54 @@ export class BatchUpdateProjectStatusDto {
   items: UpdateProjectStatusItemDto[];
 }
 
+/**
+ * DTO for registering a project with verification documents via multipart form.
+ *
+ * Accepts file uploads for Verra certificates, methodologies, and other verification docs.
+ * Files are validated (PDF/PNG only) and stored in IPFS via Pinata.
+ */
+export class RegisterProjectWithDocumentsDto {
+  @IsString()
+  @Length(1, 64)
+  projectId: string;
+
+  @IsString()
+  @Length(1, 128)
+  name: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(1024)
+  description?: string;
+
+  @IsString()
+  @Length(1, 64)
+  methodology: string;
+
+  @IsString()
+  @Length(1, 64)
+  country: string;
+
+  @IsString()
+  @Length(1, 64)
+  projectType: string;
+
+  /** Stellar public key of the assigned verifier. */
+  @IsStellarAddress()
+  verifierAddress: string;
+
+  /** Stellar public key of the project owner. */
+  @IsStellarAddress()
+  ownerAddress: string;
+
+  /** Vintage year (1990 – current year + 1). */
+  @IsVintageYear()
+  @Type(() => Number)
+  vintageYear: number;
+
+  /** Methodology quality score (0–100). Minimum 70 required for issuance. */
+  @IsMethodologyScore()
+  @Type(() => Number)
+  methodologyScore: number;
+}
+

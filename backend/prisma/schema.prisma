@@ -48,6 +48,10 @@ model CarbonProject {
   @@index([createdAt])
   @@index([methodology, country, status])
   @@index([migrationVersion])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing queries with ordering
+  @@index([country, status])     // Regional filtering support
+
   @@index([lastMonitoringAt])
   @@index([deletedAt])
   @@index([retentionUntil])
@@ -73,6 +77,8 @@ model CreditBatch {
 
   @@index([projectId, vintageYear, status])
   @@index([deletedAt])
+  // Performance optimization index for batch lookups
+  @@index([projectId, status])  // Optimize batch queries by project and status
 }
 
 model RetirementRecord {
@@ -195,6 +201,8 @@ model MarketListing {
   @@index([deletedAt])
   // Supports ORDER BY status, createdAt DESC on the listings browse page
   @@index([status, createdAt])
+  // Performance optimization indexes
+  @@index([status, createdAt])  // Optimize listing browsing with pagination
 }
 
 model MonitoringData {
@@ -318,6 +326,23 @@ model SyncMetadata {
   updatedAt         DateTime @updatedAt
 }
 
+/// Disjoint ledger ranges that the Soroban event poller has fully processed.
+/// Used to detect and backfill missing sequences after RPC downtime.
+/// Ranges are kept non-overlapping/coalesced by the poller under a transaction
+/// advisory lock so concurrent instances cannot record overlapping windows.
+model ProcessedLedgerRange {
+  id          Int      @id @default(autoincrement())
+  /// First ledger of the contiguous processed range (inclusive).
+  startLedger Int
+  /// Last ledger of the contiguous processed range (inclusive).
+  endLedger   Int
+  processedAt DateTime @default(now())
+
+  @@unique([startLedger, endLedger])
+  @@index([startLedger])
+  @@index([endLedger])
+}
+
 model Job {
   id          String    @id @default(cuid())
   queue       String
@@ -402,6 +427,38 @@ model AdminConfig {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+/// Dead Letter Queue — persists jobs that have exhausted all BullMQ retry
+/// attempts, preserving the full error context for manual inspection and
+/// admin-triggered requeueing.
+model DeadLetterJob {
+  id            String   @id @default(cuid())
+  /// Original BullMQ job ID
+  jobId         String   @unique
+  /// Queue name (e.g. "carbonledger")
+  queueName     String
+  /// Job type / name (e.g. "oracle_submission")
+  jobType       String
+  /// Original job payload (JSON)
+  payload       Json
+  /// Number of attempts made before the job was dead-lettered
+  attempts      Int
+  /// Full error message from the last failed attempt
+  lastError     String   @db.Text
+  /// Full stack trace from the last failed attempt
+  errorStack    String?  @db.Text
+  /// When the job was first enqueued
+  enqueuedAt    DateTime
+  /// When the job was moved to the DLQ
+  failedAt      DateTime @default(now())
+  /// Whether this job has been manually requeued
+  requeued      Boolean  @default(false)
+  requeuedAt    DateTime?
+
+  @@index([queueName, jobType])
+  @@index([failedAt])
+  @@index([requeued])
 }
 
 /// Stores idempotency records for critical mutating endpoints.
@@ -580,4 +637,41 @@ model OracleDeadLetter {
   @@index([resolved])
   @@index([lastFailedAt(sort: Desc)])
   @@map("oracle_dead_letters")
+}
+
+/// Two-factor authentication configuration per user (#1079).
+/// Supports TOTP (authenticator app) and email OTP.
+model TwoFactorAuth {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  enabled           Boolean   @default(false)
+
+  /// Base32-encoded TOTP secret — store encrypted in production
+  totpSecret        String?
+  totpVerified      Boolean   @default(false)
+
+  /// Email OTP support
+  emailEnabled      Boolean   @default(false)
+  emailOtp          String?         // bcrypt hash of current OTP
+  emailOtpExpiry    DateTime?
+  emailOtpAttempts  Int       @default(0)
+
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+/// One-time recovery codes for 2FA account lockout (#1079).
+/// Each user gets 10 codes on 2FA setup; each code is single-use.
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String             // bcrypt hash of the plaintext code
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([userId, usedAt])
 }
