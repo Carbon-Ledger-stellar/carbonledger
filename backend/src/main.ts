@@ -14,6 +14,7 @@ import { ValidationExceptionFilter } from './common/validation-exception.filter'
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { LoggerService } from './logger/logger.service';
 import { DdosProtectionMiddleware } from './security/ddos-protection.middleware';
+import { RequestLoggingMiddleware } from './security/request-logging.middleware';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -131,6 +132,11 @@ async function bootstrap() {
   // Applied before any other middleware so all responses carry the headers.
   const ddosMiddleware = new DdosProtectionMiddleware();
   app.use((req: any, res: any, next: any) => ddosMiddleware.use(req, res, next));
+
+  // #1020: Request logging middleware — logs all API requests in structured JSON format
+  // Includes: timestamp, method, path, status code, duration, user ID (when authenticated), errors
+  const requestLoggingMiddleware = new RequestLoggingMiddleware();
+  app.use((req: any, res: any, next: any) => requestLoggingMiddleware.use(req, res, next));
 
   const bodyLimit = process.env.BODY_SIZE_LIMIT ?? '10kb';
   app.use(express.json({ limit: bodyLimit }));
