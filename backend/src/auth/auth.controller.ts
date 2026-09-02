@@ -14,7 +14,7 @@ import {
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
-import { ChallengeDto, VerifyDto, RefreshDto, LogoutDto } from './auth.dto';
+import { ChallengeDto, VerifyDto, RefreshDto, LogoutDto, WalletNonceDto, WalletLoginDto } from './auth.dto';
 import { Public } from './decorators';
 
 export const REFRESH_COOKIE = 'refresh_token';
@@ -44,6 +44,55 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   challenge(@Query() dto: ChallengeDto) {
     return this.authService.generateChallenge(dto.publicKey);
+  }
+
+  // ── Wallet-login (issue #1023) ─────────────────────────────────────────────
+
+  /**
+   * Step 1 — Request a server-generated nonce bound to a Freighter wallet
+   * public key.  The nonce is stored in Redis with a 5-minute TTL and is
+   * single-use: presenting it in POST /auth/wallet-login invalidates it
+   * immediately regardless of whether verification succeeds.
+   *
+   * Rate-limited to 10 requests per minute per IP to prevent nonce flooding.
+   */
+  @Get('wallet-nonce')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  walletNonce(@Query() dto: WalletNonceDto) {
+    return this.authService.generateWalletNonce(dto.publicKey);
+  }
+
+  /**
+   * Step 2 — Submit a Freighter wallet signature over the server nonce to
+   * receive a short-lived JWT access token and an opaque refresh token.
+   *
+   * The client must sign the exact UTF-8 string `carbonledger-wallet:<nonce>`
+   * with their Ed25519 Stellar keypair and encode the resulting signature as
+   * lowercase hex.
+   *
+   * On success:
+   *  - `access_token`  — signed JWT (15-minute TTL) in the response body.
+   *  - `refresh_token` — opaque token delivered exclusively as an HTTP-only
+   *    cookie (never exposed to JavaScript), consistent with the existing
+   *    /auth/verify flow (#892).
+   *
+   * Rate-limited to 5 requests per minute per IP to resist brute-force.
+   */
+  @Post('wallet-login')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  async walletLogin(
+    @Body() dto: WalletLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { access_token, refresh_token } = await this.authService.walletLogin(
+      dto.publicKey,
+      dto.signature,
+      dto.nonce,
+    );
+
+    this.setRefreshCookie(res, refresh_token);
+    return { access_token };
   }
 
   /**
