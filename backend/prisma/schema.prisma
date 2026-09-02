@@ -777,6 +777,40 @@ model TwoFactorAuth {
   @@index([userId])
 }
 
+/// Dedicated sensitive-operations audit table (#1022).
+/// Tracks every high-sensitivity action (delete, role change, admin operation, etc.)
+/// independently of the general-purpose AuditLog so compliance queries are fast
+/// and the two concerns remain cleanly separated.
+///
+/// Column notes:
+///   actor_id      — Stellar public key (G…) of the user who performed the action.
+///   action        — Verb describing the operation, e.g. "user.role_change",
+///                   "project.delete", "credit.mint".
+///   resource_type — Entity kind, e.g. "User", "CarbonProject", "CreditBatch".
+///   resource_id   — Primary-key value of the affected entity.
+///   details       — Arbitrary JSON payload: before/after state, reason, metadata.
+///   timestamp     — Set by the database at insert time; never editable.
+model AuditLogEntry {
+  id           String   @id @default(cuid())
+  /// Stellar public key of the acting user; null for system-generated events.
+  actor_id     String?
+  action       String
+  resource_type String
+  resource_id  String
+  /// JSON payload carrying context (before/after state, reason, IP, etc.)
+  details      Json     @default("{}")
+  timestamp    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("audit_logs")
+
+  @@index([actor_id])
+  @@index([action])
+  @@index([resource_type, resource_id])
+  @@index([timestamp])
+  @@index([actor_id, timestamp])
+  @@index([resource_type, resource_id, timestamp])
+}
+
 /// One-time recovery codes for 2FA account lockout (#1079).
 /// Each user gets 10 codes on 2FA setup; each code is single-use.
 model RecoveryCode {
