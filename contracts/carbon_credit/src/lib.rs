@@ -96,18 +96,8 @@ pub enum DataKey {
     /// Key = project_id; Value = Vec<String> of period identifiers.
     VerifiedPeriods(String),
     UserBatches(Address),
-    RoleMap(Address),
     TotalSupply,
     Allowance(Address, Address),
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Role {
-    User,
-    Admin,
-    Verifier,
-    Oracle,
 }
 
 #[contracttype]
@@ -537,29 +527,6 @@ impl CarbonCreditContract {
         }
         env.storage().persistent().set(&DataKey::VintageYearMin, &min_year);
         env.storage().persistent().set(&DataKey::VintageYearMax, &max_year);
-        Ok(())
-    }
-
-    pub fn grant_role(
-        env: Env,
-        admin: Address,
-        target: Address,
-        role: Role,
-    ) -> Result<(), CarbonError> {
-        admin.require_auth();
-        Self::require_admin(&env, &admin)?;
-        Self::require_not_paused(&env)?;
-        env.storage()
-            .persistent()
-            .set(&DataKey::RoleMap(target), &role);
-        Ok(())
-    }
-
-    pub fn revoke_role(env: Env, admin: Address, target: Address) -> Result<(), CarbonError> {
-        admin.require_auth();
-        Self::require_admin(&env, &admin)?;
-        Self::require_not_paused(&env)?;
-        env.storage().persistent().remove(&DataKey::RoleMap(target));
         Ok(())
     }
 
@@ -1079,18 +1046,6 @@ impl CarbonCreditContract {
             .get(&RetiredKey::BatchRetired(batch.batch_id.clone()))
             .unwrap_or(0i128);
         batch.amount.checked_sub(retired).unwrap_or(0)
-    }
-
-    fn require_admin(env: &Env, caller: &Address) -> Result<(), CarbonError> {
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .ok_or(CarbonError::UnauthorizedVerifier)?;
-        if &admin != caller {
-            return Err(CarbonError::UnauthorizedVerifier);
-        }
-        Ok(())
     }
 
     fn require_not_paused(env: &Env) -> Result<(), CarbonError> {
