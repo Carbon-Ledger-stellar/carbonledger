@@ -300,6 +300,7 @@ fn test_check_liveness_stale_data_emits_liveness_flag_and_registry_suspended() {
         &s(&env, "forestry"),
         &75_u32,
         &2023_u32,
+        &BytesN::from_array(&env, &[0u8; 32]),
     );
 
     // No monitoring data was ever submitted, so the project is immediately

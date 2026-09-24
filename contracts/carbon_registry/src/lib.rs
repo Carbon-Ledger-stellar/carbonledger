@@ -39,6 +39,10 @@ pub enum CarbonError {
     DuplicateApproval = 26,
     ThresholdNotMet = 27,
     StorageLimitExceeded = 28,
+    /// Contract is paused (emergency halt).
+    EmergencyPaused = 29,
+    /// The requested status transition is not allowed from the current state.
+    InvalidStatusTransition = 30,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -56,6 +60,8 @@ pub enum DataKey {
     MultiSigConfig,
     PendingUpgrade,
     ProposalCounter,
+    /// Emergency pause flag.
+    IsPaused,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -65,6 +71,8 @@ pub enum DataKey {
 pub enum ProjectStatus {
     Pending,
     Verified,
+    Active,
+    Inactive,
     Rejected,
     Suspended,
     Completed,
@@ -86,6 +94,7 @@ pub struct CarbonProject {
     pub status: ProjectStatus,
     pub vintage_year: u32,
     pub created_at: u64,
+    pub metadata_hash: BytesN<32>,
 }
 
 #[contracttype]
@@ -96,6 +105,15 @@ pub struct UpgradeRecord {
     pub timestamp: u64,
     pub upgraded_by: Address,
     pub wasm_hash: BytesN<32>,
+}
+
+/// Emitted when old upgrade history entries are pruned to stay within bounds.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct HistoryPrunedEvent {
+    pub entries_pruned: u32,
+    pub remaining:      u32,
+    pub pruned_at:      u64,
 }
 
 /// Multi-signer configuration for contract upgrades.
@@ -158,6 +176,9 @@ impl CarbonRegistryContract {
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
+        env.storage()
+            .persistent()
+            .set(&DataKey::IsPaused, &false);
         Ok(())
     }
 
@@ -206,27 +227,23 @@ impl CarbonRegistryContract {
             .persistent()
             .get(&DataKey::MaxHistoryEntries)
             .unwrap_or(DEFAULT_MAX_HISTORY_ENTRIES);
-        let max = max_entries as usize;
 
-        if history.len() > max {
-            let excess = (history.len() - max) as u32;
-            while history.len() > max {
+        if history.len() > max_entries {
+            let excess = history.len() - max_entries;
+            while history.len() > max_entries {
                 history.remove(0);
             }
             env.events().publish(
                 (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
                 HistoryPrunedEvent {
                     entries_pruned: excess,
-                    remaining:      history.len() as u32,
+                    remaining:      history.len(),
                     pruned_at:      env.ledger().timestamp(),
                 },
             );
         }
 
         env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
-        env.storage()
-            .persistent()
-            .set(&DataKey::UpgradeHistory, &record);
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("upgraded")),
@@ -306,11 +323,10 @@ impl CarbonRegistryContract {
             .persistent()
             .get(&DataKey::UpgradeHistory)
             .unwrap_or_else(|| vec![&env]);
-        let max = clamped as usize;
 
-        if history.len() > max {
-            let excess = (history.len() - max) as u32;
-            while history.len() > max {
+        if history.len() > clamped {
+            let excess = history.len() - clamped;
+            while history.len() > clamped {
                 history.remove(0);
             }
             env.storage().persistent().set(&DataKey::UpgradeHistory, &history);
@@ -318,7 +334,7 @@ impl CarbonRegistryContract {
                 (symbol_short!("c_ledger"), symbol_short!("hist_prune")),
                 HistoryPrunedEvent {
                     entries_pruned: excess,
-                    remaining:      history.len() as u32,
+                    remaining:      history.len(),
                     pruned_at:      env.ledger().timestamp(),
                 },
             );
@@ -547,11 +563,11 @@ impl CarbonRegistryContract {
         project_type: String,
         methodology_score: u32,
         vintage_year: u32,
-        methodology_score: u32,
         metadata_hash: BytesN<32>,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         if project_id.is_empty() || project_id.len() > 64 {
             return Err(CarbonError::ProjectNotFound);
@@ -613,6 +629,7 @@ impl CarbonRegistryContract {
             status: ProjectStatus::Pending,
             vintage_year,
             created_at: env.ledger().timestamp(),
+            metadata_hash,
         };
         env.storage()
             .persistent()
@@ -641,8 +658,16 @@ impl CarbonRegistryContract {
     ) -> Result<(), CarbonError> {
         verifier_address.require_auth();
         Self::require_verifier(&env, &verifier_address)?;
+        Self::require_not_paused(&env)?;
 
         let mut project = Self::load_project(&env, &project_id)?;
+
+        // Only Pending projects can be verified
+        if project.status != ProjectStatus::Pending {
+            return Err(CarbonError::InvalidStatusTransition);
+        }
+
+        let old_status = project.status.clone();
         project.status = ProjectStatus::Verified;
         env.storage()
             .persistent()
@@ -650,7 +675,73 @@ impl CarbonRegistryContract {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("verified")),
-            (project_id, verifier_address),
+            (project_id.clone(), verifier_address.clone()),
+        );
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("st_chg")),
+            (project_id, old_status, ProjectStatus::Verified, verifier_address),
+        );
+        Ok(())
+    }
+
+    /// Activate a verified project, allowing credit minting.
+    /// Only a Verified project can become Active.
+    pub fn activate_project(
+        env: Env,
+        verifier_address: Address,
+        project_id: String,
+    ) -> Result<(), CarbonError> {
+        verifier_address.require_auth();
+        Self::require_verifier(&env, &verifier_address)?;
+        Self::require_not_paused(&env)?;
+
+        let mut project = Self::load_project(&env, &project_id)?;
+
+        // Only Verified (or Inactive) projects can be activated
+        if project.status != ProjectStatus::Verified && project.status != ProjectStatus::Inactive {
+            return Err(CarbonError::InvalidStatusTransition);
+        }
+
+        let old_status = project.status.clone();
+        project.status = ProjectStatus::Active;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Project(project_id.clone()), &project);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("st_chg")),
+            (project_id, old_status, ProjectStatus::Active, verifier_address),
+        );
+        Ok(())
+    }
+
+    /// Deactivate an active project, pausing new credit minting without full suspension.
+    /// Only an Active project can become Inactive.
+    pub fn deactivate_project(
+        env: Env,
+        verifier_address: Address,
+        project_id: String,
+    ) -> Result<(), CarbonError> {
+        verifier_address.require_auth();
+        Self::require_verifier(&env, &verifier_address)?;
+        Self::require_not_paused(&env)?;
+
+        let mut project = Self::load_project(&env, &project_id)?;
+
+        // Only Active projects can be deactivated
+        if project.status != ProjectStatus::Active {
+            return Err(CarbonError::InvalidStatusTransition);
+        }
+
+        let old_status = project.status.clone();
+        project.status = ProjectStatus::Inactive;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Project(project_id.clone()), &project);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("st_chg")),
+            (project_id, old_status, ProjectStatus::Inactive, verifier_address),
         );
         Ok(())
     }
@@ -663,8 +754,16 @@ impl CarbonRegistryContract {
     ) -> Result<(), CarbonError> {
         verifier_address.require_auth();
         Self::require_verifier(&env, &verifier_address)?;
+        Self::require_not_paused(&env)?;
 
         let mut project = Self::load_project(&env, &project_id)?;
+
+        // Only Pending projects can be rejected
+        if project.status != ProjectStatus::Pending {
+            return Err(CarbonError::InvalidStatusTransition);
+        }
+
+        let old_status = project.status.clone();
         project.status = ProjectStatus::Rejected;
         env.storage()
             .persistent()
@@ -672,7 +771,11 @@ impl CarbonRegistryContract {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("rejected")),
-            (project_id, verifier_address, reason),
+            (project_id.clone(), verifier_address.clone(), reason),
+        );
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("st_chg")),
+            (project_id, old_status, ProjectStatus::Rejected, verifier_address),
         );
         Ok(())
     }
@@ -707,6 +810,7 @@ impl CarbonRegistryContract {
     ) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
+        Self::require_not_paused(&env)?;
 
         let mut project = Self::load_project(&env, &project_id)?;
         project.status = ProjectStatus::Suspended;
@@ -910,6 +1014,59 @@ impl CarbonRegistryContract {
         }
         Ok(())
     }
+
+    // ── Emergency Pause (#1012) ────────────────────────────────────────────────
+
+    /// Pause the contract. All state-mutating calls will be rejected while paused.
+    /// Admin-only.
+    pub fn pause(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        env.storage().persistent().set(&DataKey::IsPaused, &true);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("paused")),
+            (admin, env.ledger().timestamp()),
+        );
+        Ok(())
+    }
+
+    /// Unpause the contract. Restores normal operation.
+    /// Admin-only.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        env.storage().persistent().set(&DataKey::IsPaused, &false);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("unpaused")),
+            (admin, env.ledger().timestamp()),
+        );
+        Ok(())
+    }
+
+    /// Returns `true` if the contract is currently paused. Query functions are
+    /// always accessible regardless of pause state.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::IsPaused)
+            .unwrap_or(false)
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), CarbonError> {
+        let paused: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IsPaused)
+            .unwrap_or(false);
+        if paused {
+            return Err(CarbonError::EmergencyPaused);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -917,7 +1074,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
-        vec, Env, String,
+        vec, BytesN, Env, String,
     };
 
     fn setup() -> (Env, Address, Address, Address) {
@@ -958,7 +1115,9 @@ mod tests {
             &make_str(env, "VCS"),
             &make_str(env, "Brazil"),
             &make_str(env, "forestry"),
+            &80_u32,
             &2023_u32,
+            &BytesN::from_array(env, &[0u8; 32]),
         );
     }
 
@@ -992,8 +1151,8 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &2023_u32,
             &75_u32,
+            &2023_u32,
             &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert!(result.is_err());
@@ -1106,8 +1265,8 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &2023_u32,
             &69_u32,
+            &2023_u32,
             &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result, Err(Ok(CarbonError::MethodologyScoreLow)));
@@ -1129,7 +1288,9 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
+            &70_u32,
             &2023_u32,
+            &BytesN::from_array(&env, &[0u8; 32]),
         );
 
         let p = client.get_project(&make_str(&env, "proj-min"));
@@ -1156,6 +1317,7 @@ mod tests {
                 &make_str(&env, "forestry"),
                 &75_u32,
                 &2023_u32,
+                &BytesN::from_array(&env, &[0u8; 32]),
             );
         }
 
@@ -1170,6 +1332,7 @@ mod tests {
             &make_str(&env, "forestry"),
             &75_u32,
             &2023_u32,
+            &BytesN::from_array(&env, &[0u8; 32]),
         );
         assert_eq!(result.unwrap_err().unwrap(), CarbonError::StorageLimitExceeded);
     }

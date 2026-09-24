@@ -11,11 +11,11 @@
 
 #![cfg(test)]
 
-use carbon_registry::{CarbonRegistryContract, CarbonRegistryContractClient};
+use carbon_registry::{CarbonRegistryContract, CarbonRegistryContractClient, ProjectStatus};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events as _, Ledger as _},
-    vec, Address, Env, IntoVal, String,
+    vec, Address, BytesN, Env, IntoVal, String,
 };
 
 fn s(env: &Env, v: &str) -> String {
@@ -55,6 +55,7 @@ fn register(env: &Env, client: &CarbonRegistryContractClient, admin: &Address, p
         &s(env, "forestry"),
         &75_u32,
         &2023_u32,
+        &BytesN::from_array(env, &[0u8; 32]),
     );
 }
 
@@ -75,6 +76,7 @@ fn test_register_project_emits_reg_proj_event() {
         &s(&env, "forestry"),
         &75_u32,
         &2023_u32,
+        &BytesN::from_array(&env, &[0u8; 32]),
     );
 
     assert_eq!(
@@ -106,7 +108,7 @@ fn test_verify_project_emits_verified_event() {
     client.verify_project(&verifier, &s(&env, "proj-001"));
 
     let all = env.events().all();
-    assert_eq!(all.len(), 2, "expected reg_proj + verified events");
+    assert_eq!(all.len(), 3, "expected reg_proj + verified + st_chg events");
     assert_eq!(
         all.get(1).unwrap(),
         (
@@ -126,7 +128,7 @@ fn test_reject_project_emits_rejected_event() {
     client.reject_project(&verifier, &s(&env, "proj-001"), &s(&env, "incomplete docs"));
 
     let all = env.events().all();
-    assert_eq!(all.len(), 2, "expected reg_proj + rejected events");
+    assert_eq!(all.len(), 3, "expected reg_proj + rejected + st_chg events");
     assert_eq!(
         all.get(1).unwrap(),
         (
@@ -151,7 +153,7 @@ fn test_update_project_status_emits_st_update_event() {
     client.update_project_status(
         &oracle,
         &s(&env, "proj-001"),
-        &carbon_registry::ProjectStatus::Completed,
+        &ProjectStatus::Completed,
     );
 
     let all = env.events().all();
@@ -243,6 +245,17 @@ fn test_happy_path_emits_exact_event_sequence() {
                 id.clone(),
                 (symbol_short!("c_ledger"), symbol_short!("verified")).into_val(&env),
                 (s(&env, "proj-001"), verifier.clone()).into_val(&env),
+            ),
+            (
+                id.clone(),
+                (symbol_short!("c_ledger"), symbol_short!("st_chg")).into_val(&env),
+                (
+                    s(&env, "proj-001"),
+                    ProjectStatus::Pending,
+                    ProjectStatus::Verified,
+                    verifier.clone(),
+                )
+                    .into_val(&env),
             ),
             (
                 id,
