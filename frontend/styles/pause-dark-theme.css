@@ -1,0 +1,60 @@
+/* Pause UI Dark Mode Design Tokens and Contrast Overrides */
+/* Meets WCAG 2.1 AA Contrast Ratio (>= 4.5:1 for normal text, >= 3:1 for large text / components) */
+
+:root[class~="dark"] {
+  --pause-indicator-active-bg: rgba(6, 78, 59, 0.4);
+  --pause-indicator-active-text: #6ee7b7;
+  --pause-indicator-active-border: #065f46;
+  --pause-indicator-active-dot: #10b981;
+
+  --pause-indicator-paused-bg: rgba(136, 19, 55, 0.4);
+  --pause-indicator-paused-text: #fda4af;
+  --pause-indicator-paused-border: #9f1239;
+  --pause-indicator-paused-dot: #f43f5e;
+
+  --pause-indicator-warning-bg: rgba(120, 53, 15, 0.4);
+  --pause-indicator-warning-text: #fcd34d;
+  --pause-indicator-warning-border: #b45309;
+  --pause-indicator-warning-dot: #f59e0b;
+
+  --pause-banner-bg: #881337;
+  --pause-banner-text: #ffffff;
+  --pause-banner-border: #be123c;
+
+  --pause-modal-bg: #111827;
+  --pause-modal-card: #1f2937;
+  --pause-modal-text: #f9fafb;
+  --pause-modal-subtext: #9ca3af;
+  --pause-modal-border: #374151;
+}
+
+/* Dark mode specific component adjustments */
+.dark .pause-status-operational {
+  background-color: var(--pause-indicator-active-bg);
+  color: var(--pause-indicator-active-text);
+  border-color: var(--pause-indicator-active-border);
+}
+
+.dark .pause-status-paused {
+  background-color: var(--pause-indicator-paused-bg);
+  color: var(--pause-indicator-paused-text);
+  border-color: var(--pause-indicator-paused-border);
+}
+
+.dark .pause-status-expiring {
+  background-color: var(--pause-indicator-warning-bg);
+  color: var(--pause-indicator-warning-text);
+  border-color: var(--pause-indicator-warning-border);
+}
+
+.dark .pause-system-banner {
+  background-color: var(--pause-banner-bg);
+  color: var(--pause-banner-text);
+  border-bottom: 1px solid var(--pause-banner-border);
+}
+
+.dark .pause-modal-container {
+  background-color: var(--pause-modal-bg);
+  border-color: var(--pause-modal-border);
+  color: var(--pause-modal-text);
+}
