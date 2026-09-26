@@ -1,9 +1,13 @@
-import { Test, TestingModule } from '@nestjs/testing';
+﻿import { Test, TestingModule } from '@nestjs/testing';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import * as StellarSdk from '@stellar/stellar-sdk';
-import { AuthService } from './auth.service';
+import * as jwt from 'jsonwebtoken';
+import { AuthService, parseExpirySeconds } from './auth.service';
 import { TokenFamilyService } from './token-family.service';
+import { TokenBlacklistService } from './token-blacklist.service';
+import { AccountLockoutService } from './account-lockout.service';
+import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
 import { PrismaService } from '../prisma.service';
 import { RedisService } from '../redis.service';
 
@@ -20,12 +24,13 @@ jest.mock('@prisma/client', () => ({
 
 const TEST_SECRET = 'test-secret';
 
-// ── Minimal stubs ─────────────────────────────────────────────────────────────
+// â”€â”€ Minimal stubs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const prismaMock = {
   user: {
     upsert: jest.fn(),
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
   },
 };
 
@@ -52,7 +57,7 @@ class RedisStub {
   }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('AuthService (with token family rotation)', () => {
   let service: AuthService;
@@ -73,6 +78,10 @@ describe('AuthService (with token family rotation)', () => {
       publicKey: keypair.publicKey(),
       role: 'corporation',
     });
+    prismaMock.user.findFirst.mockResolvedValue({
+      publicKey: keypair.publicKey(),
+      role: 'corporation',
+    });
     prismaMock.user.findUnique.mockResolvedValue({
       publicKey: keypair.publicKey(),
       role: 'corporation',
@@ -88,6 +97,15 @@ describe('AuthService (with token family rotation)', () => {
       providers: [
         AuthService,
         TokenFamilyService,
+        TokenBlacklistService,
+        AccountLockoutService,
+        {
+          provide: SecretsRefreshService,
+          useValue: {
+            getJwtSigningSecret: () => TEST_SECRET,
+            getJwtVerificationSecrets: () => [TEST_SECRET],
+          },
+        },
         { provide: PrismaService, useValue: prismaMock },
         { provide: RedisService, useValue: redisStub },
       ],
@@ -102,7 +120,7 @@ describe('AuthService (with token family rotation)', () => {
     redisStub.clear();
   });
 
-  // ── Helper: full login flow ──────────────────────────────────────────────────
+  // â”€â”€ Helper: full login flow â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   async function login() {
     const { nonce } = service.generateChallenge(keypair.publicKey());
     const message = `carbonledger:${nonce}`;
@@ -110,7 +128,7 @@ describe('AuthService (with token family rotation)', () => {
     return service.verifySignatureAndLogin(keypair.publicKey(), sig, nonce);
   }
 
-  // ── generateChallenge ────────────────────────────────────────────────────────
+  // â”€â”€ generateChallenge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('generateChallenge', () => {
     it('returns a 64-char hex nonce and future expiry for a valid public key', () => {
@@ -124,7 +142,7 @@ describe('AuthService (with token family rotation)', () => {
     });
   });
 
-  // ── verifySignatureAndLogin ──────────────────────────────────────────────────
+  // â”€â”€ verifySignatureAndLogin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('verifySignatureAndLogin', () => {
     it('returns a JWT access token and an opaque refresh token on valid signature', async () => {
@@ -135,7 +153,7 @@ describe('AuthService (with token family rotation)', () => {
       expect(decoded.type).toBe('access');
       expect(decoded.sub).toBe(keypair.publicKey());
 
-      // refresh_token is an opaque string — not a JWT
+      // refresh_token is an opaque string â€” not a JWT
       expect(() => jwtService.verify(refresh_token, { secret: TEST_SECRET })).toThrow();
       // It should be in `<uuid>.<base64url>` format
       expect(refresh_token).toMatch(
@@ -163,7 +181,7 @@ describe('AuthService (with token family rotation)', () => {
     });
   });
 
-  // ── refresh — normal rotation ────────────────────────────────────────────────
+  // â”€â”€ refresh â€” normal rotation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('refresh', () => {
     it('issues a new access token and a new refresh token on valid rotation', async () => {
@@ -192,7 +210,7 @@ describe('AuthService (with token family rotation)', () => {
       const { refresh_token: rt1 } = await login();
       await service.refresh(rt1);
 
-      // rt1 is now retired — using it again should trigger reuse detection
+      // rt1 is now retired â€” using it again should trigger reuse detection
       await expect(service.refresh(rt1)).rejects.toThrow(UnauthorizedException);
     });
 
@@ -201,9 +219,9 @@ describe('AuthService (with token family rotation)', () => {
     });
   });
 
-  // ── refresh — reuse detection ────────────────────────────────────────────────
+  // â”€â”€ refresh â€” reuse detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  describe('refresh — reuse detection (token theft mitigation)', () => {
+  describe('refresh â€” reuse detection (token theft mitigation)', () => {
     it('invalidates the entire family when a retired token is presented', async () => {
       const { refresh_token: rt1 } = await login();
       const { refresh_token: rt2 } = await service.refresh(rt1); // rt1 is now retired
@@ -225,7 +243,7 @@ describe('AuthService (with token family rotation)', () => {
     });
   });
 
-  // ── logout ───────────────────────────────────────────────────────────────────
+  // â”€â”€ logout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('logout', () => {
     it('returns a success message', async () => {
@@ -241,8 +259,407 @@ describe('AuthService (with token family rotation)', () => {
       await expect(service.refresh(refresh_token)).rejects.toThrow(UnauthorizedException);
     });
 
-    it('does not throw when called with a malformed / already-expired token', async () => {
-      await expect(service.logout('not-a-valid-token')).resolves.not.toThrow();
+  it('does not throw when called with a malformed / already-expired token', async () => {
+    await expect(service.logout('not-a-valid-token')).resolves.not.toThrow();
+  });
+
+  it('blacklists the access token jti so guards reject it immediately (#892)', async () => {
+    const { access_token, refresh_token } = await login();
+    await service.logout(refresh_token, access_token);
+
+    const decoded: any = jwtService.decode(access_token) as any;
+    const blacklist = (service as any).tokenBlacklist as TokenBlacklistService;
+    expect(await blacklist.isRevoked(decoded.jti)).toBe(true);
+  });
+
+  it('leaves the access token usable when logout is called without it', async () => {
+    const { access_token, refresh_token } = await login();
+    await service.logout(refresh_token);
+
+    const decoded: any = jwtService.decode(access_token) as any;
+    const blacklist = (service as any).tokenBlacklist as TokenBlacklistService;
+    expect(await blacklist.isRevoked(decoded.jti)).toBe(false);
+  });
+});
+
+describe('#892 â€” strict 15-minute access-token lifetime', () => {
+  let service: AuthService;
+  let keypair: StellarSdk.Keypair;
+  let redisStub: RedisStub;
+
+  beforeEach(async () => {
+    process.env.JWT_SECRET = TEST_SECRET;
+    process.env.JWT_ISSUER = 'carbonledger';
+    process.env.HMAC_SECRET = 'test-hmac-secret';
+
+    redisStub = new RedisStub();
+    keypair = StellarSdk.Keypair.random();
+
+    prismaMock.user.upsert.mockResolvedValue({
+      publicKey: keypair.publicKey(),
+      role: 'corporation',
+    });
+    prismaMock.user.findFirst.mockResolvedValue({
+      publicKey: keypair.publicKey(),
+      role: 'corporation',
+    });
+    prismaMock.user.findUnique.mockResolvedValue({
+      publicKey: keypair.publicKey(),
+      role: 'corporation',
+    });
+  });
+
+  afterEach(() => {
+    delete process.env.JWT_EXPIRY;
+    jest.clearAllMocks();
+    redisStub.clear();
+  });
+
+  async function buildAndLogin(): Promise<{ access_token: string }> {
+    const module: TestingModule = await Test.createTestingModule({
+      imports: [
+        JwtModule.register({
+          secret: TEST_SECRET,
+          signOptions: { expiresIn: '15m', issuer: 'carbonledger' },
+        }),
+      ],
+      providers: [
+        AuthService,
+        TokenFamilyService,
+        TokenBlacklistService,
+        AccountLockoutService,
+        {
+          provide: SecretsRefreshService,
+          useValue: {
+            getJwtSigningSecret: () => TEST_SECRET,
+            getJwtVerificationSecrets: () => [TEST_SECRET],
+          },
+        },
+        { provide: PrismaService, useValue: prismaMock },
+        { provide: RedisService, useValue: redisStub },
+      ],
+    }).compile();
+
+    const svc = module.get(AuthService);
+    const { nonce } = svc.generateChallenge(keypair.publicKey());
+    const message = `carbonledger:${nonce}`;
+    const sig = keypair.sign(Buffer.from(message, 'utf8')).toString('hex');
+    return svc.verifySignatureAndLogin(keypair.publicKey(), sig, nonce);
+  }
+
+  it('default expiry is at most 15 minutes and tokens carry a jti', async () => {
+    delete process.env.JWT_EXPIRY;
+    const { access_token } = await buildAndLogin();
+    const decoded: any = jwt.verify(access_token, TEST_SECRET);
+    expect(decoded.jti).toBeTruthy();
+    expect(decoded.exp - decoded.iat).toBeLessThanOrEqual(15 * 60);
+  });
+
+  it('clamps an over-long configured JWT_EXPIRY down to 15 minutes', async () => {
+    process.env.JWT_EXPIRY = '7d';
+    const { access_token } = await buildAndLogin();
+    const decoded: any = jwt.verify(access_token, TEST_SECRET);
+    expect(decoded.exp - decoded.iat).toBeLessThanOrEqual(15 * 60);
+  });
+
+  it('parseExpirySeconds handles s/m/h/d units and garbage input', () => {
+    expect(parseExpirySeconds('30s')).toBe(30);
+    expect(parseExpirySeconds('15m')).toBe(900);
+    expect(parseExpirySeconds('1h')).toBe(3600);
+    expect(parseExpirySeconds('2d')).toBe(172800);
+    expect(parseExpirySeconds('nonsense')).toBe(900);
+  });
+});
+});
+
+// ── Wallet-login (issue #1023) ────────────────────────────────────────────────
+
+describe('wallet-login flow (issue #1023)', () => {
+  let service: AuthService;
+  let keypair: StellarSdk.Keypair;
+  let redisStub: RedisStub;
+
+  // ── Module wiring ────────────────────────────────────────────────────────
+
+  beforeEach(async () => {
+    process.env.JWT_SECRET = TEST_SECRET;
+    process.env.JWT_ISSUER = 'carbonledger';
+    process.env.HMAC_SECRET = 'test-hmac-secret';
+
+    redisStub = new RedisStub();
+    keypair = StellarSdk.Keypair.random();
+
+    prismaMock.user.upsert.mockResolvedValue({
+      publicKey: keypair.publicKey(),
+      role: 'corporation',
+    });
+    prismaMock.user.findFirst.mockResolvedValue({
+      publicKey: keypair.publicKey(),
+      role: 'corporation',
+    });
+    prismaMock.user.findUnique.mockResolvedValue({
+      publicKey: keypair.publicKey(),
+      role: 'corporation',
+    });
+
+    const module: TestingModule = await Test.createTestingModule({
+      imports: [
+        JwtModule.register({
+          secret: TEST_SECRET,
+          signOptions: { expiresIn: '15m', issuer: 'carbonledger' },
+        }),
+      ],
+      providers: [
+        AuthService,
+        TokenFamilyService,
+        TokenBlacklistService,
+        AccountLockoutService,
+        {
+          provide: SecretsRefreshService,
+          useValue: {
+            getJwtSigningSecret: () => TEST_SECRET,
+            getJwtVerificationSecrets: () => [TEST_SECRET],
+          },
+        },
+        { provide: PrismaService, useValue: prismaMock },
+        { provide: RedisService, useValue: redisStub },
+      ],
+    }).compile();
+
+    service = module.get(AuthService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    redisStub.clear();
+  });
+
+  // ── Helper: full wallet-login flow ────────────────────────────────────────
+
+  async function walletLogin(kp: StellarSdk.Keypair = keypair) {
+    const { nonce } = await service.generateWalletNonce(kp.publicKey());
+    const message = `carbonledger-wallet:${nonce}`;
+    const sig = kp.sign(Buffer.from(message, 'utf8')).toString('hex');
+    return service.walletLogin(kp.publicKey(), sig, nonce);
+  }
+
+  // ── generateWalletNonce ───────────────────────────────────────────────────
+
+  describe('generateWalletNonce', () => {
+    it('returns a 64-char hex nonce with a future expiresAt', async () => {
+      const { nonce, expiresAt } = await service.generateWalletNonce(keypair.publicKey());
+
+      expect(nonce).toMatch(/^[0-9a-f]{64}$/);
+      expect(expiresAt).toBeGreaterThan(Date.now());
+      // TTL is approximately 5 minutes
+      expect(expiresAt - Date.now()).toBeLessThanOrEqual(5 * 60 * 1000 + 100);
+    });
+
+    it('persists the nonce in Redis under auth:nonce:<publicKey>', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+
+      const stored = await redisStub.get<{ nonce: string; expiresAt: number }>(
+        `auth:nonce:${keypair.publicKey()}`,
+      );
+      expect(stored).not.toBeNull();
+      expect(stored!.nonce).toBe(nonce);
+    });
+
+    it('rejects an invalid Stellar public key', async () => {
+      await expect(service.generateWalletNonce('not-a-key')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('overwrites a previous nonce with a fresh one on repeated calls', async () => {
+      const { nonce: first } = await service.generateWalletNonce(keypair.publicKey());
+      const { nonce: second } = await service.generateWalletNonce(keypair.publicKey());
+
+      expect(first).not.toBe(second);
+
+      const stored = await redisStub.get<{ nonce: string }>(
+        `auth:nonce:${keypair.publicKey()}`,
+      );
+      expect(stored!.nonce).toBe(second);
+    });
+  });
+
+  // ── walletLogin — happy path ──────────────────────────────────────────────
+
+  describe('walletLogin — happy path', () => {
+    it('returns a JWT access token and an opaque refresh token on a valid signature', async () => {
+      const { access_token, refresh_token } = await walletLogin();
+
+      // access_token must be a valid signed JWT
+      const decoded = jwt.verify(access_token, TEST_SECRET, {
+        issuer: 'carbonledger',
+      }) as any;
+      expect(decoded.type).toBe('access');
+      expect(decoded.sub).toBe(keypair.publicKey());
+      expect(decoded.role).toBe('corporation');
+      expect(decoded.jti).toBeTruthy();
+
+      // refresh_token is opaque — NOT a JWT
+      expect(() => jwt.verify(refresh_token, TEST_SECRET)).toThrow();
+      // Must be in <uuid>.<base64url> format
+      expect(refresh_token).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\./,
+      );
+    });
+
+    it('access token TTL is at most 15 minutes', async () => {
+      const { access_token } = await walletLogin();
+      const decoded = jwt.verify(access_token, TEST_SECRET) as any;
+      expect(decoded.exp - decoded.iat).toBeLessThanOrEqual(15 * 60);
+    });
+
+    it('nonce is deleted from Redis after successful login (single-use)', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+      const message = `carbonledger-wallet:${nonce}`;
+      const sig = keypair.sign(Buffer.from(message, 'utf8')).toString('hex');
+
+      await service.walletLogin(keypair.publicKey(), sig, nonce);
+
+      const stored = await redisStub.get(`auth:nonce:${keypair.publicKey()}`);
+      expect(stored).toBeNull();
+    });
+
+    it('refresh token is usable for rotation (token family created in Redis)', async () => {
+      const { refresh_token } = await walletLogin();
+      const { access_token: rotated } = await service.refresh(refresh_token);
+      expect(rotated).toBeTruthy();
+      const decoded = jwt.verify(rotated, TEST_SECRET) as any;
+      expect(decoded.sub).toBe(keypair.publicKey());
+    });
+  });
+
+  // ── walletLogin — invalid signature ──────────────────────────────────────
+
+  describe('walletLogin — invalid signature', () => {
+    it('rejects a signature produced with a different keypair', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+      const wrongKp = StellarSdk.Keypair.random();
+      const badSig = wrongKp
+        .sign(Buffer.from(`carbonledger-wallet:${nonce}`, 'utf8'))
+        .toString('hex');
+
+      await expect(
+        service.walletLogin(keypair.publicKey(), badSig, nonce),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects a zeroed-out signature buffer', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+      const badSig = Buffer.alloc(64).toString('hex');
+
+      await expect(
+        service.walletLogin(keypair.publicKey(), badSig, nonce),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects a signature over the wrong message prefix', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+      // Signs the legacy prefix, not the wallet-login prefix
+      const wrongMsg = `carbonledger:${nonce}`;
+      const sig = keypair.sign(Buffer.from(wrongMsg, 'utf8')).toString('hex');
+
+      await expect(
+        service.walletLogin(keypair.publicKey(), sig, nonce),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  // ── walletLogin — nonce invalidation ─────────────────────────────────────
+
+  describe('walletLogin — nonce invalidation', () => {
+    it('rejects a replayed nonce (single-use enforcement)', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+      const message = `carbonledger-wallet:${nonce}`;
+      const sig = keypair.sign(Buffer.from(message, 'utf8')).toString('hex');
+
+      // First use succeeds
+      await service.walletLogin(keypair.publicKey(), sig, nonce);
+
+      // Second use with same nonce must fail — it was deleted after first use
+      await expect(
+        service.walletLogin(keypair.publicKey(), sig, nonce),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects a nonce that was never issued (not in Redis)', async () => {
+      const fakeNonce = 'a'.repeat(64);
+      const sig = keypair
+        .sign(Buffer.from(`carbonledger-wallet:${fakeNonce}`, 'utf8'))
+        .toString('hex');
+
+      await expect(
+        service.walletLogin(keypair.publicKey(), sig, fakeNonce),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects a nonce that has passed its expiresAt wall-clock (TTL guard)', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+
+      // Manually backdate the stored entry so expiresAt is in the past
+      await redisStub.set(
+        `auth:nonce:${keypair.publicKey()}`,
+        { nonce, expiresAt: Date.now() - 1 },
+        300,
+      );
+
+      const message = `carbonledger-wallet:${nonce}`;
+      const sig = keypair.sign(Buffer.from(message, 'utf8')).toString('hex');
+
+      await expect(
+        service.walletLogin(keypair.publicKey(), sig, nonce),
+      ).rejects.toThrow(UnauthorizedException);
+
+      // Expired entry must also be cleaned up from Redis
+      const stored = await redisStub.get(`auth:nonce:${keypair.publicKey()}`);
+      expect(stored).toBeNull();
+    });
+
+    it('nonce is deleted even when the signature is wrong (no nonce reuse)', async () => {
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+      const badSig = Buffer.alloc(64).toString('hex');
+
+      await expect(
+        service.walletLogin(keypair.publicKey(), badSig, nonce),
+      ).rejects.toThrow(UnauthorizedException);
+
+      // Nonce was consumed before signature check → gone from Redis
+      const stored = await redisStub.get(`auth:nonce:${keypair.publicKey()}`);
+      expect(stored).toBeNull();
+    });
+  });
+
+  // ── walletLogin — input validation ───────────────────────────────────────
+
+  describe('walletLogin — input validation', () => {
+    it('rejects an invalid Stellar public key', async () => {
+      await expect(
+        service.walletLogin('not-a-key', 'sig', 'nonce'),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  // ── walletLogin — soft-deleted account ───────────────────────────────────
+
+  describe('walletLogin — soft-deleted account', () => {
+    it('rejects login for a soft-deleted user', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({
+        publicKey: keypair.publicKey(),
+        role: 'corporation',
+        deletedAt: new Date(),
+      });
+
+      const { nonce } = await service.generateWalletNonce(keypair.publicKey());
+      const message = `carbonledger-wallet:${nonce}`;
+      const sig = keypair.sign(Buffer.from(message, 'utf8')).toString('hex');
+
+      await expect(
+        service.walletLogin(keypair.publicKey(), sig, nonce),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 });

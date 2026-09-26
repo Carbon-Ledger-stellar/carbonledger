@@ -1,0 +1,21 @@
+[package]
+name = "adversarial_tests"
+version = "0.1.0"
+edition = "2021"
+description = "Red-team adversarial test suite for all four CarbonLedger Soroban contracts (issue #629)"
+
+[lib]
+# This crate is test-only; there is no production binary.
+test = true
+
+[[test]]
+name = "adversarial"
+path = "tests/adversarial.rs"
+
+[dev-dependencies]
+soroban-sdk     = { version = "21.7.7", features = ["testutils", "alloc"] }
+carbon_registry = { path = "../carbon_registry", features = ["testutils"] }
+carbon_credit   = { path = "../carbon_credit",   features = ["testutils"] }
+carbon_marketplace = { path = "../carbon_marketplace", features = ["testutils"] }
+carbon_oracle   = { path = "../carbon_oracle",   features = ["testutils"] }
+ed25519-dalek   = { version = "2.1.1" }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useIsMobile } from '@/hooks/useMediaQuery';
 import ErrorBoundary from '../../components/ErrorBoundary';
 import LoadingSkeleton from '../../components/LoadingSkeleton';
+import ImpactCharts from '../../components/ImpactCharts';
 
 export default function DashboardPage() {
   const isMobile = useIsMobile();
@@ -111,6 +112,10 @@ export default function DashboardPage() {
               </table>
             </div>
           )}
+        {/* Impact Charts */}
+          <div style={{ marginTop: "2rem" }}>
+            <ImpactCharts />
+          </div>
         </>
       ) : (
         <div style={{ 

@@ -8,22 +8,19 @@
  * self-contained using NestJS TestingModule.
  */
 import { Test, TestingModule } from '@nestjs/testing';
-import { StellarNetworkService } from '../../common/stellar-network.service';
-import { contractCallsRegistry } from '../../common/metrics.registry';
-import { AdminService } from '../admin.service';
-import { PrismaService } from '../../prisma.service';
-import { IndexerService } from '../../indexer/indexer.service';
-import { OracleService } from '../../oracle/oracle.service';
+import { StellarNetworkService } from '../common/stellar-network.service';
+import { contractCallsRegistry } from '../common/metrics.registry';
+import { AdminService } from './admin.service';
+import { PrismaService } from '../prisma.service';
+import { IndexerService } from '../indexer/indexer.service';
+import { OracleService } from '../oracle/oracle.service';
+import { RedisService } from '../redis.service';
+import { ProjectsService } from '../projects/projects.service';
+import { CreditsService } from '../credits/credits.service';
+import { RetirementsService } from '../retirements/retirements.service';
+import { AuditService } from '../audit/audit.service';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
-
-jest.mock('@stellar/stellar-sdk', () => ({
-  SorobanRpc: {
-    Server: jest.fn().mockImplementation(() => ({
-      getLatestLedger: jest.fn().mockResolvedValue({ sequence: 1 }),
-    })),
-  },
-}));
 
 const mockPrismaUpsert = jest.fn().mockResolvedValue({});
 const mockPrismaFindMany = jest.fn().mockResolvedValue([]);
@@ -72,6 +69,12 @@ describe('Canary Deployment — automated rollback integration', () => {
         { provide: PrismaService,  useValue: mockPrisma   },
         { provide: IndexerService, useValue: mockIndexer  },
         { provide: OracleService,  useValue: mockOracle   },
+        { provide: RedisService,  useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() } },
+        // #964 recovery deps — not under test here, only need to satisfy DI.
+        { provide: ProjectsService,    useValue: {} },
+        { provide: CreditsService,     useValue: {} },
+        { provide: RetirementsService, useValue: {} },
+        { provide: AuditService,       useValue: { createLog: jest.fn() } },
       ],
     }).compile();
 

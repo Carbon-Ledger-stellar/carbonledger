@@ -499,3 +499,156 @@ For mainnet deployment, follow the same steps but:
 5. Use gradual rollout strategy
 
 See [Production Deployment Guide](./deployment.md) for details.
+
+---
+
+## Automated Pipeline (CI/CD) — Added in #686
+
+The manual steps above are now automated by `.github/workflows/contract-redeploy.yml`.
+This section documents how the automated pipeline works and how to operate it.
+
+### How the Pipeline Works
+
+```
+push to main (contracts/**) → build → deploy → smoke tests → Slack notification
+                                 ↑                  ↑
+                           idempotent           fail → preserve previous IDs
+                           (WASM hash check)
+```
+
+**Jobs:**
+
+| Job | Purpose |
+|-----|---------|
+| `build` | Runs `cargo test --workspace`, builds WASM, computes SHA-256 hashes |
+| `deploy` | Deploys each contract; skips if WASM hash unchanged; uploads `testnet-contract-ids.json` |
+| `smoke` | Calls one read function per contract to assert liveness |
+| `notify` | Sends Slack webhook with pass/fail + all four contract IDs |
+
+### Triggering the Pipeline
+
+**Automatic:** Any push to `main` that changes a file under `contracts/` triggers the pipeline.
+
+**Manual dispatch:**
+```bash
+# From GitHub UI: Actions → Redeploy Contracts to Testnet → Run workflow
+# Or via gh CLI:
+gh workflow run contract-redeploy.yml \
+  --ref main \
+  -f force_redeploy=true   # bypass WASM hash idempotency
+```
+
+### Required GitHub Secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `STAGING_ADMIN_SECRET_KEY` | Stellar keypair with XLM for deploy fees |
+| `GH_PAT_SECRETS` | PAT with `secrets:write` scope to update environment secrets |
+| `SLACK_DEPLOY_WEBHOOK_URL` | Slack incoming webhook URL (optional — notifications skipped if absent) |
+
+### testnet-contract-ids.json Artifact
+
+After each successful deploy, a `testnet-contract-ids.json` artifact is uploaded
+to the workflow run (retained 90 days).  Download it to get the current IDs:
+
+```bash
+# Via gh CLI
+gh run download --name testnet-contract-ids-<SHA> --dir /tmp/contract-ids
+cat /tmp/contract-ids/testnet-contract-ids.json
+```
+
+Example output:
+```json
+{
+  "network": "testnet",
+  "deploy_ts": "2026-07-26T18:00:00Z",
+  "commit_sha": "abc1234",
+  "contracts": {
+    "carbon_registry":    "CXXX...",
+    "carbon_credit":      "CYYY...",
+    "carbon_marketplace": "CZZZ...",
+    "carbon_oracle":      "CAAA..."
+  },
+  "wasm_hashes": {
+    "carbon_registry":    "sha256:...",
+    "carbon_credit":      "sha256:...",
+    "carbon_marketplace": "sha256:...",
+    "carbon_oracle":      "sha256:..."
+  }
+}
+```
+
+### Idempotency — WASM Hash Check
+
+The pipeline compares the SHA-256 hash of each built WASM against the hash stored
+in the `staging` environment secret.  If the hash is unchanged, the contract is
+**not** re-deployed — the existing contract ID is reused.
+
+This prevents unnecessary contract churn when only non-contract files change
+(e.g., backend code triggering an unrelated push to `main`).
+
+To force a re-deploy (e.g., to change contract initialization parameters):
+```bash
+gh workflow run contract-redeploy.yml --ref main -f force_redeploy=true
+```
+
+### Smoke Test Assertions
+
+| Contract | Function called | Asserted response |
+|----------|-----------------|-------------------|
+| `carbon_registry` | `get_project` | Any response (including `ProjectNotFound`) |
+| `carbon_credit` | `get_version` | Returns a version number (u32) |
+| `carbon_marketplace` | `get_active_listings` | Returns a list (may be empty) |
+| `carbon_oracle` | `is_monitoring_current` | Returns `true` or `false` |
+
+If any smoke test returns an empty response (timeout or network error), that step
+fails and the overall workflow fails, **preserving the previous contract IDs**.
+
+### If the Pipeline Fails
+
+1. **Check the workflow run** for the failing step:
+   ```
+   GitHub → Actions → Redeploy Contracts to Testnet → [failing run]
+   ```
+
+2. **If `build` fails:** contract tests or WASM build broke. Fix the code, push again.
+
+3. **If `deploy` fails:** network issue or insufficient XLM.
+   - Check the deployer key balance: `stellar account info --source $ADMIN_PUBLIC_KEY --network testnet`
+   - The previous contract IDs are still active in staging secrets.
+
+4. **If `smoke` fails after successful deploy:** the new contract may be uninitialized
+   or have a breaking API change.
+   - Download the `testnet-contract-ids.json` artifact for the failed run.
+   - Initialize manually: `./scripts/deploy-testnet.sh` will re-run initialization
+     idempotently.
+   - The previous staging secrets are **not** overwritten when smoke tests fail
+     (the secret-update step runs only in the `deploy` job, before `smoke`).
+
+### Slack Notifications
+
+The `notify` job posts a message regardless of success or failure.  Configure
+the webhook:
+
+1. Create an incoming webhook at `https://api.slack.com/messaging/webhooks`.
+2. Add it as a GitHub secret: `SLACK_DEPLOY_WEBHOOK_URL`.
+
+Example success message:
+```
+✅ CarbonLedger Testnet Deploy
+Status:       Deploy succeeded
+Commit:       abc1234
+Registry ID:  CXXX...
+Credit ID:    CYYY...
+Marketplace:  CZZZ...
+Oracle ID:    CAAA...
+[View Run]
+```
+
+Example failure message:
+```
+❌ CarbonLedger Testnet Deploy
+Status:       Deploy FAILED — previous contract IDs preserved
+Commit:       abc1234
+[View Run]
+```

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
-import QRCode from 'qrcode';
+import * as QRCode from 'qrcode';
 import { Readable } from 'stream';
 
 interface CertificateData {
@@ -11,8 +11,18 @@ interface CertificateData {
   retirementReason: string;
   retiredAt: Date;
   serialNumbers: string[];
+  serialStart: string;
+  serialEnd: string;
   vintageYear: number;
-  certificateUrl?: string;
+  txHash: string;
+  /**
+   * IPFS CID of this certificate's pinned JSON content (#600). Embedded as
+   * a self-referential link (QR code + text) so a holder of only the PDF
+   * can locate and verify the canonical, content-addressed data it
+   * describes — the PDF cannot embed its own CID (that would change its
+   * own hash), so it links to the CID of the data it renders instead.
+   */
+  contentCid?: string;
 }
 
 @Injectable()
@@ -20,6 +30,15 @@ export class CertificateService {
   private readonly logger = new Logger(CertificateService.name);
 
   async generatePdf(data: CertificateData): Promise<Buffer> {
+    // Generate QR code asynchronously BEFORE entering the Promise constructor.
+    // This avoids the anti-pattern of an async executor inside new Promise.
+    let qrBuffer: Buffer | null = null;
+    try {
+      qrBuffer = await this.generateQrCode(data.retirementId, data.contentCid);
+    } catch (qrError) {
+      this.logger.warn(`QR code generation failed: ${qrError}`);
+    }
+
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({
@@ -33,7 +52,23 @@ export class CertificateService {
         doc.on('end', () => resolve(Buffer.concat(chunks)));
         doc.on('error', reject);
 
-        this.drawCertificate(doc, data);
+        // Draw static content
+        this.drawStaticContent(doc, data);
+
+        // Embed QR code if available
+        if (qrBuffer) {
+          doc.image(qrBuffer, doc.page.width - 170, 160, {
+            width: 120,
+            height: 120,
+          });
+        } else {
+          doc
+            .fontSize(10)
+            .fillColor('#999999')
+            .text('QR Code unavailable', doc.page.width - 170, 200);
+        }
+
+        // End the document after all content is drawn
         doc.end();
       } catch (error) {
         this.logger.error(`PDF generation failed: ${error}`, error);
@@ -42,7 +77,26 @@ export class CertificateService {
     });
   }
 
-  private drawCertificate(doc: PDFDocument, data: CertificateData): void {
+  private async generateQrCode(retirementId: string, contentCid?: string): Promise<Buffer> {
+    // Self-referential (#600): when the content CID is known, the QR code
+    // links directly to this certificate's pinned, content-addressed data
+    // on IPFS rather than the mutable audit page.
+    const target = contentCid
+      ? `https://gateway.pinata.cloud/ipfs/${contentCid}`
+      : `https://carbonledger.io/audit/retirement/${retirementId}`;
+    return QRCode.toBuffer(target, {
+      errorCorrectionLevel: 'H',
+      type: 'png',
+      width: 300,
+      margin: 1,
+      color: {
+        dark: '#000000',
+        light: '#ffffff',
+      },
+    });
+  }
+
+  private drawStaticContent(doc: PDFDocument, data: CertificateData): void {
     const pageWidth = doc.page.width;
     const pageHeight = doc.page.height;
 
@@ -108,43 +162,60 @@ export class CertificateService {
       .fillColor('#333333')
       .text(data.beneficiary, 60, 228);
 
-    // Amount and Project
+    // Amount
     doc
       .fontSize(11)
       .font('Helvetica-Bold')
       .fillColor('#000000')
       .text('Carbon Credits Retired:', 60, 260);
     doc
-      .fontSize(14)
+      .fontSize(16)
       .font('Helvetica-Bold')
       .fillColor('#059669')
-      .text(`${data.amount} tonnes CO₂e`, 60, 278);
+      .text(`${data.amount} tonnes CO\u2082e`, 60, 280);
 
+    // Project
     doc
       .fontSize(11)
       .font('Helvetica-Bold')
       .fillColor('#000000')
-      .text('Project:', 60, 310);
+      .text('Project:', 60, 320);
     doc
       .fontSize(10)
       .font('Helvetica')
       .fillColor('#333333')
-      .text(data.projectName, 60, 328);
+      .text(data.projectName, 60, 338);
 
     // Retirement Reason
     doc
       .fontSize(11)
       .font('Helvetica-Bold')
       .fillColor('#000000')
-      .text('Retirement Reason:', 60, 360);
+      .text('Retirement Reason:', 60, 370);
     doc
       .fontSize(10)
       .font('Helvetica')
       .fillColor('#333333')
-      .text(data.retirementReason, 60, 378, {
+      .text(data.retirementReason, 60, 388, {
         width: pageWidth - 120,
         align: 'left',
       });
+
+    // Serial Number Range
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .fillColor('#000000')
+      .text('Serial Number Range:', 60, 430);
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .fillColor('#333333')
+      .text(
+        `${data.serialStart} \u2013 ${data.serialEnd}`,
+        60,
+        448
+      );
 
     // Dates
     const retiredDate = new Date(data.retiredAt).toLocaleDateString('en-US', {
@@ -157,43 +228,72 @@ export class CertificateService {
       .fontSize(11)
       .font('Helvetica-Bold')
       .fillColor('#000000')
-      .text('Retirement Date:', 60, 430);
+      .text('Retirement Date:', 60, 490);
     doc
       .fontSize(10)
       .font('Helvetica')
       .fillColor('#333333')
-      .text(retiredDate, 60, 448);
+      .text(retiredDate, 60, 508);
 
     doc
       .fontSize(11)
       .font('Helvetica-Bold')
       .fillColor('#000000')
-      .text('Vintage Year:', 60, 480);
+      .text('Vintage Year:', 60, 540);
     doc
       .fontSize(10)
       .font('Helvetica')
       .fillColor('#333333')
-      .text(String(data.vintageYear), 60, 498);
+      .text(String(data.vintageYear), 60, 558);
 
-    // Serial Numbers (if not too many)
-    if (data.serialNumbers.length <= 10) {
+    // Transaction Hash
+    doc
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .fillColor('#000000')
+      .text('Stellar Transaction Hash:', 60, 590);
+    doc
+      .fontSize(8)
+      .font('Helvetica')
+      .fillColor('#333333')
+      .text(data.txHash, 60, 608, {
+        width: pageWidth - 220,
+      });
+
+    // QR Code label
+    doc
+      .fontSize(9)
+      .font('Helvetica')
+      .fillColor('#666666')
+      .text(
+        data.contentCid ? 'Scan to verify content' : 'Scan to verify on-chain',
+        pageWidth - 170,
+        290,
+        { width: 120, align: 'center' }
+      );
+
+    // Content CID — self-referential link to this certificate's pinned,
+    // content-addressed data on IPFS (#600).
+    if (data.contentCid) {
       doc
         .fontSize(11)
         .font('Helvetica-Bold')
         .fillColor('#000000')
-        .text('Serial Numbers:', 60, 530);
+        .text('Certificate Content CID:', 60, 640);
       doc
-        .fontSize(9)
-        .font('Helvetica')
+        .fontSize(8)
+        .font('Courier')
         .fillColor('#333333')
-        .text(data.serialNumbers.join(', '), 60, 548, {
-          width: pageWidth - 120,
-        });
-    }
-
-    // QR Code (if URL provided)
-    if (data.certificateUrl) {
-      this.addQrCode(doc, data.certificateUrl, pageWidth - 150, 160, 100);
+        .text(data.contentCid, 60, 658, { width: pageWidth - 120 });
+      doc
+        .fontSize(8)
+        .font('Helvetica')
+        .fillColor('#666666')
+        .text(
+          `Verify: GET /certificates/${data.contentCid}/verify`,
+          60,
+          676,
+        );
     }
 
     // Footer
@@ -223,28 +323,5 @@ export class CertificateService {
           width: pageWidth - 100,
         }
       );
-  }
-
-  private addQrCode(
-    doc: PDFDocument,
-    url: string,
-    x: number,
-    y: number,
-    size: number
-  ): void {
-    try {
-      const qrDataUrl = QRCode.toDataURL(url, {
-        errorCorrectionLevel: 'H',
-        type: 'image/png',
-        width: size,
-        margin: 1,
-      });
-
-      // QRCode.toDataURL is async but we need sync for PDFKit
-      // This is a limitation - in production, generate QR separately
-      doc.text('QR Code', x, y, { fontSize: 10 });
-    } catch (error) {
-      this.logger.warn(`Failed to add QR code: ${error}`);
-    }
   }
 }

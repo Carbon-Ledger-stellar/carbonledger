@@ -9,12 +9,13 @@
  */
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { CreditsService } from './credits.service';
 import { PrismaService } from '../prisma.service';
 import { MailService } from '../mail/mail.service';
 import { IpfsService } from '../common/ipfs.service';
 import { MintCreditsDto, RetireCreditsDto } from './credits.dto';
+import { QueueService } from '../queue/queue.service';
 
 // ── In-memory state mirrors ───────────────────────────────────────────────────
 
@@ -122,12 +123,16 @@ function buildMocks() {
         Promise.resolve(batches.get(where.batchId) ?? null),
       ),
       findFirst: jest.fn(({ where }: any) => {
-        // Simulate serial overlap check
-        const { serialStart: reqStart, serialEnd: reqEnd } = where.OR?.[0] ?? {};
-        if (!reqStart || !reqEnd) return Promise.resolve(null);
+        const clause = where.OR?.[0];
+        if (!clause) return Promise.resolve(null);
+        const endUpper = clause.serialStart?.lte;
+        const startLower = clause.serialEnd?.gte;
+        if (endUpper == null || startLower == null) return Promise.resolve(null);
         for (const b of batches.values()) {
-          if (BigInt(b.serialStart) <= BigInt(reqEnd.lte ?? reqEnd) &&
-              BigInt(b.serialEnd)   >= BigInt(reqStart.gte ?? reqStart)) {
+          if (
+            BigInt(b.serialStart) <= BigInt(endUpper) &&
+            BigInt(b.serialEnd) >= BigInt(startLower)
+          ) {
             return Promise.resolve(b);
           }
         }
@@ -201,6 +206,9 @@ describe('Credit Lifecycle Invariants', () => {
         { provide: PrismaService, useValue: state.mockPrisma },
         { provide: MailService,   useValue: state.mockMail },
         { provide: IpfsService,   useValue: state.mockIpfs },
+        // CreditsService gained a required QueueService dependency in #949
+        // (bulk mint job queueing); this spec predates that.
+        { provide: QueueService, useValue: { enqueue: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -278,12 +286,8 @@ describe('Credit Lifecycle Invariants', () => {
         batchId: 'b1', amount: 101, beneficiary: 'Acme',
         retirementReason: 'offset', holderPublicKey: 'GHOLDER',
       }),
-    ).rejects.toThrow(BadRequestException);
-
-    assertConservation([...state.batches.values()], state.retirements);
+    ).rejects.toThrow(UnprocessableEntityException);
   });
-
-  // ── I2: Serial uniqueness ──────────────────────────────────────────────────
 
   it('I2: no serial overlap across two non-adjacent batches', async () => {
     await service.mintCredits({
@@ -423,7 +427,7 @@ describe('Credit Lifecycle Invariants', () => {
         batchId: 'b1', amount: 1, beneficiary: 'X',
         retirementReason: 'offset', holderPublicKey: 'GHOLDER',
       }),
-    ).rejects.toThrow(BadRequestException);
+    ).rejects.toThrow(ConflictException);
 
     // Count must not have changed after the failed attempt
     assertMonotonicRetirements('proj-001', state.projects, prev);

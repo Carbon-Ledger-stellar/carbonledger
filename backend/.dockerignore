@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+
+# Node modules (installed fresh in Docker)
+node_modules
+
+# Build artifacts (rebuilt in Docker)
+dist
+
+# Test and dev files
+test
+**/*.spec.ts
+**/*.spec.js
+**/*.test.ts
+**/*.test.js
+coverage
+.nyc_output
+
+# Docs
+docs
+*.md
+!README.md
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# CI
+.github
+
+# Prisma migrations are needed for runtime
+# but keep them small
+prisma/migrations
+
+# TypeScript source maps
+**/*.js.map
+
+# Scripts not needed at runtime
+scripts

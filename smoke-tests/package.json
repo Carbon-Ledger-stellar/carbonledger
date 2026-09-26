@@ -1,0 +1,29 @@
+{
+  "name": "carbonledger-smoke-tests",
+  "private": true,
+  "description": "Post-deployment smoke test suite for CarbonLedger",
+  "scripts": {
+    "smoke": "npm run smoke:backend && npm run smoke:db && npm run smoke:mint-retire && npm run smoke:audit-trail && npm run smoke:contracts && npm run smoke:frontend",
+    "smoke:backend": "jest --config jest.smoke.json --testPathPattern='smoke-backend' --forceExit",
+    "smoke:contracts": "jest --config jest.smoke.json --testPathPattern='smoke-contracts' --forceExit",
+    "smoke:frontend": "npx playwright test --config playwright.smoke.config.ts",
+    "smoke:mint-retire": "jest --config jest.smoke.json --testPathPattern='smoke-mint-retire' --forceExit",
+    "smoke:audit-trail": "jest --config jest.smoke.json --testPathPattern='smoke-audit-trail' --forceExit",
+    "smoke:db": "jest --config jest.smoke.json --testPathPattern='smoke-db' --forceExit",
+    "smoke:ci": "npm run smoke:backend && npm run smoke:db && npm run smoke:mint-retire && npm run smoke:audit-trail && npm run smoke:contracts && npm run smoke:frontend"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.45.0",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.0.0",
+    "axios": "^1.7.0",
+    "jest": "^29.7.0",
+    "jest-junit": "^16.0.0",
+    "ts-jest": "^29.2.0",
+    "typescript": "^5.4.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node"
+  }
+}

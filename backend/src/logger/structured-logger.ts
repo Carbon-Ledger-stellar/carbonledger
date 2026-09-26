@@ -1,10 +1,17 @@
 import { v4 as uuidv4 } from "uuid";
+import { CorrelationIdContext } from "./correlation-id.context";
 
 export interface StructuredLog {
   level: "debug" | "info" | "warn" | "error";
   timestamp: string;
   service: string;
-  trace_id: string;
+  correlationId: string;
+  /** Authenticated actor ID (user sub from JWT) */
+  actorId?: string;
+  /** Authenticated actor role */
+  actorRole?: string;
+  /** HTTP endpoint that triggered this log (e.g. "POST /api/v1/credits/mint") */
+  endpoint?: string;
   message: string;
   context?: Record<string, unknown>;
   error?: {
@@ -14,36 +21,59 @@ export interface StructuredLog {
   };
 }
 
+/**
+ * StructuredLogger — lightweight structured JSON logger for use outside
+ * the NestJS DI system (e.g. standalone scripts, oracle bridge, tests).
+ *
+ * For NestJS services, prefer injecting LoggerService which integrates
+ * with Winston, CloudWatch, and AsyncLocalStorage automatically.
+ */
 export class StructuredLogger {
-  private traceId: string;
+  private correlationId: string;
   private service: string;
 
-  constructor(service: string = "carbonledger", traceId?: string) {
+  constructor(service: string = "carbonledger", correlationId?: string) {
     this.service = service;
-    this.traceId = traceId || uuidv4();
+    this.correlationId = correlationId || uuidv4();
   }
 
+  getCorrelationId(): string {
+    return this.correlationId;
+  }
+
+  setCorrelationId(correlationId: string): void {
+    this.correlationId = correlationId;
+  }
+
+  /** @deprecated use getCorrelationId() — traceId renamed to correlationId */
   getTraceId(): string {
-    return this.traceId;
+    return this.correlationId;
   }
 
+  /** @deprecated use setCorrelationId() */
   setTraceId(traceId: string): void {
-    this.traceId = traceId;
+    this.correlationId = traceId;
   }
 
-  private formatLog(
+  private buildLog(
     level: "debug" | "info" | "warn" | "error",
     message: string,
     context?: Record<string, unknown>,
     error?: Error,
   ): StructuredLog {
+    // Prefer AsyncLocalStorage context when available (inside a NestJS request)
+    const asyncCtx = CorrelationIdContext.getContext();
+
     return {
       level,
       timestamp: new Date().toISOString(),
       service: this.service,
-      trace_id: this.traceId,
+      correlationId: asyncCtx?.correlationId ?? this.correlationId,
+      actorId:       asyncCtx?.actorId,
+      actorRole:     asyncCtx?.actorRole,
+      endpoint:      asyncCtx ? `${asyncCtx.method} ${asyncCtx.path}` : undefined,
       message,
-      context: this.sanitizeContext(context),
+      context: this.sanitize(context),
       ...(error && {
         error: {
           message: error.message,
@@ -54,20 +84,13 @@ export class StructuredLogger {
     };
   }
 
-  private sanitizeContext(
+  private sanitize(
     context?: Record<string, unknown>,
   ): Record<string, unknown> | undefined {
     if (!context) return undefined;
 
     const sanitized = { ...context };
-    const secretKeys = [
-      "password",
-      "secret",
-      "token",
-      "key",
-      "api_key",
-      "private_key",
-    ];
+    const secretKeys = ["password", "secret", "token", "key", "api_key", "private_key"];
 
     for (const key of Object.keys(sanitized)) {
       if (secretKeys.some((sk) => key.toLowerCase().includes(sk))) {
@@ -79,26 +102,18 @@ export class StructuredLogger {
   }
 
   debug(message: string, context?: Record<string, unknown>): void {
-    const log = this.formatLog("debug", message, context);
-    console.log(JSON.stringify(log));
+    console.log(JSON.stringify(this.buildLog("debug", message, context)));
   }
 
   info(message: string, context?: Record<string, unknown>): void {
-    const log = this.formatLog("info", message, context);
-    console.log(JSON.stringify(log));
+    console.log(JSON.stringify(this.buildLog("info", message, context)));
   }
 
   warn(message: string, context?: Record<string, unknown>): void {
-    const log = this.formatLog("warn", message, context);
-    console.warn(JSON.stringify(log));
+    console.warn(JSON.stringify(this.buildLog("warn", message, context)));
   }
 
-  error(
-    message: string,
-    error?: Error,
-    context?: Record<string, unknown>,
-  ): void {
-    const log = this.formatLog("error", message, context, error);
-    console.error(JSON.stringify(log));
+  error(message: string, error?: Error, context?: Record<string, unknown>): void {
+    console.error(JSON.stringify(this.buildLog("error", message, context, error)));
   }
 }

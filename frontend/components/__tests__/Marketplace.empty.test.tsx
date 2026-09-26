@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import { Marketplace } from '../Marketplace';
 
 describe('Marketplace - Empty State', () => {

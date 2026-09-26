@@ -1,0 +1,263 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`CreditBatch serialization exposes exactly the documented set of fields 1`] = `
+[
+  "amount",
+  "batchId",
+  "id",
+  "issuedAt",
+  "metadataCid",
+  "projectId",
+  "serialEnd",
+  "serialStart",
+  "status",
+  "vintageYear",
+]
+`;
+
+exports[`CreditBatch serialization serializes a fully-retired batch 1`] = `
+{
+  "amount": "0",
+  "batchId": "batch-VCS-1529-2023-001",
+  "id": "clx0batch000000000000001",
+  "issuedAt": "2023-06-15T09:30:00.000Z",
+  "metadataCid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+  "projectId": "VCS-1529",
+  "serialEnd": "2250000",
+  "serialStart": "1000000",
+  "status": "FullyRetired",
+  "vintageYear": 2023,
+}
+`;
+
+exports[`CreditBatch serialization serializes a typical batch to the documented wire shape 1`] = `
+{
+  "amount": "12500",
+  "batchId": "batch-VCS-1529-2023-001",
+  "id": "clx0batch000000000000001",
+  "issuedAt": "2023-06-15T09:30:00.000Z",
+  "metadataCid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+  "projectId": "VCS-1529",
+  "serialEnd": "2250000",
+  "serialStart": "1000000",
+  "status": "Active",
+  "vintageYear": 2023,
+}
+`;
+
+exports[`CreditBatch serialization — edge cases carries max-int and uint64 serial numbers losslessly as strings 1`] = `
+{
+  "amount": "12500",
+  "batchId": "batch-VCS-1529-2023-001",
+  "id": "clx0batch000000000000001",
+  "issuedAt": "2023-06-15T09:30:00.000Z",
+  "metadataCid": "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+  "projectId": "VCS-1529",
+  "serialEnd": "18446744073709551615",
+  "serialStart": "9007199254740991",
+  "status": "Active",
+  "vintageYear": 2023,
+}
+`;
+
+exports[`CreditBatch serialization — edge cases escapes special characters in metadata CIDs and identifiers 1`] = `
+{
+  "amount": "12500",
+  "batchId": "batch-VCS-1529-2023-001",
+  "id": "clx0batch000000000000001",
+  "issuedAt": "2023-06-15T09:30:00.000Z",
+  "metadataCid": "bafy/…/quote-"double"-and-'single'",
+  "projectId": "VCS-1529",
+  "serialEnd": "2250000",
+  "serialStart": "1000000",
+  "status": "Active\\Pending",
+  "vintageYear": 2023,
+}
+`;
+
+exports[`CreditBatch serialization — edge cases serializes Decimal(18,2) amounts at both column bounds 1`] = `
+{
+  "columnMax": "9999999999999999.99",
+  "fractional": "0.5",
+  "minIssuable": "0.01",
+  "trailingZeros": "1500",
+  "zero": "0",
+}
+`;
+
+exports[`CreditBatch serialization — edge cases serializes boundary timestamps 1`] = `
+{
+  "farFuture": "2999-12-31T23:59:59.999Z",
+  "leapDay": "2024-02-29T23:59:59.999Z",
+  "preEpoch": "1969-07-20T20:17:40.000Z",
+  "subSecondPrecision": "2023-06-15T09:30:00.007Z",
+  "unixEpoch": "1970-01-01T00:00:00.000Z",
+}
+`;
+
+exports[`RetirementRecord serialization exposes exactly the documented set of fields 1`] = `
+[
+  "amount",
+  "batchId",
+  "beneficiary",
+  "certificateCid",
+  "certificateContentCid",
+  "certificateContentHash",
+  "certificateFailedAt",
+  "certificateGeneratedAt",
+  "certificateRetries",
+  "certificateStatus",
+  "certificateUrl",
+  "id",
+  "isValid",
+  "legacyStatus",
+  "projectId",
+  "retiredAt",
+  "retiredBy",
+  "retirementId",
+  "retirementReason",
+  "serialEnd",
+  "serialNumbers",
+  "serialStart",
+  "txHash",
+  "validatedAt",
+  "vintageYear",
+]
+`;
+
+exports[`RetirementRecord serialization serializes a retirement with a generated certificate 1`] = `
+{
+  "amount": "250.5",
+  "batchId": "batch-VCS-1529-2023-001",
+  "beneficiary": "Acme Corporation",
+  "certificateCid": "bafybeih5zgcgqor3dw6hpqnvj2z2r5t5oaqmhqnlvmi4vgrmvbxk5xg7pa",
+  "certificateContentCid": "bafybeiczsscdsbs7ffqz55asqdf3smv6klcw3gofszvwlyarci47bgf354",
+  "certificateContentHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "certificateFailedAt": null,
+  "certificateGeneratedAt": "2023-06-15T10:35:12.482Z",
+  "certificateRetries": 0,
+  "certificateStatus": "generated",
+  "certificateUrl": "https://gateway.pinata.cloud/ipfs/bafybeih5zgcgqor3dw6hpqnvj2z2r5t5oaqmhqnlvmi4vgrmvbxk5xg7pa",
+  "id": "clx0retire00000000000001",
+  "isValid": true,
+  "legacyStatus": null,
+  "projectId": "VCS-1529",
+  "retiredAt": "2023-06-15T10:30:00.000Z",
+  "retiredBy": "GCKFBEIYV2U22IO2BJ4KVJOIP7XPWQGQFKKWXR6DOSJBV7STMAQSMTGG",
+  "retirementId": "ret-batch-VCS-1529-2023-001-1686822600000",
+  "retirementReason": "Scope 1 emissions offset for FY2023",
+  "serialEnd": "1025050",
+  "serialNumbers": [
+    "1000000",
+    "1000001",
+    "1000002",
+  ],
+  "serialStart": "1000000",
+  "txHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+  "validatedAt": "2023-06-15T10:36:00.000Z",
+  "vintageYear": 2023,
+}
+`;
+
+exports[`RetirementRecord serialization serializes a typical retirement to the documented wire shape 1`] = `
+{
+  "amount": "250.5",
+  "batchId": "batch-VCS-1529-2023-001",
+  "beneficiary": "Acme Corporation",
+  "certificateCid": null,
+  "certificateContentCid": null,
+  "certificateContentHash": null,
+  "certificateFailedAt": null,
+  "certificateGeneratedAt": null,
+  "certificateRetries": 0,
+  "certificateStatus": "pending_certificate",
+  "certificateUrl": null,
+  "id": "clx0retire00000000000001",
+  "isValid": true,
+  "legacyStatus": null,
+  "projectId": "VCS-1529",
+  "retiredAt": "2023-06-15T10:30:00.000Z",
+  "retiredBy": "GCKFBEIYV2U22IO2BJ4KVJOIP7XPWQGQFKKWXR6DOSJBV7STMAQSMTGG",
+  "retirementId": "ret-batch-VCS-1529-2023-001-1686822600000",
+  "retirementReason": "Scope 1 emissions offset for FY2023",
+  "serialEnd": "1025050",
+  "serialNumbers": [
+    "1000000",
+    "1000001",
+    "1000002",
+  ],
+  "serialStart": "1000000",
+  "txHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+  "validatedAt": null,
+  "vintageYear": 2023,
+}
+`;
+
+exports[`RetirementRecord serialization — edge cases escapes special characters in beneficiary and reason text 1`] = `
+{
+  "amount": "250.5",
+  "batchId": "batch-VCS-1529-2023-001",
+  "beneficiary": "Ünïcødé Ltd. 🌱 «Grüne Wärme» — 株式会社 / شركة",
+  "certificateCid": null,
+  "certificateContentCid": null,
+  "certificateContentHash": null,
+  "certificateFailedAt": null,
+  "certificateGeneratedAt": null,
+  "certificateRetries": 0,
+  "certificateStatus": "pending_certificate",
+  "certificateUrl": null,
+  "id": "clx0retire00000000000001",
+  "isValid": true,
+  "legacyStatus": null,
+  "projectId": "VCS-1529",
+  "retiredAt": "2023-06-15T10:30:00.000Z",
+  "retiredBy": "GCKFBEIYV2U22IO2BJ4KVJOIP7XPWQGQFKKWXR6DOSJBV7STMAQSMTGG",
+  "retirementId": "ret-batch-VCS-1529-2023-001-1686822600000",
+  "retirementReason": "Reason with "double quotes", 'single', a backslash \\, a tab	here,
+a newline, and <script>alert(1)</script>",
+  "serialEnd": "1025050",
+  "serialNumbers": [
+    "1000000",
+    "1000001",
+    "1000002",
+  ],
+  "serialStart": "1000000",
+  "txHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+  "validatedAt": null,
+  "vintageYear": 2023,
+}
+`;
+
+exports[`RetirementRecord serialization — edge cases serializes a legacy/invalidated retirement 1`] = `
+{
+  "amount": "250.5",
+  "batchId": "batch-VCS-1529-2023-001",
+  "beneficiary": "Acme Corporation",
+  "certificateCid": null,
+  "certificateContentCid": null,
+  "certificateContentHash": null,
+  "certificateFailedAt": "2023-06-15T10:40:00.000Z",
+  "certificateGeneratedAt": null,
+  "certificateRetries": 3,
+  "certificateStatus": "failed",
+  "certificateUrl": null,
+  "id": "clx0retire00000000000001",
+  "isValid": false,
+  "legacyStatus": "migrated_v1",
+  "projectId": "VCS-1529",
+  "retiredAt": "2023-06-15T10:30:00.000Z",
+  "retiredBy": "GCKFBEIYV2U22IO2BJ4KVJOIP7XPWQGQFKKWXR6DOSJBV7STMAQSMTGG",
+  "retirementId": "ret-batch-VCS-1529-2023-001-1686822600000",
+  "retirementReason": "Scope 1 emissions offset for FY2023",
+  "serialEnd": "1025050",
+  "serialNumbers": [
+    "1000000",
+    "1000001",
+    "1000002",
+  ],
+  "serialStart": "1000000",
+  "txHash": "3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889",
+  "validatedAt": "2023-07-01T00:00:00.000Z",
+  "vintageYear": 2023,
+}
+`;

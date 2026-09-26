@@ -3,6 +3,7 @@ import { PrismaService } from "../prisma.service";
 import { LoggerService } from "../logger/logger.service";
 import axios from "axios";
 import FormData from "form-data";
+import { sanitizeUserText } from "../common/sanitization.util";
 
 @Injectable()
 export class IpfsUploadService {
@@ -39,6 +40,10 @@ export class IpfsUploadService {
       );
     }
 
+    const safeFileName = sanitizeUserText(fileName, 255) ?? "upload";
+    const safeLinkedEntityType = sanitizeUserText(linkedEntityType, 64) ?? undefined;
+    const safeLinkedEntityId = sanitizeUserText(linkedEntityId, 128) ?? undefined;
+
     const pinataApiUrl = process.env.IPFS_API_URL || "https://api.pinata.cloud";
     const pinataApiKey = process.env.IPFS_API_KEY;
     const pinataSecretKey = process.env.IPFS_SECRET_KEY;
@@ -51,12 +56,12 @@ export class IpfsUploadService {
     const fileRecord = await this.prisma.iPFSFile.create({
       data: {
         cid: "", // Will be updated after upload
-        fileName,
+        fileName: safeFileName,
         fileType,
         fileSize,
         pinStatus: "pending",
-        linkedEntityType,
-        linkedEntityId,
+        linkedEntityType: safeLinkedEntityType,
+        linkedEntityId: safeLinkedEntityId,
       },
     });
 
@@ -64,7 +69,7 @@ export class IpfsUploadService {
       // Prepare form data for Pinata upload
       const formData = new FormData();
       formData.append("file", fileBuffer, {
-        filename: fileName,
+        filename: safeFileName,
         contentType: fileType,
       });
 

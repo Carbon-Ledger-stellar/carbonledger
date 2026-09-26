@@ -1,0 +1,293 @@
+name: Weekly Dependency Update Check
+
+on:
+  schedule:
+    # Every Monday at 09:00 UTC — after the security scan (08:00) has run
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  # ── 1. npm outdated check ──────────────────────────────────────────────────
+  npm-outdated:
+    name: npm outdated (backend + frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache backend node_modules
+        uses: actions/cache@v4
+        with:
+          path: backend/node_modules
+          key: npm-backend-${{ hashFiles('backend/package-lock.json') }}
+          restore-keys: npm-backend-
+
+      - name: Cache frontend node_modules
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: npm-frontend-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-frontend-
+
+      - name: Check outdated backend packages
+        id: npm_outdated_backend
+        working-directory: backend
+        run: |
+          npm ci --ignore-scripts
+          npm outdated --json > /tmp/npm-outdated-backend.json 2>/dev/null || true
+          COUNT=$(cat /tmp/npm-outdated-backend.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
+          echo "outdated_count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "Backend: ${COUNT} outdated packages"
+          npm outdated 2>/dev/null || true
+
+      - name: Check outdated frontend packages
+        id: npm_outdated_frontend
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts
+          npm outdated --json > /tmp/npm-outdated-frontend.json 2>/dev/null || true
+          COUNT=$(cat /tmp/npm-outdated-frontend.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d))" 2>/dev/null || echo "0")
+          echo "outdated_count=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "Frontend: ${COUNT} outdated packages"
+          npm outdated 2>/dev/null || true
+
+      - name: Upload outdated package reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-outdated-report-${{ github.run_id }}
+          path: |
+            /tmp/npm-outdated-backend.json
+            /tmp/npm-outdated-frontend.json
+          retention-days: 30
+
+  # ── 2. npm audit (security-only) ──────────────────────────────────────────
+  npm-security-audit:
+    name: npm security audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Audit backend dependencies
+        id: audit_backend
+        working-directory: backend
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high --json > /tmp/npm-audit-backend.json 2>&1 || true
+          npm audit --audit-level=high 2>&1 | tee /tmp/npm-audit-backend.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Audit frontend dependencies
+        id: audit_frontend
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=high --json > /tmp/npm-audit-frontend.json 2>&1 || true
+          npm audit --audit-level=high 2>&1 | tee /tmp/npm-audit-frontend.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report-${{ github.run_id }}
+          path: |
+            /tmp/npm-audit-backend.json
+            /tmp/npm-audit-backend.txt
+            /tmp/npm-audit-frontend.json
+            /tmp/npm-audit-frontend.txt
+          retention-days: 30
+
+      - name: Fail if high-severity vulnerabilities found
+        run: |
+          FAILED=0
+          [ "${{ steps.audit_backend.outputs.exit_code }}"  != "0" ] && \
+            echo "::error::Backend has high or critical npm vulnerabilities"  && FAILED=1
+          [ "${{ steps.audit_frontend.outputs.exit_code }}" != "0" ] && \
+            echo "::error::Frontend has high or critical npm vulnerabilities" && FAILED=1
+          exit $FAILED
+
+  # ── 3. cargo audit (Rust crates) ──────────────────────────────────────────
+  cargo-audit:
+    name: cargo audit (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.91.0
+
+      - name: Cache cargo advisory DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: cargo-advisory-db-weekly-${{ github.run_id }}
+          restore-keys: cargo-advisory-db-
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --quiet 2>/dev/null || true
+
+      - name: Run cargo audit
+        id: cargo_audit
+        working-directory: contracts
+        run: |
+          cargo audit --deny warnings 2>&1 | tee /tmp/cargo-audit.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Check for outdated crates
+        working-directory: contracts
+        run: |
+          cargo install cargo-outdated --locked --quiet 2>/dev/null || true
+          cargo outdated --root-deps-only 2>&1 | tee /tmp/cargo-outdated.txt || true
+
+      - name: Upload cargo reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-audit-report-${{ github.run_id }}
+          path: |
+            /tmp/cargo-audit.txt
+            /tmp/cargo-outdated.txt
+          retention-days: 30
+
+      - name: Fail on unsafe crates
+        run: |
+          [ "${{ steps.cargo_audit.outputs.exit_code }}" != "0" ] && \
+            echo "::error::cargo audit found advisories for unsafe or vulnerable crates" && exit 1 || true
+
+  # ── 4. pip-audit (Python oracle) ──────────────────────────────────────────
+  pip-audit:
+    name: pip-audit (Python oracle)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-weekly-${{ hashFiles('oracle/requirements.txt') }}-${{ github.run_id }}
+          restore-keys: pip-
+
+      - name: Run pip-audit
+        id: pip_audit
+        working-directory: oracle
+        run: |
+          pip install pip-audit --quiet
+          pip-audit -r requirements.txt --format markdown 2>&1 | tee /tmp/pip-audit.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Upload pip-audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report-${{ github.run_id }}
+          path: /tmp/pip-audit.txt
+          retention-days: 30
+
+      - name: Fail on vulnerabilities
+        run: |
+          [ "${{ steps.pip_audit.outputs.exit_code }}" != "0" ] && \
+            echo "::error::pip-audit found vulnerabilities in oracle dependencies" && exit 1 || true
+
+  # ── 5. Weekly summary issue ───────────────────────────────────────────────
+  summary:
+    name: Create weekly summary issue
+    runs-on: ubuntu-latest
+    needs: [npm-outdated, npm-security-audit, cargo-audit, pip-audit]
+    if: always() && github.event_name == 'schedule'
+    steps:
+      - name: Create or update weekly dependency summary issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcomes = {
+              npm_outdated:    '${{ needs.npm-outdated.result }}',
+              npm_audit:       '${{ needs.npm-security-audit.result }}',
+              cargo_audit:     '${{ needs.cargo-audit.result }}',
+              pip_audit:       '${{ needs.pip-audit.result }}',
+            };
+
+            const icon = (r) => r === 'success' ? '✅' : r === 'skipped' ? '⏭️' : '❌';
+            const allGood = Object.values(outcomes).every(r => r === 'success' || r === 'skipped');
+
+            const date = new Date().toISOString().split('T')[0];
+            const title = `[Automated] Weekly dependency update check — ${date}`;
+
+            const body = [
+              `## 🗓️ Weekly Dependency Update Report — ${date}`,
+              '',
+              '| Check | Result |',
+              '|-------|--------|',
+              `| npm outdated (backend + frontend) | ${icon(outcomes.npm_outdated)} ${outcomes.npm_outdated} |`,
+              `| npm security audit | ${icon(outcomes.npm_audit)} ${outcomes.npm_audit} |`,
+              `| cargo audit (Rust contracts) | ${icon(outcomes.cargo_audit)} ${outcomes.cargo_audit} |`,
+              `| pip-audit (Python oracle) | ${icon(outcomes.pip_audit)} ${outcomes.pip_audit} |`,
+              '',
+              allGood
+                ? '**All checks passed.** No action required.'
+                : '**⚠️ One or more checks failed.** Review the [workflow run](' +
+                  `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}` +
+                  ') and update affected dependencies.',
+              '',
+              '> Dependabot will open PRs automatically for patched versions.',
+              `> Workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
+
+            // Search for an open issue from this week to avoid duplicates
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'dependency-update',
+              state: 'open',
+              per_page: 5,
+            });
+
+            const existing = issues.data.find(i =>
+              i.title.startsWith('[Automated] Weekly dependency update check')
+            );
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body,
+              });
+              console.log(`Updated existing issue #${existing.number}`);
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['dependency-update'],
+              });
+              console.log('Created new weekly summary issue');
+            }

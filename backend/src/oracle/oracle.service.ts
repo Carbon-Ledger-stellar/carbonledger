@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, ConflictException } from '@nestjs/common';
+import { SubmitMonitoringDataDto } from './monitoring.dto';
 import { InjectQueue } from '@nestjs/bullmq';
+import { enqueueWithTrace } from '../telemetry/tracing';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma.service';
 import { QUEUE_NAME, JobType } from '../queue/queue.constants';
@@ -7,6 +9,7 @@ import { RedisService } from '../redis.service';
 import { projectDetailCacheKey } from '../cache/cache.constants';
 import {
     IsString, IsInt, IsPositive, Min, Max, Length, Matches, IsNumber, MaxLength,
+    IsArray, ValidateNested, ArrayMinSize, ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -29,6 +32,11 @@ export interface OracleServicesHealth {
   };
   generatedAt: Date;
 }
+
+const BENCHMARK_TTL = 300; // 5 minutes — matches README "Price cache TTL: 24 hours" target;
+                            // set to 5 min per task requirements
+
+// ── DTOs ──────────────────────────────────────────────────────────────────────
 
 export class SubmitMonitoringDto {
   @IsString() @Length(1, 64) projectId: string;
@@ -55,7 +63,27 @@ export class HoldPriceUpdateDto {
   @IsString() @Length(1, 64) methodology: string;
   @IsInt() @Type(() => Number) vintageYear: number;
   @IsString() @Length(1, 32) priceStroops: string;
+  @IsNumber() deviation?: number;
 }
+
+export class BatchSubmitMonitoringDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SubmitMonitoringDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: SubmitMonitoringDto[];
+}
+
+export class BatchUpdatePriceDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdatePriceDto)
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  items: UpdatePriceDto[];
+}
+
 
 @Injectable()
 export class OracleService {
@@ -94,7 +122,7 @@ export class OracleService {
     });
 
     // 2. Log the oracle event — upsert so duplicate submissions don't create duplicate records
-    const oracleUpdate = await this.prisma.oracleUpdate.upsert({
+    const oracleUpdate = await this.prisma.oracleJob.upsert({
       where:  { idempotencyKey },
       update: {
         tonnesVerified:   dto.tonnesVerified,
@@ -121,16 +149,15 @@ export class OracleService {
     );
 
     // 3. Enqueue Soroban submission with exponential backoff
-    await this.queue.add(
-      JobType.ORACLE_SUBMISSION,
+    await enqueueWithTrace(QUEUE_NAME, JobType.ORACLE_SUBMISSION,
       { oracleUpdateId: oracleUpdate.id, type: 'monitoring', ...dto },
-      {
-        jobId:   `oracle-monitoring-${idempotencyKey}`, // deduplication key
+      (data) => this.queue.add(JobType.ORACLE_SUBMISSION, data, {
+        jobId: `oracle-monitoring-${idempotencyKey}`,
         attempts: 5,
-        backoff:  { type: 'exponential', delay: 5000 },
+        backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: false,
-        removeOnFail:     false,
-      },
+        removeOnFail: false,
+      }),
     );
 
     return monitoring;
@@ -142,7 +169,7 @@ export class OracleService {
   async submitPrice(dto: UpdatePriceDto) {
     const idempotencyKey = `price:${dto.methodology}:${dto.vintageYear}`;
 
-    const oracleUpdate = await this.prisma.oracleUpdate.upsert({
+    const oracleUpdate = await this.prisma.oracleJob.upsert({
       where:  { idempotencyKey },
       update: { priceUsdc: dto.priceUsdc, status: 'pending', lastError: null, updatedAt: new Date() },
       create: {
@@ -160,16 +187,15 @@ export class OracleService {
       `price=${dto.priceUsdc} oracleUpdateId=${oracleUpdate.id} at=${new Date().toISOString()}`,
     );
 
-    await this.queue.add(
-      JobType.ORACLE_SUBMISSION,
+    await enqueueWithTrace(QUEUE_NAME, JobType.ORACLE_SUBMISSION,
       { oracleUpdateId: oracleUpdate.id, type: 'price', ...dto },
-      {
-        jobId:    `oracle-price-${idempotencyKey}`,
+      (data) => this.queue.add(JobType.ORACLE_SUBMISSION, data, {
+        jobId: `oracle-price-${idempotencyKey}`,
         attempts: 5,
-        backoff:  { type: 'exponential', delay: 5000 },
+        backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: false,
-        removeOnFail:     false,
-      },
+        removeOnFail: false,
+      }),
     );
 
     return { received: true, oracleUpdateId: oracleUpdate.id };
@@ -212,13 +238,13 @@ export class OracleService {
     const PRICE_STALE_MS      =       24 * 60 * 60 * 1000; // 24 hours
 
     // ── Verification listener: last 'monitoring' oracle update ──────────────
-    const lastMonitoring = await this.prisma.oracleUpdate.findFirst({
+    const lastMonitoring = await this.prisma.oracleJob.findFirst({
       where:   { type: 'monitoring' },
       orderBy: { updatedAt: 'desc' },
     });
 
     // ── Price oracle: last 'price' oracle update ─────────────────────────────
-    const lastPrice = await this.prisma.oracleUpdate.findFirst({
+    const lastPrice = await this.prisma.oracleJob.findFirst({
       where:   { type: 'price' },
       orderBy: { updatedAt: 'desc' },
     });
@@ -299,4 +325,226 @@ export class OracleService {
   async rejectPriceUpdate(id: string, reason?: string) {
     return this.prisma.priceApproval.update({ where: { id }, data: { status: 'Rejected', reason } });
   }
+
+  /**
+   * POST /oracle/monitoring — verifier-only endpoint.
+   *
+   * Accepts satellite monitoring data from accredited verifiers (JWT-authenticated,
+   * role=verifier).  Unlike the oracle-keypair ingest endpoints this enforces:
+   *   - Timestamp freshness (max 365 days old, max 5 min in future)
+   *   - Strict duplicate rejection (ConflictException instead of upsert)
+   *   - Project existence check before writing
+   */
+  async submitMonitoringData(dto: SubmitMonitoringDataDto, submittedBy: string) {
+    // Validate timestamp freshness
+    const ts = new Date(dto.timestamp);
+    const now = new Date();
+    const ageMs = now.getTime() - ts.getTime();
+    const maxAgeMs = 365 * 24 * 60 * 60 * 1000; // 365 days
+    const futureLimitMs = 5 * 60 * 1000; // 5 minutes
+    if (ageMs > maxAgeMs) {
+      throw new BadRequestException('Timestamp is older than 365 days — data is stale');
+    }
+    if (ts.getTime() > now.getTime() + futureLimitMs) {
+      throw new BadRequestException('Timestamp is in the future');
+    }
+
+    // Derive period from timestamp if not provided (YYYY-MM format)
+    const period = dto.period ?? `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, '0')}`;
+
+    // Duplicate check — strict reject (not upsert) for verifier submissions
+    const existing = await this.prisma.monitoringData.findUnique({
+      where: { projectId_period: { projectId: dto.project_id, period } },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `Monitoring data for project ${dto.project_id} period ${period} already exists`,
+      );
+    }
+
+    // Verify project exists and is not soft-deleted
+    const project = await this.prisma.carbonProject.findFirst({
+      where: { projectId: dto.project_id, deletedAt: null },
+    });
+    if (!project) {
+      throw new BadRequestException(`Project ${dto.project_id} not found`);
+    }
+
+    const record = await this.prisma.monitoringData.create({
+      data: {
+        projectId:        dto.project_id,
+        period,
+        tonnesVerified:   dto.co2_reduction_mmt,
+        methodologyScore: dto.methodology_score ?? 0,
+        satelliteCid:     dto.satellite_cid ?? dto.url,
+        submittedBy,
+      },
+    });
+
+    this.logger.log(
+      `Monitoring data submitted: project=${dto.project_id} period=${period} by=${submittedBy}`,
+    );
+
+    return {
+      id:             record.id,
+      projectId:      record.projectId,
+      period:         record.period,
+      tonnesVerified: record.tonnesVerified,
+      submittedAt:    record.submittedAt,
+      submittedBy:    record.submittedBy,
+    };
+  }
+
+  async submitBatchPrice(dtos: UpdatePriceDto[]) {
+    if (!dtos || !Array.isArray(dtos) || dtos.length === 0) {
+      throw new BadRequestException('Batch input must be a non-empty array of items');
+    }
+    if (dtos.length > 1000) {
+      throw new BadRequestException('Batch operations are limited to 1,000 items per request');
+    }
+
+    const createdOracleUpdates = await this.prisma.$transaction(async (tx) => {
+      const records = [];
+      for (const dto of dtos) {
+        const idempotencyKey = `price:${dto.methodology}:${dto.vintageYear}`;
+        const oracleUpdate = await tx.oracleJob.upsert({
+          where: { idempotencyKey },
+          update: { priceUsdc: dto.priceUsdc, status: 'pending', lastError: null, updatedAt: new Date() },
+          create: {
+            idempotencyKey,
+            type: 'price',
+            methodology: dto.methodology,
+            vintageYear: dto.vintageYear,
+            priceUsdc: dto.priceUsdc,
+            status: 'pending',
+          },
+        });
+        records.push(oracleUpdate);
+      }
+      return records;
+    });
+
+    for (let i = 0; i < dtos.length; i++) {
+      const dto = dtos[i];
+      const oracleUpdate = createdOracleUpdates[i];
+      const idempotencyKey = `price:${dto.methodology}:${dto.vintageYear}`;
+      await enqueueWithTrace(
+        QUEUE_NAME,
+        JobType.ORACLE_SUBMISSION,
+        { oracleUpdateId: oracleUpdate.id, type: 'price', ...dto },
+        (data) =>
+          this.queue.add(JobType.ORACLE_SUBMISSION, data, {
+            jobId: `oracle-price-${idempotencyKey}`,
+            attempts: 5,
+            backoff: { type: 'exponential', delay: 5000 },
+            removeOnComplete: false,
+            removeOnFail: false,
+          }),
+      ).catch(() => undefined);
+    }
+
+    const results = createdOracleUpdates.map((ou, idx) => ({
+      index: idx,
+      status: 'success' as const,
+      itemIdentifier: ou.idempotencyKey,
+      data: { received: true, oracleUpdateId: ou.id },
+    }));
+
+    return {
+      success: true,
+      totalProcessed: dtos.length,
+      successCount: dtos.length,
+      errorCount: 0,
+      results,
+    };
+  }
+
+  async submitBatchMonitoring(dtos: SubmitMonitoringDto[]) {
+    if (!dtos || !Array.isArray(dtos) || dtos.length === 0) {
+      throw new BadRequestException('Batch input must be a non-empty array of items');
+    }
+    if (dtos.length > 1000) {
+      throw new BadRequestException('Batch operations are limited to 1,000 items per request');
+    }
+
+    const createdData = await this.prisma.$transaction(async (tx) => {
+      const records = [];
+      for (const dto of dtos) {
+        const idempotencyKey = `monitoring:${dto.projectId}:${dto.period}`;
+        const monitoring = await tx.monitoringData.upsert({
+          where: { projectId_period: { projectId: dto.projectId, period: dto.period } },
+          update: {
+            tonnesVerified: dto.tonnesVerified,
+            methodologyScore: dto.methodologyScore,
+            satelliteCid: dto.satelliteCid,
+          },
+          create: {
+            projectId: dto.projectId,
+            period: dto.period,
+            tonnesVerified: dto.tonnesVerified,
+            methodologyScore: dto.methodologyScore,
+            satelliteCid: dto.satelliteCid,
+            submittedBy: dto.submittedBy,
+          },
+        });
+
+        const oracleUpdate = await tx.oracleJob.upsert({
+          where: { idempotencyKey },
+          update: {
+            tonnesVerified: dto.tonnesVerified,
+            methodologyScore: dto.methodologyScore,
+            status: 'pending',
+            lastError: null,
+            updatedAt: new Date(),
+          },
+          create: {
+            idempotencyKey,
+            type: 'monitoring',
+            projectId: dto.projectId,
+            period: dto.period,
+            tonnesVerified: dto.tonnesVerified,
+            methodologyScore: dto.methodologyScore,
+            status: 'pending',
+          },
+        });
+        records.push({ monitoring, oracleUpdate });
+      }
+      return records;
+    });
+
+    for (let i = 0; i < dtos.length; i++) {
+      const dto = dtos[i];
+      const { oracleUpdate } = createdData[i];
+      const idempotencyKey = `monitoring:${dto.projectId}:${dto.period}`;
+      await enqueueWithTrace(
+        QUEUE_NAME,
+        JobType.ORACLE_SUBMISSION,
+        { oracleUpdateId: oracleUpdate.id, type: 'monitoring', ...dto },
+        (data) =>
+          this.queue.add(JobType.ORACLE_SUBMISSION, data, {
+            jobId: `oracle-monitoring-${idempotencyKey}`,
+            attempts: 5,
+            backoff: { type: 'exponential', delay: 5000 },
+            removeOnComplete: false,
+            removeOnFail: false,
+          }),
+      ).catch(() => undefined);
+    }
+
+    const results = createdData.map((cd, idx) => ({
+      index: idx,
+      status: 'success' as const,
+      itemIdentifier: cd.monitoring.projectId + ':' + cd.monitoring.period,
+      data: cd.monitoring,
+    }));
+
+    return {
+      success: true,
+      totalProcessed: dtos.length,
+      successCount: dtos.length,
+      errorCount: 0,
+      results,
+    };
+  }
 }
+

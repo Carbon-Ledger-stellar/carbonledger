@@ -30,7 +30,7 @@ export class AbuseDetectorGuard implements CanActivate {
       return true;
     }
 
-    const blockKey = `abuse:blocked:${clientIp}`;
+    const blockKey = `abuse:blocked:${this.safeRedisSuffix(clientIp)}`;
 
     // 1. Check if IP is already blocked
     const isBlocked = await redisClient.get(blockKey);
@@ -61,7 +61,7 @@ export class AbuseDetectorGuard implements CanActivate {
     }
 
     // 4. Sliding window enumeration check (Redis sorted set)
-    const sortedSetKey = `abuse:serials:${clientIp}`;
+    const sortedSetKey = `abuse:serials:${this.safeRedisSuffix(clientIp)}`;
     
     const multi = redisClient.multi();
     
@@ -99,7 +99,7 @@ export class AbuseDetectorGuard implements CanActivate {
     this.logger.warn(`Blocking IP ${ip}. Reason: ${reason}`);
     
     // Block for 24 hours
-    await redisClient.set(`abuse:blocked:${ip}`, '1', 'EX', 24 * 60 * 60);
+    await redisClient.set(`abuse:blocked:${this.safeRedisSuffix(ip)}`, '1', 'EX', 24 * 60 * 60);
 
     // Log the incident to abuse:log list
     const logEntry = JSON.stringify({
@@ -121,5 +121,10 @@ export class AbuseDetectorGuard implements CanActivate {
       return forwarded.split(',')[0].trim();
     }
     return req.socket?.remoteAddress ?? 'unknown';
+  }
+
+  private safeRedisSuffix(value: string): string {
+    const normalized = value.replace(/[^a-zA-Z0-9._:-]/g, '').slice(0, 128);
+    return normalized || 'unknown';
   }
 }

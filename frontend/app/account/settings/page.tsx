@@ -62,7 +62,7 @@ export default function AccountSettingsPage() {
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {PREFERENCE_LABELS.map(({ key, label, description }, i) => (
               <li
-                key={key}
+                key={String(key)}
                 style={{
                   display: "flex",
                   alignItems: "center",

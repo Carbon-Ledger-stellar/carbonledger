@@ -19,6 +19,7 @@ describe('ProjectsController – verify/reject RBAC', () => {
 
   beforeEach(async () => {
     process.env.JWT_SECRET = TEST_SECRET;
+    process.env.JWT_ISSUER = 'carbonledger';
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ProjectsController],
@@ -39,7 +40,7 @@ describe('ProjectsController – verify/reject RBAC', () => {
   afterEach(() => jest.clearAllMocks());
 
   function signToken(payload: object) {
-    return jwt.sign(payload, { secret: TEST_SECRET });
+    return jwt.sign(payload, { issuer: 'carbonledger' });
   }
 
   function setupReflector(roles: string[]) {

@@ -1,5 +1,7 @@
 import { formatStroops, parseStroops } from "./stellar";
 
+export { formatStroops, parseStroops };
+
 /** Calculate total cost in USDC stroops for a given amount and price per credit. */
 export function calculateCreditCost(amount: number, pricePerCreditStroops: bigint): bigint {
   return BigInt(amount) * pricePerCreditStroops;
@@ -70,6 +72,4 @@ export function getCountryFlag(country: string): string {
 export function formatUSDC(stroops: bigint | number | string): string {
   return `$${formatStroops(stroops)} USDC`;
 }
-
-export { formatStroops };
 

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f6; margin: 0; padding: 40px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+        .header { background: linear-gradient(135deg, #d63031, #c0392b); padding: 40px; text-align: center; color: white; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .badge { display: inline-block; padding: 4px 12px; background: rgba(255,255,255,0.2); border-radius: 20px; font-size: 13px; margin-top: 8px; }
+        .content { padding: 40px; line-height: 1.7; color: #2d3436; }
+        .error-box { background: #fff5f5; border: 1px solid #fab1a0; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .error-box .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #e17055; font-weight: bold; margin-bottom: 4px; }
+        .error-box .value { color: #2d3436; font-family: monospace; font-size: 14px; word-break: break-all; }
+        .meta { background: #f9f9f9; border-radius: 8px; padding: 16px 20px; margin-top: 20px; font-size: 13px; color: #636e72; }
+        .footer { padding: 24px; text-align: center; font-size: 12px; color: #b2bec3; border-top: 1px solid #f0f0f0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚠️ Error Alert</h1>
+            <div class="badge">Admin Notification</div>
+        </div>
+        <div class="content">
+            <p>An error was detected in the CarbonLedger backend. Immediate review may be required.</p>
+
+            <div class="error-box">
+                <div class="label">Error</div>
+                <div class="value">{{errorTitle}}</div>
+            </div>
+
+            <div class="error-box">
+                <div class="label">Details</div>
+                <div class="value">{{errorMessage}}</div>
+            </div>
+
+            <div class="meta">
+                <strong>Service:</strong> {{service}}<br>
+                <strong>Timestamp:</strong> {{timestamp}}
+            </div>
+
+            <p style="margin-top: 24px; font-size: 13px; color: #636e72;">
+                This is an automated alert. Please investigate and resolve the issue promptly to maintain platform reliability.
+            </p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2026 CarbonLedger. All rights reserved.</p>
+            <p>This is a critical system notification sent to registered administrators only.</p>
+        </div>
+    </div>
+</body>
+</html>

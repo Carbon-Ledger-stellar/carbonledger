@@ -1,0 +1,42 @@
+{
+  "name": "CarbonLedger",
+  "short_name": "CarbonLedger",
+  "description": "Verified carbon credits. Permanent retirement. Full provenance. A decentralized carbon credit marketplace on Stellar.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#059669",
+  "theme_color": "#059669",
+  "categories": ["finance", "sustainability"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Marketplace",
+      "short_name": "Market",
+      "description": "Browse carbon credit listings",
+      "url": "/marketplace",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Audit Explorer",
+      "short_name": "Audit",
+      "description": "Verify retirement certificates",
+      "url": "/audit",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

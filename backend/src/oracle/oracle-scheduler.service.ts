@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { OracleSyncService } from './oracle-sync.service';
+import { Cron } from '@nestjs/schedule';
 
+// Define the cron expression directly (every 5 minutes)
+const EVERY_5_MINUTES = '*/5 * * * *';
 /**
  * Scheduled tasks for oracle monitoring data synchronization.
  * Runs every 6 hours to sync monitoring data from the contract to the database.

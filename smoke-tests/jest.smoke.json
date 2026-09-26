@@ -1,0 +1,18 @@
+{
+  "displayName": "smoke-tests",
+  "testEnvironment": "node",
+  "testRegex": "smoke-(backend|contracts|mint-retire|audit-trail|db)\\.test\\.ts$",
+  "transform": {
+    "^.+\\.ts$": ["ts-jest", { "diagnostics": false }]
+  },
+  "moduleFileExtensions": ["ts", "js", "json"],
+  "testTimeout": 60000,
+  "reporters": [
+    "default",
+    ["jest-junit", {
+      "outputDirectory": ".",
+      "outputName": "smoke-junit.xml",
+      "suiteName": "Smoke Tests"
+    }]
+  ]
+}

@@ -11,6 +11,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "target": "ES2021",
+    "rootDir": "./src",
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",

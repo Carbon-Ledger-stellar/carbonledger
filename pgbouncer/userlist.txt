@@ -1,0 +1,15 @@
+# PgBouncer userlist.txt
+#
+# Format: "username" "md5<hash>" OR "username" "password"
+#
+# Generate the md5 hash for a password with:
+#   echo -n "passwordusername" | md5sum | awk '{print "md5" $1}'
+# Example for user=carbonledger, password=changeme:
+#   echo -n "changemedcarbonledger" | md5sum   →  prefix result with "md5"
+#
+# For production, replace the placeholder hash below with the real md5 hash
+# of your POSTGRES_PASSWORD + username, then set POSTGRES_PASSWORD in .env.
+#
+# WARNING: Do NOT commit real credentials. This file is a template.
+#
+"carbonledger" "md5REPLACE_WITH_REAL_MD5_HASH"

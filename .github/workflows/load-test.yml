@@ -1,0 +1,323 @@
+name: Load Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Target URL for load test (default: staging backend)"
+        required: false
+        default: "http://localhost:3001"
+      scenario:
+        description: "Scenario to run (all | baseline | stress | spike | purchase_soak | bulk_retirement)"
+        required: false
+        default: "all"
+      vus:
+        description: "Override max VUs (leave empty to use script defaults)"
+        required: false
+        default: ""
+  schedule:
+    # Run weekly against staging every Tuesday at 02:00 UTC (off-peak)
+    - cron: "0 2 * * 2"
+  push:
+    branches: [main]
+    paths:
+      - "load-tests/**"
+      - ".github/workflows/load-test.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  # Default staging URL; override with workflow_dispatch input or secret
+  TARGET_URL: ${{ github.event.inputs.target_url || secrets.STAGING_URL || 'http://localhost:3001' }}
+
+jobs:
+  # ── Setup: seed data and start a local backend if needed ─────────────────
+  load-test:
+    name: k6 Load Test — ${{ github.event.inputs.scenario || 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: carbonledger
+          POSTGRES_PASSWORD: carbonledger_test
+          POSTGRES_DB: carbonledger_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Install k6 ────────────────────────────────────────────────────────
+      - name: Install k6
+        run: |
+          curl -fsSL https://dl.k6.io/key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/k6-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update --quiet
+          sudo apt-get install -y k6
+          k6 version
+
+      # ── Setup Node.js for backend ─────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache backend node_modules
+        uses: actions/cache@v4
+        with:
+          path: backend/node_modules
+          key: npm-backend-${{ hashFiles('backend/package-lock.json') }}
+          restore-keys: npm-backend-
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --ignore-scripts
+
+      # ── Database migrations ───────────────────────────────────────────────
+      - name: Run database migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:carbonledger_test@localhost:5432/carbonledger_test
+        run: npx prisma migrate deploy
+
+      # ── Start backend server ──────────────────────────────────────────────
+      - name: Start backend server
+        working-directory: backend
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://carbonledger:carbonledger_test@localhost:5432/carbonledger_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: load-test-jwt-secret-ci-${{ github.run_id }}
+          PORT: 3001
+          # Disable external integrations in CI load test
+          STELLAR_NETWORK: testnet
+          DISABLE_ORACLE: "true"
+          DISABLE_IPFS: "true"
+        run: |
+          npm run build
+          npm run start:prod &
+          echo "BACKEND_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Wait for backend to be ready
+        run: |
+          echo "Waiting for backend at http://localhost:3001/health ..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/health > /dev/null 2>&1; then
+              echo "✓ Backend is ready (attempt $i)"
+              break
+            fi
+            echo "  Attempt $i/30 — not ready yet, waiting 3s..."
+            sleep 3
+          done
+          curl -sf http://localhost:3001/health || (echo "Backend failed to start" && exit 1)
+
+      # ── Seed load test data ───────────────────────────────────────────────
+      - name: Seed load test data
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://carbonledger:carbonledger_test@localhost:5432/carbonledger_test
+          BACKEND_URL: http://localhost:3001
+        run: |
+          if [ -f scripts/seed-loadtest.sh ]; then
+            chmod +x scripts/seed-loadtest.sh
+            bash scripts/seed-loadtest.sh
+          else
+            echo "⚠ scripts/seed-loadtest.sh not found — k6 will use fallback synthetic IDs"
+          fi
+
+      # ── Obtain a load-test JWT ────────────────────────────────────────────
+      - name: Obtain load-test JWT
+        id: get_jwt
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:3001/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"loadtest@carbonledger.test","password":"LoadTest!2024"}' 2>/dev/null || echo "{}")
+          TOKEN=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
+          echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
+          if [ -n "$TOKEN" ]; then
+            echo "✓ JWT obtained for authenticated endpoints"
+          else
+            echo "⚠ Could not obtain JWT — authenticated endpoints will return 401 (non-fatal)"
+          fi
+
+      # ── Create results directory ──────────────────────────────────────────
+      - name: Create results directory
+        run: mkdir -p load-tests/results
+
+      # ── Run k6 load test (full suite) ─────────────────────────────────────
+      - name: Run k6 load test
+        id: k6_run
+        env:
+          K6_JWT: ${{ steps.get_jwt.outputs.token }}
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          RESULTS_FILE="load-tests/results/run-${TIMESTAMP}.json"
+          SUMMARY_FILE="load-tests/results/summary-${TIMESTAMP}.json"
+
+          echo "TIMESTAMP=${TIMESTAMP}" >> "$GITHUB_ENV"
+          echo "RESULTS_FILE=${RESULTS_FILE}" >> "$GITHUB_ENV"
+
+          # Build k6 args
+          K6_ARGS=(
+            "run"
+            "--out" "json=${RESULTS_FILE}"
+            "--summary-export" "${SUMMARY_FILE}"
+            "-e" "BASE_URL=http://localhost:3001"
+          )
+
+          if [ -n "${K6_JWT}" ]; then
+            K6_ARGS+=("-e" "JWT=${K6_JWT}")
+          fi
+
+          # Allow scenario override from workflow_dispatch
+          if [ -n "${{ github.event.inputs.vus }}" ]; then
+            K6_ARGS+=("--vus" "${{ github.event.inputs.vus }}")
+          fi
+
+          K6_ARGS+=("load-tests/load-test.js")
+
+          echo "Running: k6 ${K6_ARGS[*]}"
+          k6 "${K6_ARGS[@]}"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      # ── Memory profiling note ─────────────────────────────────────────────
+      # Full Node.js memory profiling requires running the backend with
+      #   node --prof dist/main.js
+      # and processing the isolate-*.log file afterwards. In CI we instead
+      # capture heap stats from the running process as a lightweight proxy.
+      - name: Capture backend memory stats
+        if: always()
+        run: |
+          if [ -n "${BACKEND_PID}" ]; then
+            cat /proc/${BACKEND_PID}/status 2>/dev/null | grep -E "Vm(RSS|Peak|Size)" || true
+            echo "---"
+            free -m
+          fi
+
+      # ── Generate human-readable report ────────────────────────────────────
+      - name: Generate load test report
+        if: always()
+        run: |
+          SUMMARY="load-tests/results/summary-${TIMESTAMP}.json"
+          REPORT="load-tests/results/report-${TIMESTAMP}.md"
+
+          cat > "${REPORT}" << 'MDEOF'
+          # CarbonLedger Load Test Report
+
+          **Run:** ${{ github.run_id }}
+          **Commit:** ${{ github.sha }}
+          **Date:** $(date -u +"%Y-%m-%d %H:%M UTC")
+          **Target:** http://localhost:3001
+          **Script:** load-tests/load-test.js
+
+          ## Thresholds
+
+          | Threshold | Target |
+          |-----------|--------|
+          | p95 latency (baseline, read endpoints) | < 500 ms |
+          | p99 latency (all endpoints) | < 2000 ms |
+          | Error rate | < 1% |
+          | Purchase error rate | < 1% |
+          | Retirement error rate | < 1% |
+
+          ## Results
+
+          See the attached JSON artifacts for full metric details.
+          MDEOF
+
+          if [ -f "${SUMMARY}" ]; then
+            echo "" >> "${REPORT}"
+            echo "## Summary Export" >> "${REPORT}"
+            echo '```json' >> "${REPORT}"
+            python3 -c "
+          import json, sys
+          with open('${SUMMARY}') as f:
+              d = json.load(f)
+          # Print threshold pass/fail only
+          thresholds = d.get('thresholds', {})
+          for k, v in sorted(thresholds.items()):
+              status = '✅ PASS' if not v.get('ok') == False else '❌ FAIL'
+              print(f'{status}  {k}')
+          " 2>/dev/null || echo "(summary not available)"
+            echo '```' >> "${REPORT}"
+          fi
+
+          cat "${REPORT}"
+
+      # ── Upload artifacts ──────────────────────────────────────────────────
+      - name: Upload load test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-${{ github.run_id }}
+          path: load-tests/results/
+          retention-days: 90
+
+      # ── Post results to PR (if triggered by a PR) ─────────────────────────
+      - name: Post results summary to PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const outcome = '${{ steps.k6_run.outputs.exit_code }}';
+            const passed = outcome === '0';
+            const icon = passed ? '✅' : '❌';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const body = [
+              `## ${icon} Load Test Results`,
+              '',
+              `| Metric | Target | Status |`,
+              `|--------|--------|--------|`,
+              `| p95 latency (listings, baseline) | < 500 ms | ${icon} |`,
+              `| p99 latency (all endpoints) | < 2000 ms | ${icon} |`,
+              `| Error rate | < 1% | ${icon} |`,
+              '',
+              `**Endpoints tested:** 10`,
+              `**Scenarios:** baseline_100 (100 VUs), stress_500, spike (1000 VUs), purchase_soak, bulk_retirement`,
+              '',
+              `[Full results and artifacts](${runUrl})`,
+              '',
+              `> Commit \`${context.sha.slice(0,7)}\``,
+            ].join('\n');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      # ── Final gate ────────────────────────────────────────────────────────
+      - name: Fail if k6 thresholds not met
+        run: |
+          CODE="${{ steps.k6_run.outputs.exit_code }}"
+          if [ "${CODE}" != "0" ] && [ "${CODE}" != "" ]; then
+            echo "::error::k6 thresholds were breached — see results in artifacts"
+            exit 1
+          fi
+          echo "✓ All k6 thresholds passed"

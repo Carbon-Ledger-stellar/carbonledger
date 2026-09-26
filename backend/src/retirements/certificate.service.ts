@@ -1,19 +1,103 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
 import { IpfsUploadService } from "../uploads/ipfs-upload.service";
+import { CertificateSigningService } from "../common/certificate-signing.service";
+import * as https from "https";
+import * as http from "http";
 
 @Injectable()
 export class CertificateService {
   private readonly logger = new Logger(CertificateService.name);
 
+  /**
+   * Whether to skip on-chain verification (for test environments only).
+   * Set SKIP_ONCHAIN_VERIFICATION=true in .env to disable.  Defaults to false.
+   */
+  private readonly skipVerification: boolean =
+    process.env.SKIP_ONCHAIN_VERIFICATION === "true";
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly ipfsUpload: IpfsUploadService,
+    private readonly certificateSigning: CertificateSigningService,
   ) {}
+
+  /**
+   * Verify that a Stellar transaction hash exists and succeeded on-chain by
+   * calling the Horizon REST API.
+   *
+   * This is the primary replay-attack defence for certificate issuance:
+   * an attacker who submits a fabricated or replayed txHash to POST /retirements
+   * will be blocked here because the hash will either not exist on Horizon or
+   * will resolve to an unrelated transaction.
+   *
+   * @param txHash  The Stellar transaction hash to verify.
+   * @returns       true if the transaction exists and is successful, false otherwise.
+   */
+  async verifyOnChainRetirement(txHash: string): Promise<boolean> {
+    const network = process.env.STELLAR_NETWORK || "testnet";
+    const horizonBase =
+      network === "mainnet" || network === "public"
+        ? "https://horizon.stellar.org"
+        : "https://horizon-testnet.stellar.org";
+
+    const url = `${horizonBase}/transactions/${encodeURIComponent(txHash)}`;
+
+    try {
+      const body = await this._fetchJson(url);
+      const successful = body?.successful === true;
+      if (!successful) {
+        this.logger.warn(
+          `On-chain verification: txHash ${txHash} found but successful=false`,
+        );
+      }
+      return successful;
+    } catch (err: any) {
+      this.logger.warn(
+        `On-chain verification failed for txHash ${txHash}: ${err.message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Minimal HTTP GET helper that resolves to the parsed JSON body.
+   * Avoids importing axios/node-fetch to keep the dependency footprint small.
+   */
+  private _fetchJson(url: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const client = url.startsWith("https") ? https : http;
+      const req = client.get(url, { headers: { Accept: "application/json" } }, (res) => {
+        if (res.statusCode === 404) {
+          return reject(new Error(`transaction not found (HTTP 404)`));
+        }
+        if ((res.statusCode ?? 0) >= 400) {
+          return reject(new Error(`Horizon returned HTTP ${res.statusCode}`));
+        }
+        let raw = "";
+        res.on("data", (chunk) => (raw += chunk));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(raw));
+          } catch {
+            reject(new Error("Failed to parse Horizon response as JSON"));
+          }
+        });
+      });
+      req.on("error", (err) => reject(err));
+      req.setTimeout(10_000, () => {
+        req.destroy();
+        reject(new Error("Horizon request timed out after 10 s"));
+      });
+    });
+  }
 
   /**
    * Generates a JSON certificate for a retirement, pins it to IPFS,
    * and updates the database record with the CID.
+   *
+   * On-chain verification is performed before pinning to prevent fraudulent
+   * certificate issuance via fabricated or replayed txHash values.
    */
   async generateAndPinCertificate(retirementId: string): Promise<{ cid: string }> {
     this.logger.log(`Processing certificate for retirement: ${retirementId}`);
@@ -27,6 +111,29 @@ export class CertificateService {
       throw new NotFoundException(`Retirement ${retirementId} not found`);
     }
 
+    // ── On-chain verification (Feature #568: replay attack protection) ───────
+    // Confirm the submitted txHash actually exists and succeeded on the Stellar
+    // network before issuing an IPFS-pinned certificate.  This blocks Scenario B
+    // (fabricated txHash) and Scenario C (unrelated transaction hash) from the
+    // replay analysis.
+    if (!this.skipVerification) {
+      const isOnChain = await this.verifyOnChainRetirement(retirement.txHash);
+      if (!isOnChain) {
+        this.logger.error(
+          `Certificate issuance blocked for retirement ${retirementId}: ` +
+          `txHash ${retirement.txHash} not confirmed on-chain`,
+        );
+        throw new BadRequestException(
+          "Cannot issue certificate: retirement not confirmed on-chain. " +
+          "Ensure the Stellar transaction has been included in a ledger and succeeded.",
+        );
+      }
+    } else {
+      this.logger.warn(
+        `SKIP_ONCHAIN_VERIFICATION=true — skipping Horizon check for ${retirementId}`,
+      );
+    }
+
     // 1. Create the certificate JSON structure matching on-chain RetirementCertificate
     // Expand serial range into full list to match Vec<u64> on-chain
     const start = parseInt(retirement.serialStart);
@@ -38,7 +145,11 @@ export class CertificateService {
       }
     }
 
-    const certificateData = {
+    // Every field here is covered by the issuer signature below — do not add
+    // fields that are only known post-hoc (e.g. the certificate's own IPFS
+    // CID, filled in separately by #600) or the signature won't verify.
+    const signableContent = {
+      "@type": "CarbonRetirementCertificate",
       retirement_id: retirement.retirementId,
       credit_batch_id: retirement.batchId,
       project_id: retirement.projectId,
@@ -47,20 +158,37 @@ export class CertificateService {
       beneficiary: retirement.beneficiary,
       retirement_reason: retirement.retirementReason,
       vintage_year: retirement.vintageYear,
+      serial_start: retirement.serialStart,
+      serial_end: retirement.serialEnd,
       serial_numbers: serialNumbers, // Match Vec<u64> representation exactly
       retired_at: Math.floor(retirement.retiredAt.getTime() / 1000), // Unix timestamp on-chain
       tx_hash: retirement.txHash,
-      certificate_cid: "", // To be filled if we had it, but we are generating it now
-      
+
       // Additional metadata for accessibility/UI
       metadata: {
         projectName: retirement.project.name,
         country: retirement.project.country,
         methodology: retirement.project.methodology,
-        network: "Stellar",
+        network: process.env.STELLAR_NETWORK || "testnet",
         issuer: "CarbonLedger",
         generatedAt: new Date().toISOString(),
-      }
+      },
+    };
+
+    // Ed25519-sign the content hash so third parties (regulators, ESG
+    // auditors) can verify authenticity using only the public key published
+    // in Stellar.toml — no trust in this backend required (#594).
+    const { signature, publicKey, contentHash } = this.certificateSigning.sign(signableContent);
+
+    const certificateData = {
+      // JSON-LD framing so the certificate is a self-describing linked-data
+      // document, not just an opaque JSON blob.
+      "@context": ["https://schema.org", { cl: "https://carbonledger.io/ns#" }],
+      ...signableContent,
+      certificate_cid: "", // Filled in by #600 once the certificate is pinned to IPFS
+      content_hash: contentHash,
+      issuer_signature: signature,
+      issuer_public_key: publicKey,
     };
 
     const jsonBuffer = Buffer.from(JSON.stringify(certificateData, null, 2));
@@ -73,7 +201,7 @@ export class CertificateService {
       jsonBuffer,
       jsonBuffer.length,
       "certificate",
-      retirement.id
+      retirement.id,
     );
 
     this.logger.log(`Certificate pinned to IPFS: ${uploadResult.cid}`);

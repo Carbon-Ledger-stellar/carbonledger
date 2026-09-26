@@ -1,0 +1,17 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": ["ts-jest", {
+      "diagnostics": false,
+      "tsconfig": "<rootDir>/../tsconfig.json"
+    }]
+  },
+  "moduleNameMapper": {
+    "^uuid$": "<rootDir>/../node_modules/uuid/dist-node/index.js"
+  },
+  "testTimeout": 10000,
+  "setupFilesAfterEnv": ["<rootDir>/../src/jest.setup.ts"]
+}

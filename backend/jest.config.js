@@ -4,15 +4,14 @@ module.exports = {
   rootDir: 'src',
   testRegex: '.*\\.spec\\.ts$',
   transform: {
-    '^.+\\.(t|j)s$': ['ts-jest', {
-      // Don't fail tests on TypeScript type errors (Prisma client not generated in CI)
+    '^.+\\.(t|j)s$': [require.resolve('ts-jest'), {
       diagnostics: false,
     }],
   },
-  // uuid v14+ ships as ESM; map it to the CJS build so Jest can import it
   moduleNameMapper: {
     '^uuid$': '<rootDir>/../node_modules/uuid/dist-node/index.js',
   },
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   collectCoverageFrom: [
     '**/*.(t|j)s',
     '!**/*.spec.ts',
@@ -21,6 +20,7 @@ module.exports = {
   coverageDirectory: '../coverage',
   coverageReporters: ['text', 'lcov', 'json', 'html'],
   testEnvironment: 'node',
+
   coverageThreshold: {
     global: {
       branches: 80,
@@ -30,3 +30,4 @@ module.exports = {
     },
   },
 };
+

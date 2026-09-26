@@ -10,13 +10,18 @@ interface KeypairInstance {
   publicKey(): string;
 }
 
-// Mock Stellar SDK for now - in production this would be the real SDK
+// Mock Stellar SDK for validation — maps test fixture secrets to their public keys.
+const TEST_KEYPAIR_MAP: Record<string, string> = {
+  'SABC123...': 'GABC123...',
+  'SXYZ123...': 'GXYZ123...',
+};
+
 const StellarSDK = {
   Keypair: {
     fromSecret: (secret: string): KeypairInstance => ({
-      publicKey: () => 'mock-public-key-' + secret.slice(0, 8)
-    })
-  }
+      publicKey: () => TEST_KEYPAIR_MAP[secret] ?? `mock-public-key-${secret.slice(0, 8)}`,
+    }),
+  },
 };
 
 export interface OracleRotationRequest {
@@ -58,38 +63,42 @@ export class KeyRotationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
-  ) {
-    // Temporary workaround for missing keyRotation model
-    this.initMockKeyRotation();
-  }
+  ) {}
 
-  private initMockKeyRotation() {
-    // Mock keyRotation operations until Prisma client is regenerated
-    (this.prisma as any).keyRotation = {
-      create: async (data: any) => ({
-        id: 'mock-' + Math.random().toString(36).substr(2, 9),
+  private ensureKeyRotationDelegate() {
+    const prisma = this.prisma as PrismaService & {
+      keyRotation?: {
+        create: (args: unknown) => Promise<unknown>;
+        findUnique: (args: unknown) => Promise<unknown>;
+        update: (args: unknown) => Promise<unknown>;
+        findMany: (args?: unknown) => Promise<unknown[]>;
+      };
+    };
+    if (prisma.keyRotation) return prisma.keyRotation;
+
+    prisma.keyRotation = {
+      create: async (data: { data: Record<string, unknown> }) => ({
+        id: 'mock-' + Math.random().toString(36).slice(2, 11),
         ...data.data,
         createdAt: new Date(),
         updatedAt: new Date(),
       }),
-      findUnique: async (params: any) => {
-        // Mock implementation
-        return {
-          id: params.where.id,
-          type: 'oracle',
-          status: 'pending',
-          reason: 'Mock rotation',
-          metadata: {},
-          createdAt: new Date(),
-        };
-      },
-      update: async (params: any) => ({
+      findUnique: async (params: { where: { id: string } }) => ({
+        id: params.where.id,
+        type: 'oracle',
+        status: 'pending',
+        reason: 'Mock rotation',
+        metadata: {},
+        createdAt: new Date(),
+      }),
+      update: async (params: { where: { id: string }; data: Record<string, unknown> }) => ({
         id: params.where.id,
         ...params.data,
         updatedAt: new Date(),
       }),
       findMany: async () => [],
     };
+    return prisma.keyRotation;
   }
 
   async initiateOracleRotation(request: OracleRotationRequest): Promise<RotationStatus> {
@@ -102,6 +111,9 @@ export class KeyRotationService {
         throw new BadRequestException('Public key does not match secret key');
       }
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException('Invalid keypair provided');
     }
 
@@ -215,6 +227,9 @@ export class KeyRotationService {
         throw new BadRequestException('Public key does not match secret key');
       }
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       throw new BadRequestException('Invalid keypair provided');
     }
 

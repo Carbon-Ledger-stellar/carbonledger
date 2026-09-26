@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+
+# Node modules (installed fresh in Docker)
+node_modules
+
+# Next.js build output (rebuilt in Docker)
+.next
+out
+
+# Test files
+tests
+**/*.spec.ts
+**/*.spec.tsx
+**/*.test.ts
+**/*.test.tsx
+coverage
+playwright-report
+test-results
+
+# Docs
+docs
+*.md
+!README.md
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# CI
+.github
+
+# Storybook
+.storybook
+storybook-static
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Scripts not needed at runtime
+scripts

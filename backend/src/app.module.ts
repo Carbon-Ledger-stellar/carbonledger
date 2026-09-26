@@ -1,6 +1,12 @@
 import { AdminModule } from "./admin/admin.module";
+import { PauseAnalyticsModule } from "./pause-analytics/pause-analytics.module";
 import { PublicApiModule } from "./public-api/public-api.module";
+import { StellarModule } from "./stellar/stellar.module";
+import { BlockchainModule } from './blockchain/blockchain.module';
+import { WebhookModule } from "./webhook/webhook.module";
+import { GraphqlModule } from "./graphql/graphql.module";
 import { Module, Controller, Get, MiddlewareConsumer, NestModule, RequestMethod } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 import { APP_INTERCEPTOR, APP_GUARD, APP_FILTER } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
 import { ThrottlerModule } from "@nestjs/throttler";
@@ -18,6 +24,7 @@ import { UploadsModule } from "./uploads/uploads.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuditInterceptor } from "./audit/audit.interceptor";
 import { PrismaService } from "./prisma.service";
+import { PrismaModule } from "./prisma.module";
 import { VerifiersModule } from "./verifiers/verifiers.module";
 import { ThrottlerExceptionFilter, ResponseAlreadySentFilter } from "./common/throttler-exception.filter";
 import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
@@ -25,16 +32,25 @@ import { StellarNetworkService } from './common/stellar-network.service';
 import { StellarUnavailableExceptionFilter } from './common/stellar-unavailable.filter';
 import { LoggerModule } from "./logger/logger.module";
 import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
+import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
+import { RedisSlidingWindowRateLimitGuard } from "./common/redis-sliding-window-rate-limit.guard";
+import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
+import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
+import { RedisModule } from "./redis.module";
+import { RetentionModule } from "./retention/retention.module";
+import { ReconciliationModule } from "./reconciliation/reconciliation.module";
+import { PortfolioModule } from "./portfolio/portfolio.module";
+import { TwoFactorModule } from "./two-factor/two-factor.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
-import { Server } from "@stellar/stellar-sdk";
+import { Horizon } from "@stellar/stellar-sdk";
 import { Redis } from "ioredis";
 
 @Controller("health")
@@ -71,7 +87,7 @@ class HealthController {
     // Check Stellar
     try {
       const horizonUrl = process.env.STELLAR_HORIZON_URL || "https://horizon-testnet.stellar.org";
-      const server = new Server(horizonUrl);
+      const server = new Horizon.Server(horizonUrl);
       await server.root();
       checks.stellar = "up";
     } catch (e) {
@@ -100,6 +116,7 @@ class HealthController {
 
 @Module({
   imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
     // Built-in NestJS throttler (IP-based, Redis-backed) — handles burst/DDoS at infra level
     ThrottlerModule.forRoot({
       throttlers: [
@@ -133,9 +150,11 @@ class HealthController {
           },
     }),
     LoggerModule,
+    PrismaModule,
     AuthModule,
     ProjectsModule,
     CreditsModule,
+    BlockchainModule,
     RetirementsModule,
     MarketplaceModule,
     OracleModule,
@@ -145,13 +164,19 @@ class HealthController {
     AuditModule,
     VerifiersModule,
     AdminModule,
+    PauseAnalyticsModule,
     PublicApiModule,
+    GraphqlModule,
+    WebhookModule,
     RedisModule,
     IdempotencyModule,
+    RetentionModule,
+    ReconciliationModule,
+    PortfolioModule,
+    TwoFactorModule,
   ],
   controllers: [HealthController],
   providers: [
-    PrismaService,
     StellarNetworkService,
     {
       provide: APP_FILTER,
@@ -169,6 +194,10 @@ class HealthController {
     {
       provide: APP_GUARD,
       useClass: CustomThrottlerGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RedisSlidingWindowRateLimitGuard,
     },
     // Role-based quota guard: enforces per-role daily/hourly limits
     {
@@ -192,6 +221,14 @@ class HealthController {
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+    consumer.apply(RateLimitMiddleware).forRoutes('*');
+    // CSRF protection: double-submit cookie pattern.
+    // Exempt: GET/HEAD/OPTIONS (safe methods), requests with Authorization header (JWT API clients).
+    consumer.apply(CsrfMiddleware).forRoutes('*');
+
+    // Adds RFC 8594 Deprecation + Sunset headers to all v1 responses.
+    // v2 routes only receive X-API-Version: 2 (no deprecation headers).
+    consumer.apply(DeprecationMiddleware).forRoutes('*');
 
     // Apply idempotency enforcement to the three critical mutating endpoints.
     // The Idempotency-Key header is optional; omitting it simply bypasses the check.
@@ -201,6 +238,7 @@ export class AppModule implements NestModule {
         { path: 'credits/mint',           method: RequestMethod.POST },
         { path: 'marketplace/purchase',   method: RequestMethod.POST },
         { path: 'retirements',            method: RequestMethod.POST },
+        { path: 'retirements/bulk',        method: RequestMethod.POST },
       );
   }
 }

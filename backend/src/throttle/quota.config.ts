@@ -54,6 +54,28 @@ export const ROLE_QUOTAS: Record<string, RoleQuotas> = {
       limit: 1000,
       windowMs: 24 * 60 * 60 * 1000, // 24 hours
     },
+    bulkRetire: {
+      name: 'bulkRetire',
+      limit: 5,
+      windowMs: 60 * 60 * 1000, // 1 hour
+    },
+    default: {
+      name: 'default',
+      limit: 500,
+      windowMs: 60 * 60 * 1000, // 1 hour
+    },
+  },
+  admin: {
+    purchase: {
+      name: 'purchase',
+      limit: 1000,
+      windowMs: 24 * 60 * 60 * 1000, // 24 hours
+    },
+    bulkRetire: {
+      name: 'bulkRetire',
+      limit: 5,
+      windowMs: 60 * 60 * 1000, // 1 hour
+    },
     default: {
       name: 'default',
       limit: 500,
@@ -63,18 +85,54 @@ export const ROLE_QUOTAS: Record<string, RoleQuotas> = {
   public: {
     serialLookup: {
       name: 'serialLookup',
+      limit: 10,
+      windowMs: 60 * 1000, // 1 minute (issue #1017)
+    },
+    read: {
+      name: 'read',
+      limit: 10,
+      windowMs: 60 * 1000, // 1 minute (issue #1017)
+    },
+    default: {
+      name: 'default',
+      limit: 10,
+      windowMs: 60 * 1000, // 1 minute (issue #1017)
+    },
+  },
+
+  // ── Issue #1017: per-minute role buckets ───────────────────────────────
+  user: {
+    default: {
+      name: 'default',
       limit: 100,
-      windowMs: 60 * 60 * 1000, // 1 hour
+      windowMs: 60 * 1000, // 1 minute
     },
     read: {
       name: 'read',
       limit: 100,
-      windowMs: 60 * 60 * 1000, // 1 hour
+      windowMs: 60 * 1000,
     },
+    write: {
+      name: 'write',
+      limit: 100,
+      windowMs: 60 * 1000,
+    },
+  },
+  premium: {
     default: {
       name: 'default',
-      limit: 100,
-      windowMs: 60 * 60 * 1000, // 1 hour
+      limit: 1000,
+      windowMs: 60 * 1000, // 1 minute
+    },
+    read: {
+      name: 'read',
+      limit: 1000,
+      windowMs: 60 * 1000,
+    },
+    write: {
+      name: 'write',
+      limit: 1000,
+      windowMs: 60 * 1000,
     },
   },
 };
@@ -95,5 +153,7 @@ export const PATH_BUCKET_OVERRIDES: Array<{ prefix: string; bucket: string }> = 
   { prefix: '/api/v1/marketplace/purchase',  bucket: 'purchase' },
   { prefix: '/api/v1/marketplace/bulk-purchase', bucket: 'purchase' },
   { prefix: '/api/v1/credits/retire',        bucket: 'purchase' },
+  { prefix: '/retirements/bulk',            bucket: 'bulkRetire' },
+  { prefix: '/api/v1/retirements/bulk',      bucket: 'bulkRetire' },
   { prefix: '/api/v1/public/serial',         bucket: 'serialLookup' },
 ];

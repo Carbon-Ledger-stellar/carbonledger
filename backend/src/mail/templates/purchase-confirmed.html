@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f6; margin: 0; padding: 40px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+        .header { background: linear-gradient(135deg, #0984e3, #6c5ce7); padding: 40px; text-align: center; color: white; }
+        .header h1 { margin: 0; font-size: 26px; }
+        .content { padding: 40px; line-height: 1.7; color: #2d3436; }
+        .summary { background: #f0f4ff; border-radius: 8px; padding: 24px; margin: 20px 0; }
+        .summary table { width: 100%; border-collapse: collapse; }
+        .summary td { padding: 8px 0; font-size: 15px; }
+        .summary td:first-child { color: #636e72; width: 140px; }
+        .summary td:last-child { font-weight: 600; color: #2d3436; }
+        .tx-hash { font-family: monospace; font-size: 12px; color: #636e72; word-break: break-all; }
+        .btn { display: inline-block; padding: 12px 24px; background: #0984e3; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+        .footer { padding: 24px; text-align: center; font-size: 12px; color: #b2bec3; border-top: 1px solid #f0f0f0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Purchase Confirmed ✓</h1>
+        </div>
+        <div class="content">
+            <p>Your carbon credit purchase has been confirmed on the Stellar blockchain. The credits have been transferred to your account.</p>
+
+            <div class="summary">
+                <table>
+                    <tr>
+                        <td>Project</td>
+                        <td>{{projectName}}</td>
+                    </tr>
+                    <tr>
+                        <td>Amount</td>
+                        <td>{{amount}} Tonnes CO₂e</td>
+                    </tr>
+                    <tr>
+                        <td>Transaction</td>
+                        <td><span class="tx-hash">{{txHash}}</span></td>
+                    </tr>
+                </table>
+            </div>
+
+            <p>Your credits are now available in your account. You can retire them at any time to generate a permanent, verifiable retirement certificate for your ESG reporting.</p>
+
+            <a href="{{certificateUrl}}" class="btn">View Your Credits</a>
+        </div>
+        <div class="footer">
+            <p>&copy; 2026 CarbonLedger. All rights reserved.</p>
+            <p><a href="{{unsubscribe_link}}">Unsubscribe</a> from these notifications.</p>
+        </div>
+    </div>
+</body>
+</html>

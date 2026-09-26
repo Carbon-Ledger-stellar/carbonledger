@@ -1,0 +1,4 @@
+aws_region     = "us-east-1"
+db_username    = "carbonledger"
+db_password    = "your-secure-password"
+certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxxx"

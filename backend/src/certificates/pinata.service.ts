@@ -28,13 +28,14 @@ export class PinataService {
   async uploadFile(
     buffer: Buffer,
     filename: string,
-    metadata?: Record<string, unknown>
+    metadata?: Record<string, unknown>,
+    contentType: string = 'application/pdf',
   ): Promise<PinataUploadResult> {
     try {
       this.logger.log(`Uploading ${filename} to Pinata...`);
 
-      const blob = new Blob([buffer], { type: 'application/pdf' });
-      const file = new File([blob], filename, { type: 'application/pdf' });
+      const blob = new Blob([buffer], { type: contentType });
+      const file = new File([blob], filename, { type: contentType });
 
       const result = await this.pinata.upload.file(file);
 

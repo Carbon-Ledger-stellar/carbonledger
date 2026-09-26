@@ -15,6 +15,7 @@ const STATIC_CACHE = `carbonledger-static-${SW_VERSION}`;
 
 /** API path prefixes that belong to the audit data plane. */
 const AUDIT_API_PATTERNS = [
+  '/api/v1/public',
   '/api/audit',
   '/retirements',
   '/projects',
@@ -22,6 +23,17 @@ const AUDIT_API_PATTERNS = [
   '/stats',
   '/oracle',
   '/marketplace/listings',
+];
+
+/** App shell pages to precache so the UI is usable fully offline. */
+const PAGE_PRECACHE = [
+  '/',
+  '/audit',
+  '/projects',
+  '/marketplace',
+  '/dashboard',
+  '/verifier/dashboard',
+  '/offline',
 ];
 
 /** Maximum cache size in bytes (50 MB). */
@@ -34,10 +46,7 @@ self.addEventListener('install', (event) => {
     caches
       .open(STATIC_CACHE)
       .then((cache) =>
-        cache.addAll([
-          '/',
-          '/audit',
-        ]).catch(() => {
+        cache.addAll([...PAGE_PRECACHE, '/audit']).catch(() => {
           // Non-fatal: pages might not be pre-rendered yet in dev
         })
       )

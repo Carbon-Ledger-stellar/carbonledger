@@ -27,3 +27,22 @@ evicted from the ledger state. Callers receive `CarbonError::ProjectNotFound`
 
 Evicted entries can be restored via `restore_footprint` if the historical
 ledger data is still available in the archive.
+
+## Instance storage (upgrade history)
+
+Both `carbon_registry` and `carbon_credit` store upgrade history in
+**instance storage** (`env.storage().instance()` is not used; upgrade history
+uses `env.storage().persistent()` under `DataKey::UpgradeHistory`).
+
+Key characteristics:
+
+- **No TTL** — persistent entries survive indefinitely; no rent fee accrues
+  beyond the initial write fee.
+- **Size** — each `UpgradeRecord` is ~120 bytes. With the default cap of 50
+  entries, the maximum storage footprint is ~6 KB.
+- **Capping** — the history Vec is pruned when it exceeds
+  `MaxHistoryEntries` (default 50, configurable [10, 200] via
+  `set_max_history_entries`). Old records are dropped from the front (oldest
+  first) and a `HistoryPruned` event is emitted.
+- **Cost** — writing a new record costs ~0.00001 XLM in resource fees.
+  Pruning old entries is free (Soroban does not charge for deletion).

@@ -171,7 +171,7 @@
             },
             "ext": "v0"
           },
-          1
+          518400
         ]
       ],
       [
@@ -204,7 +204,7 @@
             },
             "ext": "v0"
           },
-          1
+          518400
         ]
       ],
       [
@@ -237,7 +237,7 @@
             },
             "ext": "v0"
           },
-          1
+          518400
         ]
       ],
       [
@@ -346,6 +346,45 @@
                       "string": "list-001"
                     }
                   ]
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          1
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "ContractVersion"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "ContractVersion"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "u32": 1
                 }
               }
             },

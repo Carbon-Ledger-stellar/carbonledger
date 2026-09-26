@@ -70,3 +70,43 @@ PROPTEST_CASES=1000 cargo test -p carbon_marketplace fuzz:: -- --nocapture
 - [x] Fuzz tests for `mint_credits`, `retire_credits`, `purchase_credits`
 - [x] No panics under any input combination — all errors are `CarbonError` variants
 - [x] Fuzz test suite runs in CI weekly
+
+---
+
+## Dedicated `--test proptest` target (issue #1051)
+
+The `fuzz` modules above live inside `src/lib.rs` and are selected by test-name
+filter (`cargo test -p carbon_credit 'fuzz::'`). Issue #1051 asks for a single
+stable entrypoint, so `contracts/carbon_credit/tests/proptest.rs` adds an
+integration-test target that runs from one command:
+
+```bash
+cd contracts
+cargo test -p carbon_credit --test proptest            # or: cargo test --test proptest
+PROPTEST_CASES=10000 cargo test -p carbon_credit --test proptest -- --nocapture
+```
+
+It exercises the two invariants named in the issue against the **public**
+contract API (not internals):
+
+| Group | Properties |
+|---|---|
+| **Supply conservation** — *total supply never changes* | `sc1` issued supply immutable across any retirement sequence, `Σ retired ≤ issued`, status tracks the active balance · `sc2` over-retirement rejected with `InsufficientCredits`, supply preserved · `sc3` ownership transfer conserves supply across an arbitrary transfer chain · `sc4` Σ `batch.amount` over many batches equals Σ minted, and retiring one batch never moves another |
+| **Ownership consistency** — *state consistency* | `oc1` a successful transfer sets `owner` to the recipient · `oc2` a non-owner transfer fails with `UnauthorizedVerifier`, owner unchanged · `oc3` through a hand-off chain the owner is always the latest recipient and stale owners lose transfer rights · `oc4` self-transfer is a no-op |
+| **Core function — `mint`** | `m1` a well-formed mint round-trips every stored field · `m2` degenerate serial ranges rejected with `InvalidSerialRange`, nothing persisted · `m3` amounts outside `(0, MAX_BATCH_SIZE]` rejected |
+
+- **≥ 1000 iterations per property** — `ProptestConfig::with_cases(1_000)` floor;
+  `PROPTEST_CASES` raises it in CI.
+- **Shrinking enabled** — `max_shrink_iters = 8_192`; a failing
+  mint/retire/transfer sequence is minimised before it is reported.
+- CI: new step in the `fuzz` job of `.github/workflows/ci.yml`
+  (`cargo test -p carbon_credit --test proptest`); also picked up by the
+  per-PR `cargo test --workspace` / `cargo test --all` contract jobs.
+
+### Acceptance criteria (#1051)
+
+- [x] Property tests defined for core functions (`mint`, `retire`, `transfer`)
+- [x] Invariants verified: supply conservation, ownership consistency
+- [x] Min 1000 iterations per property
+- [x] Shrinking enabled for failure diagnosis
+- [x] Command: `cargo test --test proptest`

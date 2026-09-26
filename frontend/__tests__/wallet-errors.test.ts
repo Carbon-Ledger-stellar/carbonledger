@@ -6,8 +6,10 @@ import {
 
 const ALL_CODES: WalletErrorCode[] = [
   'WALLET_NOT_INSTALLED',
+  'WALLET_LOCKED',
   'WALLET_PERMISSION_DENIED',
   'WRONG_NETWORK',
+  'SESSION_EXPIRED',
   'TRANSACTION_REJECTED',
   'INSUFFICIENT_XLM',
   'ACCOUNT_NOT_ACTIVATED',
@@ -53,6 +55,21 @@ describe('getWalletErrorMessage', () => {
 
   it('INSUFFICIENT_XLM message mentions XLM', () => {
     expect(getWalletErrorMessage('INSUFFICIENT_XLM')).toMatch(/XLM/i);
+  });
+
+  it('WALLET_LOCKED message mentions unlocking', () => {
+    expect(getWalletErrorMessage('WALLET_LOCKED')).toMatch(/lock/i);
+  });
+
+  it('SESSION_EXPIRED message mentions reconnecting', () => {
+    expect(getWalletErrorMessage('SESSION_EXPIRED')).toMatch(/reconnect|session/i);
+  });
+
+  it('every known error message is specific — none fall back to generic "Connection failed"', () => {
+    ALL_CODES.filter((c) => c !== 'UNKNOWN').forEach((code) => {
+      expect(getWalletErrorMessage(code).toLowerCase()).not.toBe('connection failed');
+      expect(getWalletErrorMessage(code)).not.toBe(getWalletErrorMessage('UNKNOWN'));
+    });
   });
 });
 

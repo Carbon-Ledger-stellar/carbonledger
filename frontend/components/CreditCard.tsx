@@ -3,6 +3,7 @@
 import { MarketListing } from "../lib/api";
 import { formatStroops, formatTonnes, getCountryFlag } from "../lib/carbon-utils";
 import { statusBadge, colors } from "../styles/design-system";
+import { useTranslations } from "next-intl";
 
 interface Props {
   listing: MarketListing;
@@ -18,15 +19,17 @@ const methodologyColors: Record<string, string> = {
 };
 
 export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
+  const t = useTranslations("creditCard");
   const badge = statusBadge(listing.status);
   const methodColor = methodologyColors[listing.methodology] ?? "#6b7280";
   const priceUSDC = formatStroops(listing.pricePerCredit);
   const projectLabel = listing.projectName || listing.projectId;
+  const statusLabel = listing.status === "Active" ? t("statusActive") : listing.status;
 
   return (
     <article
       data-testid="credit-card"
-      aria-label={`${projectLabel} — ${listing.methodology} ${listing.vintageYear}`}
+      aria-label={t("cardAria", { project: projectLabel, methodology: listing.methodology, vintageYear: listing.vintageYear })}
       className="credit-card"
     >
       <style>{`
@@ -75,7 +78,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
       <div className="credit-card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <p style={{ fontSize: "0.75rem", color: colors.neutral[500], marginBottom: "0.25rem" }}>
-            {getCountryFlag(listing.country)} {listing.country} · {listing.vintageYear} Vintage
+            {getCountryFlag(listing.country)} {listing.country} · {listing.vintageYear} {t("vintageSuffix")}
           </p>
           <h3 style={{ fontSize: "1rem", fontWeight: 600, color: colors.neutral[900], margin: 0 }}>
             {projectLabel}
@@ -91,7 +94,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
           fontWeight: 600,
           whiteSpace: "nowrap",
         }}>
-          {listing.status}
+          {statusLabel}
         </span>
       </div>
 
@@ -123,7 +126,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
           fontWeight: 600,
           width: "fit-content",
         }}>
-          {listing.oracleDaysSinceUpdate <= 300 ? "Verified" : "Stale Oracle"}
+          {listing.oracleDaysSinceUpdate <= 300 ? t("verified") : t("staleOracle")}
         </span>
       )}
 
@@ -131,7 +134,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
       <div className="credit-card-stats" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
         <div>
           <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.2rem" }}>
-            Available
+            {t("available")}
           </p>
           <p style={{ fontSize: "0.95rem", fontWeight: 600, color: colors.neutral[800], margin: 0 }}>
             {formatTonnes(listing.amountAvailable)}
@@ -139,7 +142,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
         </div>
         <div>
           <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: "0 0 0.2rem" }}>
-            Price per tonne
+            {t("pricePerTonne")}
           </p>
           <p style={{ fontSize: "0.95rem", fontWeight: 700, color: colors.primary[700], margin: 0 }}>
             ${priceUSDC} USDC
@@ -159,7 +162,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
                   onBuyNow(listing);
                 }
               }}
-              aria-label={`Purchase carbon credits from ${projectLabel}`}
+              aria-label={t("purchaseAria", { project: projectLabel })}
               style={{
                 flex: 1,
                 background: colors.primary[600],
@@ -172,7 +175,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
                 cursor: "pointer",
               }}
             >
-              Purchase Credits
+              {t("purchaseCredits")}
             </button>
           )}
           {onAddToCart && (
@@ -184,7 +187,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
                   onAddToCart(listing);
                 }
               }}
-              aria-label={`Add ${projectLabel} to cart`}
+              aria-label={t("addToCartAria", { project: projectLabel })}
               style={{
                 flex: 1,
                 background: colors.primary[100],
@@ -197,7 +200,7 @@ export default function CreditCard({ listing, onAddToCart, onBuyNow }: Props) {
                 cursor: "pointer",
               }}
             >
-              Add to Cart
+              {t("addToCart")}
             </button>
           )}
         </div>

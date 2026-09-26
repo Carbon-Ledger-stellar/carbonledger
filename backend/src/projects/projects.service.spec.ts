@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ProjectsService } from './projects.service';
+import { NotFoundException } from '@nestjs/common';
+import { ProjectsService, CallerContext } from './projects.service';
 import { PrismaService } from '../prisma.service';
 import { RedisService } from '../redis.service';
 import { MailService } from '../mail/mail.service';
@@ -14,10 +15,14 @@ describe('ProjectsService', () => {
   const mockPrisma = {
     carbonProject: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       count: jest.fn(),
+    },
+    user: {
+      findUnique: jest.fn(),
     },
   };
 
@@ -34,6 +39,18 @@ describe('ProjectsService', () => {
   const mockStateMachineService = {
     transition: jest.fn(),
   };
+
+  // ── Caller fixtures used throughout ────────────────────────────────────
+  // adminCaller is used as the default for tests that are really about
+  // filter/pagination/sorting logic, unrelated to RBAC — admin gets no
+  // added scoping, so it preserves the original assertions unchanged.
+  const adminCaller: CallerContext = { publicKey: 'GADMIN789', role: 'admin' };
+  const verifierCaller: CallerContext = { publicKey: 'GVERIF456', role: 'verifier' };
+  const corporationCaller: CallerContext = { publicKey: 'GCORP123', role: 'corporation' };
+  // Owns mockProjects[0] (ownerAddress: '0x456')
+  const ownerDeveloperCaller: CallerContext = { publicKey: '0x456', role: 'project_developer' };
+  // A different developer who does NOT own mockProjects[0]
+  const otherDeveloperCaller: CallerContext = { publicKey: '0xDEV999', role: 'project_developer' };
 
   const mockProjects = [
     {
@@ -82,22 +99,10 @@ describe('ProjectsService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProjectsService,
-        {
-          provide: PrismaService,
-          useValue: mockPrisma,
-        },
-        {
-          provide: MailService,
-          useValue: mockMailService,
-        },
-        {
-          provide: ProjectStateMachineService,
-          useValue: mockStateMachineService,
-        },
-        {
-          provide: RedisService,
-          useValue: mockRedisService,
-        },
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: MailService, useValue: mockMailService },
+        { provide: ProjectStateMachineService, useValue: mockStateMachineService },
+        { provide: RedisService, useValue: mockRedisService },
       ],
     }).compile();
 
@@ -160,17 +165,21 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue(mockProjects);
       mockPrisma.carbonProject.count.mockResolvedValue(2);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(result).toEqual({
+        data: mockProjects,
         projects: mockProjects,
-        nextCursor: undefined,
-        hasMore: false,
         total: 2,
+        limit: 20,
+        offset: 0,
+        hasMore: false,
+        nextOffset: null,
+        nextCursor: undefined,
       });
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
-        where: {},
+        where: { deletedAt: null },
         orderBy: { createdAt: 'desc' },
         take: 21,
         cursor: undefined,
@@ -185,10 +194,10 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[0]]);
       mockPrisma.carbonProject.count.mockResolvedValue(1);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
-        where: { methodology: { in: ['VCS'] } },
+        where: { deletedAt: null, methodology: { in: ['VCS'] } },
         orderBy: { createdAt: 'desc' },
         take: 21,
         cursor: undefined,
@@ -206,10 +215,10 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue(mockProjects);
       mockPrisma.carbonProject.count.mockResolvedValue(2);
 
-      await service.searchProjects(searchDto);
+      await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
-        where: { country: { in: ['BR', 'US'] } },
+        where: { deletedAt: null, country: { in: ['BR', 'US'] } },
         orderBy: { createdAt: 'desc' },
         take: 21,
         cursor: undefined,
@@ -224,7 +233,7 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[0]]);
       mockPrisma.carbonProject.count.mockResolvedValue(1);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(result.projects).toHaveLength(1);
       expect(result.projects[0].status).toBe('Verified');
@@ -236,10 +245,10 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue(mockProjects);
       mockPrisma.carbonProject.count.mockResolvedValue(2);
 
-      await service.searchProjects(searchDto);
+      await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
-        where: { vintageYear: { in: [2023, 2024] } },
+        where: { deletedAt: null, vintageYear: { in: [2023, 2024] } },
         orderBy: { createdAt: 'desc' },
         take: 21,
         cursor: undefined,
@@ -254,10 +263,11 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[0]]);
       mockPrisma.carbonProject.count.mockResolvedValue(1);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
         where: {
+          deletedAt: null,
           OR: [
             { name: { contains: 'Amazon', mode: 'insensitive' } },
             { description: { contains: 'Amazon', mode: 'insensitive' } }
@@ -280,10 +290,11 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[0]]);
       mockPrisma.carbonProject.count.mockResolvedValue(1);
 
-      await service.searchProjects(searchDto);
+      await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
         where: {
+          deletedAt: null,
           lastMonitoringAt: {
             gte: expect.any(Date)
           }
@@ -302,10 +313,11 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[1]]);
       mockPrisma.carbonProject.count.mockResolvedValue(1);
 
-      await service.searchProjects(searchDto);
+      await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
         where: {
+          deletedAt: null,
           OR: [
             { lastMonitoringAt: { lt: expect.any(Date) } },
             { lastMonitoringAt: null }
@@ -325,10 +337,10 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[1]]);
       mockPrisma.carbonProject.count.mockResolvedValue(1);
 
-      await service.searchProjects(searchDto);
+      await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
-        where: { lastMonitoringAt: null },
+        where: { deletedAt: null, lastMonitoringAt: null },
         orderBy: { createdAt: 'desc' },
         take: 21,
         cursor: undefined,
@@ -343,10 +355,10 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[1]]);
       mockPrisma.carbonProject.count.mockResolvedValue(2);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
-        where: {},
+        where: { deletedAt: null },
         orderBy: { createdAt: 'desc' },
         take: 11,
         cursor: { id: '1' },
@@ -363,7 +375,7 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue(mockProjects);
       mockPrisma.carbonProject.count.mockResolvedValue(2);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(result.hasMore).toBe(true);
       expect(result.nextCursor).toBe(mockProjects[0].id);
@@ -376,10 +388,10 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue(mockProjects);
       mockPrisma.carbonProject.count.mockResolvedValue(2);
 
-      await service.searchProjects(searchDto);
+      await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
-        where: {},
+        where: { deletedAt: null },
         orderBy: { name: 'asc' },
         take: 21,
         cursor: undefined,
@@ -400,10 +412,11 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[0]]);
       mockPrisma.carbonProject.count.mockResolvedValue(1);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
         where: {
+          deletedAt: null,
           OR: [
             { name: { contains: 'Amazon', mode: 'insensitive' } },
             { description: { contains: 'Amazon', mode: 'insensitive' } }
@@ -433,7 +446,7 @@ describe('ProjectsService', () => {
       mockPrisma.carbonProject.findMany.mockResolvedValue([]);
       mockPrisma.carbonProject.count.mockResolvedValue(0);
 
-      const result = await service.searchProjects(searchDto);
+      const result = await service.searchProjects(searchDto, adminCaller);
 
       expect(result.projects).toHaveLength(0);
       expect(result.hasMore).toBe(false);
@@ -442,16 +455,18 @@ describe('ProjectsService', () => {
     });
   });
 
-  describe('findAll (backward compatibility)', () => {
-    it('should work with existing findAll method', async () => {
+  describe('findAll', () => {
+    it('should work with existing findAll method (admin, unscoped)', async () => {
       const filters = { methodology: 'VCS', country: 'BR', vintage: 2023 };
 
       mockPrisma.carbonProject.findMany.mockResolvedValue([]);
+      mockPrisma.carbonProject.count.mockResolvedValue(0);
 
-      await service.findAll(filters);
+      await service.findAll(filters, adminCaller);
 
       expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith({
         where: {
+          deletedAt: null,
           methodology: 'VCS',
           country: 'BR',
           vintageYear: 2023,
@@ -466,26 +481,26 @@ describe('ProjectsService', () => {
 
   describe('findOne', () => {
     beforeEach(() => {
-      mockPrisma.carbonProject.findUnique.mockReset();
+      mockPrisma.carbonProject.findFirst.mockReset();
     });
 
     it('should return a cached project by ID when available', async () => {
       const mockProject = mockProjects[0];
       redisService.get.mockResolvedValue(mockProject);
 
-      const result = await service.findOne('proj-001');
+      const result = await service.findOne('proj-001', adminCaller);
 
       expect(result).toEqual(mockProject);
       expect(redisService.get).toHaveBeenCalledWith('project-detail:proj-001');
-      expect(mockPrisma.carbonProject.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.carbonProject.findFirst).not.toHaveBeenCalled();
     });
 
     it('should cache a project on cache miss and return it', async () => {
       const mockProject = mockProjects[0];
       redisService.get.mockResolvedValue(null);
-      mockPrisma.carbonProject.findUnique.mockResolvedValue(mockProject);
+      mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProject);
 
-      const result = await service.findOne('proj-001');
+      const result = await service.findOne('proj-001', adminCaller);
 
       expect(result).toEqual(mockProject);
       expect(redisService.get).toHaveBeenCalledWith('project-detail:proj-001');
@@ -494,20 +509,22 @@ describe('ProjectsService', () => {
 
     it('should return a project by ID', async () => {
       const mockProject = mockProjects[0];
-      mockPrisma.carbonProject.findUnique.mockResolvedValue(mockProject);
+      redisService.get.mockResolvedValue(null);
+      mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProject);
 
-      const result = await service.findOne('proj-001');
+      const result = await service.findOne('proj-001', adminCaller);
 
       expect(result).toEqual(mockProject);
-      expect(mockPrisma.carbonProject.findUnique).toHaveBeenCalledWith({
-        where: { projectId: 'proj-001' },
+      expect(mockPrisma.carbonProject.findFirst).toHaveBeenCalledWith({
+        where: { projectId: 'proj-001', deletedAt: null },
       });
     });
 
     it('should throw NotFoundException if project not found', async () => {
-      mockPrisma.carbonProject.findUnique.mockResolvedValue(null);
+      redisService.get.mockResolvedValue(null);
+      mockPrisma.carbonProject.findFirst.mockResolvedValue(null);
 
-      await expect(service.findOne('nonexistent')).rejects.toThrow(
+      await expect(service.findOne('nonexistent', adminCaller)).rejects.toThrow(
         'Project nonexistent not found'
       );
     });
@@ -517,13 +534,169 @@ describe('ProjectsService', () => {
       const updatedProject = { ...mockProject, status: 'Verified' };
 
       redisService.get.mockResolvedValue(null);
-      mockPrisma.carbonProject.findUnique.mockResolvedValue(mockProject);
+      mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProject);
       mockPrisma.carbonProject.update.mockResolvedValue(updatedProject);
 
       const result = await service.updateStatus('proj-001', { status: 'Verified' } as any);
 
       expect(result).toEqual(updatedProject);
       expect(redisService.del).toHaveBeenCalledWith('project-detail:proj-001');
+    });
+  });
+
+  // ── RBAC scoping — the actual point of this ticket ───────────────────────
+  describe('role-based access scoping', () => {
+    describe('findAll', () => {
+      beforeEach(() => {
+        mockPrisma.carbonProject.findMany.mockResolvedValue([]);
+        mockPrisma.carbonProject.count.mockResolvedValue(0);
+      });
+
+      it('project_developer: query is scoped to their own ownerAddress', async () => {
+        await service.findAll({}, ownerDeveloperCaller);
+
+        expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ ownerAddress: ownerDeveloperCaller.publicKey }),
+          }),
+        );
+      });
+
+      it('verifier: query is NOT scoped by owner (full visibility)', async () => {
+        await service.findAll({}, verifierCaller);
+
+        const calledWith = mockPrisma.carbonProject.findMany.mock.calls[0][0];
+        expect(calledWith.where.ownerAddress).toBeUndefined();
+      });
+
+      it('admin: query is NOT scoped by owner (full visibility)', async () => {
+        await service.findAll({}, adminCaller);
+
+        const calledWith = mockPrisma.carbonProject.findMany.mock.calls[0][0];
+        expect(calledWith.where.ownerAddress).toBeUndefined();
+      });
+
+      it('corporation: query is NOT scoped by owner (full visibility)', async () => {
+        await service.findAll({}, corporationCaller);
+
+        const calledWith = mockPrisma.carbonProject.findMany.mock.calls[0][0];
+        expect(calledWith.where.ownerAddress).toBeUndefined();
+      });
+    });
+
+    describe('searchProjects', () => {
+      beforeEach(() => {
+        mockPrisma.carbonProject.findMany.mockResolvedValue([]);
+        mockPrisma.carbonProject.count.mockResolvedValue(0);
+      });
+
+      it('project_developer: ownerAddress filter is combined with other filters, not replacing them', async () => {
+        await service.searchProjects({ methodology: ['VCS'] }, ownerDeveloperCaller);
+
+        expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              methodology: { in: ['VCS'] },
+              ownerAddress: ownerDeveloperCaller.publicKey,
+            }),
+          }),
+        );
+      });
+
+      it('verifier: no ownerAddress filter applied', async () => {
+        await service.searchProjects({ methodology: ['VCS'] }, verifierCaller);
+
+        const calledWith = mockPrisma.carbonProject.findMany.mock.calls[0][0];
+        expect(calledWith.where.ownerAddress).toBeUndefined();
+      });
+    });
+
+    describe('findOne', () => {
+      it('project_developer who owns the project: returns it', async () => {
+        redisService.get.mockResolvedValue(null);
+        mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProjects[0]); // ownerAddress: '0x456'
+
+        const result = await service.findOne('proj-001', ownerDeveloperCaller);
+
+        expect(result).toEqual(mockProjects[0]);
+      });
+
+      it('project_developer who does NOT own the project: throws NotFoundException (not Forbidden)', async () => {
+        redisService.get.mockResolvedValue(null);
+        mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProjects[0]); // owned by '0x456'
+
+        await expect(
+          service.findOne('proj-001', otherDeveloperCaller),
+        ).rejects.toThrow(NotFoundException);
+      });
+
+      it('verifier: can view any project regardless of owner', async () => {
+        redisService.get.mockResolvedValue(null);
+        mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProjects[0]);
+
+        const result = await service.findOne('proj-001', verifierCaller);
+
+        expect(result).toEqual(mockProjects[0]);
+      });
+
+      it('corporation: can view any project regardless of owner', async () => {
+        redisService.get.mockResolvedValue(null);
+        mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProjects[0]);
+
+        const result = await service.findOne('proj-001', corporationCaller);
+
+        expect(result).toEqual(mockProjects[0]);
+      });
+
+      // Regression test for the cache-bypass bug: the ownership check must run
+      // on a cache HIT too, not only when the DB is actually queried. Before
+      // the fix, this scenario returned the cached project to anyone, no
+      // matter who was asking.
+      it('cache-bypass regression: ownership check still applies when project is served from cache', async () => {
+        redisService.get.mockResolvedValue(mockProjects[0]); // cache HIT, owned by '0x456'
+
+        await expect(
+          service.findOne('proj-001', otherDeveloperCaller),
+        ).rejects.toThrow(NotFoundException);
+
+        // Confirms this really was the cache path, not a DB fallback
+        expect(mockPrisma.carbonProject.findFirst).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('findVerifiedProjects (public, unauthenticated)', () => {
+      beforeEach(() => {
+        mockPrisma.carbonProject.findMany.mockResolvedValue([mockProjects[0]]);
+        mockPrisma.carbonProject.count.mockResolvedValue(1);
+      });
+
+      it('always filters to status = Verified', async () => {
+        await service.findVerifiedProjects({});
+
+        expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ status: 'Verified' }),
+          }),
+        );
+      });
+
+      it('does not select ownerAddress or verifierAddress', async () => {
+        await service.findVerifiedProjects({});
+
+        const calledWith = mockPrisma.carbonProject.findMany.mock.calls[0][0];
+        expect(calledWith.select.ownerAddress).toBeUndefined();
+        expect(calledWith.select.verifierAddress).toBeUndefined();
+      });
+
+      it('combines status=Verified with other filters, not overridden by them', async () => {
+        await service.findVerifiedProjects({ methodology: 'VCS' });
+
+        expect(mockPrisma.carbonProject.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ status: 'Verified', methodology: 'VCS' }),
+          }),
+        );
+      });
     });
   });
 
@@ -542,7 +715,7 @@ describe('ProjectsService', () => {
         vintageYear: 2023,
       };
 
-      mockPrisma.carbonProject.findUnique.mockResolvedValue(null);
+      mockPrisma.carbonProject.findFirst.mockResolvedValue(null);
       mockPrisma.carbonProject.create.mockResolvedValue({ ...dto, id: '3' });
 
       const result = await service.register(dto);
@@ -567,7 +740,7 @@ describe('ProjectsService', () => {
         vintageYear: 2023,
       };
 
-      mockPrisma.carbonProject.findUnique.mockResolvedValue(mockProjects[0]);
+      mockPrisma.carbonProject.findFirst.mockResolvedValue(mockProjects[0]);
 
       await expect(service.register(dto)).rejects.toThrow(
         'Project proj-001 already exists'

@@ -1,0 +1,31 @@
+[package]
+name = "carbonledger-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+
+# This crate has no library or binary target of its own — it exists purely to
+# host cross-contract integration tests that exercise all four CarbonLedger
+# Soroban contracts deployed together in one Soroban test environment.
+# See docs/integration-testing.md for how to run it.
+autotests = false
+
+[[test]]
+name = "oracle_registry_credit_issuance_flow"
+path = "oracle_registry_credit_issuance_flow_test.rs"
+harness = true
+
+[[test]]
+name = "upgrade_path"
+path = "upgrade_path_test.rs"
+harness = true
+
+[dev-dependencies]
+soroban-sdk = { version = "21.7.7", features = ["testutils", "alloc"] }
+carbon_registry = { path = "../contracts/carbon_registry" }
+carbon_credit = { path = "../contracts/carbon_credit", features = ["testutils"] }
+carbon_marketplace = { path = "../contracts/carbon_marketplace" }
+carbon_oracle = { path = "../contracts/carbon_oracle" }
+ed25519-dalek = "2"
+rand = "0.9"

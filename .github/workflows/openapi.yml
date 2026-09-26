@@ -1,0 +1,38 @@
+name: OpenAPI Spec Drift Check
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/openapi.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  openapi-drift:
+    name: OpenAPI spec + Postman collection are up to date
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Regenerate spec + Postman artifacts
+        working-directory: ./backend
+        run: python3 scripts/generate_openapi.py
+
+      - name: Fail on drift
+        working-directory: ./backend
+        run: |
+          git --no-pager diff --exit-code -- docs/openapi.json docs/api/openapi.yaml docs/api/openapi.json docs/api/carbonledger.postman_collection.json \
+            || (echo "::error::Committed OpenAPI/Postman artifacts are out of date. Run 'python3 scripts/generate_openapi.py' in backend/ and commit the regenerated files." && exit 1)

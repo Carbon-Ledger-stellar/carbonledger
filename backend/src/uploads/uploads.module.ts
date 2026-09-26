@@ -2,8 +2,10 @@ import { Module } from "@nestjs/common";
 import { UploadsController } from "./uploads.controller";
 import { IpfsUploadService } from "./ipfs-upload.service";
 import { PrismaService } from "../prisma.service";
+import { PoliciesModule } from "../policies/policies.module";
 
 @Module({
+  imports: [PoliciesModule],
   controllers: [UploadsController],
   providers: [IpfsUploadService, PrismaService],
   exports: [IpfsUploadService],

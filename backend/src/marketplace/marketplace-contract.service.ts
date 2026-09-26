@@ -29,7 +29,7 @@ export class MarketplaceContractService {
       this.logger.log(`Ownership verification passed for batch ${batchId}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to verify ownership for batch ${batchId}: ${error.message}`);
+      this.logger.error(`Failed to verify ownership for batch ${batchId}: ${(error as any).message}`);
       return false;
     }
   }
@@ -54,7 +54,7 @@ export class MarketplaceContractService {
       this.logger.log(`Contract call list_credits completed for listing ${listingId}, tx: ${txHash}`);
       return txHash;
     } catch (error) {
-      this.logger.error(`Failed to call list_credits on contract for listing ${listingId}: ${error.message}`);
+      this.logger.error(`Failed to call list_credits on contract for listing ${listingId}: ${(error as any).message}`);
       throw error;
     }
   }
@@ -76,7 +76,7 @@ export class MarketplaceContractService {
       this.logger.log(`Contract call delist_credits completed for listing ${listingId}, tx: ${txHash}`);
       return txHash;
     } catch (error) {
-      this.logger.error(`Failed to call delist_credits on contract for listing ${listingId}: ${error.message}`);
+      this.logger.error(`Failed to call delist_credits on contract for listing ${listingId}: ${(error as any).message}`);
       throw error;
     }
   }

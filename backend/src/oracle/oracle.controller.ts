@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, UseGuards, Header, Res } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, UseGuards, Header, Res, BadRequestException, Request } from '@nestjs/common';
 import { Response } from 'express';
 import {
   OracleService,
@@ -7,9 +7,15 @@ import {
   UpdatePriceDto,
   FlagProjectDto,
   HoldPriceUpdateDto,
+  BatchSubmitMonitoringDto,
+  BatchUpdatePriceDto,
 } from './oracle.service';
+import { OracleSyncService } from './oracle-sync.service';
+import { OracleSchedulerService } from './oracle-scheduler.service';
 import { OracleGuard } from './oracle.guard';
 import { Public, Roles } from '../auth/decorators';
+import { CheckPolicies, PoliciesGuard, OracleDataSubject } from '../policies';
+import { SubmitMonitoringDataDto } from './monitoring.dto';
 
 /** Cache TTL for the services health endpoint (30 seconds). */
 const HEALTH_CACHE_TTL_S = 30;
@@ -33,16 +39,9 @@ export class OracleController {
   /**
    * GET /oracle/services/health
    *
-   * Returns the aggregate health of all three oracle services:
-   *   - verification_listener  (stale threshold: 365 days)
-   *   - price_oracle           (stale threshold: 24 hours)
-   *   - satellite_monitor      (stale threshold: 365 days)
-   *
-   * Always returns HTTP 200.  The `status` field per service is one of:
-   *   "healthy" | "stale" | "offline"
-   *
-   * Response is cached for 30 seconds via Cache-Control.
+   * Returns the aggregate health of all three oracle services.
    * Public — no authentication required.
+   * Response is cached for 30 seconds via Cache-Control.
    */
   @Get('services/health')
   @Public()
@@ -56,12 +55,25 @@ export class OracleController {
   }
 
   // ── Internal oracle endpoints — authenticated with oracle keypair ─────────
+  // The OracleGuard verifies an Ed25519 Stellar keypair signature.
+  // @Public() bypasses RolesGuard (no JWT); @UseGuards(OracleGuard) enforces oracle auth.
 
   @Post('ingest/monitoring')
-  @Public()                   // bypass JWT RolesGuard
-  @UseGuards(OracleGuard)     // oracle keypair signature required
+  @Public()
+  @UseGuards(OracleGuard)
   submitMonitoring(@Body() dto: SubmitMonitoringDto) {
     return this.oracleService.submitMonitoring(dto);
+  }
+
+  @Post('ingest/batch-monitoring')
+  @Public()
+  @UseGuards(OracleGuard)
+  submitBatchMonitoring(@Body() body: BatchSubmitMonitoringDto | SubmitMonitoringDto[]) {
+    const items = Array.isArray(body) ? body : body?.items;
+    if (!items || !Array.isArray(items)) {
+      throw new BadRequestException('Request body must be an array of SubmitMonitoringDto or contain an items array');
+    }
+    return this.oracleService.submitBatchMonitoring(items);
   }
 
   @Post('ingest/price')
@@ -71,6 +83,17 @@ export class OracleController {
     return this.oracleService.submitPrice(dto);
   }
 
+  @Post('ingest/batch-price')
+  @Public()
+  @UseGuards(OracleGuard)
+  updateBatchPrice(@Body() body: BatchUpdatePriceDto | UpdatePriceDto[]) {
+    const items = Array.isArray(body) ? body : body?.items;
+    if (!items || !Array.isArray(items)) {
+      throw new BadRequestException('Request body must be an array of UpdatePriceDto or contain an items array');
+    }
+    return this.oracleService.submitBatchPrice(items);
+  }
+
   @Post('ingest/flag')
   @Public()
   @UseGuards(OracleGuard)
@@ -78,28 +101,47 @@ export class OracleController {
     return this.oracleService.flagProject(dto);
   }
 
+  // ── Verifier-facing monitoring submission ─────────────────────────────────
+  // JWT-authenticated; requires role=verifier.  Distinct from the oracle-
+  // keypair ingest endpoint: enforces strict duplicate rejection and timestamp
+  // freshness checks suitable for human-submitted satellite data.
+
+  @Post('monitoring')
+  @Roles('verifier')
+  async submitMonitoringData(@Body() dto: SubmitMonitoringDataDto, @Request() req: any) {
+    return this.oracleService.submitMonitoringData(dto, req.user.publicKey);
+  }
+
   // ── Admin: price approval workflow ───────────────────────────────────────
 
   @Post('price-approvals/hold')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('hold', OracleDataSubject))
   holdPriceUpdate(@Body() dto: HoldPriceUpdateDto) {
     return this.oracleService.holdPriceUpdate(dto);
   }
 
   @Get('price-approvals')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', OracleDataSubject))
   getPriceApprovals() {
     return this.oracleService.getPriceApprovals();
   }
 
   @Post('price-approvals/:id/approve')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('approve', OracleDataSubject))
   approvePriceUpdate(@Param('id') id: string) {
     return this.oracleService.approvePriceUpdate(id);
   }
 
   @Post('price-approvals/:id/reject')
   @Roles('admin')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('reject', OracleDataSubject))
   rejectPriceUpdate(@Param('id') id: string, @Body('reason') reason?: string) {
     return this.oracleService.rejectPriceUpdate(id, reason);
   }

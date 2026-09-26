@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../dist/prisma",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["*.ts", "../src/logger/*.ts"]
+}

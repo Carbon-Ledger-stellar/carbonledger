@@ -1,0 +1,72 @@
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info
+dist
+build
+.eggs
+
+# Virtual environments
+.venv
+venv
+env
+ENV
+
+# Test files
+test_*.py
+*_test.py
+pytest_cache
+.pytest_cache
+.coverage
+htmlcov
+
+# Dev dependencies
+requirements-dev.txt
+
+# Docs
+*.md
+!README.md
+docs
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# CI
+.github
+
+# Systemd
+systemd
+
+# Misc docs
+*.md
+E2E_SETUP_GUIDE.md
+ORACLE_INTEGRATION.md
+ORACLE_SETUP.md
+ORACLE_SYNC.md
+DEPLOYMENT.md
+TEST_E2E_DOCS.md

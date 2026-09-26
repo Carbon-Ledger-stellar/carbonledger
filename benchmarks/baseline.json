@@ -1,0 +1,102 @@
+{
+  "generated_at": "2026-08-29T23:00:00.000Z",
+  "schema_version": "2",
+  "note": "Initial baseline established for #1056. Update by running scripts/run_perf_benchmarks.py --run and copying benchmarks/current.json here. Append a row to benchmarks/history.csv when updating.",
+  "contract": {
+    "mint_credits": {
+      "function": "mint_credits",
+      "cpu_instructions": 850000,
+      "mem_bytes": 45000,
+      "reads": 5,
+      "writes": 4
+    },
+    "retire_credits": {
+      "function": "retire_credits",
+      "cpu_instructions": 920000,
+      "mem_bytes": 48000,
+      "reads": 6,
+      "writes": 5
+    },
+    "verify_serial_range": {
+      "function": "verify_serial_range",
+      "cpu_instructions": 410000,
+      "mem_bytes": 22000,
+      "reads": 3,
+      "writes": 0
+    },
+    "bulk_purchase": {
+      "function": "bulk_purchase",
+      "cpu_instructions": 1800000,
+      "mem_bytes": 95000,
+      "reads": 12,
+      "writes": 8
+    }
+  },
+  "api": {
+    "GET /health": {
+      "endpoint": "GET /health",
+      "p50_ms": 5,
+      "p95_ms": 15,
+      "p99_ms": 30,
+      "samples": 100
+    },
+    "GET /projects": {
+      "endpoint": "GET /projects",
+      "p50_ms": 45,
+      "p95_ms": 120,
+      "p99_ms": 250,
+      "samples": 100
+    },
+    "GET /marketplace/listings": {
+      "endpoint": "GET /marketplace/listings",
+      "p50_ms": 45,
+      "p95_ms": 320,
+      "p99_ms": 780,
+      "samples": 100
+    },
+    "POST /marketplace/purchase": {
+      "endpoint": "POST /marketplace/purchase",
+      "p50_ms": 120,
+      "p95_ms": 580,
+      "p99_ms": 1100,
+      "samples": 100
+    },
+    "GET /audit/credits/:id/events": {
+      "endpoint": "GET /audit/credits/:id/events",
+      "p50_ms": 35,
+      "p95_ms": 95,
+      "p99_ms": 180,
+      "samples": 100
+    }
+  },
+  "db": {
+    "projects_list_query": {
+      "query": "projects_list_query",
+      "p50_ms": 8,
+      "p95_ms": 25,
+      "p99_ms": 55,
+      "samples": 100
+    },
+    "marketplace_listings_query": {
+      "query": "marketplace_listings_query",
+      "p50_ms": 12,
+      "p95_ms": 38,
+      "p99_ms": 75,
+      "samples": 100
+    },
+    "audit_events_query": {
+      "query": "audit_events_query",
+      "p50_ms": 6,
+      "p95_ms": 18,
+      "p99_ms": 40,
+      "samples": 100
+    },
+    "retirement_lookup_query": {
+      "query": "retirement_lookup_query",
+      "p50_ms": 5,
+      "p95_ms": 14,
+      "p99_ms": 30,
+      "samples": 100
+    }
+  }
+}

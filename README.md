@@ -264,6 +264,7 @@ carbonledger/
 │   └── prisma/
 │       └── schema.prisma  # Prisma database schema — all PostgreSQL models and relations
 ├── components/       # Shared UI components used outside the Next.js app directory
+├── circuits/         # Circom ZK circuits (private retirement certificates, BLS12-381 Groth16)
 ├── contracts/        # Soroban smart contracts written in Rust
 │   └── Cargo.toml    # Rust workspace manifest for all Soroban contract crates
 ├── docs/             # Project documentation: guides, ADRs, runbooks, API references
@@ -273,7 +274,7 @@ carbonledger/
 ├── load-tests/       # k6 load test scripts and results for the marketplace API
 ├── logging/          # Observability stack configuration: Loki, Promtail, Grafana
 ├── oracle/           # Python oracle bridge: verification listener, price feeds, satellite monitor
-├── scripts/          # Developer utility scripts: setup, deploy, test runners, DB backup
+├── scripts/          # Developer utility scripts: setup, deploy, test runners, DB backup, ZK prove
 ├── tests/            # Cross-contract and upgrade path integration tests (Rust)
 ├── .env.example      # Environment variable template — copy to .env before running locally
 ├── docker-compose.yml  # Local development stack definition — starts all services with one command
@@ -896,3 +897,16 @@ MIT License — see [LICENSE](./LICENSE) for details.
 [Website](#) · [Audit Explorer](#) · [Twitter](#) · [Discord](#)
 
 </div>
+
+## Integration Tests
+
+### Running Integration Tests
+
+To run all integration tests:
+
+```bash
+# Run all tests
+./scripts/test-all.sh
+
+# Run only integration tests
+cargo test --test lifecycle_integration_test -- --nocapture

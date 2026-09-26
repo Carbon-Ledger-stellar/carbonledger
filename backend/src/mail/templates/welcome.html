@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f6; margin: 0; padding: 40px; }
+        .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+        .header { background: linear-gradient(135deg, #00b894, #00cec9); padding: 48px 40px; text-align: center; color: white; }
+        .header h1 { margin: 0; font-size: 28px; }
+        .header p { margin: 8px 0 0; opacity: 0.9; font-size: 16px; }
+        .content { padding: 40px; line-height: 1.7; color: #2d3436; }
+        .steps { background: #f9fffe; border-left: 4px solid #00b894; padding: 20px 24px; border-radius: 0 8px 8px 0; margin: 24px 0; }
+        .steps h3 { margin: 0 0 12px; color: #00b894; }
+        .steps ol { margin: 0; padding-left: 20px; }
+        .steps li { margin-bottom: 8px; }
+        .btn { display: inline-block; padding: 14px 28px; background: #00b894; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 24px; font-size: 15px; }
+        .key-box { background: #f0f0f0; padding: 10px 16px; border-radius: 6px; font-family: monospace; font-size: 12px; word-break: break-all; margin: 12px 0; }
+        .footer { padding: 24px; text-align: center; font-size: 12px; color: #b2bec3; border-top: 1px solid #f0f0f0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Welcome to CarbonLedger 🌿</h1>
+            <p>Verified carbon credits. Permanent retirement. Full provenance.</p>
+        </div>
+        <div class="content">
+            <p>You're now part of the CarbonLedger ecosystem — the most transparent carbon credit marketplace on Stellar.</p>
+            <p>Your wallet address has been registered:</p>
+            <div class="key-box">{{publicKey}}</div>
+
+            <div class="steps">
+                <h3>Get started in 3 steps</h3>
+                <ol>
+                    <li><strong>Browse the marketplace</strong> — find verified carbon projects by methodology, vintage year, or country.</li>
+                    <li><strong>Purchase credits</strong> — buy individual or bulk credits with USDC.</li>
+                    <li><strong>Retire &amp; certify</strong> — retire credits on-chain and receive a permanent, verifiable certificate.</li>
+                </ol>
+            </div>
+
+            <p>Every credit on CarbonLedger has a unique serial number, making double-counting mathematically impossible. Every retirement is permanently recorded on the Stellar blockchain.</p>
+
+            <a href="{{dashboardLink}}" class="btn">Go to Dashboard</a>
+        </div>
+        <div class="footer">
+            <p>&copy; 2026 CarbonLedger. All rights reserved.</p>
+            <p><a href="{{unsubscribe_link}}">Unsubscribe</a> from non-critical notifications.</p>
+        </div>
+    </div>
+</body>
+</html>

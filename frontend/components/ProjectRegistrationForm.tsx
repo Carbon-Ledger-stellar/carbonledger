@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { colors, borderRadius, shadows } from "../styles/design-system";
+import { useFormValidation, ValidationRule } from "../hooks/useFormValidation";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api/v1";
 
@@ -37,6 +38,42 @@ const EMPTY: FormState = {
 
 const STEPS = ["Project Metadata", "Documentation", "Review & Submit"];
 
+// ── Validation rules ──────────────────────────────────────────────────────────
+
+const FIELD_RULES: Record<keyof FormState, ValidationRule[]> = {
+  name: [{ type: "required", message: "Project name is required" }],
+  methodology: [{ type: "required", message: "Please select a methodology" }],
+  projectType: [{ type: "required", message: "Please select a project type" }],
+  country: [{ type: "required", message: "Please select a country" }],
+  latitude: [
+    { type: "required", message: "Latitude is required" },
+    { type: "numeric", message: "Latitude must be between -90 and 90", min: -90, max: 90 },
+  ],
+  longitude: [
+    { type: "required", message: "Longitude is required" },
+    { type: "numeric", message: "Longitude must be between -180 and 180", min: -180, max: 180 },
+  ],
+  vintageYear: [
+    { type: "required", message: "Please select a vintage year" },
+    { type: "numeric", message: "Vintage year must be a number" },
+  ],
+  description: [{ type: "required", message: "Project description is required" }],
+  contactEmail: [
+    { type: "required", message: "Contact email is required" },
+    { type: "email", message: "Please enter a valid email address" },
+  ],
+  developerPublicKey: [{ type: "required", message: "Developer Stellar public key is required" }],
+  documentsCid: [
+    { type: "custom", message: "", validate: (value: string) => {
+      if (!value) return null; // optional when file is uploaded
+      const isUrl = /^https?:\/\/[^\s]+\.[^\s]+$/i.test(value);
+      const isCid = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-zA-Z0-9]{46,})$/.test(value);
+      if (!isUrl && !isCid) return "Provide a valid IPFS CID or metadata URL";
+      return null;
+    } },
+  ],
+};
+
 export default function ProjectRegistrationForm() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>(EMPTY);
@@ -44,115 +81,52 @@ export default function ProjectRegistrationForm() {
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
-  const [errors, setErrors] = useState<Partial<FormState>>({});
+
+  const {
+    errors,
+    isValid,
+    validateField,
+    validateFieldDebounced,
+    validateForm,
+    clearFieldError,
+    clearErrors,
+    setFieldError,
+  } = useFormValidation<FormState>({ fields: FIELD_RULES });
 
   const set = (k: keyof FormState) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       const value = e.target.value;
       setForm(f => {
         const updated = { ...f, [k]: value };
-        // Clear error for this field when user starts typing
-        if (errors[k]) {
-          setErrors(prev => {
-            const next = { ...prev };
-            delete next[k];
-            return next;
-          });
-        }
         return updated;
       });
+      // Clear error immediately when user types
+      if (errors[k]) clearFieldError(k);
+      // Debounced full validation
+      validateFieldDebounced(k, value);
     };
 
-  function validateField(field: keyof FormState, value: string): string | null {
-    switch (field) {
-      case 'name':
-        return !value.trim() ? 'Project name is required' : null;
-      case 'methodology':
-        return !value ? 'Please select a methodology' : null;
-      case 'projectType':
-        return !value ? 'Please select a project type' : null;
-      case 'country':
-        return !value ? 'Please select a country' : null;
-      case 'latitude': {
-        const lat = Number(value);
-        if (!value || isNaN(lat)) return 'Latitude is required';
-        if (lat < -90 || lat > 90) return 'Latitude must be between -90 and 90';
-        return null;
-      }
-      case 'longitude': {
-        const lng = Number(value);
-        if (!value || isNaN(lng)) return 'Longitude is required';
-        if (lng < -180 || lng > 180) return 'Longitude must be between -180 and 180';
-        return null;
-      }
-      case 'vintageYear':
-        return !value || isNaN(Number(value)) ? 'Please select a vintage year' : null;
-      case 'description':
-        return !value.trim() ? 'Project description is required' : null;
-      case 'contactEmail': {
-        if (!value) return 'Contact email is required';
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return 'Please enter a valid email address';
-        return null;
-      }
-      case 'developerPublicKey':
-        return !value.trim() ? 'Developer Stellar public key is required' : null;
-      case 'documentsCid':
-        return !value.trim() && !docFile ? 'Upload a document or provide a CID' : null;
-      default:
-        return null;
-    }
+  function handleBlur(field: keyof FormState) {
+    validateField(field, form[field]);
   }
 
-  function handleBlur(field: keyof FormState) {
-    const value = form[field];
-    const error = validateField(field, value);
-    if (error) {
-      setErrors(prev => ({ ...prev, [field]: error }));
-    }
-  }
+  // Per-step validity: a step is valid when none of its fields has an error.
+  const step0FieldsValid =
+    !errors.name && !errors.methodology && !errors.projectType && !errors.country &&
+    !errors.latitude && !errors.longitude && !errors.vintageYear &&
+    !errors.description && !errors.contactEmail && !errors.developerPublicKey;
+  const step1FieldsValid = !errors.documentsCid;
 
   function validateStep0(): boolean {
-    const e: Partial<FormState> = {};
-    const nameError = validateField('name', form.name);
-    if (nameError) e.name = nameError;
-    
-    const methodologyError = validateField('methodology', form.methodology);
-    if (methodologyError) e.methodology = methodologyError;
-    
-    const projectTypeError = validateField('projectType', form.projectType);
-    if (projectTypeError) e.projectType = projectTypeError;
-    
-    const countryError = validateField('country', form.country);
-    if (countryError) e.country = countryError;
-    
-    const latError = validateField('latitude', form.latitude);
-    if (latError) e.latitude = latError;
-    
-    const lngError = validateField('longitude', form.longitude);
-    if (lngError) e.longitude = lngError;
-    
-    const yearError = validateField('vintageYear', form.vintageYear);
-    if (yearError) e.vintageYear = yearError;
-    
-    const descError = validateField('description', form.description);
-    if (descError) e.description = descError;
-    
-    const emailError = validateField('contactEmail', form.contactEmail);
-    if (emailError) e.contactEmail = emailError;
-    
-    const keyError = validateField('developerPublicKey', form.developerPublicKey);
-    if (keyError) e.developerPublicKey = keyError;
-    
-    setErrors(e);
-    return Object.keys(e).length === 0;
+    const stepFields = ["name", "methodology", "projectType", "country", "latitude", "longitude", "vintageYear", "description", "contactEmail", "developerPublicKey"] as (keyof FormState)[];
+    const values = stepFields.reduce((acc, f) => ({ ...acc, [f]: form[f] }), {} as Record<keyof FormState, unknown>);
+    return validateForm(values);
   }
 
   function validateStep1(): boolean {
-    const e: Partial<FormState> = {};
-    const docError = validateField('documentsCid', form.documentsCid);
-    if (docError) e.documentsCid = docError;
-    setErrors(e);
-    return Object.keys(e).length === 0;
+    const stepFields = ["documentsCid"] as (keyof FormState)[];
+    const values = stepFields.reduce((acc, f) => ({ ...acc, [f]: form[f] }), {} as Record<keyof FormState, unknown>);
+    return validateForm(values);
   }
 
   async function uploadToIPFS() {
@@ -166,7 +140,7 @@ export default function ProjectRegistrationForm() {
       const { cid } = await res.json();
       setForm(f => ({ ...f, documentsCid: cid }));
     } catch {
-      setErrors(e => ({ ...e, documentsCid: "Upload failed — paste CID manually" }));
+      setFieldError("documentsCid", "Upload failed — paste CID manually");
     } finally {
       setUploading(false);
     }
@@ -174,8 +148,15 @@ export default function ProjectRegistrationForm() {
 
   function advance() {
     if (step === 0 && !validateStep0()) return;
-    if (step === 1 && !validateStep1()) return;
-    setErrors({});
+    if (step === 1) {
+      // Require either a file upload or a manually entered CID
+      if (!form.documentsCid && !docFile) {
+        setFieldError("documentsCid", "Upload a document or provide a CID");
+        return;
+      }
+      if (!validateStep1()) return;
+    }
+    clearErrors();
     setStep(s => s + 1);
   }
 
@@ -248,9 +229,10 @@ export default function ProjectRegistrationForm() {
           <Field label="Project Name" error={errors.name}>
             <input style={inputStyle(!!errors.name)} value={form.name} onChange={set("name")}
               onBlur={() => handleBlur('name')}
+              autoComplete="organization"
               placeholder="Amazon Reforestation Initiative" />
           </Field>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Methodology" error={errors.methodology}>
               <select style={inputStyle(!!errors.methodology)} value={form.methodology} onChange={set("methodology")}
                 onBlur={() => handleBlur('methodology')}>
@@ -266,7 +248,7 @@ export default function ProjectRegistrationForm() {
               </select>
             </Field>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Country" error={errors.country}>
               <select style={inputStyle(!!errors.country)} value={form.country} onChange={set("country")}
                 onBlur={() => handleBlur('country')}>
@@ -282,16 +264,16 @@ export default function ProjectRegistrationForm() {
               </select>
             </Field>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <Field label="Latitude" error={errors.latitude}>
               <input style={inputStyle(!!errors.latitude)} value={form.latitude} onChange={set("latitude")}
                 onBlur={() => handleBlur('latitude')}
-                placeholder="-3.4653" type="number" step="any" />
+                placeholder="-3.4653" type="number" inputMode="decimal" step="any" />
             </Field>
             <Field label="Longitude" error={errors.longitude}>
               <input style={inputStyle(!!errors.longitude)} value={form.longitude} onChange={set("longitude")}
                 onBlur={() => handleBlur('longitude')}
-                placeholder="-62.2159" type="number" step="any" />
+                placeholder="-62.2159" type="number" inputMode="decimal" step="any" />
             </Field>
           </div>
           <Field label="Description" error={errors.description}>
@@ -302,16 +284,25 @@ export default function ProjectRegistrationForm() {
           </Field>
           <Field label="Contact Email" error={errors.contactEmail}>
             <input style={inputStyle(!!errors.contactEmail)} type="email"
+              inputMode="email"
+              autoComplete="email"
               value={form.contactEmail} onChange={set("contactEmail")}
               onBlur={() => handleBlur('contactEmail')}
               placeholder="you@example.com" />
           </Field>
           <Field label="Developer Stellar Public Key" error={errors.developerPublicKey}>
             <input style={inputStyle(!!errors.developerPublicKey)}
+              autoComplete="off"
+              inputMode="text"
               value={form.developerPublicKey} onChange={set("developerPublicKey")}
               onBlur={() => handleBlur('developerPublicKey')}
               placeholder="G..." />
           </Field>
+          <style>{`
+            @media (max-width: 639px) {
+              .prf-grid-2 { grid-template-columns: 1fr !important; }
+            }
+          `}</style>
         </div>
       )}
 
@@ -331,7 +322,7 @@ export default function ProjectRegistrationForm() {
             }}>
               <input type="file" accept=".pdf" id="doc-upload"
                 style={{ display: "none" }}
-                onChange={e => { setDocFile(e.target.files?.[0] ?? null); setErrors({}); }} />
+                onChange={e => { setDocFile(e.target.files?.[0] ?? null); clearErrors(); }} />
               <label htmlFor="doc-upload" style={{ cursor: "pointer" }}>
                 {docFile ? (
                   <span style={{ color: colors.primary[700], fontWeight: 600 }}>📄 {docFile.name}</span>
@@ -360,6 +351,7 @@ export default function ProjectRegistrationForm() {
           <Field label="IPFS CID" error={!docFile ? errors.documentsCid : undefined}>
             <input style={inputStyle(!!errors.documentsCid && !docFile)}
               value={form.documentsCid} onChange={set("documentsCid")}
+              onBlur={() => handleBlur("documentsCid")}
               placeholder="Qm... or bafy..." />
           </Field>
         </div>
@@ -419,12 +411,14 @@ export default function ProjectRegistrationForm() {
           </a>
         )}
         {step < 2 ? (
-          <button type="button" onClick={advance} style={btnStyle(colors.primary[600])}>
+          <button type="button" onClick={advance}
+            disabled={step === 0 ? !step0FieldsValid : !step1FieldsValid}
+            style={btnStyle((step === 0 ? step0FieldsValid : step1FieldsValid) ? colors.primary[600] : colors.neutral[400])}>
             Next →
           </button>
         ) : (
-          <button type="button" onClick={submit} disabled={status === "loading"}
-            style={btnStyle(status === "loading" ? colors.neutral[400] : colors.primary[600])}>
+          <button type="button" onClick={submit} disabled={status === "loading" || !isValid}
+            style={btnStyle(status === "loading" || !isValid ? colors.neutral[400] : colors.primary[600])}>
             {status === "loading" ? "Submitting..." : "Submit Project"}
           </button>
         )}
@@ -453,7 +447,7 @@ const cardStyle: React.CSSProperties = {
   background: colors.surface,
   border: `1px solid ${colors.neutral[200]}`,
   borderRadius: borderRadius.xl,
-  padding: "2rem",
+  padding: "1.5rem 1rem", // smaller padding on mobile (#1035)
   boxShadow: shadows.md,
   maxWidth: 640,
   margin: "0 auto",
@@ -468,10 +462,17 @@ const headingStyle: React.CSSProperties = {
 };
 
 const inputStyle = (hasError: boolean): React.CSSProperties => ({
-  width: "100%", padding: "0.5rem 0.75rem", boxSizing: "border-box",
+  width: "100%",
+  padding: "0.6rem 0.75rem",
+  boxSizing: "border-box",
   border: `1px solid ${hasError ? colors.suspended.border : colors.neutral[300]}`,
-  borderRadius: borderRadius.md, fontSize: "0.875rem", color: colors.neutral[800],
-  background: colors.surface, outline: "none",
+  borderRadius: borderRadius.md,
+  // 1rem = 16px: prevents iOS Safari auto-zoom on focus (#1035)
+  fontSize: "1rem",
+  color: colors.neutral[800],
+  background: colors.surface,
+  outline: "none",
+  minHeight: "48px", // 48px touch target (#1035)
 });
 
 const btnStyle = (bg: string): React.CSSProperties => ({

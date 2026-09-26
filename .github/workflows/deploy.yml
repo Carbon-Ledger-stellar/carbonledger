@@ -1,0 +1,216 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOCKER_REGISTRY: ghcr.io
+  DOCKER_IMAGE_BACKEND: ${{ github.repository }}/backend
+  DOCKER_IMAGE_FRONTEND: ${{ github.repository }}/frontend
+  DOCKER_IMAGE_CONTRACTS: ${{ github.repository }}/contracts
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Run contract tests
+        run: |
+          cd contracts
+          cargo test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      backend_image: ${{ steps.backend.outputs.image }}
+      frontend_image: ${{ steps.frontend.outputs.image }}
+      contracts_image: ${{ steps.contracts.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        id: backend
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: docker/backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        id: frontend
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: docker/frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push contracts
+        id: contracts
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: docker/contracts/Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_CONTRACTS }}:${{ github.sha }}
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_CONTRACTS }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  migrate:
+    name: Database Migrations
+    runs-on: ubuntu-latest
+    needs: build
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run migrations
+        run: npm run migrate
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, migrate]
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.STAGING_KUBECONFIG }}" > $HOME/.kube/config
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/backend backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
+          kubectl set image deployment/frontend frontend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
+          kubectl rollout status deployment/backend
+          kubectl rollout status deployment/frontend
+
+      - name: Verify deployment
+        run: |
+          curl -f https://staging.carbonledger.com/health || exit 1
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: production
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl set image deployment/backend backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
+          kubectl set image deployment/frontend frontend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
+          kubectl rollout status deployment/backend
+          kubectl rollout status deployment/frontend
+
+      - name: Verify deployment
+        run: |
+          curl -f https://carbonledger.com/health || exit 1
+
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: failure()
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
+
+      - name: Rollback deployment
+        run: |
+          kubectl rollout undo deployment/backend
+          kubectl rollout undo deployment/frontend
+          kubectl rollout status deployment/backend
+          kubectl rollout status deployment/frontend
+
+      - name: Notify rollback
+        run: |
+          echo "⚠️ Production deployment rolled back due to failure"
+          # Send notification to Slack/Discord

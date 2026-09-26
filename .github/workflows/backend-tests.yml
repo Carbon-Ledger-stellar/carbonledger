@@ -46,6 +46,10 @@ jobs:
           cp .env.test .env
           echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5433/carbonledger_test?schema=public" >> .env
 
+      - name: Lint Prisma migrations
+        working-directory: ./backend
+        run: npm run migrate:lint
+
       - name: Run Prisma migrations
         working-directory: ./backend
         run: npx prisma migrate deploy
@@ -58,7 +62,7 @@ jobs:
 
       - name: Run integration tests
         working-directory: ./backend
-        run: npm run test:e2e
+        run: npx jest --config ./test/jest-e2e.json --runInBand
         env:
           DATABASE_URL: postgresql://testuser:testpass@localhost:5433/carbonledger_test?schema=public
           JWT_SECRET: test-secret-for-ci

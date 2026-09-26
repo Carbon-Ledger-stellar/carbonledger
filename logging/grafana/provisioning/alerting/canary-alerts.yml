@@ -1,0 +1,226 @@
+apiVersion: 1
+
+groups:
+  - orgId:    1
+    name:     carbonledger-canary-alerts
+    folder:   CarbonLedger
+    interval: 1m
+    rules:
+
+      # ── credit-lookup canary — 2 consecutive failures ─────────────────────
+      - uid:     canary-credit-lookup-failure
+        title:   "Canary: credit-lookup failing (≥2 consecutive)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600   # look back 10 min to catch 2 × 5-min runs
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                max_over_time(
+                  {service="carbonledger-canary"} | json
+                  | checkName="credit-lookup"
+                  | unwrap consecutiveFailures [10m]
+                )
+              queryType: instant
+
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [2]
+                    type: gte
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          0s    # fire immediately when condition met (2nd run)
+        annotations:
+          summary:     "Canary check credit-lookup has failed {{ $value }} consecutive times"
+          description: |
+            The read-only credit lookup canary check has failed 2 or more consecutive
+            times against {{ $labels.environment }}. This may indicate:
+            - The /projects API endpoint is down or returning errors
+            - Database connectivity issues in the backend
+            - Deployment regression breaking the projects route
+
+            See runbook: https://github.com/YOUR_ORG/carbonledger/blob/main/docs/runbooks/synthetic-monitoring.md
+          runbook_url:  "https://github.com/YOUR_ORG/carbonledger/blob/main/docs/runbooks/synthetic-monitoring.md"
+        labels:
+          severity:   critical
+          team:       carbonledger
+          check_name: credit-lookup
+          alert_type: canary
+
+      # ── marketplace-listings canary — 2 consecutive failures ─────────────
+      - uid:     canary-marketplace-listings-failure
+        title:   "Canary: marketplace-listings failing (≥2 consecutive)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                max_over_time(
+                  {service="carbonledger-canary"} | json
+                  | checkName="marketplace-listings"
+                  | unwrap consecutiveFailures [10m]
+                )
+              queryType: instant
+
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [2]
+                    type: gte
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          0s
+        annotations:
+          summary:     "Canary check marketplace-listings has failed {{ $value }} consecutive times"
+          description: |
+            The marketplace listings canary check has failed 2 or more consecutive
+            times. This may indicate:
+            - The /marketplace/listings endpoint is down
+            - Redis cache service unreachable (listings use Redis cache)
+            - Database connectivity issues
+
+            See runbook: https://github.com/YOUR_ORG/carbonledger/blob/main/docs/runbooks/synthetic-monitoring.md
+          runbook_url:  "https://github.com/YOUR_ORG/carbonledger/blob/main/docs/runbooks/synthetic-monitoring.md"
+        labels:
+          severity:   critical
+          team:       carbonledger
+          check_name: marketplace-listings
+          alert_type: canary
+
+      # ── simulate-transaction canary — 2 consecutive failures ─────────────
+      - uid:     canary-simulate-transaction-failure
+        title:   "Canary: simulate-transaction (Soroban RPC) failing (≥2 consecutive)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                max_over_time(
+                  {service="carbonledger-canary"} | json
+                  | checkName="simulate-transaction"
+                  | unwrap consecutiveFailures [10m]
+                )
+              queryType: instant
+
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: last
+
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [2]
+                    type: gte
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          0s
+        annotations:
+          summary:     "Canary check simulate-transaction has failed {{ $value }} consecutive times"
+          description: |
+            The Soroban RPC health check canary has failed 2 or more consecutive times.
+            This may indicate:
+            - The Soroban RPC node is unreachable or unhealthy
+            - Network partition between canary runner and Soroban RPC
+            - Stellar network issues affecting the RPC endpoint
+
+            See runbook: https://github.com/YOUR_ORG/carbonledger/blob/main/docs/runbooks/synthetic-monitoring.md
+          runbook_url:  "https://github.com/YOUR_ORG/carbonledger/blob/main/docs/runbooks/synthetic-monitoring.md"
+        labels:
+          severity:   warning
+          team:       carbonledger
+          check_name: simulate-transaction
+          alert_type: canary
+
+      # ── High canary latency alert ─────────────────────────────────────────
+      - uid:     canary-high-latency
+        title:   "Canary: p95 latency exceeds 5s for any check"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to:   0
+            datasourceUid: loki
+            model:
+              expr: |
+                max by (checkName) (
+                  quantile_over_time(0.95,
+                    {service="carbonledger-canary"} | json | unwrap latencyMs [10m]
+                  )
+                )
+              queryType: instant
+
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: max
+
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    params: [5000]
+                    type: gt
+
+        noDataState:  NoData
+        execErrState: Alerting
+        for:          5m
+        annotations:
+          summary:     "Canary p95 latency is {{ $value }}ms — exceeds 5s threshold"
+          description: |
+            One or more canary checks is experiencing high latency (p95 > 5s).
+            This indicates degraded API performance even if checks are not failing.
+          runbook_url:  "https://github.com/YOUR_ORG/carbonledger/blob/main/docs/runbooks/synthetic-monitoring.md"
+        labels:
+          severity:   warning
+          team:       carbonledger
+          alert_type: canary-latency

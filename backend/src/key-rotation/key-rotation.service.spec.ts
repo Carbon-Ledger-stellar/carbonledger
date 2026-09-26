@@ -50,6 +50,7 @@ describe('KeyRotationService', () => {
       newOraclePublicKey: 'GABC123...',
       newOracleSecretKey: 'SABC123...',
       reason: 'Test rotation',
+      scheduledAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     };
 
     it('should initiate oracle rotation successfully', async () => {
@@ -121,7 +122,7 @@ describe('KeyRotationService', () => {
 
   describe('initiateJWTRotation', () => {
     const validJWTRequest = {
-      newJWTSecret: 'new-secret-key-32-chars-minimum',
+      newJWTSecret: 'new-secret-key-32-chars-minimum!',
       reason: 'Test JWT rotation',
       transitionPeriodHours: 24,
     };
@@ -137,6 +138,11 @@ describe('KeyRotationService', () => {
       };
 
       mockPrismaService.keyRotation.create.mockResolvedValue(mockRotation);
+      mockPrismaService.keyRotation.findUnique.mockResolvedValue(mockRotation);
+      mockPrismaService.keyRotation.update.mockResolvedValue({
+        ...mockRotation,
+        status: 'completed',
+      });
       mockConfigService.get.mockReturnValue('old-secret');
 
       const result = await service.initiateJWTRotation(validJWTRequest);

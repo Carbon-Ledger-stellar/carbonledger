@@ -8,18 +8,19 @@
  *  - Export endpoints leak all retirements regardless of caller identity
  */
 
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
+import { INestApplication } from "@nestjs/common";
+import request from "supertest";
 import * as jwt from "jsonwebtoken";
 
-import { AppModule } from "../app.module";
+import { createSecurityTestApp } from "./create-security-test-app";
 import { PrismaService } from "../prisma.service";
 
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
 
+import { signSecurityToken } from "./security-test-auth";
+
 function corpToken(publicKey: string) {
-  return jwt.sign({ sub: publicKey, role: "corporation" }, SECRET, { expiresIn: "1h" });
+  return signSecurityToken(publicKey, "corporation");
 }
 
 describe("IDOR (OWASP API1)", () => {
@@ -35,14 +36,7 @@ describe("IDOR (OWASP API1)", () => {
   const RETIREMENT_ID = "ret-idor-test-001";
 
   beforeAll(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
-    await app.init();
-
+    app = await createSecurityTestApp({ whitelist: true });
     prisma = app.get(PrismaService);
 
     // Seed minimal data: project → batch → listing + retirement
@@ -127,13 +121,13 @@ describe("IDOR (OWASP API1)", () => {
     // Any authenticated user can delist any listing.
     // Fix: compare listing.seller against req.user.publicKey.
     request(app.getHttpServer())
-      .delete(`/marketplace/${LISTING_ID}`)
+      .delete(`/api/v1/marketplace/listings/${LISTING_ID}`)
       .set("Authorization", `Bearer ${corpToken(ATTACKER_KEY)}`)
       .expect(403));
 
   it("owner can delist their own listing → 200", () =>
     request(app.getHttpServer())
-      .delete(`/marketplace/${LISTING_ID}`)
+      .delete(`/api/v1/marketplace/listings/${LISTING_ID}`)
       .set("Authorization", `Bearer ${corpToken(SELLER_KEY)}`)
       .expect(200));
 
@@ -144,24 +138,24 @@ describe("IDOR (OWASP API1)", () => {
     // is publicly accessible without any token.
     // Fix: add @UseGuards(AuthGuard('jwt')) and scope to req.user.publicKey.
     request(app.getHttpServer())
-      .get("/retirements")
+      .get("/api/v1/retirements")
       .expect(401));
 
   it("GET /retirements/:id requires authentication → 401", () =>
     request(app.getHttpServer())
-      .get(`/retirements/${RETIREMENT_ID}`)
+      .get(`/api/v1/retirements/${RETIREMENT_ID}`)
       .expect(401));
 
   it("corporation cannot read another corporation's retirement → 403", () =>
     // After auth is added, attacker should get 403 for a retirement they don't own.
     request(app.getHttpServer())
-      .get(`/retirements/${RETIREMENT_ID}`)
+      .get(`/api/v1/retirements/${RETIREMENT_ID}`)
       .set("Authorization", `Bearer ${corpToken(ATTACKER_KEY)}`)
       .expect(403));
 
   it("owner can read their own retirement → 200", () =>
     request(app.getHttpServer())
-      .get(`/retirements/${RETIREMENT_ID}`)
+      .get(`/api/v1/retirements/${RETIREMENT_ID}`)
       .set("Authorization", `Bearer ${corpToken(SELLER_KEY)}`)
       .expect(200));
 
@@ -169,7 +163,7 @@ describe("IDOR (OWASP API1)", () => {
 
   it("GET /retirements/export/csv scopes to caller's retirements only", async () => {
     const res = await request(app.getHttpServer())
-      .get("/retirements/export/csv")
+      .get("/api/v1/retirements/export/csv")
       .set("Authorization", `Bearer ${corpToken(ATTACKER_KEY)}`)
       .expect(200);
 

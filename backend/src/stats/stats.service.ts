@@ -1,5 +1,14 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { PrismaService } from "../prisma.service";
+import { ApiCacheService } from "../cache/api-cache.service";
+import {
+  STATS_CACHE_KEY,
+  STATS_CACHE_TTL_SECONDS,
+  STATS_AGGREGATE_CACHE_KEY,
+  STATS_AGGREGATE_CACHE_TTL_SECONDS,
+  statsLeaderboardCacheKey,
+  STATS_LEADERBOARD_CACHE_TTL_SECONDS,
+} from "../cache/cache.constants";
 
 export interface LeaderboardEntry {
   rank: number;
@@ -16,9 +25,24 @@ export interface AggregateStats {
 
 @Injectable()
 export class StatsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly apiCache?: ApiCacheService,
+  ) {}
 
   async getLeaderboard(year?: number): Promise<LeaderboardEntry[]> {
+    if (this.apiCache) {
+      return this.apiCache.getOrSet(
+        statsLeaderboardCacheKey(year),
+        STATS_LEADERBOARD_CACHE_TTL_SECONDS,
+        'stats:leaderboard',
+        () => this._getLeaderboardDb(year),
+      );
+    }
+    return this._getLeaderboardDb(year);
+  }
+
+  private async _getLeaderboardDb(year?: number): Promise<LeaderboardEntry[]> {
     const where = year
       ? { retiredAt: { gte: new Date(`${year}-01-01`), lt: new Date(`${year + 1}-01-01`) } }
       : {};
@@ -39,6 +63,18 @@ export class StatsService {
   }
 
   async getPlatformStats() {
+    if (this.apiCache) {
+      return this.apiCache.getOrSet(
+        STATS_CACHE_KEY,
+        STATS_CACHE_TTL_SECONDS,
+        'stats:platform',
+        () => this._getPlatformStatsDb(),
+      );
+    }
+    return this._getPlatformStatsDb();
+  }
+
+  private async _getPlatformStatsDb() {
     const [projects, retirements, listings] = await Promise.all([
       this.prisma.carbonProject.aggregate({
         _sum: { totalCreditsIssued: true, totalCreditsRetired: true },
@@ -56,12 +92,24 @@ export class StatsService {
       totalCreditsIssued:  projects._sum.totalCreditsIssued  ?? 0,
       totalCreditsRetired: projects._sum.totalCreditsRetired ?? 0,
       activeProjects:      projects._count._all,
-      marketplaceVolume:   "0", // Would sum completed purchase amounts
+      marketplaceVolume:   "0",
     };
   }
 
   async getAggregateStats(): Promise<AggregateStats> {
-    const [retirements, listings, projects, soldListings] = await Promise.all([
+    if (this.apiCache) {
+      return this.apiCache.getOrSet(
+        STATS_AGGREGATE_CACHE_KEY,
+        STATS_AGGREGATE_CACHE_TTL_SECONDS,
+        'stats:aggregate',
+        () => this._getAggregateStatsDb(),
+      );
+    }
+    return this._getAggregateStatsDb();
+  }
+
+  private async _getAggregateStatsDb(): Promise<AggregateStats> {
+    const [retirements, listings, projects, volumeResult] = await Promise.all([
       this.prisma.retirementRecord.aggregate({
         _sum: { amount: true },
       }),
@@ -71,23 +119,14 @@ export class StatsService {
       this.prisma.carbonProject.count({
         where: { status: "Verified" },
       }),
-      this.prisma.marketListing.findMany({
-        where: { status: "Sold" },
-        select: {
-          pricePerCredit: true,
-          amountAvailable: true,
-        },
-      }),
+      this.prisma.$queryRaw<[{ total: string | null }]>`
+        SELECT SUM(CAST("pricePerCredit" AS numeric) * "amountAvailable")::text AS total
+        FROM "MarketListing"
+        WHERE status = 'Sold'
+      `,
     ]);
 
-    // Calculate USDC volume from sold listings
-    // Note: amountAvailable represents the original amount since it's not updated on sale
-    // In a real implementation, you'd track actual purchase amounts in a transaction table
-    const totalUsdcVolume = soldListings.reduce((sum, listing) => {
-      const price = parseFloat(listing.pricePerCredit);
-      const amount = parseFloat(listing.amountAvailable.toString());
-      return sum + (price * amount);
-    }, 0);
+    const totalUsdcVolume = parseFloat(volumeResult[0]?.total ?? "0") || 0;
 
     return {
       total_co2_retired: retirements._sum.amount?.toNumber() ?? 0,

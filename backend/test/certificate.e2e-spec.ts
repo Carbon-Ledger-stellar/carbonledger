@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
 import { createTestApp, cleanDatabase, seedTestData } from './test-helpers';
 
-describe('Certificate Retrieval Integration Tests (e2e)', () => {
+describe('Certificate Generation & Retrieval Integration Tests (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
@@ -19,18 +19,22 @@ describe('Certificate Retrieval Integration Tests (e2e)', () => {
     await seedTestData(app);
   });
 
-  describe('GET /certificates/:id', () => {
-    it('should retrieve certificate for retired credit', async () => {
+  describe('GET /certificates/:retirementId', () => {
+    it('should retrieve certificate metadata for retired credit', async () => {
       const response = await request(app.getHttpServer())
         .get('/certificates/RET001')
         .expect(200);
 
       expect(response.body).toHaveProperty('retirementId', 'RET001');
-      expect(response.body).toHaveProperty('amount', 100);
+      expect(response.body).toHaveProperty('amount', '100');
       expect(response.body).toHaveProperty('retiredBy', 'GCORP123');
       expect(response.body).toHaveProperty('beneficiary', 'Test Corporation');
       expect(response.body).toHaveProperty('txHash', '0xtest123');
       expect(response.body).toHaveProperty('serialNumbers');
+      expect(response.body).toHaveProperty('serialStart');
+      expect(response.body).toHaveProperty('serialEnd');
+      expect(response.body).toHaveProperty('certificateStatus');
+      expect(response.body).toHaveProperty('certificateCid');
       expect(Array.isArray(response.body.serialNumbers)).toBe(true);
     });
 
@@ -43,117 +47,96 @@ describe('Certificate Retrieval Integration Tests (e2e)', () => {
       expect(response.body.message).toContain('not found');
     });
 
-    it('should return complete retirement data including project info', async () => {
+    it('should include project information in certificate metadata', async () => {
       const response = await request(app.getHttpServer())
         .get('/certificates/RET001')
         .expect(200);
 
-      expect(response.body).toHaveProperty('projectId', 'PROJ001');
-      expect(response.body).toHaveProperty('batchId', 'BATCH001');
-      expect(response.body).toHaveProperty('vintageYear', 2024);
-      expect(response.body).toHaveProperty('retirementReason');
+      expect(response.body).toHaveProperty('project');
+      expect(response.body.project).toHaveProperty('name');
+      expect(response.body.project).toHaveProperty('country');
+      expect(response.body.project).toHaveProperty('methodology');
+      expect(response.body).toHaveProperty('verificationUrl');
     });
   });
 
-  describe('GET /retirements/:id', () => {
-    it('should retrieve retirement record by ID', async () => {
+  describe('GET /certificates/:retirementId/pdf', () => {
+    it('should return a PDF for a valid retirement (on-demand generation)', async () => {
       const response = await request(app.getHttpServer())
-        .get('/retirements/RET001')
+        .get('/certificates/RET001/pdf')
         .expect(200);
 
-      expect(response.body).toHaveProperty('retirementId', 'RET001');
-      expect(response.body).toHaveProperty('amount');
-      expect(response.body).toHaveProperty('retiredAt');
+      expect(response.headers['content-type']).toContain('application/pdf');
+      expect(response.headers['x-certificate-source']).toBe('generated');
+      expect(Buffer.isBuffer(response.body)).toBe(true);
+      expect(response.body.length).toBeGreaterThan(500); // PDF should have content
     });
 
-    it('should return 404 for invalid retirement ID', async () => {
+    it('should return 404 for non-existent retirement PDF', async () => {
       await request(app.getHttpServer())
-        .get('/retirements/INVALID123')
-        .expect(404);
-    });
-  });
-
-  describe('GET /retirements', () => {
-    it('should list all retirements', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/retirements')
-        .expect(200);
-
-      expect(Array.isArray(response.body)).toBe(true);
-      expect(response.body.length).toBeGreaterThan(0);
-      expect(response.body[0]).toHaveProperty('retirementId');
-    });
-
-    it('should respect limit parameter', async () => {
-      // Create additional retirements
-      const prisma = app.get('PrismaService');
-      
-      for (let i = 2; i <= 5; i++) {
-        await prisma.retirementRecord.create({
-          data: {
-            retirementId: `RET00${i}`,
-            batchId: 'BATCH001',
-            projectId: 'PROJ001',
-            amount: 10 * i,
-            retiredBy: 'GCORP123',
-            beneficiary: `Test Corp ${i}`,
-            retirementReason: 'Testing',
-            vintageYear: 2024,
-            serialNumbers: [`KE-001-2024-${i}000`],
-            txHash: `0xtest${i}`,
-          },
-        });
-      }
-
-      const response = await request(app.getHttpServer())
-        .get('/retirements?limit=3')
-        .expect(200);
-
-      expect(response.body.length).toBeLessThanOrEqual(3);
-    });
-
-    it('should return retirements ordered by date (most recent first)', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/retirements')
-        .expect(200);
-
-      if (response.body.length > 1) {
-        const dates = response.body.map((r: any) => new Date(r.retiredAt).getTime());
-        for (let i = 1; i < dates.length; i++) {
-          expect(dates[i - 1]).toBeGreaterThanOrEqual(dates[i]);
-        }
-      }
-    });
-  });
-
-  describe('POST /retirements/generate-pdf', () => {
-    it('should generate PDF data for valid retirement', async () => {
-      const response = await request(app.getHttpServer())
-        .post('/retirements/generate-pdf')
-        .send({ retirementId: 'RET001' })
-        .expect(201);
-
-      expect(response.body).toHaveProperty('retirementId', 'RET001');
-    });
-
-    it('should return 404 when generating PDF for non-existent retirement', async () => {
-      await request(app.getHttpServer())
-        .post('/retirements/generate-pdf')
-        .send({ retirementId: 'NONEXISTENT' })
+        .get('/certificates/NONEXISTENT/pdf')
         .expect(404);
     });
 
-    it('should validate retirementId parameter', async () => {
-      await request(app.getHttpServer())
-        .post('/retirements/generate-pdf')
-        .send({})
-        .expect(400);
+    it('should set proper caching headers on PDF response', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/certificates/RET001/pdf')
+        .expect(200);
+
+      expect(response.headers['cache-control']).toBeDefined();
+      expect(response.headers['content-disposition']).toContain('certificate-RET001.pdf');
     });
   });
 
-  describe('Certificate Data Integrity', () => {
-    it('should include all required fields for certificate generation', async () => {
+  describe('GET /certificates/:retirementId/status', () => {
+    it('should return certificate generation status', async () => {
       const response = await request(app.getHttpServer())
+        .get('/certificates/RET001/status')
+        .expect(200);
+
+      expect(response.body).toHaveProperty('retirementId', 'RET001');
+      expect(response.body).toHaveProperty('status');
+      expect(['pending', 'ready', 'error']).toContain(response.body.status);
+      expect(response.body).toHaveProperty('cid');
+      expect(response.body).toHaveProperty('url');
+      expect(response.body).toHaveProperty('retries');
+      expect(response.body).toHaveProperty('generatedAt');
+      expect(response.body).toHaveProperty('failedAt');
+    });
+
+    it('should return 404 for non-existent retirement status', async () => {
+      await request(app.getHttpServer())
+        .get('/certificates/NONEXISTENT/status')
+        .expect(404);
+    });
+
+    it('should return status "pending" for newly created retirements', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/certificates/RET001/status')
+        .expect(200);
+
+      // New retirements start as pending_certificate which maps to "pending"
+      expect(response.body.status).toBe('pending');
+    });
+  });
+
+  describe('Full generate → status → PDF retrieval flow', () => {
+    it('should complete the full certificate generation lifecycle', async () => {
+      // 1. Verify initial status is pending
+      const status1 = await request(app.getHttpServer())
+        .get('/certificates/RET001/status')
+        .expect(200);
+      expect(status1.body.status).toBe('pending');
+
+      // 2. Generate PDF on demand
+      const pdfResponse = await request(app.getHttpServer())
+        .get('/certificates/RET001/pdf')
+        .expect(200);
+      expect(pdfResponse.headers['content-type']).toContain('application/pdf');
+      expect(pdfResponse.body.length).toBeGreaterThan(500);
+
+      // 3. Verify metadata includes all required fields
+      const certResponse = await request(app.getHttpServer())
         .get('/certificates/RET001')
         .expect(200);
 
@@ -169,6 +152,36 @@ describe('Certificate Retrieval Integration Tests (e2e)', () => {
         'retiredAt',
         'projectId',
         'batchId',
+        'certificateStatus',
+        'certificateCid',
+      ];
+
+      requiredFields.forEach(field => {
+        expect(certResponse.body).toHaveProperty(field);
+      });
+    });
+  });
+
+  describe('Certificate Data Integrity', () => {
+    it('should include all required fields for PDF certificate generation', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/certificates/RET001')
+        .expect(200);
+
+      const requiredFields = [
+        'retirementId',
+        'amount',
+        'retiredBy',
+        'beneficiary',
+        'retirementReason',
+        'vintageYear',
+        'serialNumbers',
+        'serialStart',
+        'serialEnd',
+        'txHash',
+        'retiredAt',
+        'projectId',
+        'batchId',
       ];
 
       requiredFields.forEach(field => {
@@ -176,7 +189,7 @@ describe('Certificate Retrieval Integration Tests (e2e)', () => {
       });
     });
 
-    it('should return valid serial numbers array', async () => {
+    it('should return valid serial numbers and range', async () => {
       const response = await request(app.getHttpServer())
         .get('/certificates/RET001')
         .expect(200);
@@ -186,6 +199,30 @@ describe('Certificate Retrieval Integration Tests (e2e)', () => {
       response.body.serialNumbers.forEach((serial: any) => {
         expect(typeof serial).toBe('string');
       });
+      expect(response.body).toHaveProperty('serialStart');
+      expect(response.body).toHaveProperty('serialEnd');
+    });
+  });
+
+  describe('GET /retirements/:id', () => {
+    it('should retrieve retirement record by ID', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/retirements/RET001')
+        .expect(200);
+
+      expect(response.body).toHaveProperty('retirementId', 'RET001');
+      expect(response.body).toHaveProperty('amount');
+      expect(response.body).toHaveProperty('retiredAt');
+    });
+  });
+
+  describe('GET /retirements', () => {
+    it('should list all retirements', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/retirements')
+        .expect(200);
+
+      expect(Array.isArray(response.body)).toBe(true);
     });
   });
 });

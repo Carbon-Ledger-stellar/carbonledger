@@ -1,23 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { StellarNetworkService } from './stellar-network.service';
-
-const mockGetLatestLedger = jest.fn().mockResolvedValue({ sequence: 123 });
-
-jest.mock('@stellar/stellar-sdk', () => ({
-  SorobanRpc: {
-    Server: jest.fn().mockImplementation(() => ({
-      getLatestLedger: mockGetLatestLedger,
-    })),
-  },
-}));
+import { SorobanRpc } from '@stellar/stellar-sdk';
 
 describe('StellarNetworkService', () => {
   let service: StellarNetworkService;
   let fetchMock: jest.Mock;
+  let getLatestLedger: jest.Mock;
 
   beforeEach(async () => {
     fetchMock = jest.fn();
     (global as any).fetch = fetchMock;
+    getLatestLedger = jest.fn().mockResolvedValue({ sequence: 123 });
+    (SorobanRpc.Server as jest.Mock).mockImplementation(() => ({
+      getLatestLedger,
+    }));
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [StellarNetworkService],
@@ -27,7 +23,7 @@ describe('StellarNetworkService', () => {
   });
 
   afterEach(() => {
-    jest.resetAllMocks();
+    jest.clearAllMocks();
   });
 
   it('reports healthy when Horizon and Soroban RPC are reachable', async () => {
@@ -38,7 +34,8 @@ describe('StellarNetworkService', () => {
     expect(result.healthy).toBe(true);
     expect(result.horizon.healthy).toBe(true);
     expect(result.rpc.healthy).toBe(true);
-    expect(mockGetLatestLedger).toHaveBeenCalled();
+    expect(getLatestLedger).toHaveBeenCalled();
+    expect(SorobanRpc.Server).toHaveBeenCalled();
   });
 
   it('returns degraded when Horizon is unreachable', async () => {
@@ -53,7 +50,7 @@ describe('StellarNetworkService', () => {
 
   it('returns degraded when Soroban RPC is unreachable', async () => {
     fetchMock.mockResolvedValueOnce({ ok: true, text: jest.fn() });
-    mockGetLatestLedger.mockRejectedValueOnce(new Error('rpc failure'));
+    getLatestLedger.mockRejectedValueOnce(new Error('rpc failure'));
 
     const result = await service.checkConnectivity();
 

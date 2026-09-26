@@ -1,33 +1,255 @@
 version: 2
 updates:
+  # ── Backend (Node.js / npm) ──────────────────────────────────────────────
+
+  # Daily security-only pass: patches critical/high CVEs immediately
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "daily"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "security"
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "fix(deps):"
+      prefix-development: "chore(deps-dev):"
+      include: "scope"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      # Major version bumps require manual review
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    reviewers:
+      - "Carbon-Ledger-stellar/maintainers"
+    assignees:
+      - "Carbon-Ledger-stellar/maintainers"
+    groups:
+      nestjs:
+        patterns:
+          - "@nestjs/*"
+        update-types:
+          - "minor"
+          - "patch"
+      opentelemetry:
+        patterns:
+          - "@opentelemetry/*"
+        update-types:
+          - "minor"
+          - "patch"
+      prisma:
+        patterns:
+          - "@prisma/*"
+          - "prisma"
+        update-types:
+          - "minor"
+          - "patch"
+      stellar:
+        patterns:
+          - "@stellar/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Weekly full scan: minor + patch updates
   - package-ecosystem: "npm"
     directory: "/backend"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "UTC"
     open-pull-requests-limit: 10
-    security: true
-    auto_merge: true
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps):"
+      prefix-development: "chore(deps-dev):"
+      include: "scope"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    versioning-strategy: increase
+
+  # ── Frontend (Node.js / npm) ─────────────────────────────────────────────
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "daily"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "security"
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "fix(deps):"
+      prefix-development: "chore(deps-dev):"
+      include: "scope"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    reviewers:
+      - "Carbon-Ledger-stellar/maintainers"
+    groups:
+      next:
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - "minor"
+          - "patch"
+      stellar-frontend:
+        patterns:
+          - "@stellar/*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "UTC"
     open-pull-requests-limit: 10
-    security: true
-    auto_merge: true
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps):"
+      prefix-development: "chore(deps-dev):"
+      include: "scope"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    versioning-strategy: increase
+
+  # ── Contracts (Rust / Cargo) ──────────────────────────────────────────────
 
   - package-ecosystem: "cargo"
     directory: "/contracts"
     schedule:
       interval: "weekly"
+      day: "tuesday"
+      time: "08:00"
+      timezone: "UTC"
     open-pull-requests-limit: 10
-    security: true
-    auto_merge: true
+    labels:
+      - "security"
+      - "dependencies"
+      - "cargo"
+    commit-message:
+      prefix: "fix(deps):"
+      prefix-development: "chore(deps-dev):"
+      include: "scope"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    reviewers:
+      - "Carbon-Ledger-stellar/maintainers"
+    groups:
+      soroban:
+        patterns:
+          - "soroban-sdk"
+          - "soroban-env-*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ── Oracle (Python / pip) ────────────────────────────────────────────────
 
   - package-ecosystem: "pip"
     directory: "/oracle"
     schedule:
       interval: "weekly"
+      day: "tuesday"
+      time: "08:00"
+      timezone: "UTC"
     open-pull-requests-limit: 10
-    security: true
-    auto_merge: true
+    labels:
+      - "security"
+      - "dependencies"
+      - "pip"
+    commit-message:
+      prefix: "fix(deps):"
+      prefix-development: "chore(deps-dev):"
+      include: "scope"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    reviewers:
+      - "Carbon-Ledger-stellar/maintainers"
+
+  # ── Docker ───────────────────────────────────────────────────────────────
+
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "security"
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "fix(deps):"
+      include: "scope"
+    reviewers:
+      - "Carbon-Ledger-stellar/maintainers"
+
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "security"
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "fix(deps):"
+      include: "scope"
+
+  # ── GitHub Actions ───────────────────────────────────────────────────────
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "08:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "security"
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci):"
+      include: "scope"
+    reviewers:
+      - "Carbon-Ledger-stellar/maintainers"

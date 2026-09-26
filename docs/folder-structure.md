@@ -17,6 +17,8 @@ carbonledger/
 │   └── src/                        # NestJS modules (auth, admin, certificates, marketplace, etc.)
 ├── components/                     # Shared UI components used outside the Next.js app directory
 │   └── ui/                         # Reusable primitive UI elements
+├── circuits/                       # Circom ZK circuits (private retirement certificates, BLS12-381 Groth16)
+│   └── retirement_private_cert/    # Poseidon commitment / nullifier circuit + snarkjs artifacts
 ├── contracts/                      # Soroban smart contracts written in Rust
 │   ├── carbon_credit/              # Mint, transfer, and permanently retire tokenized carbon credits
 │   ├── carbon_marketplace/         # Credit listings, purchases, and bulk corporate buying
@@ -24,6 +26,7 @@ carbonledger/
 │   ├── carbon_registry/            # Carbon project registration, verification, and lifecycle status
 │   ├── carbon_registry_v1/         # Legacy v1 registry contract (kept for upgrade path testing)
 │   ├── carbon_registry_v2/         # Registry v2 used in upgrade path tests
+│   ├── carbon_zk_verifier/         # Groth16 BLS12-381 verifier for private retirement certificates
 │   └── Cargo.toml                  # Rust workspace manifest — declares all Soroban contract crates
 ├── docs/                           # Project documentation (guides, ADRs, runbooks, API references)
 │   ├── adr/                        # Architecture Decision Records
@@ -43,7 +46,7 @@ carbonledger/
 │   ├── loki/                       # Loki log aggregation configuration
 │   └── promtail/                   # Promtail log shipping configuration
 ├── oracle/                         # Python oracle bridge: verification listener, price feeds, satellite monitor
-├── scripts/                        # Developer utility scripts: setup, deploy, test runners, DB backup
+├── scripts/                        # Developer utility scripts: setup, deploy, test runners, DB backup, ZK prove helpers
 ├── tests/                          # Cross-contract and upgrade path integration tests (Rust)
 ├── .env.example                    # Environment variable template — copy to .env before running locally
 ├── .env.staging.example            # Staging-specific environment variable template
@@ -64,7 +67,9 @@ carbonledger/
 | `backend/` | NestJS REST API — auth, projects, credits, retirements, marketplace, oracle modules |
 | `backend/prisma/schema.prisma` | Prisma database schema — defines all PostgreSQL models and relations |
 | `components/` | Shared UI components used outside the Next.js app directory |
+| `circuits/` | Circom ZK circuits for private retirement certificates (BLS12-381 Groth16) |
 | `contracts/` | Soroban smart contracts written in Rust |
+| `contracts/carbon_zk_verifier/` | On-chain Groth16 verifier (CAP-0059 / BLS12-381) for private certificates |
 | `contracts/Cargo.toml` | Rust workspace manifest — declares all Soroban contract crates |
 | `docs/` | Project documentation: guides, ADRs, runbooks, API references |
 | `frontend/` | Next.js 14 (App Router) web application |
@@ -73,7 +78,7 @@ carbonledger/
 | `load-tests/` | k6 load test scripts and results for the marketplace API |
 | `logging/` | Observability stack configuration: Loki, Promtail, Grafana |
 | `oracle/` | Python oracle bridge: verification listener, price feeds, satellite monitor |
-| `scripts/` | Developer utility scripts: setup, deploy, test runners, DB backup |
+| `scripts/` | Developer utility scripts: setup, deploy, test runners, DB backup, ZK prove helpers |
 | `tests/` | Cross-contract and upgrade path integration tests (Rust) |
 | `.env.example` | Environment variable template — copy to `.env` before running locally |
 | `docker-compose.yml` | Local development stack definition — starts all services with a single command |

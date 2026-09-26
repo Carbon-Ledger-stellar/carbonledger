@@ -1,14 +1,17 @@
-import { Test, TestingModule } from '@nestjs/testing';
+﻿import { Test, TestingModule } from '@nestjs/testing';
 import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { RolesGuard } from './roles.guard';
+import { TokenBlacklistService } from './token-blacklist.service';
 import { PrismaService } from '../prisma.service';
 import { IS_PUBLIC_KEY, ROLES_KEY } from './decorators';
 
 const TEST_SECRET = 'test-secret';
 
-const prismaMock = { user: { findUnique: jest.fn() } };
+const prismaMock = {
+  user: { findUnique: jest.fn(), findFirst: jest.fn() },
+};
 
 function makeContext(overrides: {
   token?: string;
@@ -34,10 +37,13 @@ describe('RolesGuard', () => {
   let guard: RolesGuard;
   let jwt: JwtService;
   let reflector: Reflector;
+  let blacklistServiceMock: { isRevoked: jest.Mock };
 
   beforeEach(async () => {
     process.env.JWT_SECRET = TEST_SECRET;
     process.env.JWT_ISSUER = 'carbonledger';
+
+    blacklistServiceMock = { isRevoked: jest.fn().mockResolvedValue(false) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -45,6 +51,7 @@ describe('RolesGuard', () => {
         Reflector,
         { provide: JwtService, useValue: new JwtService({ secret: TEST_SECRET }) },
         { provide: PrismaService, useValue: prismaMock },
+        { provide: TokenBlacklistService, useValue: blacklistServiceMock },
       ],
     }).compile();
 
@@ -94,7 +101,7 @@ describe('RolesGuard', () => {
 
   it('throws 401 when user is not found in DB', async () => {
     setupReflector(false, undefined);
-    prismaMock.user.findUnique.mockResolvedValue(null);
+    prismaMock.user.findFirst.mockResolvedValue(null);
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
@@ -102,7 +109,7 @@ describe('RolesGuard', () => {
 
   it('allows any authenticated user when no @Roles declared', async () => {
     setupReflector(false, undefined);
-    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
@@ -110,7 +117,7 @@ describe('RolesGuard', () => {
 
   it('allows access when user role matches @Roles', async () => {
     setupReflector(false, ['verifier', 'admin']);
-    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'verifier' });
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'verifier' });
     const token = signToken({ sub: 'GKEY', role: 'verifier', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
@@ -118,7 +125,7 @@ describe('RolesGuard', () => {
 
   it('throws 403 when user role does not match @Roles', async () => {
     setupReflector(false, ['verifier', 'admin']);
-    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
@@ -126,7 +133,7 @@ describe('RolesGuard', () => {
 
   it('throws 403 with "Verifier role required" when verifier role is required', async () => {
     setupReflector(false, ['verifier', 'admin']);
-    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).rejects.toThrow(
@@ -136,7 +143,7 @@ describe('RolesGuard', () => {
 
   it('throws 403 with "Insufficient permissions" for non-verifier role mismatch', async () => {
     setupReflector(false, ['admin']);
-    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).rejects.toThrow(
@@ -145,9 +152,9 @@ describe('RolesGuard', () => {
   });
 
   it('uses DB role, not JWT role claim', async () => {
-    // JWT says corporation, DB says admin — DB wins
+    // JWT says corporation, DB says admin â€” DB wins
     setupReflector(false, ['admin']);
-    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'admin' });
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'admin' });
     const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
@@ -155,9 +162,31 @@ describe('RolesGuard', () => {
 
   it('denies when JWT says admin but DB says corporation', async () => {
     setupReflector(false, ['admin']);
-    prismaMock.user.findUnique.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
     const token = signToken({ sub: 'GKEY', role: 'admin', type: 'access' });
     const ctx = makeContext({ token });
     await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('rejects a blacklisted (logged-out) access token with its jti (#892)', async () => {
+    setupReflector(false, undefined);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+
+    blacklistServiceMock.isRevoked.mockResolvedValue(true);
+
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access', jti: 'abc-123' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).rejects.toThrow('Token has been revoked');
+  });
+
+  it('allows a non-revoked token that carries a jti (#892)', async () => {
+    setupReflector(false, undefined);
+    prismaMock.user.findFirst.mockResolvedValue({ publicKey: 'GKEY', role: 'corporation' });
+
+    blacklistServiceMock.isRevoked.mockResolvedValue(false);
+
+    const token = signToken({ sub: 'GKEY', role: 'corporation', type: 'access', jti: 'def-456' });
+    const ctx = makeContext({ token });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 });

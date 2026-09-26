@@ -83,8 +83,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Only expose directly for local development/debugging.
+    # In production, remove this port binding and only connect via pgbouncer.
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U carbonledger"]
       interval: 10s
@@ -139,6 +141,80 @@ services:
 
   # ── Application services ────────────────────────────────────────────────────
 
+  # ── Connection Pool ────────────────────────────────────────────────────────────
+  # PgBouncer sits between the application and PostgreSQL, multiplexing up to
+  # 200 client connections down to a managed pool of 100 server connections.
+  # Pool mode: transaction — each connection is returned to the pool after
+  # every transaction, maximising concurrency for stateless NestJS requests.
+  #
+  # Monitor pool health at any time:
+  #   psql -h localhost -p 6432 -U carbonledger pgbouncer -c "SHOW STATS;"
+  #   psql -h localhost -p 6432 -U carbonledger pgbouncer -c "SHOW POOLS;"
+  #   psql -h localhost -p 6432 -U carbonledger pgbouncer -c "SHOW CLIENTS;"
+  pgbouncer:
+    build:
+      context: ./pgbouncer
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # These override values in pgbouncer.ini at runtime via env substitution.
+      # The DB_* vars allow the image to generate userlist.txt on first boot
+      # (supported by edoburu/pgbouncer via environment variables).
+      DB_USER:              carbonledger
+      DB_PASSWORD:          ${POSTGRES_PASSWORD:-changeme}
+      DB_HOST:              postgres
+      DB_PORT:              5432
+      DB_NAME:              carbonledger
+      POOL_MODE:            ${PGBOUNCER_POOL_MODE:-transaction}
+      MAX_CLIENT_CONN:      ${PGBOUNCER_MAX_CLIENT_CONN:-200}
+      DEFAULT_POOL_SIZE:    ${PGBOUNCER_DEFAULT_POOL_SIZE:-100}
+      MIN_POOL_SIZE:        10
+      RESERVE_POOL_SIZE:    20
+      RESERVE_POOL_TIMEOUT: 5
+      SERVER_IDLE_TIMEOUT:  600
+      LOG_CONNECTIONS:      1
+      LOG_DISCONNECTIONS:   1
+      STATS_PERIOD:         60
+      AUTH_TYPE:            md5
+      ADMIN_USERS:          carbonledger
+      STATS_USERS:          carbonledger
+    ports:
+      # Expose PgBouncer admin port for monitoring tools (not for app traffic)
+      - "6432:5432"
+    healthcheck:
+      # pg_isready targets PgBouncer which proxies to postgres
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U carbonledger"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Cache ──────────────────────────────────────────────────────────────────────
+  # Redis is used for 5-minute TTL caching of expensive read queries:
+  #   - GET /api/v1/projects
+  #   - GET /api/v1/marketplace/listings
+  #   - GET /api/v1/oracle/benchmark-price
+  # Cache is invalidated on any write (create / update / delete) to those resources.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Backend API ────────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -146,7 +222,9 @@ services:
     restart: unless-stopped
     <<: *resources-backend
     depends_on:
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       redis-sentinel:
         condition: service_healthy
@@ -164,6 +242,10 @@ services:
       REDIS_SENTINEL_NAME: mymaster
       REDIS_PASSWORD:    ${REDIS_PASSWORD:-}
       LOG_LEVEL:         ${LOG_LEVEL:-info}
+      OTEL_ENABLED:      ${OTEL_ENABLED:-true}
+      OTEL_SERVICE_NAME: carbonledger-backend
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
     ports:
       - "3001:3001"
     healthcheck:
@@ -176,6 +258,7 @@ services:
       sh -c "npx prisma migrate deploy && node dist/main"
     logging: *default-logging
 
+  # ── Frontend ───────────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -205,7 +288,38 @@ services:
       start_period: 30s
     logging: *default-logging
 
+  # ── Oracle Services ───────────────────────────────────────────────────────────
   oracle_verification:
+    build:
+      context: ./oracle
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    <<: *resources-oracle
+    environment:
+      ORACLE_SECRET_KEY:           ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID:   ${CARBON_ORACLE_CONTRACT_ID}
+      CARBON_REGISTRY_CONTRACT_ID: ${CARBON_REGISTRY_CONTRACT_ID}
+      STELLAR_RPC_URL:             ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      DATABASE_URL:                postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@pgbouncer:5432/carbonledger
+      ADMIN_ALERT_WEBHOOK:         ${ADMIN_ALERT_WEBHOOK}
+      GOLD_STANDARD_API_URL:       ${GOLD_STANDARD_API_URL}
+      GOLD_STANDARD_API_KEY:       ${GOLD_STANDARD_API_KEY}
+      VERRA_VCS_API_URL:           ${VERRA_VCS_API_URL}
+      VERRA_VCS_API_KEY:           ${VERRA_VCS_API_KEY}
+      LOG_LEVEL:                   ${LOG_LEVEL:-INFO}
+    command: python3 verification_listener.py
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep verification_listener.py | grep -v grep || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  oracle_verification_standby:
     build:
       context: ./oracle
       dockerfile: Dockerfile
@@ -223,6 +337,8 @@ services:
       VERRA_VCS_API_URL:           ${VERRA_VCS_API_URL}
       VERRA_VCS_API_KEY:           ${VERRA_VCS_API_KEY}
       LOG_LEVEL:                   ${LOG_LEVEL:-INFO}
+      ORACLE_STANDBY_MODE:         "true"
+      FAILOVER_SERVICE_NAME:       verification_listener
     command: python3 verification_listener.py
     depends_on:
       postgres:
@@ -258,6 +374,31 @@ services:
       start_period: 10s
     logging: *default-logging
 
+  oracle_price_standby:
+    build:
+      context: ./oracle
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    <<: *resources-oracle
+    environment:
+      ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID: ${CARBON_ORACLE_CONTRACT_ID}
+      STELLAR_RPC_URL:           ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      XPANSIV_API_KEY:           ${XPANSIV_API_KEY}
+      TOUCAN_API_KEY:            ${TOUCAN_API_KEY}
+      ADMIN_ALERT_WEBHOOK:       ${ADMIN_ALERT_WEBHOOK}
+      LOG_LEVEL:                 ${LOG_LEVEL:-INFO}
+      ORACLE_STANDBY_MODE:       "true"
+      FAILOVER_SERVICE_NAME:     price_oracle
+    command: python3 price_oracle.py
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep price_oracle.py | grep -v grep || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
   oracle_satellite:
     build:
       context: ./oracle
@@ -278,6 +419,32 @@ services:
       - "5001:5001"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:5001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  oracle_satellite_standby:
+    build:
+      context: ./oracle
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    <<: *resources-oracle
+    environment:
+      ORACLE_SECRET_KEY:         ${ORACLE_SECRET_KEY}
+      CARBON_ORACLE_CONTRACT_ID: ${CARBON_ORACLE_CONTRACT_ID}
+      STELLAR_RPC_URL:           ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      BACKEND_API_URL:           http://backend:3001/api/v1
+      GEE_WEBHOOK_SECRET:        ${GEE_WEBHOOK_SECRET}
+      ADMIN_ALERT_WEBHOOK:       ${ADMIN_ALERT_WEBHOOK}
+      SATELLITE_MONITOR_PORT:    5002
+      LOG_LEVEL:                 ${LOG_LEVEL:-INFO}
+      ORACLE_STANDBY_MODE:       "true"
+      FAILOVER_SERVICE_NAME:     satellite_monitor
+    command: python3 satellite_monitor.py
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:5002/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -333,6 +500,24 @@ services:
     depends_on:
       loki:
         condition: service_healthy
+    logging: *default-logging
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    restart: unless-stopped
+    <<: *resources-observability
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+      - "6831:6831/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:16686/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     logging: *default-logging
 
 volumes:

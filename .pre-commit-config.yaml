@@ -1,0 +1,67 @@
+# Pre-commit hook suite (issue #647).
+# One-command install: see docs/development-guidelines.md.
+#
+# Every hook below is `repo: local` / `language: system` — none fetch a
+# pinned external hook repo over the network at install time. They shell
+# out to the same toolchains already required by CONTRIBUTING.md (cargo,
+# node/npm, python), via the wrapper scripts in scripts/hooks/ where a
+# working directory change or extra flags are needed.
+#
+# Each hook's `files:` pattern means it's skipped entirely when no matching
+# file is staged, which is what keeps a typical changed-file-set run under
+# the ~30s budget — see docs/development-guidelines.md for the one caveat
+# (cold cargo build cache on the first clippy run of a session).
+
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt (contracts)
+        language: system
+        entry: scripts/hooks/rustfmt.sh
+        files: ^contracts/.*\.rs$
+        pass_filenames: false
+
+      - id: clippy
+        name: clippy (contracts)
+        language: system
+        entry: scripts/hooks/clippy.sh
+        files: ^contracts/.*\.rs$
+        pass_filenames: false
+
+      - id: eslint-frontend
+        name: eslint (frontend)
+        language: system
+        entry: scripts/hooks/eslint-frontend.sh
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: false
+
+      - id: black
+        name: black (python)
+        language: system
+        entry: black
+        types: [python]
+        files: ^(oracle|scripts|tests/fuzz)/.*\.py$|^generate_png\.py$
+
+      - id: ruff
+        name: ruff (python)
+        language: system
+        entry: ruff check --fix
+        types: [python]
+        files: ^(oracle|scripts|tests/fuzz)/.*\.py$|^generate_png\.py$
+
+      - id: detect-secrets
+        name: detect-secrets
+        language: system
+        entry: detect-secrets-hook --baseline .secrets.baseline
+        exclude: package-lock\.json|.*\.lock$
+
+      - id: conventional-commit-msg
+        name: conventional commit message
+        language: system
+        entry: python3 scripts/check_conventional_commit.py
+        stages: [commit-msg]
+        pass_filenames: true

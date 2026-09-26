@@ -1,0 +1,98 @@
+{
+    "title": "Carbon Ledger - System Dashboard",
+    "description": "System health and performance monitoring",
+    "layout_type": "free",
+    "widgets": [
+        {
+            "definition": {
+                "type": "timeseries",
+                "title": "Request Latency (p95)",
+                "requests": [
+                    {
+                        "q": "p95:trace.servlet.request.duration{service:carbonledger}",
+                        "display_type": "line"
+                    }
+                ]
+            }
+        },
+        {
+            "definition": {
+                "type": "timeseries",
+                "title": "Error Rate",
+                "requests": [
+                    {
+                        "q": "sum:app.error.rate{service:carbonledger}.as_rate()",
+                        "display_type": "line"
+                    }
+                ]
+            }
+        },
+        {
+            "definition": {
+                "type": "timeseries",
+                "title": "Throughput",
+                "requests": [
+                    {
+                        "q": "sum:app.throughput{service:carbonledger}",
+                        "display_type": "line"
+                    }
+                ]
+            }
+        },
+        {
+            "definition": {
+                "type": "query_value",
+                "title": "Error Rate (1h)",
+                "requests": [
+                    {
+                        "q": "sum:app.error.rate{service:carbonledger}.as_rate() / sum:app.throughput{service:carbonledger} * 100"
+                    }
+                ]
+            }
+        },
+        {
+            "definition": {
+                "type": "query_value",
+                "title": "Active Requests",
+                "requests": [
+                    {
+                        "q": "sum:trace.servlet.request.hits{service:carbonledger}.as_count()"
+                    }
+                ]
+            }
+        },
+        {
+            "definition": {
+                "type": "toplist",
+                "title": "Top Endpoints by Latency",
+                "requests": [
+                    {
+                        "q": "top(p95:trace.servlet.request.duration{service:carbonledger}, 10, 'max', 'desc')"
+                    }
+                ]
+            }
+        },
+        {
+            "definition": {
+                "type": "log_stream",
+                "title": "Error Logs",
+                "requests": [
+                    {
+                        "query": "status:error service:carbonledger"
+                    }
+                ]
+            }
+        },
+        {
+            "definition": {
+                "type": "heatmap",
+                "title": "Latency Distribution",
+                "requests": [
+                    {
+                        "q": "trace.servlet.request.duration{service:carbonledger}"
+                    }
+                ]
+            }
+        }
+    ]
+}

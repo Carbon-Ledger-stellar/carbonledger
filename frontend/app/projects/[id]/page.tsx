@@ -8,6 +8,7 @@ import OracleStatus from "../../../components/OracleStatus";
 import OracleHistory from "../../../components/OracleHistory";
 import ProjectMap from "../../../components/ProjectMap";
 import ProjectOracleStatus from "../../../components/ProjectOracleStatus";
+import Tooltip from "../../../components/Tooltip";
 import ProvenanceTrail from "../../../components/ProvenanceTrail";
 import LoadingSkeleton from "../../../components/LoadingSkeleton";
 
@@ -210,7 +211,14 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                 {project.name}
               </h1>
               <p style={{ color: colors.neutral[500], margin: 0 }}>
-                {project.methodology} · {project.projectType} · {project.country} · {project.vintageYear} Vintage · Score {project.methodologyScore}/100
+                <Tooltip content="What is VCS? The Verified Carbon Standard (VCS) is the world&apos;s most widely used voluntary greenhouse gas (GHG) reduction program, setting rigorous rules under which verified carbon credits are issued.">
+                  <span style={{ borderBottom: "1px dashed #cbd5e1", cursor: "help" }}>{project.methodology}</span>
+                </Tooltip>
+                {" · "}{project.projectType} · {project.country} ·{" "}
+                <Tooltip content="Vintage Year: the year the emissions reductions represented by these credits were generated — think of it as the &quot;harvest year&quot; for the carbon benefit.">
+                  <span style={{ borderBottom: "1px dashed #cbd5e1", cursor: "help" }}>{project.vintageYear} Vintage</span>
+                </Tooltip>
+                {" · Score "}{project.methodologyScore}/100
               </p>
             </div>
           <span style={{
@@ -266,7 +274,10 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                 }} />
               </div>
               <p style={{ fontSize: "0.7rem", color: colors.neutral[400], margin: "0.3rem 0 0" }}>
-                {retiredPct}% of issued credits have been permanently retired
+                {retiredPct}% of issued credits have been{" "}
+                <Tooltip content="Retirement is permanent: once a carbon credit is retired it is permanently removed from circulation and can never be bought, sold, or reused again.">
+                  <span style={{ borderBottom: "1px dashed #cbd5e1", cursor: "help" }}>permanently retired</span>
+                </Tooltip>
               </p>
             </div>
           </div>

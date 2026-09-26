@@ -1,4 +1,4 @@
-import { Test, TestingModule } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import { ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { AbuseDetectorGuard } from './abuse.guard';
 import { RedisService } from '../redis.service';

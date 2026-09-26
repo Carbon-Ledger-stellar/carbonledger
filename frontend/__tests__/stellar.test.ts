@@ -1,23 +1,31 @@
-const mockSubmitTransaction = jest.fn();
-const mockLoadAccount = jest.fn();
-const mockFromXDR = jest.fn();
-
-function MockTransactionBuilder(this: any) {
-  return {
-    addOperation: jest.fn().mockReturnThis(),
-    setTimeout: jest.fn().mockReturnThis(),
-    build: jest.fn().mockReturnValue({ sign: jest.fn() }),
-  };
-}
-MockTransactionBuilder.fromXDR = mockFromXDR;
-
+// The mock fns live inside the factory itself (not as outer `const`s) because
+// jest.mock() calls — and the imports that trigger them — are hoisted above
+// every other top-level statement in this file, including outer `const`
+// declarations. Referencing an outer `const` here would hit its temporal
+// dead zone. They're exposed back out via the mocked module's `__mocks`
+// property so the rest of this file can assert on / configure them.
 jest.mock('@stellar/stellar-sdk', () => {
+  const mockLoadAccount = jest.fn();
+  const mockSubmitTransaction = jest.fn();
+  const mockFromXDR = jest.fn();
+
   const mockKeypair = {
     publicKey: () => 'GTEST123PUBLIC',
     sign: jest.fn(),
     verify: jest.fn(() => true),
   };
+
+  function MockTransactionBuilderInner(this: any) {
+    return {
+      addOperation: jest.fn().mockReturnThis(),
+      setTimeout: jest.fn().mockReturnThis(),
+      build: jest.fn().mockReturnValue({ sign: jest.fn() }),
+    };
+  }
+  MockTransactionBuilderInner.fromXDR = mockFromXDR;
+
   return {
+    __mocks: { mockLoadAccount, mockSubmitTransaction, mockFromXDR },
     Horizon: {
       Server: jest.fn().mockImplementation(() => ({
         loadAccount: mockLoadAccount,
@@ -32,7 +40,7 @@ jest.mock('@stellar/stellar-sdk', () => {
       PUBLIC: 'Public Global Stellar Network',
       TESTNET: 'Test SDF Network ; September 2015',
     },
-    TransactionBuilder: MockTransactionBuilder,
+    TransactionBuilder: MockTransactionBuilderInner,
     BASE_FEE: '100',
     Asset: jest.fn().mockImplementation(() => ({})),
     Operation: {
@@ -55,6 +63,12 @@ import {
   issueAsset,
   createTrustline,
 } from '../lib/stellar';
+
+const { mockLoadAccount, mockSubmitTransaction, mockFromXDR } = (
+  jest.requireMock('@stellar/stellar-sdk') as {
+    __mocks: { mockLoadAccount: jest.Mock; mockSubmitTransaction: jest.Mock; mockFromXDR: jest.Mock };
+  }
+).__mocks;
 
 beforeEach(() => {
   jest.clearAllMocks();

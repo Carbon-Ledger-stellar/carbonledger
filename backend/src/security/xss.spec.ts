@@ -13,17 +13,18 @@
  *  - Retirement certificate endpoint must not reflect injected scripts
  */
 
-import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
-import * as request from "supertest";
+import { INestApplication } from "@nestjs/common";
+import request from "supertest";
 import * as jwt from "jsonwebtoken";
 
-import { AppModule } from "../app.module";
+import { createSecurityTestApp } from "./create-security-test-app";
 import { PrismaService } from "../prisma.service";
 
+import { signSecurityToken } from "./security-test-auth";
+
 const SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
-const ADMIN_TOKEN = jwt.sign({ sub: "GADMIN_XSS", role: "admin" }, SECRET, { expiresIn: "1h" });
-const CORP_TOKEN  = jwt.sign({ sub: "GCORP_XSS",  role: "corporation" }, SECRET, { expiresIn: "1h" });
+const ADMIN_TOKEN = signSecurityToken("GADMIN_XSS", "admin");
+const CORP_TOKEN  = signSecurityToken("GCORP_XSS",  "corporation");
 
 /** Common XSS payloads */
 const XSS_PAYLOADS = [
@@ -49,18 +50,18 @@ describe("XSS Sanitization (OWASP API3 / #423)", () => {
   let prisma: PrismaService;
 
   beforeAll(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = module.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
-    await app.init();
+    app = await createSecurityTestApp({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    });
 
     prisma = app.get(PrismaService);
   });
 
-  afterAll(() => app.close());
+  afterAll(async () => {
+    await app.close();
+  });
 
   // ── Project name / description fields ────────────────────────────────────
 
@@ -226,6 +227,7 @@ describe("XSS Sanitization (OWASP API3 / #423)", () => {
     it("GET /api/v1/retirements must not contain unescaped script tags", async () => {
       const res = await request(app.getHttpServer())
         .get("/api/v1/retirements")
+        .set("Authorization", `Bearer ${CORP_TOKEN}`)
         .expect(200);
 
       assertNoXss(res.body);

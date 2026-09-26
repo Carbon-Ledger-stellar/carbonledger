@@ -2,12 +2,14 @@
 
 import { colors } from "../styles/design-system";
 
-type Variant = "CreditCard" | "MarketplaceItem" | "PoolStats" | "LoanCard" | "ProjectCard" | "ProvenanceTrail" | "Certificate" | "AuditItem";
+type Variant = "CreditCard" | "MarketplaceItem" | "PoolStats" | "LoanCard" | "ProjectCard" | "ProvenanceTrail" | "Certificate" | "AuditItem" | "PricingTable" | "Table";
 
 interface Props {
   variant?: Variant;
   count?: number;
   className?: string;
+  /** Only used by the "Table" variant — number of shimmer cells per row. Defaults to 4. */
+  columns?: number;
 }
 
 function Shimmer({ width, height, borderRadius = "0.375rem" }: { width: string; height: string; borderRadius?: string }) {
@@ -57,21 +59,41 @@ function CreditCardSkeleton() {
   );
 }
 
+// Mirrors the real listing row in app/marketplace/page.tsx (checkbox + project
+// info + price + action buttons) so there's no layout shift when data arrives —
+// same grid columns, height, padding and border-radius as the live row.
 function MarketplaceItemSkeleton() {
   return (
     <div style={{
+      display: "grid",
+      gridTemplateColumns: "auto 1fr auto auto",
+      alignItems: "center",
+      gap: "1rem",
       background: colors.surface,
       border: `1px solid ${colors.neutral[200]}`,
-      borderRadius: "0.5rem",
-      padding: "1rem",
-      display: "grid",
-      gridTemplateColumns: "2fr 1fr 1fr 1fr auto",
-      gap: "1rem",
-      alignItems: "center",
+      borderRadius: "0.75rem",
+      padding: "1rem 1.25rem",
+      height: "84px",
+      marginBottom: "0.75rem",
+      boxSizing: "border-box",
+      overflow: "hidden",
     }}>
-      {[200, 100, 80, 90, 60].map((w, i) => (
-        <Shimmer key={i} width={`${w}px`} height="16px" />
-      ))}
+      <Shimmer width="16px" height="16px" borderRadius="0.25rem" />
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem", overflow: "hidden" }}>
+        <Shimmer width="55%" height="15px" />
+        <Shimmer width="80%" height="12px" />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.3rem" }}>
+        <Shimmer width="70px" height="16px" />
+        <Shimmer width="50px" height="10px" />
+      </div>
+
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <Shimmer width="78px" height="30px" borderRadius="0.375rem" />
+        <Shimmer width="92px" height="30px" borderRadius="0.375rem" />
+      </div>
     </div>
   );
 }
@@ -229,7 +251,80 @@ function CertificateSkeleton() {
   );
 }
 
-export default function LoadingSkeleton({ variant = "CreditCard", count = 1, className }: Props) {
+// Mirrors OrderBookChart's initial-load state: the step chart on the left,
+// the "estimated fill" and depth-metric panels stacked on the right. Reuses
+// the same two-column ratio (1.2fr / 0.8fr) and stacks to one column below
+// 768px, matching the real .sdex-widget-grid breakpoint.
+function MetricRowSkeleton() {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", padding: "0.25rem 0" }}>
+      <Shimmer width="70px" height="12px" />
+      <Shimmer width="60px" height="14px" />
+    </div>
+  );
+}
+
+// Renders just the chart + metrics grid (no outer card/header) so callers like
+// OrderBookChart can drop it in place of their data-dependent content while
+// keeping their own static header visible during the initial load.
+function PricingTableSkeleton() {
+  return (
+    <div className="skeleton-pricing-grid">
+      <Shimmer width="100%" height="360px" borderRadius="0.75rem" />
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+        <div style={{ background: colors.neutral[50], border: `1px solid ${colors.neutral[200]}`, borderRadius: "0.5rem", padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          <Shimmer width="100%" height="42px" borderRadius="0.375rem" />
+          <Shimmer width="90%" height="12px" />
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <Shimmer width="140px" height="34px" borderRadius="0.375rem" />
+            <Shimmer width="110px" height="34px" borderRadius="0.375rem" />
+          </div>
+        </div>
+
+        <div style={{ background: colors.neutral[50], border: `1px solid ${colors.neutral[200]}`, borderRadius: "0.5rem", padding: "1rem" }}>
+          {Array.from({ length: 5 }).map((_, i) => <MetricRowSkeleton key={i} />)}
+        </div>
+      </div>
+
+      <style>{`
+        .skeleton-pricing-grid {
+          display: grid;
+          grid-template-columns: 1.2fr 0.8fr;
+          gap: 1.25rem;
+        }
+        @media (max-width: 767px) {
+          .skeleton-pricing-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// Generic table row — used wherever a real <table>/list is still loading.
+// Renders as its own bordered rows (not literal <tr>s) so a caller can drop
+// it in place of the whole table while data is in flight, same pattern as
+// MarketplaceItemSkeleton.
+function TableRowSkeleton({ columns = 4 }: { columns?: number }) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${columns}, 1fr)`,
+      alignItems: "center",
+      gap: "1rem",
+      padding: "0.85rem 1rem",
+      borderBottom: `1px solid ${colors.neutral[100]}`,
+    }}>
+      {Array.from({ length: columns }).map((_, i) => (
+        <Shimmer key={i} width={i === 0 ? "80%" : "55%"} height="14px" />
+      ))}
+    </div>
+  );
+}
+
+export default function LoadingSkeleton({ variant = "CreditCard", count = 1, className, columns }: Props) {
   const skeletons = Array.from({ length: count });
 
   return (
@@ -248,6 +343,8 @@ export default function LoadingSkeleton({ variant = "CreditCard", count = 1, cla
         if (variant === "ProvenanceTrail") return <ProvenanceTrailSkeleton key={i} />;
         if (variant === "Certificate")     return <CertificateSkeleton key={i} />;
         if (variant === "AuditItem")       return <AuditItemSkeleton key={i} />;
+        if (variant === "PricingTable")    return <PricingTableSkeleton key={i} />;
+        if (variant === "Table")           return <TableRowSkeleton key={i} columns={columns} />;
         return <CreditCardSkeleton key={i} />;
       })}
     </div>

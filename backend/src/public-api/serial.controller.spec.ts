@@ -1,4 +1,4 @@
-import { Test, TestingModule } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import { PublicSerialController } from './serial.controller';
 import { CreditsService } from '../credits/credits.service';
 import { AbuseDetectorGuard } from '../security/abuse.guard';

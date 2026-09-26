@@ -1,0 +1,236 @@
+name: E2E Integration Tests
+
+on:
+  push:
+    branches: [main, develop, feature/**]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: e2e-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-tests:
+    name: E2E Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: carbonledger_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Setup test environment
+        working-directory: ./backend
+        run: |
+          cp .env.test .env
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5433/carbonledger_test?schema=public" >> .env
+          echo "REDIS_URL=redis://localhost:6380" >> .env
+          echo "CACHE_ENABLED=true" >> .env
+
+      - name: Lint Prisma migrations
+        working-directory: ./backend
+        run: npm run migrate:lint
+
+      - name: Run Prisma migrations
+        working-directory: ./backend
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5433/carbonledger_test?schema=public
+
+      - name: Generate Prisma Client
+        working-directory: ./backend
+        run: npx prisma generate
+
+      - name: Run E2E tests
+        working-directory: ./backend
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5433/carbonledger_test?schema=public
+          REDIS_URL: redis://localhost:6380
+          NODE_ENV: test
+          CACHE_ENABLED: true
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./backend/coverage/lcov.info
+          flags: e2e
+          fail_ci_if_error: false
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: ./backend/coverage
+          retention-days: 7
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-screenshots
+          path: ./backend/test/e2e/screenshots
+          retention-days: 7
+
+      - name: Comment PR with test results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const testResults = fs.readFileSync('./backend/coverage/test-results.json', 'utf8');
+            const results = JSON.parse(testResults);
+            
+            const comment = `## E2E Test Results
+            
+            - ✅ Tests Passed: ${results.numPassedTests}
+            - ❌ Tests Failed: ${results.numFailedTests}
+            - ⏭️ Tests Skipped: ${results.numPendingTests}
+            - ⏱️ Duration: ${(results.testResults.reduce((a, b) => a + b.perfStats.end - b.perfStats.start, 0) / 1000).toFixed(2)}s
+            - 📊 Coverage: ${results.testResults[0]?.coverage?.total?.lines?.pct || 'N/A'}%
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  e2e-performance:
+    name: E2E Performance Baseline
+    runs-on: ubuntu-latest
+    needs: e2e-tests
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: carbonledger_perf
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6381:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Setup performance test environment
+        working-directory: ./backend
+        run: |
+          cp .env.test .env
+          echo "DATABASE_URL=postgresql://testuser:testpass@localhost:5434/carbonledger_perf?schema=public" >> .env
+          echo "REDIS_URL=redis://localhost:6381" >> .env
+          echo "CACHE_ENABLED=true" >> .env
+
+      - name: Run Prisma migrations
+        working-directory: ./backend
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5434/carbonledger_perf?schema=public
+
+      - name: Run performance tests
+        working-directory: ./backend
+        run: npm run test:e2e -- --testPathPattern=performance
+        continue-on-error: true
+        env:
+          DATABASE_URL: postgresql://testuser:testpass@localhost:5434/carbonledger_perf?schema=public
+          REDIS_URL: redis://localhost:6381
+          NODE_ENV: test
+
+      - name: Compare performance baseline
+        working-directory: ./backend
+        run: |
+          npm run perf:baseline
+        continue-on-error: true
+
+      - name: Comment on performance impact
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const fs = require('fs');
+            if (fs.existsSync('./backend/perf-results.json')) {
+              const perfResults = JSON.parse(fs.readFileSync('./backend/perf-results.json', 'utf8'));
+              const comment = `## Performance Impact
+              
+              - **Query Time**: ${perfResults.avgQueryTime}ms (${perfResults.queryTimeChange > 0 ? '+' : ''}${perfResults.queryTimeChange}%)
+              - **API Response**: ${perfResults.avgResponseTime}ms (${perfResults.responseTimeChange > 0 ? '+' : ''}${perfResults.responseTimeChange}%)
+              - **Memory**: ${perfResults.memoryUsage}MB (${perfResults.memoryChange > 0 ? '+' : ''}${perfResults.memoryChange}%)
+              `;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+

@@ -5,17 +5,27 @@
 ///   I1 – Conservation:  sum(batch.amount) >= sum(retired per batch)
 ///   I2 – Serial uniqueness: no serial number appears in two active batches
 ///   I3 – Monotonic retirements: per-batch retired count never decreases
-
 #[cfg(test)]
 mod invariant_tests {
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, Env, String};
     use crate::{CarbonCreditContract, CarbonCreditContractClient, CreditStatus};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger as _},
+        Env, String,
+    };
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    fn s(env: &Env, v: &str) -> String { String::from_str(env, v) }
+    fn s(env: &Env, v: &str) -> String {
+        String::from_str(env, v)
+    }
 
-    fn setup(env: &Env) -> (CarbonCreditContractClient, soroban_sdk::Address, soroban_sdk::Address) {
+    fn setup(
+        env: &Env,
+    ) -> (
+        CarbonCreditContractClient,
+        soroban_sdk::Address,
+        soroban_sdk::Address,
+    ) {
         env.mock_all_auths();
         // Set ledger time to 2025-01-01 so vintage year 2023 is valid
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
@@ -28,10 +38,10 @@ mod invariant_tests {
             min_persistent_entry_ttl: 1,
             max_entry_ttl: 518400,
         });
-        let admin    = soroban_sdk::Address::generate(env);
+        let admin = soroban_sdk::Address::generate(env);
         let registry = soroban_sdk::Address::generate(env);
-        let id       = env.register_contract(None, CarbonCreditContract);
-        let client   = CarbonCreditContractClient::new(env, &id);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(env, &id);
         client.initialize(&admin, &registry);
         (client, admin, registry)
     }
@@ -84,12 +94,8 @@ mod invariant_tests {
 
     /// I1: For every batch, batch.amount >= retired_amount_for_that_batch.
     /// Uses the contract's public getter — no direct storage access needed.
-    fn assert_conservation(
-        env: &Env,
-        client: &CarbonCreditContractClient,
-        batch_ids: &[&str],
-    ) {
-        let mut total_issued:  i128 = 0;
+    fn assert_conservation(env: &Env, client: &CarbonCreditContractClient, batch_ids: &[&str]) {
+        let mut total_issued: i128 = 0;
         let mut total_retired: i128 = 0;
 
         for id in batch_ids {
@@ -103,8 +109,8 @@ mod invariant_tests {
             // instead we track via the retirement certificate count indirectly.
             // Simplest: retired = batch.amount - active_amount (computed from status).
             let retired: i128 = match batch.status {
-                CreditStatus::FullyRetired    => batch.amount,
-                CreditStatus::Active          => 0,
+                CreditStatus::FullyRetired => batch.amount,
+                CreditStatus::Active => 0,
                 CreditStatus::PartiallyRetired => {
                     // We can't read BatchRetired directly from test context.
                     // Use the fact that active = batch.amount - retired.
@@ -120,10 +126,11 @@ mod invariant_tests {
             assert!(
                 batch.amount >= retired,
                 "I1 violated for batch {id}: issued={} < retired={}",
-                batch.amount, retired
+                batch.amount,
+                retired
             );
 
-            total_issued  += batch.amount;
+            total_issued += batch.amount;
             total_retired += retired;
         }
 
@@ -171,8 +178,12 @@ mod invariant_tests {
                 assert!(
                     !overlaps,
                     "I2 violated: batch {} [{},{}] overlaps batch {} [{},{}]",
-                    batch_ids[i], a.serial_start, a.serial_end,
-                    batch_ids[j], b.serial_start, b.serial_end,
+                    batch_ids[i],
+                    a.serial_start,
+                    a.serial_end,
+                    batch_ids[j],
+                    b.serial_start,
+                    b.serial_end,
                 );
             }
         }
@@ -226,7 +237,7 @@ mod invariant_tests {
         let (client, admin, _) = setup(&env);
         let owner = soroban_sdk::Address::generate(&env);
 
-        mint(&env, &client, &admin, &owner, "b1", "p1", 500,  1,   500);
+        mint(&env, &client, &admin, &owner, "b1", "p1", 500, 1, 500);
         assert_conservation(&env, &client, &["b1"]);
         assert_no_serial_overlap(&env, &client, &["b1"]);
 
@@ -267,11 +278,18 @@ mod invariant_tests {
 
         retire(&env, &client, &owner, "b1", 100, "ret-002");
         assert_conservation_exact(&env, &client, &["b1"], &["ret-001", "ret-002"]);
-        let prev = assert_retirement_monotonic_exact(&env, &client, &["ret-001", "ret-002"], "b1", prev);
+        let prev =
+            assert_retirement_monotonic_exact(&env, &client, &["ret-001", "ret-002"], "b1", prev);
 
         retire(&env, &client, &owner, "b1", 100, "ret-003");
         assert_conservation_exact(&env, &client, &["b1"], &["ret-001", "ret-002", "ret-003"]);
-        assert_retirement_monotonic_exact(&env, &client, &["ret-001", "ret-002", "ret-003"], "b1", prev);
+        assert_retirement_monotonic_exact(
+            &env,
+            &client,
+            &["ret-001", "ret-002", "ret-003"],
+            "b1",
+            prev,
+        );
 
         let batch = client.get_credit_batch(&s(&env, "b1"));
         assert_eq!(batch.status, CreditStatus::FullyRetired);
@@ -283,8 +301,8 @@ mod invariant_tests {
         let (client, admin, _) = setup(&env);
         let owner = soroban_sdk::Address::generate(&env);
 
-        mint(&env, &client, &admin, &owner, "b1", "p1", 200,   1,  200);
-        mint(&env, &client, &admin, &owner, "b2", "p1", 300, 201,  500);
+        mint(&env, &client, &admin, &owner, "b1", "p1", 200, 1, 200);
+        mint(&env, &client, &admin, &owner, "b2", "p1", 300, 201, 500);
         mint(&env, &client, &admin, &owner, "b3", "p2", 500, 501, 1000);
 
         assert_conservation(&env, &client, &["b1", "b2", "b3"]);
@@ -336,7 +354,7 @@ mod invariant_tests {
         let (client, admin, _) = setup(&env);
         let owner = soroban_sdk::Address::generate(&env);
 
-        mint(&env, &client, &admin, &owner, "b1", "p1", 100,   1, 100);
+        mint(&env, &client, &admin, &owner, "b1", "p1", 100, 1, 100);
         mint(&env, &client, &admin, &owner, "b2", "p1", 100, 101, 200);
         mint(&env, &client, &admin, &owner, "b3", "p1", 100, 201, 300);
 
@@ -366,18 +384,42 @@ mod invariant_tests {
         assert_conservation_exact(&env, &client, &["b1"], &[steps[0].0]);
 
         retire(&env, &client, &owner, "b1", steps[1].1, steps[1].0);
-        prev = assert_retirement_monotonic_exact(&env, &client, &[steps[0].0, steps[1].0], "b1", prev);
+        prev =
+            assert_retirement_monotonic_exact(&env, &client, &[steps[0].0, steps[1].0], "b1", prev);
         assert_conservation_exact(&env, &client, &["b1"], &[steps[0].0, steps[1].0]);
 
         retire(&env, &client, &owner, "b1", steps[2].1, steps[2].0);
-        prev = assert_retirement_monotonic_exact(&env, &client, &[steps[0].0, steps[1].0, steps[2].0], "b1", prev);
+        prev = assert_retirement_monotonic_exact(
+            &env,
+            &client,
+            &[steps[0].0, steps[1].0, steps[2].0],
+            "b1",
+            prev,
+        );
 
         retire(&env, &client, &owner, "b1", steps[3].1, steps[3].0);
-        prev = assert_retirement_monotonic_exact(&env, &client, &[steps[0].0, steps[1].0, steps[2].0, steps[3].0], "b1", prev);
+        prev = assert_retirement_monotonic_exact(
+            &env,
+            &client,
+            &[steps[0].0, steps[1].0, steps[2].0, steps[3].0],
+            "b1",
+            prev,
+        );
 
         retire(&env, &client, &owner, "b1", steps[4].1, steps[4].0);
-        assert_retirement_monotonic_exact(&env, &client, &[steps[0].0, steps[1].0, steps[2].0, steps[3].0, steps[4].0], "b1", prev);
-        assert_conservation_exact(&env, &client, &["b1"], &[steps[0].0, steps[1].0, steps[2].0, steps[3].0, steps[4].0]);
+        assert_retirement_monotonic_exact(
+            &env,
+            &client,
+            &[steps[0].0, steps[1].0, steps[2].0, steps[3].0, steps[4].0],
+            "b1",
+            prev,
+        );
+        assert_conservation_exact(
+            &env,
+            &client,
+            &["b1"],
+            &[steps[0].0, steps[1].0, steps[2].0, steps[3].0, steps[4].0],
+        );
     }
 
     #[test]
@@ -393,7 +435,10 @@ mod invariant_tests {
 
         assert_conservation_exact(&env, &client, &["b1"], &["ret-001"]);
         let retired = assert_retirement_monotonic_exact(&env, &client, &["ret-001"], "b1", prev);
-        assert_eq!(retired, 500, "retired should equal issued at full retirement");
+        assert_eq!(
+            retired, 500,
+            "retired should equal issued at full retirement"
+        );
     }
 
     #[test]

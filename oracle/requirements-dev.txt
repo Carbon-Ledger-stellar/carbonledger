@@ -1,0 +1,6 @@
+# Test-only dependencies — not installed in production oracle deployments.
+# See tests/fuzz/oracle/README.md (issue #641).
+pytest==8.3.4
+hypothesis==6.123.2
+# atheris is intentionally NOT pinned here: it requires clang and is only
+# used by the scheduled/manual deep-fuzz CI job, installed there directly.

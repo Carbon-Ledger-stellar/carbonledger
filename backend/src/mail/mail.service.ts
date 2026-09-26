@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { MAIL_QUEUE, MailEvent } from './mail.constants';
 import { PrismaService } from '../prisma.service';
+import { enqueueWithTrace } from '../telemetry/tracing';
 
 @Injectable()
 export class MailService {
@@ -15,7 +16,9 @@ export class MailService {
     const log = await this.prisma.emailLog.create({
       data: { to, template: event, subject: this.getSubject(event), status: 'Pending' },
     });
-    await this.mailQueue.add(event, { logId: log.id, to, payload });
+    await enqueueWithTrace(MAIL_QUEUE, event, { logId: log.id, to, payload }, (data) =>
+      this.mailQueue.add(event, data),
+    );
     return log;
   }
 
@@ -34,22 +37,48 @@ export class MailService {
     return this.sendEmail(user.email, event, payload);
   }
 
+  /**
+   * Send an admin error alert. Uses ADMIN_ALERT_EMAIL env var.
+   * Never throws — email failures must not break the main flow.
+   */
+  async sendAdminAlert(
+    errorTitle: string,
+    errorMessage: string,
+    service = 'carbonledger-backend',
+  ): Promise<void> {
+    const adminEmail = process.env.ADMIN_ALERT_EMAIL;
+    if (!adminEmail) return;
+    try {
+      await this.sendEmail(adminEmail, MailEvent.ERROR_ALERT, {
+        errorTitle,
+        errorMessage,
+        timestamp: new Date().toISOString(),
+        service,
+      });
+    } catch {
+      // swallow — alert failures must never propagate
+    }
+  }
+
   private isEventEnabled(prefs: any, event: MailEvent): boolean {
     switch (event) {
-      case MailEvent.PROJECT_APPROVED:    return prefs.projectApproved;
-      case MailEvent.CREDITS_MINTED:      return prefs.creditsMinted;
-      case MailEvent.PURCHASE_CONFIRMED:  return prefs.purchaseConfirmed;
+      case MailEvent.PROJECT_APPROVED:     return prefs.projectApproved;
+      case MailEvent.CREDITS_MINTED:       return prefs.creditsMinted;
+      case MailEvent.PURCHASE_CONFIRMED:   return prefs.purchaseConfirmed;
       case MailEvent.RETIREMENT_CONFIRMED: return prefs.retirementConfirmed;
+      // WELCOME and ERROR_ALERT are always sent regardless of preferences
       default: return true;
     }
   }
 
   private getSubject(event: MailEvent): string {
     switch (event) {
-      case MailEvent.PROJECT_APPROVED:    return 'Project Approved - CarbonLedger';
-      case MailEvent.CREDITS_MINTED:      return 'Credits Minted Successfully';
-      case MailEvent.PURCHASE_CONFIRMED:  return 'Purchase Confirmed - CarbonLedger';
+      case MailEvent.PROJECT_APPROVED:     return 'Project Approved - CarbonLedger';
+      case MailEvent.CREDITS_MINTED:       return 'Credits Minted Successfully';
+      case MailEvent.PURCHASE_CONFIRMED:   return 'Purchase Confirmed - CarbonLedger';
       case MailEvent.RETIREMENT_CONFIRMED: return 'Retirement Confirmed & Certificate Attached';
+      case MailEvent.WELCOME:              return 'Welcome to CarbonLedger 🌿';
+      case MailEvent.ERROR_ALERT:          return '[ALERT] CarbonLedger Error Notification';
       default: return 'Notification from CarbonLedger';
     }
   }

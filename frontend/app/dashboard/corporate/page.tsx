@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { colors, typography, spacing } from "../../styles/design-system";
+import { colors, typography, spacing } from "../../../styles/design-system";
 
 interface PortfolioStats {
   totalHeld: number;
