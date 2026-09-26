@@ -1,0 +1,272 @@
+openapi: 3.0.3
+info:
+  title: CarbonLedger Pause System API
+  version: 1.0.0
+  description: OpenAPI 3.0 specification for CarbonLedger contract pause control, status verification, and operational history.
+paths:
+  /api/v1/contract/status:
+    get:
+      summary: Retrieve current contract operational & pause status
+      description: Returns the real-time operational status of the Soroban CarbonCredit and Marketplace contracts.
+      operationId: getContractStatus
+      tags:
+        - Contract Status
+      responses:
+        '200':
+          description: Operational status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractStatusResponse'
+              example:
+                contractId: "CCREDIT7J2XNQ5B6E4Y8WZ3M1K9L0P5R7T2V4X6Z8A0B"
+                network: "testnet"
+                isPaused: false
+                status: "operational"
+                pauseUntil: 0
+                pausedAt: null
+                pausedBy: null
+                reason: null
+        '500':
+          description: Internal server error or Soroban RPC unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/admin/pause:
+    post:
+      summary: Emergency pause contract operations
+      description: Halts all state-mutating contract operations (minting, transfers, retirements). Requires administrator privileges.
+      operationId: emergencyPauseContract
+      tags:
+        - Admin Controls
+      security:
+        - AdminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PauseContractRequest'
+            example:
+              durationHours: 24
+              reason: "Investigating anomalous price oracle reports"
+              affectedContracts:
+                - "carbon_credit"
+                - "marketplace"
+      responses:
+        '200':
+          description: Contract paused successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseActionResponse'
+              example:
+                success: true
+                transactionHash: "4a7f29bb5c689d02347101ad79803bf56f10c662865c345330a1bf64c23f1124"
+                pausedUntil: 1727295330
+                status: "paused"
+        '400':
+          description: Invalid request parameters (e.g. duration exceeds 72h)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden - caller is not designated admin
+        '409':
+          description: Contract is already paused
+
+  /api/v1/admin/unpause:
+    post:
+      summary: Resume contract operations
+      description: Resumes state-mutating operations on paused contracts. Requires administrator privileges.
+      operationId: resumeContractOperations
+      tags:
+        - Admin Controls
+      security:
+        - AdminBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnpauseContractRequest'
+            example:
+              reason: "Security audit cleared and verified"
+      responses:
+        '200':
+          description: Contract unpaused successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseActionResponse'
+              example:
+                success: true
+                transactionHash: "9b12a83ef7c02b1928374a01c349586fe09a7b6c5d4e3f2109847123958abcdef"
+                pausedUntil: 0
+                status: "operational"
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: Contract is not paused
+
+  /api/v1/admin/pause-history:
+    get:
+      summary: Retrieve pause incident history
+      description: Fetches historical pause and unpause events with timestamps, administrators, and audit reasons.
+      operationId: getPauseHistory
+      tags:
+        - Admin Controls
+      security:
+        - AdminBearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Audit history retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseHistoryResponse'
+
+components:
+  securitySchemes:
+    AdminBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ContractStatusResponse:
+      type: object
+      required:
+        - contractId
+        - isPaused
+        - status
+      properties:
+        contractId:
+          type: string
+        network:
+          type: string
+        isPaused:
+          type: boolean
+        status:
+          type: string
+          enum: [operational, paused, expiring_soon]
+        pauseUntil:
+          type: integer
+          description: Unix timestamp in seconds
+        pausedAt:
+          type: integer
+          nullable: true
+        pausedBy:
+          type: string
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+
+    PauseContractRequest:
+      type: object
+      required:
+        - durationHours
+        - reason
+      properties:
+        durationHours:
+          type: integer
+          minimum: 1
+          maximum: 72
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        affectedContracts:
+          type: array
+          items:
+            type: string
+
+    UnpauseContractRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 5
+
+    PauseActionResponse:
+      type: object
+      required:
+        - success
+        - transactionHash
+        - status
+      properties:
+        success:
+          type: boolean
+        transactionHash:
+          type: string
+        pausedUntil:
+          type: integer
+        status:
+          type: string
+
+    PauseHistoryResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PauseHistoryItem'
+
+    PauseHistoryItem:
+      type: object
+      properties:
+        id:
+          type: string
+        action:
+          type: string
+          enum: [PAUSE, UNPAUSE, AUTO_EXPIRE]
+        adminAddress:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        durationHours:
+          type: integer
+        reason:
+          type: string
+        transactionHash:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required:
+        - statusCode
+        - message
+        - errorCode
+      properties:
+        statusCode:
+          type: integer
+        message:
+          type: string
+        errorCode:
+          type: string
