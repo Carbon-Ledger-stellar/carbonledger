@@ -34,3 +34,4 @@ This directory contains ADRs for CarbonLedger. Each ADR documents a significant 
 | [ADR-010](ADR-010-api-design-versioning.md) | API design and versioning strategy | Accepted |
 | [ADR-011](ADR-011-soroban-contract-architecture.md) | Soroban smart contract architecture and patterns | Accepted |
 | [ADR-012](ADR-012-stellar-integration-patterns.md) | Stellar integration patterns and key management | Accepted |
+| [ADR-013](ADR-013-emergency-pause.md) | Emergency pause mechanism for carbon_credit and carbon_marketplace | Accepted |

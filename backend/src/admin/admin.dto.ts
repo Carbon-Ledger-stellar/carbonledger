@@ -89,3 +89,15 @@ export class UpdateCanaryDto {
   @Max(100)
   trafficPct?: number;
 }
+
+/**
+ * DTO for pausing a contract (#1307).
+ *
+ * Validation:
+ *  - untilTimestamp: unix seconds; the contract rejects windows longer than 72h
+ */
+export class PauseContractDto {
+  @IsInt()
+  @Min(1)
+  untilTimestamp: number;
+}

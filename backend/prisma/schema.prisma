@@ -824,33 +824,35 @@ model RecoveryCode {
   @@index([userId, usedAt])
 }
 
-/// First time a subject was shown an experiment variant (#1326).
-/// One row per (experiment, subject); the variant never changes afterwards.
-model ExperimentExposure {
-  id            String   @id @default(cuid())
-  experimentKey String
-  variant       String
-  /// SHA-256 of the subject's public key — raw keys are not stored
-  subjectHash   String
-  firstSeenAt   DateTime @default(now())
+/// Emergency pause / unpause of the credit or marketplace contract (#1324).
+///
+/// Rows are written from two directions and joined on (txHash, action):
+///   - the event indexer records the on-chain `(c_ledger, paused|unpaused)`
+///     event (admin, pausedUntil, occurredAt, eventId)
+///   - an admin records *why* the contract was paused via
+///     POST /admin/pause-analytics/events (reason)
+/// Whichever arrives first creates the row; the other fills in its fields.
+model PauseEvent {
+  id          String    @id @default(cuid())
+  /// "credit" | "marketplace"
+  contract    String
+  /// "pause" | "unpause"
+  action      String
+  /// Stellar public key of the admin that signed the transaction
+  admin       String
+  reason      String?
+  /// Requested auto-expiry for a pause; null for unpause
+  pausedUntil DateTime?
+  txHash      String
+  /// Soroban RPC event id; null until the indexer has seen the event
+  eventId     String?   @unique
+  /// Ledger close time of the event (or API receipt time until indexed)
+  occurredAt  DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  @@unique([experimentKey, subjectHash])
-  @@index([experimentKey, variant])
-  @@map("experiment_exposures")
-}
-
-/// Metric observation for an exposed subject (#1326). Conversion metrics
-/// count distinct subjects; continuous metrics sum `value` per subject.
-model ExperimentMetricEvent {
-  id            String   @id @default(cuid())
-  experimentKey String
-  variant       String
-  subjectHash   String
-  metric        String
-  value         Float    @default(1)
-  createdAt     DateTime @default(now())
-
-  @@index([experimentKey, metric, variant])
-  @@index([experimentKey, subjectHash])
-  @@map("experiment_metric_events")
+  @@unique([txHash, action])
+  @@index([contract, occurredAt])
+  @@index([occurredAt])
+  @@map("pause_events")
 }
