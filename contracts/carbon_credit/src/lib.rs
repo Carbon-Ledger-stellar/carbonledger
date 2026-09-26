@@ -502,6 +502,10 @@ impl CarbonCreditContract {
         }
         env.storage().persistent().set(&DataKey::PauseEnabled, &true);
         env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("paused")),
+            (admin, until_timestamp, now),
+        );
         Ok(())
     }
 
@@ -510,6 +514,10 @@ impl CarbonCreditContract {
         Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("unpaused")),
+            (admin, env.ledger().timestamp()),
+        );
         Ok(())
     }
 

@@ -394,3 +394,52 @@ fn test_happy_path_emits_exact_event_sequence() {
         ]
     );
 }
+
+#[test]
+fn test_pause_operations_emits_paused_event() {
+    let env = Env::default();
+    let (client, admin, _treasury, _seller, _usdc, id) = setup(&env);
+    let now = env.ledger().timestamp();
+    let until = now + 3_600;
+
+    client.pause_operations(&admin, &until);
+
+    // `setup` registers a Stellar asset contract, which emits its own
+    // `set_admin` event, so only the marketplace's final event is compared.
+    assert_eq!(
+        vec![&env, env.events().all().last().unwrap()],
+        vec![
+            &env,
+            (
+                id,
+                (symbol_short!("c_ledger"), symbol_short!("paused")).into_val(&env),
+                (admin.clone(), until, now).into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_unpause_operations_emits_unpaused_event() {
+    let env = Env::default();
+    let (client, admin, _treasury, _seller, _usdc, id) = setup(&env);
+    let now = env.ledger().timestamp();
+    client.pause_operations(&admin, &(now + 3_600));
+
+    env.ledger().with_mut(|l| l.timestamp = now + 600);
+    client.unpause_operations(&admin);
+
+    // `setup` registers a Stellar asset contract, which emits its own
+    // `set_admin` event, so only the marketplace's final event is compared.
+    assert_eq!(
+        vec![&env, env.events().all().last().unwrap()],
+        vec![
+            &env,
+            (
+                id,
+                (symbol_short!("c_ledger"), symbol_short!("unpaused")).into_val(&env),
+                (admin.clone(), now + 600).into_val(&env),
+            )
+        ]
+    );
+}
