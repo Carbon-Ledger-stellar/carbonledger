@@ -19,6 +19,7 @@ Runbooks for CarbonLedger production incidents. Each runbook follows the same st
 
 - [contacts.md](contacts.md) — On-call contacts per incident type
 - [escalation.md](escalation.md) — Escalation path and SLA thresholds
+- [Emergency pause training](../pause-feature/training/README.md) — Pausing / unpausing `carbon_credit` and `carbon_marketplace`
 
 ## Severity Definitions
 
