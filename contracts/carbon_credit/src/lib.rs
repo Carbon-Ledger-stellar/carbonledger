@@ -70,6 +70,8 @@ pub enum Role {
     Verifier,
     Oracle,
     MarketplaceAdmin,
+    /// Project developer: can submit credit issuance requests for their own projects.
+    Developer,
 }
 
 #[contracttype]
@@ -155,6 +157,9 @@ pub struct CreditMintedEvent {
 #[derive(Clone)]
 pub enum RetiredKey {
     BatchRetired(String),
+    /// Tracks whether an individual serial number has been retired.
+    /// Used by retire_batch() to provide per-serial idempotency guarantees.
+    SerialRetired(u64),
 }
 
 #[contracttype]
@@ -915,6 +920,171 @@ impl CarbonCreditContract {
             },
         );
         Self::release_lock(&env);
+        Ok(cert)
+    }
+
+    /// Retire a specific set of serial numbers belonging to a single batch.
+    ///
+    /// The caller supplies an explicit `Vec<u64>` of serial numbers to retire.
+    /// This allows partial retirements targeting precise serials rather than
+    /// consuming credits sequentially from the front of the batch.
+    ///
+    /// ## Ownership check
+    /// The `holder` must be the current owner of the batch.
+    ///
+    /// ## Validation
+    /// * Every serial number must fall within `[batch.serial_start, batch.serial_end]`.
+    /// * No serial number may already be retired (idempotency guard via the
+    ///   `DataKey::SerialRetired(serial)` flag).
+    /// * Duplicate serial numbers in the input `Vec` are rejected.
+    ///
+    /// ## Emissions
+    /// Emits one `RetirementEvent` per retirement invocation (not per serial).
+    ///
+    /// Closes #1000.
+    pub fn retire_batch(
+        env: Env,
+        holder: Address,
+        batch_id: String,
+        serial_numbers: Vec<u64>,
+        reason: String,
+        beneficiary: String,
+        retire_id: String,
+        tx_hash: String,
+        cert_cid: String,
+    ) -> Result<RetirementCertificate, CarbonError> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+
+        let amount = serial_numbers.len() as i128;
+        if amount == 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+
+        // Prevent retire_id reuse.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Retirement(retire_id.clone()))
+        {
+            return Err(CarbonError::SerialNumberConflict);
+        }
+
+        let mut batch = Self::load_batch(&env, &batch_id)?;
+
+        // Ownership check.
+        if batch.owner != holder {
+            return Err(CarbonError::UnauthorizedVerifier);
+        }
+
+        if batch.status == CreditStatus::FullyRetired {
+            return Err(CarbonError::AlreadyRetired);
+        }
+        if batch.status == CreditStatus::Suspended {
+            return Err(CarbonError::ProjectSuspended);
+        }
+        if Self::is_batch_expired(&env, &batch) {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+
+        let active_amount = Self::active_amount(&env, &batch);
+        if amount > active_amount {
+            return Err(CarbonError::InsufficientCredits);
+        }
+
+        // Validate every supplied serial number.
+        // Also check for duplicates by verifying each is unique within the input.
+        for i in 0..serial_numbers.len() {
+            let sn = serial_numbers.get(i).unwrap();
+            // Range check: serial must belong to this batch.
+            if sn < batch.serial_start || sn > batch.serial_end {
+                return Err(CarbonError::InvalidSerialRange);
+            }
+            // Already retired check via per-serial flag.
+            if env
+                .storage()
+                .persistent()
+                .has(&RetiredKey::SerialRetired(sn))
+            {
+                return Err(CarbonError::AlreadyRetired);
+            }
+            // Duplicate check within the caller-supplied list.
+            for j in 0..i {
+                if serial_numbers.get(j).unwrap() == sn {
+                    return Err(CarbonError::DoubleCountingDetected);
+                }
+            }
+        }
+
+        // Burn tokens: update the retired counter for this batch.
+        let already_retired: i128 = env
+            .storage()
+            .persistent()
+            .get(&RetiredKey::BatchRetired(batch_id.clone()))
+            .unwrap_or(0_i128);
+        let new_retired = already_retired
+            .checked_add(amount)
+            .ok_or(CarbonError::Arithmetic)?;
+        env.storage()
+            .persistent()
+            .set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
+
+        // Persist per-serial flags so future calls detect already-retired serials.
+        for i in 0..serial_numbers.len() {
+            let sn = serial_numbers.get(i).unwrap();
+            env.storage()
+                .persistent()
+                .set(&RetiredKey::SerialRetired(sn), &true);
+        }
+
+        // Update batch status.
+        let new_active = batch
+            .amount
+            .checked_sub(new_retired)
+            .ok_or(CarbonError::Arithmetic)?;
+        batch.status = if new_active == 0 {
+            CreditStatus::FullyRetired
+        } else {
+            CreditStatus::PartiallyRetired
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
+        Self::extend_batch_ttl(&env, &batch_id);
+
+        let now = env.ledger().timestamp();
+        let cert = RetirementCertificate {
+            retirement_id: retire_id.clone(),
+            credit_batch_id: batch_id.clone(),
+            project_id: batch.project_id.clone(),
+            amount,
+            retired_by: holder.clone(),
+            beneficiary: beneficiary.clone(),
+            retirement_reason: reason.clone(),
+            vintage_year: batch.vintage_year,
+            serial_numbers: serial_numbers.clone(),
+            retired_at: now,
+            tx_hash: tx_hash.clone(),
+            certificate_cid: cert_cid.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retirement(retire_id.clone()), &cert);
+
+        // Emit one RetirementEvent covering the entire batch of serial numbers.
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("retired")),
+            CreditRetiredEvent {
+                retirement_id: retire_id.clone(),
+                batch_id: batch_id.clone(),
+                project_id: batch.project_id.clone(),
+                amount,
+                retired_by: holder.clone(),
+                beneficiary: beneficiary.clone(),
+                timestamp: now,
+                certificate_cid: cert_cid.clone(),
+            },
+        );
         Ok(cert)
     }
 
