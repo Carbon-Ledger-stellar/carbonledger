@@ -823,3 +823,36 @@ model RecoveryCode {
   @@index([userId])
   @@index([userId, usedAt])
 }
+
+/// Emergency pause / unpause of the credit or marketplace contract (#1324).
+///
+/// Rows are written from two directions and joined on (txHash, action):
+///   - the event indexer records the on-chain `(c_ledger, paused|unpaused)`
+///     event (admin, pausedUntil, occurredAt, eventId)
+///   - an admin records *why* the contract was paused via
+///     POST /admin/pause-analytics/events (reason)
+/// Whichever arrives first creates the row; the other fills in its fields.
+model PauseEvent {
+  id          String    @id @default(cuid())
+  /// "credit" | "marketplace"
+  contract    String
+  /// "pause" | "unpause"
+  action      String
+  /// Stellar public key of the admin that signed the transaction
+  admin       String
+  reason      String?
+  /// Requested auto-expiry for a pause; null for unpause
+  pausedUntil DateTime?
+  txHash      String
+  /// Soroban RPC event id; null until the indexer has seen the event
+  eventId     String?   @unique
+  /// Ledger close time of the event (or API receipt time until indexed)
+  occurredAt  DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([txHash, action])
+  @@index([contract, occurredAt])
+  @@index([occurredAt])
+  @@map("pause_events")
+}
