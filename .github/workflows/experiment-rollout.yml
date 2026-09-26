@@ -1,0 +1,63 @@
+name: Experiment rollout
+
+# Advances, holds, rolls back or concludes the pause feature experiments
+# (#1326) based on their current results. See docs/pause-experiments.md.
+#
+# Scheduled runs are dry runs unless the repository variable
+# EXPERIMENT_AUTO_APPLY is "true". Manual runs apply only when `apply` is set.
+#
+# Required secrets: EXPERIMENT_API_URL, EXPERIMENT_ADMIN_JWT
+
+on:
+  schedule:
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: 'Experiment key (blank = all)'
+        required: false
+        default: ''
+      apply:
+        description: 'Apply the planned change (otherwise dry run)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --test scripts/experiment-rollout.test.js
+
+  rollout:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        experiment: [pause_confirmation_step, pause_default_window, paused_state_banner]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Plan / apply
+        if: ${{ github.event.inputs.experiment == '' || github.event.inputs.experiment == matrix.experiment }}
+        env:
+          API_URL: ${{ secrets.EXPERIMENT_API_URL }}
+          ADMIN_JWT: ${{ secrets.EXPERIMENT_ADMIN_JWT }}
+          APPLY: ${{ (github.event_name == 'schedule' && vars.EXPERIMENT_AUTO_APPLY == 'true') || github.event.inputs.apply == 'true' }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$ADMIN_JWT" ]; then
+            echo "::notice::EXPERIMENT_API_URL / EXPERIMENT_ADMIN_JWT not configured; skipping."
+            exit 0
+          fi
+          FLAGS="--experiment ${{ matrix.experiment }}"
+          if [ "$APPLY" = "true" ]; then FLAGS="$FLAGS --apply"; fi
+          node scripts/experiment-rollout.js $FLAGS
