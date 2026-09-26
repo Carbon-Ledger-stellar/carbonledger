@@ -1,7 +1,7 @@
 # Contract Architecture: Pause Mechanism
 
-> **Closes:** #1291  
-> **Last updated:** 2026-09-25  
+> **Closes:** #1201  
+> **Last updated:** 2026-09-26  
 > **See also:** [ADR-013](adr/ADR-013-emergency-pause.md) | [Pause Specification](pause-specification.md) | [Pause API Reference](pause-api-reference.md)
 
 This document describes how the emergency pause mechanism integrates into the CarbonLedger smart contract architecture. It includes updated architecture diagrams, sequence diagrams for pause flows, and storage model documentation.

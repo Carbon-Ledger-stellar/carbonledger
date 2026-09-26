@@ -1,6 +1,9 @@
 # Pause Events Reference
 
-> **Status:** This document describes events for the proposed pause mechanism. The pause feature is planned but not yet implemented — see [ISSUES.md](ISSUES.md) for implementation scope.
+> **Closes:** #1203  
+> **Last updated:** 2026-09-26  
+> **Status:** This document describes events for the pause mechanism. See [ISSUES.md](ISSUES.md) for implementation scope.
+> **See also:** [Pause Architecture](pause-architecture.md) | [Pause Testing Guide](PAUSE_TESTING_GUIDE.md) | [Contract Events Reference](contract-events.md)
 
 ## Table of Contents
 
