@@ -1,12 +1,14 @@
 import {
   Controller, Get, Post, Delete, Body, Param, Query, Req,
-  UseGuards, HttpCode, HttpStatus,
+  UseGuards, HttpCode, HttpStatus, BadRequestException,
 } from '@nestjs/common';
+import { ApiBearerAuth } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators';
 import { AdminService } from './admin.service';
+import { PauseService, PAUSABLE_CONTRACTS, type PausableContract } from './pause.service';
 import {
   VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto, UpdateCanaryDto,
-  ReviewQuarantineDto, SoftDeleteDto,
+  ReviewQuarantineDto, SoftDeleteDto, PauseContractDto,
 } from './admin.dto';
 import {
   CheckPolicies, PoliciesGuard, UserSubject, AuditLogSubject, OracleDataSubject,
@@ -23,7 +25,10 @@ import {
 @Roles('admin')
 @ApiBearerAuth()
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly pause: PauseService,
+  ) {}
 
   // ── Role assignment ─────────────────────────────────────────────────────────
 
@@ -87,6 +92,34 @@ export class AdminController {
   @CheckPolicies((ability) => ability.can('reindex', 'all'))
   reindex() {
     return this.admin.triggerReindex();
+  }
+
+  // ── Emergency pause (#1307) ─────────────────────────────────────────────────
+  //
+  // Traced end to end (contract call → DB update → event emit); the response
+  // carries the traceId for lookup in Jaeger.
+
+  @Get('contracts/:contract/pause')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', 'all'))
+  getPauseState(@Param('contract') contract: string) {
+    return this.pause.getPauseState(parsePausableContract(contract));
+  }
+
+  @Post('contracts/:contract/pause')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', 'all'))
+  pauseContract(@Param('contract') contract: string, @Body() dto: PauseContractDto, @Req() req: any) {
+    return this.pause.pauseContract(parsePausableContract(contract), req.user?.publicKey, dto.untilTimestamp);
+  }
+
+  @Post('contracts/:contract/unpause')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', 'all'))
+  unpauseContract(@Param('contract') contract: string, @Req() req: any) {
+    return this.pause.unpauseContract(parsePausableContract(contract), req.user?.publicKey);
   }
 
   // ── Soft delete / recovery (#964) ───────────────────────────────────────────
@@ -215,4 +248,11 @@ export class AdminController {
       dto.note,
     );
   }
+}
+
+function parsePausableContract(contract: string): PausableContract {
+  if (!(PAUSABLE_CONTRACTS as readonly string[]).includes(contract)) {
+    throw new BadRequestException(`contract must be one of: ${PAUSABLE_CONTRACTS.join(', ')}`);
+  }
+  return contract as PausableContract;
 }

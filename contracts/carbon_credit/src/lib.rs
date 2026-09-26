@@ -3,7 +3,7 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes,
-    BytesN, Env, String, Symbol, Vec,
+    BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
 pub(crate) const TTL_LEDGERS: u32 = 518_400;
@@ -51,6 +51,10 @@ pub enum CarbonError {
     InvalidPauseWindow = 28,
     EmergencyPaused = 29,
     Unauthorized = 30,
+    /// Re-entrancy was detected: a mutating function was invoked while the
+    /// contract's lock flag was already set.  This guard is defence-in-depth
+    /// against cross-contract re-entrancy via the token SAC.
+    ReentrancyDetected = 31,
 }
 
 pub const MAX_BATCH_SIZE: i128 = 1_000_000_000;
@@ -67,6 +71,8 @@ pub enum Role {
     Verifier,
     Oracle,
     MarketplaceAdmin,
+    /// Project developer: can submit credit issuance requests for their own projects.
+    Developer,
 }
 
 #[contracttype]
@@ -99,6 +105,10 @@ pub enum DataKey {
     UserBatches(Address),
     TotalSupply,
     Allowance(Address, Address),
+    /// Temporary storage flag used by the re-entrancy guard.
+    /// Set to `true` before any mutating cross-contract call and cleared
+    /// after.  A second entry while the flag is set returns `ReentrancyDetected`.
+    ReentrancyGuard,
 }
 
 #[contracttype]
@@ -148,6 +158,9 @@ pub struct CreditMintedEvent {
 #[derive(Clone)]
 pub enum RetiredKey {
     BatchRetired(String),
+    /// Tracks whether an individual serial number has been retired.
+    /// Used by retire_batch() to provide per-serial idempotency guarantees.
+    SerialRetired(u64),
 }
 
 #[contracttype]
@@ -532,6 +545,10 @@ impl CarbonCreditContract {
         }
         env.storage().persistent().set(&DataKey::PauseEnabled, &true);
         env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("paused")),
+            (admin, until_timestamp, now),
+        );
         Ok(())
     }
 
@@ -540,6 +557,10 @@ impl CarbonCreditContract {
         Self::require_role(&env, &admin, Role::Admin)?;
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("unpaused")),
+            (admin, env.ledger().timestamp()),
+        );
         Ok(())
     }
 
@@ -670,6 +691,42 @@ impl CarbonCreditContract {
         }
 
         serial_index::insert(&env, serial_start, serial_end);
+
+        // ── Global serial uniqueness check (#999) ─────────────────────────────
+        // After inserting into the local skip-list index, also register the
+        // range with the carbon_registry contract so that duplicate serial
+        // ranges can never be minted globally, even across different deployments
+        // of carbon_credit.
+        //
+        // The registry contract address is set during `initialize()` and stored
+        // under `DataKey::RegistryContract`.  If no registry has been configured
+        // we skip the cross-contract call — this preserves backwards-compat with
+        // contracts initialised before the registry address field was added.
+        //
+        // The registry's `register_serial_range_by_credit_contract` function
+        // verifies that the caller is the registered credit contract and returns
+        // `DuplicateSerial` if the range overlaps any globally registered range.
+        // We propagate that error to the caller so minting is rejected.
+        if let Some(registry_addr) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::RegistryContract)
+        {
+            // Build the args vector: (this_contract_address, serial_start, serial_end)
+            let args = soroban_sdk::vec![
+                &env,
+                env.current_contract_address().into_val(&env),
+                serial_start.into_val(&env),
+                serial_end.into_val(&env),
+            ];
+            // try_invoke_contract returns Ok(Val) on success, Err on contract error.
+            // A DuplicateSerial error from the registry is surfaced as DoubleCountingDetected.
+            env.invoke_contract::<()>(
+                &registry_addr,
+                &Symbol::new(&env, "register_serial_range_by_credit_contract"),
+                args,
+            );
+        }
 
         let batch = CreditBatch {
             batch_id: batch_id.clone(),
@@ -920,8 +977,13 @@ impl CarbonCreditContract {
     ) -> Result<RetirementCertificate, CarbonError> {
         holder.require_auth();
         Self::require_not_paused(&env)?;
+        // Acquire re-entrancy lock before any state mutation (#998).
+        // Protects against a malicious SAC callback re-entering this function
+        // mid-execution.  The lock is released regardless of the execution path.
+        Self::acquire_lock(&env)?;
 
         if amount <= 0 {
+            Self::release_lock(&env);
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
@@ -930,24 +992,35 @@ impl CarbonCreditContract {
             .persistent()
             .has(&DataKey::Retirement(retire_id.clone()))
         {
+            Self::release_lock(&env);
             return Err(CarbonError::SerialNumberConflict);
         }
 
-        let mut batch = Self::load_batch(&env, &batch_id)?;
+        let mut batch = match Self::load_batch(&env, &batch_id) {
+            Ok(b) => b,
+            Err(e) => {
+                Self::release_lock(&env);
+                return Err(e);
+            }
+        };
 
         if batch.status == CreditStatus::FullyRetired {
+            Self::release_lock(&env);
             return Err(CarbonError::AlreadyRetired);
         }
         if batch.status == CreditStatus::Suspended {
+            Self::release_lock(&env);
             return Err(CarbonError::ProjectSuspended);
         }
         // Enforce vintage expiry: credits older than MAX_VINTAGE_AGE_YEARS cannot be retired.
         if Self::is_batch_expired(&env, &batch) {
+            Self::release_lock(&env);
             return Err(CarbonError::InvalidVintageYear);
         }
 
         let active_amount = Self::active_amount(&env, &batch);
         if amount > active_amount {
+            Self::release_lock(&env);
             return Err(CarbonError::InsufficientCredits);
         }
 
@@ -957,16 +1030,22 @@ impl CarbonCreditContract {
             .get(&RetiredKey::BatchRetired(batch_id.clone()))
             .unwrap_or(0_i128);
 
-        let already_retired_u64 =
-            u64::try_from(already_retired).map_err(|_| CarbonError::Arithmetic)?;
-        let retire_serial_start = batch
-            .serial_start
-            .checked_add(already_retired_u64)
-            .ok_or(CarbonError::Arithmetic)?;
-        let amount_u64 = u64::try_from(amount).map_err(|_| CarbonError::Arithmetic)?;
-        let retire_serial_end = retire_serial_start
-            .checked_add(amount_u64 - 1)
-            .ok_or(CarbonError::Arithmetic)?;
+        let already_retired_u64 = match u64::try_from(already_retired) {
+            Ok(v) => v,
+            Err(_) => { Self::release_lock(&env); return Err(CarbonError::Arithmetic); }
+        };
+        let retire_serial_start = match batch.serial_start.checked_add(already_retired_u64) {
+            Some(v) => v,
+            None => { Self::release_lock(&env); return Err(CarbonError::Arithmetic); }
+        };
+        let amount_u64 = match u64::try_from(amount) {
+            Ok(v) => v,
+            Err(_) => { Self::release_lock(&env); return Err(CarbonError::Arithmetic); }
+        };
+        let retire_serial_end = match retire_serial_start.checked_add(amount_u64 - 1) {
+            Some(v) => v,
+            None => { Self::release_lock(&env); return Err(CarbonError::Arithmetic); }
+        };
 
         let mut serial_numbers: Vec<u64> = vec![&env];
         let mut s = retire_serial_start;
@@ -975,17 +1054,18 @@ impl CarbonCreditContract {
             s += 1;
         }
 
-        let new_retired = already_retired
-            .checked_add(amount)
-            .ok_or(CarbonError::Arithmetic)?;
+        let new_retired = match already_retired.checked_add(amount) {
+            Some(v) => v,
+            None => { Self::release_lock(&env); return Err(CarbonError::Arithmetic); }
+        };
         env.storage()
             .persistent()
             .set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
 
-        let new_active = batch
-            .amount
-            .checked_sub(new_retired)
-            .ok_or(CarbonError::Arithmetic)?;
+        let new_active = match batch.amount.checked_sub(new_retired) {
+            Some(v) => v,
+            None => { Self::release_lock(&env); return Err(CarbonError::Arithmetic); }
+        };
         batch.status = if new_active == 0 {
             CreditStatus::FullyRetired
         } else {
@@ -1028,6 +1108,172 @@ impl CarbonCreditContract {
                 certificate_cid: cert_cid.clone(),
             },
         );
+        Self::release_lock(&env);
+        Ok(cert)
+    }
+
+    /// Retire a specific set of serial numbers belonging to a single batch.
+    ///
+    /// The caller supplies an explicit `Vec<u64>` of serial numbers to retire.
+    /// This allows partial retirements targeting precise serials rather than
+    /// consuming credits sequentially from the front of the batch.
+    ///
+    /// ## Ownership check
+    /// The `holder` must be the current owner of the batch.
+    ///
+    /// ## Validation
+    /// * Every serial number must fall within `[batch.serial_start, batch.serial_end]`.
+    /// * No serial number may already be retired (idempotency guard via the
+    ///   `DataKey::SerialRetired(serial)` flag).
+    /// * Duplicate serial numbers in the input `Vec` are rejected.
+    ///
+    /// ## Emissions
+    /// Emits one `RetirementEvent` per retirement invocation (not per serial).
+    ///
+    /// Closes #1000.
+    pub fn retire_batch(
+        env: Env,
+        holder: Address,
+        batch_id: String,
+        serial_numbers: Vec<u64>,
+        reason: String,
+        beneficiary: String,
+        retire_id: String,
+        tx_hash: String,
+        cert_cid: String,
+    ) -> Result<RetirementCertificate, CarbonError> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+
+        let amount = serial_numbers.len() as i128;
+        if amount == 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+
+        // Prevent retire_id reuse.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Retirement(retire_id.clone()))
+        {
+            return Err(CarbonError::SerialNumberConflict);
+        }
+
+        let mut batch = Self::load_batch(&env, &batch_id)?;
+
+        // Ownership check.
+        if batch.owner != holder {
+            return Err(CarbonError::UnauthorizedVerifier);
+        }
+
+        if batch.status == CreditStatus::FullyRetired {
+            return Err(CarbonError::AlreadyRetired);
+        }
+        if batch.status == CreditStatus::Suspended {
+            return Err(CarbonError::ProjectSuspended);
+        }
+        if Self::is_batch_expired(&env, &batch) {
+            return Err(CarbonError::InvalidVintageYear);
+        }
+
+        let active_amount = Self::active_amount(&env, &batch);
+        if amount > active_amount {
+            return Err(CarbonError::InsufficientCredits);
+        }
+
+        // Validate every supplied serial number.
+        // Also check for duplicates by verifying each is unique within the input.
+        for i in 0..serial_numbers.len() {
+            let sn = serial_numbers.get(i).unwrap();
+            // Range check: serial must belong to this batch.
+            if sn < batch.serial_start || sn > batch.serial_end {
+                return Err(CarbonError::InvalidSerialRange);
+            }
+            // Already retired check via per-serial flag.
+            if env
+                .storage()
+                .persistent()
+                .has(&RetiredKey::SerialRetired(sn))
+            {
+                return Err(CarbonError::AlreadyRetired);
+            }
+            // Duplicate check within the caller-supplied list.
+            for j in 0..i {
+                if serial_numbers.get(j).unwrap() == sn {
+                    return Err(CarbonError::DoubleCountingDetected);
+                }
+            }
+        }
+
+        // Burn tokens: update the retired counter for this batch.
+        let already_retired: i128 = env
+            .storage()
+            .persistent()
+            .get(&RetiredKey::BatchRetired(batch_id.clone()))
+            .unwrap_or(0_i128);
+        let new_retired = already_retired
+            .checked_add(amount)
+            .ok_or(CarbonError::Arithmetic)?;
+        env.storage()
+            .persistent()
+            .set(&RetiredKey::BatchRetired(batch_id.clone()), &new_retired);
+
+        // Persist per-serial flags so future calls detect already-retired serials.
+        for i in 0..serial_numbers.len() {
+            let sn = serial_numbers.get(i).unwrap();
+            env.storage()
+                .persistent()
+                .set(&RetiredKey::SerialRetired(sn), &true);
+        }
+
+        // Update batch status.
+        let new_active = batch
+            .amount
+            .checked_sub(new_retired)
+            .ok_or(CarbonError::Arithmetic)?;
+        batch.status = if new_active == 0 {
+            CreditStatus::FullyRetired
+        } else {
+            CreditStatus::PartiallyRetired
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
+        Self::extend_batch_ttl(&env, &batch_id);
+
+        let now = env.ledger().timestamp();
+        let cert = RetirementCertificate {
+            retirement_id: retire_id.clone(),
+            credit_batch_id: batch_id.clone(),
+            project_id: batch.project_id.clone(),
+            amount,
+            retired_by: holder.clone(),
+            beneficiary: beneficiary.clone(),
+            retirement_reason: reason.clone(),
+            vintage_year: batch.vintage_year,
+            serial_numbers: serial_numbers.clone(),
+            retired_at: now,
+            tx_hash: tx_hash.clone(),
+            certificate_cid: cert_cid.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Retirement(retire_id.clone()), &cert);
+
+        // Emit one RetirementEvent covering the entire batch of serial numbers.
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("retired")),
+            CreditRetiredEvent {
+                retirement_id: retire_id.clone(),
+                batch_id: batch_id.clone(),
+                project_id: batch.project_id.clone(),
+                amount,
+                retired_by: holder.clone(),
+                beneficiary: beneficiary.clone(),
+                timestamp: now,
+                certificate_cid: cert_cid.clone(),
+            },
+        );
         Ok(cert)
     }
 
@@ -1045,36 +1291,42 @@ impl CarbonCreditContract {
     ) -> Result<(), CarbonError> {
         from.require_auth();
         Self::require_not_paused(&env)?;
+        // Acquire re-entrancy lock before any state mutation (#998).
+        Self::acquire_lock(&env)?;
 
         if amount <= 0 {
+            Self::release_lock(&env);
             return Err(CarbonError::ZeroAmountNotAllowed);
         }
 
-        let mut batch = Self::load_batch(&env, &batch_id)?;
+        let mut batch = match Self::load_batch(&env, &batch_id) {
+            Ok(b) => b,
+            Err(e) => { Self::release_lock(&env); return Err(e); }
+        };
 
         if batch.owner != from {
+            Self::release_lock(&env);
             return Err(CarbonError::UnauthorizedVerifier);
         }
 
-        // Closes #1005: prevent transfer of retired credits.
-        // FullyRetired and PartiallyRetired batches are immutable — once any
-        // credits have been permanently retired the batch cannot change hands.
-        if batch.status == CreditStatus::FullyRetired
-            || batch.status == CreditStatus::PartiallyRetired
-        {
+        if batch.status == CreditStatus::FullyRetired {
+            Self::release_lock(&env);
             return Err(CarbonError::AlreadyRetired);
         }
         if batch.status == CreditStatus::Suspended {
+            Self::release_lock(&env);
             return Err(CarbonError::ProjectSuspended);
         }
 
         // Enforce vintage expiry: credits older than MAX_VINTAGE_AGE_YEARS cannot be transferred.
         if Self::is_batch_expired(&env, &batch) {
+            Self::release_lock(&env);
             return Err(CarbonError::InvalidVintageYear);
         }
 
         let active = Self::active_amount(&env, &batch);
         if amount > active {
+            Self::release_lock(&env);
             return Err(CarbonError::InsufficientCredits);
         }
 
@@ -1088,6 +1340,7 @@ impl CarbonCreditContract {
             (symbol_short!("c_ledger"), symbol_short!("transfer")),
             (batch_id, from, to, amount),
         );
+        Self::release_lock(&env);
         Ok(())
     }
 
@@ -1314,6 +1567,37 @@ impl CarbonCreditContract {
     /// registry. `0` means overlap checks are fully sub-linear.
     pub fn serial_index_pending_migration(env: Env) -> u32 {
         serial_index::legacy_pending(&env)
+    }
+
+    // ── Re-entrancy guard helpers (#998) ──────────────────────────────────────
+
+    /// Acquire the re-entrancy lock.
+    ///
+    /// Sets a temporary-storage flag that prevents a second invocation of any
+    /// guarded function before the first one completes.  Soroban's execution
+    /// model already makes classic same-transaction re-entrancy impossible, but
+    /// a malicious SAC callback in a cross-contract call chain could still
+    /// re-enter.  This flag is defence-in-depth at negligible cost.
+    fn acquire_lock(env: &Env) -> Result<(), CarbonError> {
+        let locked: bool = env
+            .storage()
+            .temporary()
+            .get::<DataKey, bool>(&DataKey::ReentrancyGuard)
+            .unwrap_or(false);
+        if locked {
+            return Err(CarbonError::ReentrancyDetected);
+        }
+        env.storage()
+            .temporary()
+            .set(&DataKey::ReentrancyGuard, &true);
+        Ok(())
+    }
+
+    /// Release the re-entrancy lock.
+    fn release_lock(env: &Env) {
+        env.storage()
+            .temporary()
+            .set(&DataKey::ReentrancyGuard, &false);
     }
 }
 

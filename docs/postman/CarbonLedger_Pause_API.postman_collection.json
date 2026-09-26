@@ -1,0 +1,224 @@
+{
+  "info": {
+    "name": "CarbonLedger Contract Pause API",
+    "_postman_id": "c1f7a08b-6218-42f2-9599-73bf5e1564aa",
+    "description": "Postman Collection for verifying and testing CarbonLedger smart contract pause endpoints, circuit-breaker controls, and operational audit history.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Get Contract Pause & Operational Status",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Response contains contract status fields\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('isPaused');",
+              "    pm.expect(jsonData).to.have.property('status');",
+              "    pm.expect(jsonData.status).to.be.oneOf(['operational', 'paused', 'expiring_soon']);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/contract/status",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "contract", "status"]
+        },
+        "description": "Retrieves the current operational status of the CarbonCredit smart contract."
+      },
+      "response": []
+    },
+    {
+      "name": "2. Emergency Pause Contract",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.environment.set(\"pauseReason\", \"Postman automated circuit breaker verification: \" + new Date().toISOString());"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Successful pause returns 200 or 409 if already paused\", function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "    pm.expect(jsonData).to.have.property('transactionHash');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminAuthToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"durationHours\": 6,\n  \"reason\": \"{{pauseReason}}\",\n  \"affectedContracts\": [\"carbon_credit\"]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/pause",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "pause"]
+        },
+        "description": "Admin endpoint to trigger emergency pause across specified contracts."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Resume Contract Operations (Unpause)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Successful unpause returns 200 or 409 if not paused\", function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
+              "});",
+              "if (pm.response.code === 200) {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.success).to.eql(true);",
+              "    pm.expect(jsonData.status).to.eql('operational');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminAuthToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"reason\": \"Postman verification test complete, restoring operations.\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/unpause",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "unpause"]
+        },
+        "description": "Admin endpoint to lift contract pause and restore operations."
+      },
+      "response": []
+    },
+    {
+      "name": "4. Get Pause Audit History",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test(\"Response is an array of audit history items\", function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('items');",
+              "    pm.expect(Array.isArray(jsonData.items)).to.be.true;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminAuthToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/admin/pause-history?limit=10&offset=0",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "admin", "pause-history"],
+          "query": [
+            {
+              "key": "limit",
+              "value": "10"
+            },
+            {
+              "key": "offset",
+              "value": "0"
+            }
+          ]
+        },
+        "description": "Admin endpoint to query historical pause events for auditing and compliance."
+      },
+      "response": []
+    }
+  ]
+}

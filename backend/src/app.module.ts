@@ -1,4 +1,5 @@
 import { AdminModule } from "./admin/admin.module";
+import { PauseAnalyticsModule } from "./pause-analytics/pause-analytics.module";
 import { PublicApiModule } from "./public-api/public-api.module";
 import { StellarModule } from "./stellar/stellar.module";
 import { BlockchainModule } from './blockchain/blockchain.module';
@@ -163,6 +164,7 @@ class HealthController {
     AuditModule,
     VerifiersModule,
     AdminModule,
+    PauseAnalyticsModule,
     PublicApiModule,
     GraphqlModule,
     WebhookModule,
