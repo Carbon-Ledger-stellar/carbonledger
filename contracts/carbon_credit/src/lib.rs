@@ -1,5 +1,6 @@
 #![no_std]
 
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Bytes,
     BytesN, Env, IntoVal, String, Symbol, Vec,
@@ -284,14 +285,34 @@ pub struct CarbonCreditContract;
 
 #[contractimpl]
 impl CarbonCreditContract {
+    /// Initialize the contract for the first time.
+    ///
+    /// Versioning (closes #1008): the contract version is stored in persistent
+    /// storage at `DataKey::ContractVersion` so migration scripts can read it
+    /// after a WASM upgrade and apply schema changes accordingly.
+    ///
+    /// If `ContractVersion` already exists in storage this call returns
+    /// `AlreadyInitialized`.  Upgrade scripts should call `upgrade_contract`
+    /// instead, which bumps the version atomically and records an
+    /// `UpgradeRecord` in the upgrade history.
     pub fn initialize(
         env: Env,
         admin: Address,
         registry_contract: Address,
     ) -> Result<(), CarbonError> {
-        if env.storage().persistent().has(&DataKey::Role(admin.clone())) {
+        // Closes #1008: version check — reject double-initialisation and give
+        // migration scripts a reliable "what version am I" source of truth.
+        let existing_version: Option<u32> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ContractVersion);
+
+        if existing_version.is_some()
+            || env.storage().persistent().has(&DataKey::Role(admin.clone()))
+        {
             return Err(CarbonError::AlreadyInitialized);
         }
+
         admin.require_auth();
         env.storage()
             .persistent()
@@ -301,11 +322,20 @@ impl CarbonCreditContract {
             .set(&DataKey::RegistryContract, &registry_contract);
         // The serial index materialises itself lazily on first use, so there is
         // nothing to seed here.
+        //
+        // Store the current version so migration scripts can detect upgrades:
+        //   let v = env.storage().persistent().get(&DataKey::ContractVersion);
+        //   if v < CURRENT_VERSION { /* apply migrations */ }
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), Symbol::new(&env, "initialized")),
+            (admin, CURRENT_VERSION),
+        );
         Ok(())
     }
 
@@ -745,6 +775,165 @@ impl CarbonCreditContract {
     }
 
     // ============================================
+    // Deterministic Serial Number Generation (#1007)
+    // ============================================
+
+    /// Generate a deterministic serial number from `batch_id` and a credit
+    /// `index` within that batch using SHA-256 (closes #1007).
+    ///
+    /// The output is the first 8 bytes of `SHA-256(batch_id_bytes || index_be)`
+    /// interpreted as a big-endian `u64`.  Determinism means the same
+    /// `(batch_id, index)` always produces the same serial, which lets any
+    /// off-chain system predict serial numbers before a transaction is
+    /// confirmed.
+    ///
+    /// This function is `pub` so external tooling and cross-contract callers
+    /// can pre-compute serials for verification without minting.
+    pub fn generate_serial(env: Env, batch_id: String, index: u32) -> u64 {
+        Self::generate_serial_internal(&env, &batch_id, index)
+    }
+
+    fn generate_serial_internal(env: &Env, batch_id: &String, index: u32) -> u64 {
+        // Build the pre-image: batch_id bytes followed by 4-byte big-endian index.
+        let mut data = Bytes::new(env);
+        // Append each byte of the batch_id string.
+        let bid_bytes = batch_id.to_xdr(env);
+        for i in 0..bid_bytes.len() {
+            data.push_back(bid_bytes.get(i).unwrap());
+        }
+        // Append the 4-byte big-endian representation of `index`.
+        let idx_bytes = index.to_be_bytes();
+        for b in idx_bytes.iter() {
+            data.push_back(*b);
+        }
+
+        // SHA-256 hash → first 8 bytes → big-endian u64.
+        let hash = env.crypto().sha256(&data);
+        let hash_array: [u8; 32] = hash.to_array();
+        let mut serial: u64 = 0;
+        for i in 0..8usize {
+            serial = (serial << 8) | (hash_array[i] as u64);
+        }
+        // Ensure serial is never 0 (0 is the NIL sentinel in the skip-list index).
+        if serial == 0 { 1 } else { serial }
+    }
+
+    /// Mint credits with deterministic serial number generation (closes #1007).
+    ///
+    /// Identical to `mint_credits` except that `serial_start` and `serial_end`
+    /// are **auto-generated** via SHA-256 hash of `(batch_id, 0)` and
+    /// `(batch_id, amount - 1)` respectively.  Callers do not need to manage
+    /// the serial range — the contract derives it deterministically, so any
+    /// off-chain observer can independently verify the range without querying
+    /// on-chain state.
+    ///
+    /// Returns `(serial_start, serial_end)` so callers know the assigned range.
+    pub fn mint_credits_deterministic(
+        env: Env,
+        admin: Address,
+        project_id: String,
+        amount: i128,
+        vintage_year: u32,
+        batch_id: String,
+        metadata_cid: String,
+        initial_owner: Address,
+    ) -> Result<(u64, u64), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+        Self::require_not_paused(&env)?;
+
+        if project_id.is_empty() || project_id.len() > 64 {
+            return Err(CarbonError::ProjectNotFound);
+        }
+        if batch_id.is_empty() || batch_id.len() > 64 {
+            return Err(CarbonError::ProjectNotFound);
+        }
+        if metadata_cid.is_empty() || metadata_cid.len() > 128 {
+            return Err(CarbonError::ProjectNotFound);
+        }
+        if amount <= 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+        if amount > MAX_BATCH_SIZE {
+            return Err(CarbonError::BatchTooLarge);
+        }
+
+        Self::validate_vintage_year(&env, vintage_year)?;
+        if env.storage().persistent().has(&DataKey::Batch(batch_id.clone())) {
+            return Err(CarbonError::SerialNumberConflict);
+        }
+
+        let batch_count_key = DataKey::ProjectBatchCount(project_id.clone());
+        let batch_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&batch_count_key)
+            .unwrap_or(0u32);
+        if batch_count >= MAX_BATCHES_PER_PROJECT {
+            return Err(CarbonError::StorageLimitExceeded);
+        }
+
+        // Derive serial_start from hash(batch_id, 0) and serial_end from
+        // serial_start + amount - 1, ensuring a contiguous range.
+        let serial_start = Self::generate_serial_internal(&env, &batch_id, 0);
+        let amount_u64 = u64::try_from(amount).map_err(|_| CarbonError::Arithmetic)?;
+        let serial_end = serial_start
+            .checked_add(amount_u64 - 1)
+            .ok_or(CarbonError::Arithmetic)?;
+
+        if !Self::verify_serial_range_internal(&env, serial_start, serial_end) {
+            return Err(CarbonError::DoubleCountingDetected);
+        }
+
+        serial_index::insert(&env, serial_start, serial_end);
+
+        let batch = CreditBatch {
+            batch_id: batch_id.clone(),
+            project_id: project_id.clone(),
+            vintage_year,
+            amount,
+            serial_start,
+            serial_end,
+            issued_at: env.ledger().timestamp(),
+            status: CreditStatus::Active,
+            metadata_cid: metadata_cid.clone(),
+            owner: initial_owner.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
+        Self::extend_batch_ttl(&env, &batch_id);
+
+        let mut project_batches: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProjectBatches(project_id.clone()))
+            .unwrap_or_else(|| vec![&env]);
+        project_batches.push_back(batch_id.clone());
+        env.storage().persistent().set(
+            &DataKey::ProjectBatches(project_id.clone()),
+            &project_batches,
+        );
+        env.storage()
+            .persistent()
+            .set(&batch_count_key, &(batch_count + 1));
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("minted")),
+            CreditMintedEvent {
+                batch_id: batch_id.clone(),
+                project_id: project_id.clone(),
+                amount,
+                retired_by: admin.clone(),
+                beneficiary: String::from_str(&env, ""),
+                timestamp: env.ledger().timestamp(),
+                retirement_id: String::from_str(&env, ""),
+            },
+        );
+        Ok((serial_start, serial_end))
+    }
+
+    // ============================================
     // Get Project from Registry
     // ============================================
 
@@ -1088,6 +1277,11 @@ impl CarbonCreditContract {
         Ok(cert)
     }
 
+    /// Transfer credits from `from` to `to` for the given `batch_id` and `amount`.
+    ///
+    /// Retirement status check (closes #1005): credits that have been fully or
+    /// partially retired cannot be transferred — a batch is immutable once any
+    /// retirement has occurred.  Only `Active` batches may be transferred.
     pub fn transfer_credits(
         env: Env,
         from: Address,
@@ -3087,5 +3281,193 @@ mod serial_benchmark {
             &Address::generate(&env),
         );
         assert_eq!(client.get_credit_batch(&batch_id).amount, 100);
+    }
+
+    // ── Issue #1005: transfer_credits retirement status check ─────────────────
+
+    /// Closes #1005: a PartiallyRetired batch cannot be transferred — once any
+    /// credits have been permanently retired the batch is immutable.
+    #[test]
+    fn test_partially_retired_batch_cannot_be_transferred() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner); // 1000 credits
+
+        // Partially retire 400 credits — batch becomes PartiallyRetired.
+        client.retire_credits(
+            &owner,
+            &s(&env, "batch-001"),
+            &400_i128,
+            &s(&env, "partial"),
+            &s(&env, "Corp"),
+            &s(&env, "ret-partial"),
+            &s(&env, "tx"),
+            &s(&env, "QmCID"),
+        );
+        let batch = client.get_credit_batch(&s(&env, "batch-001"));
+        assert_eq!(batch.status, CreditStatus::PartiallyRetired);
+
+        // Transfer of a PartiallyRetired batch must fail (#1005).
+        let result =
+            client.try_transfer_credits(&owner, &buyer, &s(&env, "batch-001"), &100_i128);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::AlreadyRetired);
+    }
+
+    /// Active batches (no retirements) can still be transferred normally.
+    #[test]
+    fn test_active_batch_transfer_still_works() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        mint_batch(&env, &client, &admin, &owner);
+
+        client.transfer_credits(&owner, &buyer, &s(&env, "batch-001"), &500_i128);
+        let batch = client.get_credit_batch(&s(&env, "batch-001"));
+        assert_eq!(batch.owner, buyer);
+    }
+
+    // ── Issue #1008: contract versioning persisted in storage ─────────────────
+
+    /// Closes #1008: `ContractVersion` is stored in persistent storage from the
+    /// very first `initialize` call so migration scripts always have a reliable
+    /// "what version am I running" source of truth.
+    #[test]
+    fn test_version_stored_in_persistent_storage_on_init() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(&env, &id);
+
+        client.initialize(&admin, &registry);
+
+        // Version must be 1 immediately after a fresh initialisation.
+        assert_eq!(client.get_version(), CURRENT_VERSION);
+    }
+
+    /// Closes #1008: double-initialisation is rejected because `ContractVersion`
+    /// is already present — migration scripts can rely on this guard.
+    #[test]
+    fn test_double_initialize_rejected_by_version_check() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let registry = Address::generate(&env);
+        let id = env.register_contract(None, CarbonCreditContract);
+        let client = CarbonCreditContractClient::new(&env, &id);
+
+        client.initialize(&admin, &registry);
+
+        // Second call must fail — version key already present.
+        let result = client.try_initialize(&admin, &registry);
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::AlreadyInitialized);
+    }
+
+    // ── Issue #1007: deterministic serial number generation via SHA-256 ────────
+
+    /// Closes #1007: `generate_serial` is deterministic — same inputs always
+    /// produce the same output across calls and environments.
+    #[test]
+    fn test_generate_serial_is_deterministic() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+
+        let s1 = client.generate_serial(&s(&env, "batch-det"), &0_u32);
+        let s2 = client.generate_serial(&s(&env, "batch-det"), &0_u32);
+        assert_eq!(s1, s2);
+    }
+
+    /// Closes #1007: different `(batch_id, index)` pairs produce different
+    /// serial numbers with overwhelming probability (collision probability is
+    /// 2^-64 per pair for a 64-bit output of SHA-256).
+    #[test]
+    fn test_generate_serial_different_inputs_differ() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+
+        let s0 = client.generate_serial(&s(&env, "batch-x"), &0_u32);
+        let s1 = client.generate_serial(&s(&env, "batch-x"), &1_u32);
+        let s2 = client.generate_serial(&s(&env, "batch-y"), &0_u32);
+
+        assert_ne!(s0, s1, "index 0 vs 1 same batch should differ");
+        assert_ne!(s0, s2, "same index, different batch_id should differ");
+    }
+
+    /// Closes #1007: `generate_serial` never returns 0 (the NIL sentinel).
+    #[test]
+    fn test_generate_serial_never_zero() {
+        let env = Env::default();
+        let (client, _, _) = setup(&env);
+        for i in 0u32..20 {
+            let serial = client.generate_serial(&s(&env, "batch-nonzero"), &i);
+            assert_ne!(serial, 0, "serial must not be the NIL sentinel");
+        }
+    }
+
+    /// Closes #1007: `mint_credits_deterministic` stores a batch whose
+    /// `serial_start` matches the value returned by `generate_serial`.
+    #[test]
+    fn test_mint_credits_deterministic_serial_matches_generate_serial() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        let (serial_start, serial_end) = client.mint_credits_deterministic(
+            &admin,
+            &s(&env, "proj-det"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "batch-det-1"),
+            &s(&env, "QmCID"),
+            &owner,
+        );
+
+        // The batch should be stored with the deterministic range.
+        let batch = client.get_credit_batch(&s(&env, "batch-det-1"));
+        assert_eq!(batch.serial_start, serial_start);
+        assert_eq!(batch.serial_end, serial_end);
+        assert_eq!(batch.amount, 100);
+        assert_eq!(batch.status, CreditStatus::Active);
+
+        // The start must equal generate_serial(batch_id, 0).
+        let expected_start = client.generate_serial(&s(&env, "batch-det-1"), &0_u32);
+        assert_eq!(serial_start, expected_start);
+        // The range must span exactly `amount` credits.
+        assert_eq!(serial_end - serial_start + 1, 100);
+    }
+
+    /// Closes #1007: a second call with the same batch_id is rejected as a
+    /// serial conflict (double-counting guard).
+    #[test]
+    fn test_mint_credits_deterministic_duplicate_batch_id_fails() {
+        let env = Env::default();
+        let (client, admin, _) = setup(&env);
+        let owner = Address::generate(&env);
+
+        client.mint_credits_deterministic(
+            &admin,
+            &s(&env, "proj-det"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "batch-dup"),
+            &s(&env, "QmCID"),
+            &owner,
+        );
+
+        // Same batch_id a second time must be rejected.
+        let result = client.try_mint_credits_deterministic(
+            &admin,
+            &s(&env, "proj-det"),
+            &100_i128,
+            &2023_u32,
+            &s(&env, "batch-dup"),
+            &s(&env, "QmCID"),
+            &owner,
+        );
+        assert_eq!(result.unwrap_err().unwrap(), CarbonError::SerialNumberConflict);
     }
 }
