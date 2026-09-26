@@ -572,6 +572,10 @@ impl CarbonMarketplaceContract {
         }
         env.storage().persistent().set(&DataKey::PauseEnabled, &true);
         env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("paused")),
+            (admin, until_timestamp, now),
+        );
         Ok(())
     }
 
@@ -580,6 +584,10 @@ impl CarbonMarketplaceContract {
         Self::require_admin(&env, &admin)?;
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("unpaused")),
+            (admin, env.ledger().timestamp()),
+        );
         Ok(())
     }
 
