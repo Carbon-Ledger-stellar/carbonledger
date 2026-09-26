@@ -276,7 +276,6 @@ impl CarbonMarketplaceContract {
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
-        env.storage().persistent().set(&DataKey::ReentrancyGuard, &false);
         env.storage().persistent().set(&DataKey::CircuitBreaker, &false);
         env.storage().persistent().set(&DataKey::CircuitBreakerTrippedAt, &0_u64);
         Ok(())
@@ -1425,14 +1424,14 @@ impl CarbonMarketplaceContract {
     fn acquire_lock(env: &Env) -> Result<(), CarbonError> {
         let locked: bool = env
             .storage()
-            .persistent()
+            .temporary()
             .get::<DataKey, bool>(&DataKey::ReentrancyGuard)
             .unwrap_or(false);
         if locked {
             return Err(CarbonError::ReentrancyDetected);
         }
         env.storage()
-            .persistent()
+            .temporary()
             .set(&DataKey::ReentrancyGuard, &true);
         Ok(())
     }
@@ -1440,7 +1439,7 @@ impl CarbonMarketplaceContract {
     /// Release the re-entrancy lock.
     fn release_lock(env: &Env) {
         env.storage()
-            .persistent()
+            .temporary()
             .set(&DataKey::ReentrancyGuard, &false);
     }
 }
