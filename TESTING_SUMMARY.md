@@ -275,6 +275,48 @@ cd backend
 
 ---
 
+## Pause Controls Usability Test Plan (#1189)
+
+### Objective
+Validate the pause control design with admin users and identify UX issues before wider rollout.
+
+### Participants
+- Recruit 5–8 admin users (target: 6) who regularly manage long-running operations.
+- Mix of experience levels: at least 2 power users, 2 occasional users, and 2 new admins.
+
+### Session Format
+- 45-minute moderated sessions, remote or in person.
+- Written consent obtained before recording; participants may opt out of recording and still take part.
+- Recording stored securely and used only for this research.
+
+### Tasks
+1. Locate the pause control and pause an active operation.
+2. Resume a paused operation.
+3. Pause, then navigate away and return to confirm state is preserved.
+4. Recover from an accidental pause.
+5. Explain what the pause control does and its current state.
+
+### Metrics
+- Task success rate
+- Time on task
+- Error and hesitation count
+- System Usability Scale (SUS) score
+- Qualitative feedback on labels, affordances, and feedback
+
+### Issue Identification & Prioritization
+- Log each observed issue with severity (Critical / High / Medium / Low) based on impact and frequency.
+- Prioritize Critical and High issues for immediate follow-up.
+
+### Deliverables
+- Test plan (this section)
+- Participant roster and consent records
+- Session recordings (with consent)
+- Prioritized issue list
+- Recommendations document
+- Final test report with findings
+
+---
+
 ## Conclusion
 
 ### ✅ All Tests Verified and Ready
