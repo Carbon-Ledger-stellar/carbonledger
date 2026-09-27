@@ -910,3 +910,8 @@ To run all integration tests:
 
 # Run only integration tests
 cargo test --test lifecycle_integration_test -- --nocapture
+
+## Handsoff notes
+
+<!-- handsoff-issue-1245 -->
+- #1245: Frontend - Create pause reason modal
