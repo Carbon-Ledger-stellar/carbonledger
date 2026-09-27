@@ -12,6 +12,7 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [Common Issues](#common-issues)
 - [Testnet Setup](#testnet-setup)
 - [Development Workflow](#development-workflow)
+- [UI/UX: Disabled State Indicators](#uiux-disabled-state-indicators)
 
 ---
 
@@ -431,277 +432,112 @@ Check your `DATABASE_URL` in `.env`:
 psql -U carbonledger -d carbonledger -h localhost
 
 # If password fails, reset it:
-sudo -u postgres psql
-ALTER USER carbonledger WITH PASSWORD 'changeme';
-\q
+sudo -u postgres psql -c "ALTER USER carbonledger WITH PASSWORD 'changeme';"
 ```
 
 ---
 
-### Issue: `stellar-cli` installation fails
+## UI/UX: Disabled State Indicators
 
-**Solution:**
-```bash
-# Update Rust first
-rustup update
+This section is the design specification for disabled buttons and inputs shown when a
+contract is paused. It is the single source of truth for the paused-contract disabled
+state and must be applied consistently across the app (dashboard, marketplace, forms,
+mobile controls).
 
-# Install with specific version
-cargo install --locked stellar-cli --version 21.0.0 --force
+### When to use the disabled state
 
-# If still fails, try without lock file
-cargo install stellar-cli --version 21.0.0
-```
+Apply the disabled state to any interactive control whose action is blocked because the
+contract is paused. The control must be rendered with the native `disabled` attribute
+(buttons/inputs) or `aria-disabled="true"` (custom controls) so assistive technology
+reports the state.
 
----
+### Disabled button design spec
 
-### Issue: Python `stellar-sdk` import error
+| Property | Value |
+|----------|-------|
+| Background | `--color-surface-disabled` (neutral-200 light / neutral-700 dark) |
+| Text / icon | `--color-text-disabled` (neutral-500 light / neutral-400 dark) |
+| Border | 1px solid `--color-border-disabled` (neutral-300 light / neutral-600 dark) |
+| Border radius | Same as the enabled variant (do not change shape) |
+| Padding / size | Identical to the enabled variant (no layout shift) |
+| Shadow | None |
+| Hover / active | No hover, focus-ring, or active styles |
 
-**Symptoms:**
-```
-ModuleNotFoundError: No module named 'stellar_sdk'
-```
+Disabled controls keep the same dimensions as their enabled counterparts so pausing a
+contract never causes layout shift.
 
-**Solution:**
-```bash
-cd oracle
-pip3 install --upgrade pip
-pip3 install -r requirements.txt
+### Cursor and opacity specifications
 
-# If using virtual environment
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+| State | Cursor | Opacity |
+|-------|--------|---------|
+| Disabled (default) | `not-allowed` | `0.6` |
+| Disabled (loading/pending) | `progress` | `0.6` |
+| Enabled | `pointer` | `1.0` |
 
----
+- Opacity is applied to the whole control, not just the label, so the border and icon
+  fade together.
+- Never use `opacity: 0` or `visibility: hidden` — the control must remain perceivable.
+- Do not rely on opacity alone to convey the state; pair it with the disabled colors
+  above and the tooltip described below.
 
-### Issue: Frontend build fails with TypeScript errors
+### Tooltip styling
 
-**Solution:**
-```bash
-cd frontend
-rm -rf node_modules package-lock.json
-npm install
-npm run build
-```
+Every disabled control that is disabled because the contract is paused must expose a
+tooltip explaining why.
 
----
+| Property | Value |
+|----------|-------|
+| Trigger | Hover and keyboard focus on the disabled control |
+| Background | `--color-tooltip-bg` (neutral-900 light / neutral-100 dark) |
+| Text | `--color-tooltip-text` (neutral-50 light / neutral-900 dark) |
+| Font size | `0.75rem` (12px), weight 500 |
+| Padding | `6px 10px` |
+| Border radius | `4px` |
+| Max width | `240px` |
+| Offset | `8px` above the control |
+| Motion | Fade in `120ms ease-out`; respect `prefers-reduced-motion` |
 
-### Issue: Docker Compose fails to start
+Default copy: **"Contract is paused. Actions are temporarily unavailable."**
 
-**Symptoms:**
-```
-Error: port 5432 already in use
-```
+Because native `disabled` elements do not fire pointer events, wrap the control in a
+focusable container (or use `aria-disabled` on a custom control) so the tooltip is
+reachable by both mouse and keyboard.
 
-**Solution:**
-```bash
-# Stop local PostgreSQL
-brew services stop postgresql@16  # macOS
-sudo systemctl stop postgresql    # Linux
+### Color contrast
 
-# Or change port in docker-compose.yml
-ports:
-  - "5433:5432"  # Use 5433 instead
-```
+Disabled states are exempt from WCAG 1.4.3 minimum contrast, but the tooltip and any
+status text must still meet **WCAG 2.1 AA**:
 
----
+- Tooltip text on tooltip background: contrast ratio **≥ 4.5:1** (verify in both light
+  and dark themes).
+- Disabled label on disabled background: target **≥ 3:1** so the control stays legible
+  even though it is non-interactive.
+- Never convey the paused state by color alone — the tooltip text and `disabled`/
+  `aria-disabled` semantics carry the meaning.
 
-### Issue: Tests fail with "Contract not found"
+### Testing the disabled state
 
-**Solution:**
-This is expected for integration tests without deployed contracts. Unit tests should pass:
-```bash
-cd contracts
-cargo test --lib  # Run only unit tests
-```
+Verify the spec across these UI states before merging:
+
+- [ ] Light theme and dark theme
+- [ ] Enabled → disabled transition (no layout shift)
+- [ ] Hover and keyboard focus on a disabled control (tooltip appears)
+- [ ] Screen reader announces the disabled state and tooltip copy
+- [ ] Mobile / touch: disabled controls are non-tappable and the tooltip is reachable
+- [ ] `prefers-reduced-motion` disables the tooltip fade
 
 ---
 
 ## Testnet Setup
 
-### Quick Start
-
-```bash
-# 1. Generate and fund testnet account
-stellar keys generate alice --network testnet --fund
-
-# 2. Deploy contracts
-cd contracts
-./scripts/deploy-testnet.sh
-
-# 3. Update .env with contract IDs
-```
-
-### Detailed Guide
-
-For complete testnet setup including:
-- Multiple faucet methods
-- Freighter wallet setup
-- Contract deployment and initialization
-- Getting testnet USDC
-- Testing contract interactions
-- Troubleshooting testnet issues
-
-**See:** [Testnet Guide](docs/TESTNET_GUIDE.md)
+See the [Testnet Setup](#testnet-setup) section in the project docs for deploying
+contracts to Stellar testnet and funding accounts via Friendbot.
 
 ---
 
 ## Development Workflow
 
-### 1. Create a Feature Branch
-
-```bash
-git checkout -b feat/your-feature-name
-```
-
-### 2. Make Changes
-
-Edit code, add tests, update documentation.
-
-### 3. Run Tests Locally
-
-```bash
-# Rust tests
-cd contracts && cargo test
-
-# Backend tests
-cd backend && npm test
-
-# Frontend tests
-cd frontend && npm test
-```
-
-### 4. Commit Changes
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-
-```bash
-git add .
-git commit -m "feat: add serial number validation"
-git commit -m "fix: resolve double-counting bug"
-git commit -m "docs: update API documentation"
-```
-
-### 5. Push and Create PR
-
-```bash
-git push origin feat/your-feature-name
-```
-
-Then create a Pull Request on GitHub.
-
----
-
-## Code Style Guidelines
-
-### Rust (Contracts)
-
-- Use `snake_case` for functions and variables
-- Use `PascalCase` for types and enums
-- Add doc comments for public functions
-- Use `CarbonError` enum for all errors
-- Follow checks-effects-interactions pattern
-
-```rust
-/// Register a new carbon project
-pub fn register_project(
-    env: Env,
-    project_id: String,
-    owner: Address,
-) -> Result<(), CarbonError> {
-    // Checks
-    if project_exists(&env, &project_id) {
-        return Err(CarbonError::ProjectAlreadyExists);
-    }
-    
-    // Effects
-    save_project(&env, &project_id, &owner);
-    
-    // Interactions
-    emit_event(&env, "ProjectRegistered", project_id);
-    
-    Ok(())
-}
-```
-
-### TypeScript (Frontend/Backend)
-
-- Use `camelCase` for variables and functions
-- Use `PascalCase` for components and classes
-- Add JSDoc comments for exported functions
-- Use TypeScript strict mode
-- Prefer `const` over `let`
-
-```typescript
-/**
- * Retire carbon credits permanently on-chain
- */
-export async function retireCredits(
-  batchId: string,
-  amount: number,
-  beneficiary: string
-): Promise<RetirementCertificate> {
-  // Implementation
-}
-```
-
-### Python (Oracle)
-
-- Follow PEP 8 style guide
-- Use `snake_case` for functions and variables
-- Use `PascalCase` for classes
-- Add docstrings for functions
-- Use type hints
-
-```python
-def submit_monitoring_data(
-    project_id: str,
-    tonnes_verified: int,
-    methodology_score: int
-) -> str:
-    """
-    Submit monitoring data to oracle contract
-    
-    Args:
-        project_id: Unique project identifier
-        tonnes_verified: Verified CO2 tonnes
-        methodology_score: Quality score (0-100)
-        
-    Returns:
-        Transaction hash
-    """
-    # Implementation
-```
-
----
-
-## Getting Help
-
-- **Documentation**: Check [docs/](docs/) folder
-- **Architecture Decisions**: See [docs/adr/](docs/adr/)
-- **API Reference**: See [backend/docs/API_REFERENCE.md](backend/docs/API_REFERENCE.md)
-- **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/carbonledger/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/carbonledger/discussions)
-
----
-
-## Next Steps
-
-After completing this guide, you should be able to:
-
-- ✅ Run all tests locally
-- ✅ Deploy contracts to testnet
-- ✅ Start the development servers
-- ✅ Make code changes and test them
-- ✅ Submit pull requests
-
-Ready to contribute? Check out:
-
-- [Good First Issues](https://github.com/YOUR_USERNAME/carbonledger/labels/good%20first%20issue)
-- [Roadmap](README.md#-roadmap)
-- [Architecture Decisions](docs/adr/README.md)
-
----
-
-**Welcome to the CarbonLedger community!** 🌍
+1. Create a feature branch from `main`.
+2. Make your changes and add tests where applicable.
+3. Run the relevant test suites locally (see [Running Tests](#running-tests)).
+4. Open a pull request describing the change and linking the issue.
