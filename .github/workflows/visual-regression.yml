@@ -52,6 +52,14 @@ jobs:
         env:
           CI: true
 
+      - name: Run mobile pause UI tests
+        id: mobile
+        working-directory: frontend
+        run: |
+          npx playwright test tests/mobile-pause-ui.spec.ts --project=mobile-chrome --project=mobile-safari
+        env:
+          CI: true
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -101,4 +109,10 @@ jobs:
         if: failure() && steps.visual.outcome == 'failure'
         run: |
           echo "Visual regression tests failed. Review the report above."
+          exit 1
+
+      - name: Fail if mobile pause UI tests fail
+        if: failure() && steps.mobile.outcome == 'failure'
+        run: |
+          echo "Mobile pause UI tests failed. Review the report above."
           exit 1
