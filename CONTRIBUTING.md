@@ -14,6 +14,7 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [Development Workflow](#development-workflow)
 - [UI/UX: Disabled State Indicators](#uiux-disabled-state-indicators)
 - [UI/UX: Pause Stats Dashboard](#uiux-pause-stats-dashboard)
+- [UI/UX: Pause Error Message Hierarchy](#uiux-pause-error-message-hierarchy)
 
 ---
 
@@ -428,8 +429,56 @@ Error: P1001: Can't reach database server
 
 **Solution:**
 Check your `DATABASE_URL` in `.env`:
-```bash
-# Verify PostgreSQL is running
-psql -U carbonledger -d
 
-/* … truncated 4302 chars — edit only what you need near the top … */
+---
+
+## UI/UX: Pause Error Message Hierarchy
+
+Design spec for pause-related failure messages (issue #1177). Applies to all pause/unpause error surfaces: inline banners, toasts, and modal dialogs.
+
+### Severity Levels
+
+| Level | When to use | Icon | Color token |
+|-------|-------------|------|-------------|
+| **Blocking** | Pause/unpause could not be applied; user action required | `alert-octagon` | `--color-error-strong` (`#B42318`) |
+| **Warning** | Pause applied but with caveats (e.g. partial scope) | `alert-triangle` | `--color-warning-strong` (`#B54708`) |
+| **Info** | Pause state changed successfully; confirmation only | `check-circle` | `--color-success-strong` (`#027A48`) |
+
+### Icon and Color Usage
+
+- Icons are 20px (inline) / 24px (modal), stroke width 2, rendered in the level's strong color.
+- Message container uses the level's subtle background (`--color-error-subtle` `#FEF3F2`, `--color-warning-subtle` `#FFFAEB`, `--color-success-subtle` `#ECFDF3`) with a 1px border in the strong color at 20% opacity.
+- Never rely on color alone: every message pairs its color with the matching icon and a text label.
+- Contrast: text on subtle backgrounds must meet WCAG AA (4.5:1).
+
+### Typography Scale
+
+| Element | Token | Size / Weight / Line-height |
+|---------|-------|-----------------------------|
+| Title | `text-sm` | 14px / 600 / 20px |
+| Body | `text-sm` | 14px / 400 / 20px |
+| Helper / recovery hint | `text-xs` | 12px / 400 / 16px |
+| Modal title | `text-base` | 16px / 600 / 24px |
+
+- Title and body share the same size; hierarchy comes from weight and color, not size.
+- Helper text is muted (`--color-text-muted`) and always follows the body with 4px spacing.
+
+### Action Button Design
+
+- Primary recovery action (e.g. **Retry pause**) uses the solid button style in the level's strong color.
+- Secondary action (e.g. **Dismiss**) uses the ghost/text button style.
+- Buttons are right-aligned, 8px gap, min height 32px, `text-sm` / 600.
+- Blocking errors must always expose at least one recovery action; info messages may omit actions.
+
+### Animation / Transition Specs
+
+- Enter: fade in + 4px upward slide, 150ms, `ease-out`.
+- Exit: fade out, 100ms, `ease-in`.
+- Respect `prefers-reduced-motion`: skip transforms, keep opacity only.
+- Toasts auto-dismiss after 6s for info, 8s for warning; blocking errors persist until dismissed.
+
+---
+
+## UI/UX: Pause Stats Dashboard
+
+See the pause stats dashboard section above for layout and data conventions.

@@ -65,3 +65,52 @@ Design specification for the pause statistics dashboard, presenting charts, tabl
 - Date range picker opens as a full-screen sheet with a single-month calendar.
 - Touch targets ≥ 44px; tooltips replaced by tap-to-reveal panels.
 - Filters collapse into a toggleable panel to preserve vertical space.
+
+## Pause Error Message Hierarchy (Issue #1177)
+
+Design specification for consistent error messages shown when pause-related actions fail, with a clear visual hierarchy and actionable user guidance.
+
+### Error Severity Levels
+
+Pause errors are grouped into three severity levels, each with a distinct visual treatment:
+
+| Level | When to use | Example |
+| --- | --- | --- |
+| **Inline / Field** | A single input is invalid; the rest of the form is usable. | "Pause duration must be at least 1 minute." |
+| **Blocking / Action** | The pause action itself failed and cannot proceed. | "Couldn't pause the session. Please try again." |
+| **System / Banner** | Pause service is unavailable or degraded. | "Pause service is temporarily unavailable." |
+
+### Icon and Color Usage
+
+- **Inline / Field** — Warning icon (`alert-circle`), color `--color-warning-600` (#B45309) on `--color-warning-50` (#FFFBEB) background. Border-left 3px accent.
+- **Blocking / Action** — Error icon (`alert-triangle`), color `--color-error-600` (#B91C1C) on `--color-error-50` (#FEF2F2) background. Border-left 3px accent.
+- **System / Banner** — Error icon (`alert-octagon`), color `--color-error-700` (#991B1B) on `--color-error-100` (#FEE2E2) background. Full-width banner.
+- Icons are 16px (inline), 20px (blocking), 24px (banner), vertically aligned to the first line of text.
+- Never rely on color alone: every level pairs its color with a distinct icon and text label.
+- Success and info states reuse the same layout with `check-circle` / `info` icons and green/blue tokens respectively.
+
+### Typography Scale
+
+- **Title** — 14px / 20px line-height, weight 600, `--color-error-700` (or matching severity token). One short sentence, sentence case, no trailing period.
+- **Body / Guidance** — 13px / 18px line-height, weight 400, `--color-neutral-700`. Explains what happened and what to do next; max 2 lines.
+- **Field label / inline text** — 12px / 16px line-height, weight 500, matching severity color.
+- **Error code / reference** — 12px / 16px, weight 400, `--color-neutral-500`, monospace, shown only when a support reference exists.
+- Keep messages under ~120 characters; avoid jargon and never expose raw stack traces.
+
+### Action Button Design
+
+- Primary recovery action (e.g., "Try again", "Retry pause") uses the standard primary button: 32px height, 8px horizontal padding, 13px/500 label, `--color-error-600` background with white text for blocking errors.
+- Secondary action (e.g., "Dismiss", "View details") uses a ghost/text button: transparent background, `--color-neutral-600` label, underline on hover.
+- Inline field errors show no button; the fix is editing the field itself.
+- Banner errors include a single "Retry" button plus a "Dismiss" text action; never more than two actions.
+- Buttons are right-aligned within the message container with 8px gap; on mobile they stack full-width.
+- Disabled while the retry is in flight, showing a 16px inline spinner and label "Retrying…".
+
+### Animation / Transition Specs
+
+- **Enter** — fade in + 4px upward slide, 150ms, `ease-out`. Banner slides down from the top edge instead.
+- **Exit** — fade out, 100ms, `ease-in`; collapse height over 150ms to avoid layout jump.
+- **Auto-dismiss** — inline and blocking messages auto-dismiss after 6s; system banners persist until resolved or dismissed.
+- **Retry feedback** — spinner rotates 800ms linear infinite; on success the message cross-fades to a success state over 200ms.
+- **Reduced motion** — when `prefers-reduced-motion: reduce` is set, skip slide/collapse and use opacity-only transitions (≤ 100ms).
+- **Focus** — on appearance, move focus to the message container (`role="alert"`, `aria-live="assertive"`) so screen readers announce it immediately.
