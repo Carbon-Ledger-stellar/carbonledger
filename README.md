@@ -910,3 +910,8 @@ To run all integration tests:
 
 # Run only integration tests
 cargo test --test lifecycle_integration_test -- --nocapture
+
+## Handsoff notes
+
+<!-- handsoff-issue-1247 -->
+- #1247: Frontend - Create pause statistics dashboard
