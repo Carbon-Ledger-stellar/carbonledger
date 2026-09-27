@@ -288,131 +288,187 @@ npm run start:dev
 ### Check Database
 ```bash
 # Connect to PostgreSQL
-psql postgresql://carbonledger:changeme@localhost:5432/carbonledger
-
-# Check pending certificates
-SELECT retirementId, certificateStatus, certificateRetries 
-FROM "RetirementRecord" 
-WHERE certificateStatus != 'completed';
-
-# Check failed certificates
-SELECT retirementId, certificateStatus, certificateFailedAt 
-FROM "RetirementRecord" 
-WHERE certificateStatus = 'failed';
+psql
 ```
 
-### Check Redis Queue
-```bash
-# Connect to Redis
-redis-cli
+## Pause Integration Guide
 
-# Check queue stats
-LLEN carbonledger:waiting
-LLEN carbonledger:active
-LLEN carbonledger:completed
-LLEN carbonledger:failed
+This section is a step-by-step developer guide for integrating pause functionality into client applications. It covers the JavaScript SDK, error handling, polling vs WebSocket patterns, testing strategies, and common issues.
+
+### Overview
+
+Pause functionality lets a client temporarily suspend operations (for example, pausing a retirement batch, a queue consumer, or an automated job) and later resume them. The backend exposes pause state through the API and pushes state changes over WebSocket. Clients should treat pause state as authoritative from the server and reconcile local state on reconnect.
+
+### Step-by-Step Integration
+
+1. **Authenticate** — obtain a JWT and initialize the SDK client.
+2. **Read initial pause state** — call the pause status endpoint before starting work.
+3. **Subscribe to pause events** — open a WebSocket connection to receive live updates.
+4. **Gate your work loop** — check pause state before each unit of work.
+5. **Handle pause/resume commands** — call the pause and resume endpoints and await confirmation.
+6. **Reconcile on reconnect** — re-fetch pause state after any disconnect.
+7. **Clean up** — close the WebSocket and clear timers on shutdown.
+
+### JavaScript SDK Examples
+
+#### Initialize the client
+
+```javascript
+import { CarbonLedgerClient } from '@carbonledger/sdk';
+
+const client = new CarbonLedgerClient({
+  baseUrl: 'https://api.carbonledger.io/api/v1',
+  token: process.env.CARBONLEDGER_JWT,
+});
 ```
 
-## Troubleshooting
+#### Read the current pause state
 
-### Certificates Not Generating
+```javascript
+async function getPauseState(resourceId) {
+  const state = await client.pause.getStatus(resourceId);
+  // { resourceId, paused: boolean, pausedAt, pausedBy, reason }
+  return state;
+}
+```
 
-**Problem**: Certificates stuck in "pending_certificate" status
+#### Pause and resume
 
-**Solutions**:
-1. Check Redis connection: `redis-cli ping`
-2. Check Pinata credentials: `echo $IPFS_API_KEY`
-3. Check logs for errors: `npm run start:dev`
-4. Verify database migration: `npx prisma migrate status`
-5. Check Pinata account quota and API limits
+```javascript
+async function pause(resourceId, reason) {
+  return client.pause.pause(resourceId, { reason });
+}
 
-### Email Not Sending
+async function resume(resourceId) {
+  return client.pause.resume(resourceId);
+}
+```
 
-**Problem**: Users not receiving certificate ready emails
+#### Gate a work loop on pause state
 
-**Solutions**:
-1. Verify SMTP credentials in `.env`
-2. Check firewall/network access to SMTP server
-3. Review logs for email errors
-4. Test with mock mode (remove SMTP config)
-5. Check email spam folder
+```javascript
+async function runWorkLoop(resourceId, items) {
+  for (const item of items) {
+    const { paused } = await getPauseState(resourceId);
+    if (paused) {
+      console.log('Paused, stopping work loop');
+      return;
+    }
+    await processItem(item);
+  }
+}
+```
 
-### IPFS Upload Fails
+### Error Handling Examples
 
-**Problem**: "Pinata upload failed" errors
+Wrap pause calls and handle the common failure modes explicitly.
 
-**Solutions**:
-1. Verify Pinata API key and secret
-2. Check Pinata account quota
-3. Verify network connectivity
-4. Check file size (should be < 10MB)
-5. Try uploading manually to Pinata dashboard
+```javascript
+async function safePause(resourceId, reason) {
+  try {
+    return await client.pause.pause(resourceId, { reason });
+  } catch (err) {
+    if (err.status === 401) {
+      throw new Error('Authentication failed: refresh your JWT and retry.');
+    }
+    if (err.status === 403) {
+      throw new Error('Not authorized to pause this resource.');
+    }
+    if (err.status === 404) {
+      throw new Error('Resource not found: verify the resourceId.');
+    }
+    if (err.status === 409) {
+      // Already paused or a conflicting state transition is in progress.
+      return getPauseState(resourceId);
+    }
+    if (err.status >= 500) {
+      // Transient server error: retry with backoff.
+      return retryWithBackoff(() => client.pause.pause(resourceId, { reason }));
+    }
+    throw err;
+  }
+}
 
-### High Memory Usage
+async function retryWithBackoff(fn, attempts = 3, baseDelayMs = 500) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
+    }
+  }
+}
+```
 
-**Problem**: Memory usage increasing over time
+### Polling vs WebSocket Patterns
 
-**Solutions**:
-1. Reduce polling batch size (currently 10)
-2. Increase polling interval (currently 60s)
-3. Monitor PDF generation memory usage
-4. Check for memory leaks in dependencies
+| Aspect | Polling | WebSocket |
+| --- | --- | --- |
+| Latency | Up to one interval | Near real-time |
+| Complexity | Low | Medium (reconnect logic) |
+| Server load | Higher with short intervals | Lower, event-driven |
+| Best for | Simple clients, low frequency | Live dashboards, long-running jobs |
 
-## Security Considerations
+#### Polling pattern
 
-1. **API Keys**: Store Pinata credentials in environment variables only
-2. **Email Credentials**: Use app-specific passwords, not account passwords
-3. **IPFS URLs**: Public gateway URLs are accessible to anyone with the CID
-4. **Retirement Data**: Sensitive data (beneficiary, reason) stored in PDF
-5. **Rate Limiting**: Consider adding rate limits to certificate endpoints
-6. **Access Control**: Ensure only authenticated users can check certificate status
+```javascript
+function startPolling(resourceId, intervalMs = 5000) {
+  const timer = setInterval(async () => {
+    const state = await getPauseState(resourceId);
+    onPauseStateChange(state);
+  }, intervalMs);
+  return () => clearInterval(timer);
+}
+```
 
-## Future Enhancements
+#### WebSocket pattern
 
-1. **Webhook Notifications**: Use Pinata webhooks instead of polling
-2. **Parallel Processing**: Process multiple certificates in parallel
-3. **Certificate Customization**: Allow users to customize certificate design
-4. **Blockchain Verification**: Store certificate CID on-chain
-5. **Certificate Revocation**: Support certificate revocation if needed
-6. **Analytics**: Track certificate generation metrics
-7. **Caching**: Cache generated certificates for faster retrieval
-8. **Batch Operations**: Support bulk certificate generation
+```javascript
+function subscribeToPause(resourceId) {
+  const ws = client.pause.subscribe(resourceId);
 
-## Support & Documentation
+  ws.on('pause', (state) => onPauseStateChange(state));
+  ws.on('resume', (state) => onPauseStateChange(state));
 
-- See `CERTIFICATE_GENERATION.md` for detailed technical documentation
-- See `backend/package.json` for dependency versions
-- See `backend/prisma/schema.prisma` for database schema
-- See `.env.example` for configuration options
+  ws.on('close', () => {
+    // Reconcile state after reconnect.
+    setTimeout(async () => {
+      onPauseStateChange(await getPauseState(resourceId));
+      subscribeToPause(resourceId);
+    }, 2000);
+  });
 
-## Rollback Instructions
+  ws.on('error', (err) => console.error('Pause socket error', err));
 
-If you need to rollback this implementation:
+  return () => ws.close();
+}
+```
 
-1. **Revert Database**
-   ```bash
-   npx prisma migrate resolve --rolled-back add_certificate_fields
-   ```
+Use polling as a fallback when WebSocket connections are unavailable, and always re-fetch state on reconnect to avoid acting on stale data.
 
-2. **Revert Code**
-   ```bash
-   git revert <commit-hash>
-   ```
+### Testing Strategies
 
-3. **Reinstall Dependencies**
-   ```bash
-   npm install
-   ```
+- **Unit tests** — mock the SDK client and assert your work loop stops when `paused` is true.
+- **Integration tests** — pause a resource, trigger work, and assert no work is processed until resume.
+- **Reconnect tests** — simulate a WebSocket drop and verify state is reconciled on reconnect.
+- **Error-path tests** — simulate 401/403/409/5xx responses and assert the documented handling.
+- **Idempotency tests** — calling pause twice should not error or double-apply.
 
-4. **Restart Backend**
-   ```bash
-   npm run start:dev
-   ```
+```javascript
+test('work loop stops when paused', async () => {
+  jest.spyOn(client.pause, 'getStatus').mockResolvedValue({ paused: true });
+  const processItem = jest.fn();
+  await runWorkLoop('res-1', ['a', 'b']);
+  expect(processItem).not.toHaveBeenCalled();
+});
+```
 
-## Questions & Support
+### Common Issues and Solutions
 
-For issues or questions:
-1. Check logs: `npm run start:dev`
-2. Review documentation: `CERTIFICATE_GENERATION.md`
-3. Check database: `npx prisma studio`
-4. Monitor queue: `GET /queue/stats`
+- **Stale pause state after reconnect** — always re-fetch pause status on WebSocket reconnect.
+- **Duplicate pause calls** — treat 409 as success and re-read state instead of failing.
+- **Work continues after pause** — check pause state before each unit of work, not just once at startup.
+- **Missed resume events** — combine WebSocket events with a periodic reconciliation poll.
+- **Auth expiry mid-session** — refresh the JWT on 401 and retry the pause call once.
+- **Clock skew on `pausedAt`** — compare durations using server timestamps, not local time.
