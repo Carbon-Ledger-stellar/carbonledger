@@ -915,3 +915,6 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 <!-- handsoff-issue-1183 -->
 - #1183: UI/UX - Test pause UI with screen readers
+
+<!-- handsoff-issue-1184 -->
+- #1184: UI/UX - Create pause UI usage guidelines
