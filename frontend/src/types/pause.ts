@@ -37,3 +37,21 @@ export interface PauseHistoryResponse {
   events: PauseHistoryEvent[];
   pagination: PauseHistoryPagination;
 }
+
+export interface PauseConfirmationModalProps {
+  isOpen: boolean;
+  action: PauseAction;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isSubmitting?: boolean;
+}
+
+export interface PauseImpact {
+  blockedOperations: string[];
+  continuedOperations: string[];
+}
+
+export const PAUSE_IMPACT: PauseImpact = {
+  blockedOperations: ['Mint', 'Transfer', 'Retire'],
+  continuedOperations: ['Queries', 'Reads'],
+};
