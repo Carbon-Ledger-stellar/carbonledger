@@ -797,7 +797,7 @@ impl CarbonCreditContract {
         // Build the pre-image: batch_id bytes followed by 4-byte big-endian index.
         let mut data = Bytes::new(env);
         // Append each byte of the batch_id string.
-        let bid_bytes = batch_id.to_xdr(env);
+        let bid_bytes = batch_id.clone().to_xdr(env);
         for i in 0..bid_bytes.len() {
             data.push_back(bid_bytes.get(i).unwrap());
         }

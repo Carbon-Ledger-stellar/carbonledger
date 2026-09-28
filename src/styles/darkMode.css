@@ -1,0 +1,68 @@
+/* Dark mode theme for the application.
+ * Includes pause UI variants (issue #1186): status indicator and banner.
+ * All foreground/background pairs below meet WCAG AA (>= 4.5:1 for text,
+ * >= 3:1 for large text and non-text UI such as the status indicator).
+ */
+
+:root {
+  --color-bg: #ffffff;
+  --color-surface: #f5f5f5;
+  --color-text: #1a1a1a;
+  --color-text-muted: #5a5a5a;
+  --color-border: #d0d0d0;
+
+  /* Pause UI (light) */
+  --pause-banner-bg: #fff8e1;
+  --pause-banner-border: #f0c000;
+  --pause-banner-text: #5a4500;
+  --pause-status-active: #2e7d32;
+  --pause-status-paused: #b26a00;
+  --pause-status-inactive: #6b6b6b;
+}
+
+[data-theme="dark"],
+.dark-mode {
+  --color-bg: #121212;
+  --color-surface: #1e1e1e;
+  --color-text: #f5f5f5;
+  --color-text-muted: #b0b0b0;
+  --color-border: #3a3a3a;
+
+  /* Pause UI (dark) — contrast checked against --color-surface (#1e1e1e) */
+  --pause-banner-bg: #2a2410;
+  --pause-banner-border: #d4a017;
+  --pause-banner-text: #ffe9a8; /* ~11.6:1 on banner bg */
+  --pause-status-active: #66bb6a; /* ~6.4:1 on surface */
+  --pause-status-paused: #ffb74d; /* ~8.9:1 on surface */
+  --pause-status-inactive: #9e9e9e; /* ~5.6:1 on surface */
+}
+
+/* Pause banner */
+.pause-banner {
+  background-color: var(--pause-banner-bg);
+  border: 1px solid var(--pause-banner-border);
+  color: var(--pause-banner-text);
+  border-radius: 6px;
+  padding: 12px 16px;
+}
+
+/* Pause status indicator */
+.pause-status-indicator {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--pause-status-inactive);
+}
+
+.pause-status-indicator[data-status="active"] {
+  background-color: var(--pause-status-active);
+}
+
+.pause-status-indicator[data-status="paused"] {
+  background-color: var(--pause-status-paused);
+}
+
+.pause-status-indicator[data-status="inactive"] {
+  background-color: var(--pause-status-inactive);
+}

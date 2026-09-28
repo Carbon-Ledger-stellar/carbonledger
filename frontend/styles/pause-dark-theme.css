@@ -58,3 +58,21 @@
   border-color: var(--pause-modal-border);
   color: var(--pause-modal-text);
 }
+
+/* Accessibility & Reduced-Motion Settings (#1275) */
+@media (prefers-reduced-motion: reduce) {
+  .pause-system-banner,
+  .pause-modal-container,
+  .pause-status-operational,
+  .pause-status-paused,
+  .pause-status-expiring,
+  .pause-button,
+  .pause-indicator-dot {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.pause-banner-transition {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease-in-out;
+}
