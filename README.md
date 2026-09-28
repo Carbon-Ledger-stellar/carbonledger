@@ -913,5 +913,5 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1245 -->
-- #1245: Frontend - Create pause reason modal
+<!-- handsoff-issue-1240 -->
+- #1240: Backend - Create database health check for pause state
