@@ -1,6 +1,9 @@
 # Pause Functionality Testing Guide
 
-> **Status:** This guide documents the proposed pause mechanism for CarbonLedger smart contracts. The pause feature is planned but not yet implemented — see [ISSUES.md](ISSUES.md) for implementation scope.
+> **Closes:** #1202  
+> **Last updated:** 2026-09-26  
+> **Status:** This guide documents the pause mechanism for CarbonLedger smart contracts. See [ISSUES.md](ISSUES.md) for implementation scope.
+> **See also:** [Pause Events](PAUSE_EVENTS.md) | [Pause Architecture](pause-architecture.md) | [Pause Operations Guide](PAUSE_OPERATIONS_GUIDE.md)
 
 ## Table of Contents
 
