@@ -824,6 +824,112 @@ jobs:
         working-directory: contracts
         run: cargo fmt --check
 
+  # ── Issue #1318: Emergency-Pause Acceptance Tests ──────────────────────────
+  # Dedicated gate for the ADR-013 emergency-pause feature.  The workspace-wide
+  # `cargo test --workspace` job above also covers these two targets, but it is
+  # currently red on unrelated pre-existing failures, so this job keeps a
+  # reliable, fast signal for the pause feature specifically: if a change
+  # regresses pause / unpause / expiry / authorisation / event semantics, this
+  # check is the one that reports it unambiguously.
+  pause-acceptance-tests:
+    name: Pause Acceptance Tests (#1318)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.91.0
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-pause-acceptance-${{ hashFiles('contracts/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-pause-acceptance-
+            ${{ runner.os }}-cargo-ci-
+
+      - name: Run carbon_credit pause acceptance suite
+        working-directory: contracts
+        run: |
+          cargo test -p carbon_credit --test pause_acceptance 2>&1 \
+            | tee /tmp/pause-acceptance-credit.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Run carbon_marketplace pause acceptance suite
+        working-directory: contracts
+        run: |
+          cargo test -p carbon_marketplace --test pause_acceptance 2>&1 \
+            | tee /tmp/pause-acceptance-marketplace.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Print pause acceptance summary
+        if: always()
+        run: |
+          {
+            echo "## Pause Acceptance Tests (#1318)"
+            echo
+            echo '```'
+            cat /tmp/pause-acceptance-credit.txt /tmp/pause-acceptance-marketplace.txt 2>/dev/null \
+              | grep -E "^(running|test result)" || echo "(no results captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload pause acceptance logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pause-acceptance-test-log
+          path: |
+            /tmp/pause-acceptance-credit.txt
+            /tmp/pause-acceptance-marketplace.txt
+          retention-days: 30
+
+      - name: Post pause acceptance results on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const readLog = (path) => {
+              try { return fs.readFileSync(path, 'utf8'); } catch { return ''; }
+            };
+            const log =
+              readLog('/tmp/pause-acceptance-credit.txt') +
+              readLog('/tmp/pause-acceptance-marketplace.txt');
+            const results = [...log.matchAll(/test result: (\w+)\. (\d+) passed; (\d+) failed/g)]
+              .map(([, outcome, passed, failed]) => ({ outcome, passed: +passed, failed: +failed }));
+            const passed = results.every(r => r.outcome === 'ok');
+            const table = results
+              .map(r => `| ${r.passed} | ${r.failed} | ${r.outcome === 'ok' ? '✅' : '❌'} |`)
+              .join('\n');
+            const body = [
+              '## ⏸️ Pause Acceptance Test Results (#1318)',
+              '',
+              '| Passed | Failed | Status |',
+              '|--------|--------|--------|',
+              table || '| - | - | ❌ no results captured |',
+              '',
+              passed
+                ? '✅ Emergency-pause semantics (AC0–AC5) hold for `carbon_credit` and `carbon_marketplace`.'
+                : '❌ One or more emergency-pause acceptance tests failed.',
+              '',
+              '_Issue #1318 — ADR-013 emergency pause: 72h window, expiry, admin-only control, events, read availability._',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
   # ── Kani Formal Verification ─────────────────────────────────────────────────
   # Runs bounded model-checking proofs for the three critical carbon_credit
   # invariants.  Failures block merge.  Timeout: 5 minutes.
