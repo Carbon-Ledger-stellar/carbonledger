@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, BytesN,
-    Env, IntoVal, String, Vec,
+    Env, IntoVal, InvokeError, String, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -494,7 +494,8 @@ impl CarbonMarketplaceContract {
         {
             // Use try_invoke_contract so a PriceNotSet or network error falls
             // through to the cached fallback rather than panicking.
-            let live: Result<Result<i128, CarbonError>, _> = env.try_invoke_contract(
+            let live: Result<Result<i128, soroban_sdk::Error>, Result<CarbonError, InvokeError>> =
+                env.try_invoke_contract(
                 &oracle_address,
                 &soroban_sdk::Symbol::new(&env, "get_benchmark_price"),
                 soroban_sdk::vec![
