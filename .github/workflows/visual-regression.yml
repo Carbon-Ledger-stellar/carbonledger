@@ -52,11 +52,10 @@ jobs:
         env:
           CI: true
 
-      - name: Run mobile pause UI tests
-        id: mobile
+      - name: Run pause animation & transition tests
+        id: pause-animations
         working-directory: frontend
-        run: |
-          npx playwright test tests/mobile-pause-ui.spec.ts --project=mobile-chrome --project=mobile-safari
+        run: npx playwright test tests/pause-animations.spec.ts --project=chromium
         env:
           CI: true
 
@@ -111,8 +110,8 @@ jobs:
           echo "Visual regression tests failed. Review the report above."
           exit 1
 
-      - name: Fail if mobile pause UI tests fail
-        if: failure() && steps.mobile.outcome == 'failure'
+      - name: Fail if pause animation tests fail
+        if: failure() && steps.pause-animations.outcome == 'failure'
         run: |
-          echo "Mobile pause UI tests failed. Review the report above."
+          echo "Pause animation & transition tests failed. Review the report above."
           exit 1
