@@ -38,7 +38,7 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
 
   return (
     <aside
-      role="alert"
+      role="alert" aria-live="polite" className="motion-reduce:transition-none"
       aria-live="assertive"
       data-testid="pause-banner"
       className={`w-full bg-rose-600 text-white px-4 py-3 shadow-md dark:bg-rose-950 dark:border-b dark:border-rose-800 ${className}`}

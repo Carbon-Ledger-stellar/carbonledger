@@ -913,5 +913,5 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1247 -->
-- #1247: Frontend - Create pause statistics dashboard
+<!-- handsoff-issue-1240 -->
+- #1240: Backend - Create database health check for pause state
