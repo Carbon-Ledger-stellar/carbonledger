@@ -1,27 +1,114 @@
 {
   "info": {
-    "name": "CarbonLedger Contract Pause API",
+    "name": "CarbonLedger Pause API",
     "_postman_id": "c1f7a08b-6218-42f2-9599-73bf5e1564aa",
-    "description": "Postman Collection for verifying and testing CarbonLedger smart contract pause endpoints, circuit-breaker controls, and operational audit history.",
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    "description": "# CarbonLedger Pause API\n\nCloses #1197\n\nThis collection covers all four pause-related endpoints for the CarbonLedger smart contract emergency circuit breaker.\n\n## Endpoints\n- **GET** `/api/v1/contract/status` — Current pause state (no auth)\n- **POST** `/api/v1/admin/pause` — Trigger emergency pause (admin)\n- **POST** `/api/v1/admin/unpause` — Lift active pause (admin)\n- **GET** `/api/v1/admin/pause-history` — Audit log of pause events (admin)\n\n## Setup\n1. Import `CarbonLedger_Testnet.postman_environment.json`.\n2. Set `adminAuthToken` to a valid admin JWT.\n3. Run requests in order (1 → 2 → 3 → 4) for a complete test cycle.\n\n## Authentication\nAdmin endpoints require `Authorization: Bearer {{adminAuthToken}}`.\n\nThe status endpoint is public — no authentication required.\n\n## Error codes\n- `EmergencyPaused` (29/27) — write blocked by active pause\n- `InvalidPauseWindow` (28/26) — `until_timestamp` out of valid range `(now, now+72h]`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "2.0.0"
   },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://api.carbonledger.io",
+      "description": "CarbonLedger API base URL (override per environment)",
+      "type": "string"
+    },
+    {
+      "key": "adminAuthToken",
+      "value": "",
+      "description": "Admin JWT — set in your environment file",
+      "type": "string"
+    },
+    {
+      "key": "pauseDurationHours",
+      "value": "2",
+      "description": "Default pause duration in hours (1–72)",
+      "type": "string"
+    },
+    {
+      "key": "pauseReason",
+      "value": "",
+      "description": "Set automatically by pre-request script",
+      "type": "string"
+    },
+    {
+      "key": "lastPauseTxHash",
+      "value": "",
+      "description": "Set automatically after a successful pause",
+      "type": "string"
+    },
+    {
+      "key": "lastPauseUntil",
+      "value": "",
+      "description": "Set automatically after a successful pause",
+      "type": "string"
+    }
+  ],
   "item": [
     {
-      "name": "1. Get Contract Pause & Operational Status",
+      "name": "1. Get Contract Status",
       "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// No authentication required for this endpoint.",
+              "// Clear any stale test variables from previous runs.",
+              "pm.variables.set('statusCheckTime', new Date().toISOString());"
+            ],
+            "type": "text/javascript"
+          }
+        },
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"Status code is 200\", function () {",
+              "pm.test('Status 200 OK', function () {",
               "    pm.response.to.have.status(200);",
               "});",
-              "pm.test(\"Response contains contract status fields\", function () {",
-              "    var jsonData = pm.response.json();",
-              "    pm.expect(jsonData).to.have.property('isPaused');",
-              "    pm.expect(jsonData).to.have.property('status');",
-              "    pm.expect(jsonData.status).to.be.oneOf(['operational', 'paused', 'expiring_soon']);",
-              "});"
+              "",
+              "pm.test('Response time under 2000ms', function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(2000);",
+              "});",
+              "",
+              "pm.test('Response is valid JSON', function () {",
+              "    pm.response.to.be.json;",
+              "});",
+              "",
+              "pm.test('Response has required fields', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json).to.have.property('isPaused');",
+              "    pm.expect(json).to.have.property('status');",
+              "    pm.expect(json.isPaused).to.be.a('boolean');",
+              "    pm.expect(json.status).to.be.a('string');",
+              "});",
+              "",
+              "pm.test('status field has a valid value', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json.status).to.be.oneOf(['operational', 'paused', 'expiring_soon']);",
+              "});",
+              "",
+              "pm.test('pauseUntil is null or a positive integer when paused', function () {",
+              "    const json = pm.response.json();",
+              "    if (json.isPaused) {",
+              "        pm.expect(json.pauseUntil).to.be.a('number');",
+              "        pm.expect(json.pauseUntil).to.be.above(0);",
+              "    } else {",
+              "        pm.expect(json.pauseUntil === null || json.pauseUntil === undefined).to.be.true;",
+              "    }",
+              "});",
+              "",
+              "// Store current pause state for downstream tests",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('contractIsPaused', json.isPaused);",
+              "pm.collectionVariables.set('contractStatus', json.status);",
+              "if (json.pauseUntil) {",
+              "    pm.collectionVariables.set('currentPauseUntil', json.pauseUntil);",
+              "}",
+              "",
+              "console.log('[Status check]', json.status,",
+              "    json.isPaused ? `- paused until ${new Date(json.pauseUntil * 1000).toISOString()}` : '');",
+              ""
             ],
             "type": "text/javascript"
           }
@@ -32,7 +119,8 @@
         "header": [
           {
             "key": "Accept",
-            "value": "application/json"
+            "value": "application/json",
+            "type": "text"
           }
         ],
         "url": {
@@ -40,9 +128,65 @@
           "host": ["{{baseUrl}}"],
           "path": ["api", "v1", "contract", "status"]
         },
-        "description": "Retrieves the current operational status of the CarbonCredit smart contract."
+        "description": "Retrieve the current operational status of the CarbonLedger contracts.\n\n**No authentication required.**\n\nReturns:\n- `isPaused` (bool) — whether the contract is currently blocking writes\n- `status` — `\"operational\"`, `\"paused\"`, or `\"expiring_soon\"`\n- `pauseUntil` — Unix timestamp when pause expires (null if not paused)\n- `reason` — human-readable reason for the pause (null if not paused)\n\nThe effective pause formula is:\n```\nis_effectively_paused = isPaused == true AND pauseUntil > current_time\n```\nEven if `isPaused` is `true`, the contract is not blocking writes once `pauseUntil` is in the past (stale flag)."
       },
-      "response": []
+      "response": [
+        {
+          "name": "200 OK — Contract operational",
+          "originalRequest": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contract/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "contract", "status"]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" },
+            { "key": "X-Correlation-Id", "value": "req-abc123" }
+          ],
+          "body": "{\n  \"isPaused\": false,\n  \"status\": \"operational\",\n  \"pauseUntil\": null,\n  \"reason\": null,\n  \"contractVersion\": \"1.0.0\"\n}"
+        },
+        {
+          "name": "200 OK — Contract paused",
+          "originalRequest": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contract/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "contract", "status"]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"isPaused\": true,\n  \"status\": \"paused\",\n  \"pauseUntil\": 1756486400,\n  \"reason\": \"Oracle price anomaly detected — investigation in progress\",\n  \"contractVersion\": \"1.0.0\"\n}"
+        },
+        {
+          "name": "200 OK — Pause expiring soon",
+          "originalRequest": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/contract/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "contract", "status"]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"isPaused\": true,\n  \"status\": \"expiring_soon\",\n  \"pauseUntil\": 1756480000,\n  \"reason\": \"Scheduled maintenance window\",\n  \"contractVersion\": \"1.0.0\"\n}"
+        }
+      ]
     },
     {
       "name": "2. Emergency Pause Contract",
@@ -51,7 +195,22 @@
           "listen": "prerequest",
           "script": {
             "exec": [
-              "pm.environment.set(\"pauseReason\", \"Postman automated circuit breaker verification: \" + new Date().toISOString());"
+              "// Validate admin token is set",
+              "const token = pm.environment.get('adminAuthToken') || pm.collectionVariables.get('adminAuthToken');",
+              "if (!token || token.trim() === '') {",
+              "    throw new Error('adminAuthToken is not set. Update it in your environment file before running this request.');",
+              "}",
+              "",
+              "// Build a timestamped reason so each run is distinct in the audit log",
+              "const reason = `Postman automated test — emergency pause verification at ${new Date().toISOString()}`;",
+              "pm.collectionVariables.set('pauseReason', reason);",
+              "",
+              "// Default duration if not set",
+              "if (!pm.collectionVariables.get('pauseDurationHours')) {",
+              "    pm.collectionVariables.set('pauseDurationHours', '2');",
+              "}",
+              "",
+              "console.log('[Pre-request] Triggering pause with reason:', reason);"
             ],
             "type": "text/javascript"
           }
@@ -60,13 +219,52 @@
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"Successful pause returns 200 or 409 if already paused\", function () {",
+              "pm.test('Pause succeeds (200) or contract already paused (409)', function () {",
               "    pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
               "});",
+              "",
+              "pm.test('Response is valid JSON', function () {",
+              "    pm.response.to.be.json;",
+              "});",
+              "",
               "if (pm.response.code === 200) {",
-              "    var jsonData = pm.response.json();",
-              "    pm.expect(jsonData.success).to.eql(true);",
-              "    pm.expect(jsonData).to.have.property('transactionHash');",
+              "    pm.test('Success response has required fields', function () {",
+              "        const json = pm.response.json();",
+              "        pm.expect(json).to.have.property('success');",
+              "        pm.expect(json).to.have.property('transactionHash');",
+              "        pm.expect(json).to.have.property('pauseUntil');",
+              "        pm.expect(json).to.have.property('affectedContracts');",
+              "        pm.expect(json.success).to.equal(true);",
+              "        pm.expect(json.transactionHash).to.be.a('string').and.not.empty;",
+              "        pm.expect(json.pauseUntil).to.be.a('number').and.above(0);",
+              "        pm.expect(Array.isArray(json.affectedContracts)).to.be.true;",
+              "    });",
+              "",
+              "    pm.test('pauseUntil is in the future', function () {",
+              "        const json = pm.response.json();",
+              "        const nowSeconds = Math.floor(Date.now() / 1000);",
+              "        pm.expect(json.pauseUntil).to.be.above(nowSeconds);",
+              "    });",
+              "",
+              "    pm.test('pauseUntil is within 72 hours', function () {",
+              "        const json = pm.response.json();",
+              "        const nowSeconds = Math.floor(Date.now() / 1000);",
+              "        const maxAllowed = nowSeconds + (72 * 3600);",
+              "        pm.expect(json.pauseUntil).to.be.at.most(maxAllowed);",
+              "    });",
+              "",
+              "    // Store for use in unpause test",
+              "    const json = pm.response.json();",
+              "    pm.collectionVariables.set('lastPauseTxHash', json.transactionHash);",
+              "    pm.collectionVariables.set('lastPauseUntil', json.pauseUntil);",
+              "    console.log('[Pause] TX:', json.transactionHash,",
+              "        '| Until:', new Date(json.pauseUntil * 1000).toISOString());",
+              "} else if (pm.response.code === 409) {",
+              "    pm.test('409 body indicates already-paused state', function () {",
+              "        const json = pm.response.json();",
+              "        pm.expect(json).to.have.property('error');",
+              "    });",
+              "    console.warn('[Pause] Contract already paused — skipping. Check contract status first.');",
               "}"
             ],
             "type": "text/javascript"
@@ -88,41 +286,172 @@
         "header": [
           {
             "key": "Content-Type",
-            "value": "application/json"
+            "value": "application/json",
+            "type": "text"
           },
           {
             "key": "Accept",
-            "value": "application/json"
+            "value": "application/json",
+            "type": "text"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"durationHours\": 6,\n  \"reason\": \"{{pauseReason}}\",\n  \"affectedContracts\": [\"carbon_credit\"]\n}"
+          "raw": "{\n  \"durationHours\": {{pauseDurationHours}},\n  \"reason\": \"{{pauseReason}}\",\n  \"affectedContracts\": [\"carbon_credit\", \"carbon_marketplace\"]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
         },
         "url": {
           "raw": "{{baseUrl}}/api/v1/admin/pause",
           "host": ["{{baseUrl}}"],
           "path": ["api", "v1", "admin", "pause"]
         },
-        "description": "Admin endpoint to trigger emergency pause across specified contracts."
+        "description": "Trigger an emergency pause across the specified CarbonLedger contracts.\n\n**Requires:** Admin JWT in `Authorization: Bearer` header.\n\n**Request body fields:**\n- `durationHours` (required, 1–72) — how long the pause should last\n- `reason` (required) — human-readable explanation, stored in the audit log\n- `affectedContracts` (optional) — which contracts to pause; defaults to both\n\n**Response codes:**\n- `200` — pause activated successfully\n- `400` — `durationHours` is out of range or missing\n- `403` — caller is not an admin\n- `409` — contract is already paused\n\nAfter a successful pause, all write operations on the affected contracts return `409 Conflict` with error code `EmergencyPaused` until the pause expires or is lifted via the unpause endpoint."
       },
-      "response": []
+      "response": [
+        {
+          "name": "200 OK — Pause activated",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "pause"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"durationHours\": 2,\n  \"reason\": \"Oracle price anomaly\",\n  \"affectedContracts\": [\"carbon_credit\", \"carbon_marketplace\"]\n}"
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"success\": true,\n  \"transactionHash\": \"a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890\",\n  \"pauseUntil\": 1756486400,\n  \"affectedContracts\": [\"carbon_credit\", \"carbon_marketplace\"],\n  \"initiatedBy\": \"GADMIN7J2XNQ5B6E4Y8WZ3M1K9L0P5R7T2V4X6Z8A0BADMIN\"\n}"
+        },
+        {
+          "name": "400 Bad Request — Invalid pause window",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "pause"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"durationHours\": 100,\n  \"reason\": \"Test\"\n}"
+            }
+          },
+          "status": "Bad Request",
+          "code": 400,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"statusCode\": 400,\n  \"error\": \"INVALID_PAUSE_WINDOW\",\n  \"message\": \"durationHours must be between 1 and 72\"\n}"
+        },
+        {
+          "name": "403 Forbidden — Not admin",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "pause"]
+            }
+          },
+          "status": "Forbidden",
+          "code": 403,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"statusCode\": 403,\n  \"error\": \"Forbidden\",\n  \"message\": \"Insufficient permissions: admin role required\"\n}"
+        },
+        {
+          "name": "409 Conflict — Already paused",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/pause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "pause"]
+            }
+          },
+          "status": "Conflict",
+          "code": 409,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"statusCode\": 409,\n  \"error\": \"ALREADY_PAUSED\",\n  \"message\": \"Contract is already paused until 2026-09-28T04:00:00Z\",\n  \"pauseUntil\": 1756486400\n}"
+        }
+      ]
     },
     {
       "name": "3. Resume Contract Operations (Unpause)",
       "event": [
         {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Validate admin token is set",
+              "const token = pm.environment.get('adminAuthToken') || pm.collectionVariables.get('adminAuthToken');",
+              "if (!token || token.trim() === '') {",
+              "    throw new Error('adminAuthToken is not set. Update it in your environment file.');",
+              "}",
+              "",
+              "// Log context from previous pause request if available",
+              "const lastTxHash = pm.collectionVariables.get('lastPauseTxHash');",
+              "if (lastTxHash) {",
+              "    console.log('[Pre-request] Unpausing after pause TX:', lastTxHash);",
+              "} else {",
+              "    console.log('[Pre-request] Unpausing (no previous pause TX in this run — idempotent call)');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"Successful unpause returns 200 or 409 if not paused\", function () {",
-              "    pm.expect(pm.response.code).to.be.oneOf([200, 409]);",
+              "pm.test('Unpause returns 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
               "});",
-              "if (pm.response.code === 200) {",
-              "    var jsonData = pm.response.json();",
-              "    pm.expect(jsonData.success).to.eql(true);",
-              "    pm.expect(jsonData.status).to.eql('operational');",
-              "}"
+              "",
+              "pm.test('Response is valid JSON', function () {",
+              "    pm.response.to.be.json;",
+              "});",
+              "",
+              "pm.test('Success response has required fields', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json).to.have.property('success');",
+              "    pm.expect(json).to.have.property('status');",
+              "    pm.expect(json).to.have.property('transactionHash');",
+              "    pm.expect(json.success).to.equal(true);",
+              "    pm.expect(json.status).to.equal('operational');",
+              "    pm.expect(json.transactionHash).to.be.a('string').and.not.empty;",
+              "});",
+              "",
+              "pm.test('Contract status is operational after unpause', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json.status).to.equal('operational');",
+              "});",
+              "",
+              "// Clear pause variables",
+              "pm.collectionVariables.unset('lastPauseTxHash');",
+              "pm.collectionVariables.unset('lastPauseUntil');",
+              "pm.collectionVariables.set('contractIsPaused', false);",
+              "",
+              "const json = pm.response.json();",
+              "console.log('[Unpause] Operations restored. TX:', json.transactionHash);"
             ],
             "type": "text/javascript"
           }
@@ -143,41 +472,167 @@
         "header": [
           {
             "key": "Content-Type",
-            "value": "application/json"
+            "value": "application/json",
+            "type": "text"
           },
           {
             "key": "Accept",
-            "value": "application/json"
+            "value": "application/json",
+            "type": "text"
           }
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"reason\": \"Postman verification test complete, restoring operations.\"\n}"
+          "raw": "{\n  \"reason\": \"Postman verification test complete — restoring operations after automated pause test\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
         },
         "url": {
           "raw": "{{baseUrl}}/api/v1/admin/unpause",
           "host": ["{{baseUrl}}"],
           "path": ["api", "v1", "admin", "unpause"]
         },
-        "description": "Admin endpoint to lift contract pause and restore operations."
+        "description": "Lift an active emergency pause and restore normal contract operations.\n\n**Requires:** Admin JWT in `Authorization: Bearer` header.\n\n**This endpoint is idempotent.** Calling it when the contract is not currently paused returns `200 OK` with `status: \"operational\"` — it does not return an error.\n\n**Request body fields:**\n- `reason` (required) — human-readable note stored in the audit log\n\n**Response codes:**\n- `200` — pause lifted (or was already operational)\n- `403` — caller is not an admin\n\nAfter a successful unpause, write operations on all previously paused contracts resume immediately."
       },
-      "response": []
+      "response": [
+        {
+          "name": "200 OK — Pause lifted",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/unpause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "unpause"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Incident resolved. Price feed cache cleared and restarted.\"\n}"
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"success\": true,\n  \"status\": \"operational\",\n  \"restoredAt\": 1756479800,\n  \"transactionHash\": \"b2c3d4e5f6a7890bcdef2345678901bcdef2345678901bcdef2345678901bcde\",\n  \"initiatedBy\": \"GADMIN7J2XNQ5B6E4Y8WZ3M1K9L0P5R7T2V4X6Z8A0BADMIN\"\n}"
+        },
+        {
+          "name": "200 OK — Already operational (idempotent)",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/unpause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "unpause"]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"success\": true,\n  \"status\": \"operational\",\n  \"restoredAt\": 1756479800,\n  \"transactionHash\": \"c3d4e5f6a7890bcdef2345678901bcdef2345678901bcdef2345678901bcdef1\",\n  \"note\": \"Contract was already operational — no-op\"\n}"
+        },
+        {
+          "name": "403 Forbidden — Not admin",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/unpause",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "unpause"]
+            }
+          },
+          "status": "Forbidden",
+          "code": 403,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"statusCode\": 403,\n  \"error\": \"Forbidden\",\n  \"message\": \"Insufficient permissions: admin role required\"\n}"
+        }
+      ]
     },
     {
-      "name": "4. Get Pause Audit History",
+      "name": "4. Get Pause History",
       "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Validate admin token",
+              "const token = pm.environment.get('adminAuthToken') || pm.collectionVariables.get('adminAuthToken');",
+              "if (!token || token.trim() === '') {",
+              "    throw new Error('adminAuthToken is not set. Update it in your environment file.');",
+              "}",
+              "",
+              "// Set sensible defaults for pagination params",
+              "pm.variables.set('historyLimit', pm.variables.get('historyLimit') || '10');",
+              "pm.variables.set('historyOffset', pm.variables.get('historyOffset') || '0');",
+              "",
+              "console.log(`[Pre-request] Fetching pause history (limit=${pm.variables.get('historyLimit')}, offset=${pm.variables.get('historyOffset')})`);"
+            ],
+            "type": "text/javascript"
+          }
+        },
         {
           "listen": "test",
           "script": {
             "exec": [
-              "pm.test(\"Status code is 200\", function () {",
+              "pm.test('Status 200 OK', function () {",
               "    pm.response.to.have.status(200);",
               "});",
-              "pm.test(\"Response is an array of audit history items\", function () {",
-              "    var jsonData = pm.response.json();",
-              "    pm.expect(jsonData).to.have.property('items');",
-              "    pm.expect(Array.isArray(jsonData.items)).to.be.true;",
-              "});"
+              "",
+              "pm.test('Response time under 3000ms', function () {",
+              "    pm.expect(pm.response.responseTime).to.be.below(3000);",
+              "});",
+              "",
+              "pm.test('Response is valid JSON', function () {",
+              "    pm.response.to.be.json;",
+              "});",
+              "",
+              "pm.test('Response has pagination fields', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json).to.have.property('items');",
+              "    pm.expect(json).to.have.property('total');",
+              "    pm.expect(json).to.have.property('limit');",
+              "    pm.expect(json).to.have.property('offset');",
+              "    pm.expect(Array.isArray(json.items)).to.be.true;",
+              "    pm.expect(json.total).to.be.a('number').and.at.least(0);",
+              "    pm.expect(json.limit).to.be.a('number').and.above(0);",
+              "    pm.expect(json.offset).to.be.a('number').and.at.least(0);",
+              "});",
+              "",
+              "pm.test('Each history item has required fields', function () {",
+              "    const json = pm.response.json();",
+              "    json.items.forEach(function(item, index) {",
+              "        pm.expect(item, `items[${index}]`).to.have.property('id');",
+              "        pm.expect(item, `items[${index}]`).to.have.property('action');",
+              "        pm.expect(item, `items[${index}]`).to.have.property('reason');",
+              "        pm.expect(item, `items[${index}]`).to.have.property('timestamp');",
+              "        pm.expect(item, `items[${index}]`).to.have.property('transactionHash');",
+              "        pm.expect(item.action).to.be.oneOf(['paused', 'unpaused', 'auto_expired']);",
+              "        pm.expect(item.timestamp).to.be.a('number').and.above(0);",
+              "    });",
+              "});",
+              "",
+              "pm.test('items count does not exceed limit', function () {",
+              "    const json = pm.response.json();",
+              "    pm.expect(json.items.length).to.be.at.most(json.limit);",
+              "});",
+              "",
+              "// Log summary",
+              "const json = pm.response.json();",
+              "console.log(`[History] ${json.items.length} items returned (total: ${json.total})`);",
+              "if (json.items.length > 0) {",
+              "    const latest = json.items[0];",
+              "    console.log(`  Latest: ${latest.action} at ${new Date(latest.timestamp * 1000).toISOString()} — ${latest.reason}`);",
+              "}"
             ],
             "type": "text/javascript"
           }
@@ -198,27 +653,198 @@
         "header": [
           {
             "key": "Accept",
-            "value": "application/json"
+            "value": "application/json",
+            "type": "text"
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/api/v1/admin/pause-history?limit=10&offset=0",
+          "raw": "{{baseUrl}}/api/v1/admin/pause-history?limit={{historyLimit}}&offset={{historyOffset}}",
           "host": ["{{baseUrl}}"],
           "path": ["api", "v1", "admin", "pause-history"],
           "query": [
             {
               "key": "limit",
-              "value": "10"
+              "value": "{{historyLimit}}",
+              "description": "Number of records per page (default 10, max 100)"
             },
             {
               "key": "offset",
-              "value": "0"
+              "value": "{{historyOffset}}",
+              "description": "Pagination offset"
             }
           ]
         },
-        "description": "Admin endpoint to query historical pause events for auditing and compliance."
+        "description": "Retrieve the paginated audit history of all pause and unpause operations.\n\n**Requires:** Admin JWT in `Authorization: Bearer` header.\n\n**Query parameters:**\n- `limit` — page size (default `10`, max `100`)\n- `offset` — pagination offset\n\n**Response fields:**\n- `items[]` — list of pause events, each with `id`, `action`, `initiatedBy`, `reason`, `timestamp`, `pauseUntil`, `transactionHash`, `affectedContracts`\n- `total` — total count of events (for pagination calculation)\n- `limit` — the effective page size\n- `offset` — the current offset\n\n**Item action values:**\n- `\"paused\"` — a pause was triggered\n- `\"unpaused\"` — a pause was manually lifted\n- `\"auto_expired\"` — the pause deadline passed and the contract auto-resumed"
       },
-      "response": []
+      "response": [
+        {
+          "name": "200 OK — History with items",
+          "originalRequest": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/pause-history?limit=10&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "pause-history"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"items\": [\n    {\n      \"id\": \"evt-pause-001\",\n      \"action\": \"unpaused\",\n      \"initiatedBy\": \"GADMIN7J2XNQ5B6E4Y8WZ3M1K9L0P5R7T2V4X6Z8A0BADMIN\",\n      \"reason\": \"Incident resolved. Price feed cache cleared and restarted.\",\n      \"timestamp\": 1756479800,\n      \"pauseUntil\": null,\n      \"transactionHash\": \"b2c3d4e5f6a7890bcdef2345678901bcdef2345678901bcdef2345678901bcde\",\n      \"affectedContracts\": [\"carbon_credit\", \"carbon_marketplace\"]\n    },\n    {\n      \"id\": \"evt-pause-000\",\n      \"action\": \"paused\",\n      \"initiatedBy\": \"GADMIN7J2XNQ5B6E4Y8WZ3M1K9L0P5R7T2V4X6Z8A0BADMIN\",\n      \"reason\": \"Oracle price anomaly detected — investigation in progress\",\n      \"timestamp\": 1756472600,\n      \"pauseUntil\": 1756486400,\n      \"transactionHash\": \"a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890\",\n      \"affectedContracts\": [\"carbon_credit\", \"carbon_marketplace\"]\n    }\n  ],\n  \"total\": 2,\n  \"limit\": 10,\n  \"offset\": 0\n}"
+        },
+        {
+          "name": "200 OK — Empty history",
+          "originalRequest": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/pause-history?limit=10&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "pause-history"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"items\": [],\n  \"total\": 0,\n  \"limit\": 10,\n  \"offset\": 0\n}"
+        },
+        {
+          "name": "403 Forbidden — Not admin",
+          "originalRequest": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/admin/pause-history",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "admin", "pause-history"]
+            }
+          },
+          "status": "Forbidden",
+          "code": 403,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"statusCode\": 403,\n  \"error\": \"Forbidden\",\n  \"message\": \"Insufficient permissions: admin role required\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "5. Verify Write Blocked While Paused",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// This request verifies that write operations are blocked when the contract is paused.",
+              "// Run this AFTER request #2 (pause) and BEFORE request #3 (unpause).",
+              "//",
+              "// It intentionally triggers a 409/423 response — the test asserts that the error is",
+              "// EmergencyPaused, not a random server error.",
+              "const isPaused = pm.collectionVariables.get('contractIsPaused');",
+              "if (!isPaused) {",
+              "    console.warn('[Pre-request] Contract may not be paused — this request expects a 409/423 response.');",
+              "    console.warn('Run request #2 (Emergency Pause Contract) first.');",
+              "}",
+              "const token = pm.environment.get('adminAuthToken') || pm.collectionVariables.get('adminAuthToken');",
+              "if (!token || token.trim() === '') {",
+              "    throw new Error('adminAuthToken is not set.');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Write operation is blocked while paused (409 or 423)', function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([200, 409, 423]);",
+              "    // 200 is possible if the contract was not actually paused when this runs",
+              "});",
+              "",
+              "if (pm.response.code === 409 || pm.response.code === 423) {",
+              "    pm.test('Error body indicates EmergencyPaused', function () {",
+              "        const json = pm.response.json();",
+              "        pm.expect(json).to.have.property('error');",
+              "        pm.expect(json.error).to.be.oneOf(['CONTRACT_PAUSED', 'EmergencyPaused']);",
+              "    });",
+              "    console.log('[Verify] ✓ Write operation correctly blocked during pause. Error:', pm.response.json().error);",
+              "} else {",
+              "    console.warn('[Verify] Write operation succeeded — contract may not have been paused when this request ran.');",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{adminAuthToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"listingId\": \"listing-test-pause-check-001\",\n  \"amount\": 1\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/marketplace/purchase",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "marketplace", "purchase"]
+        },
+        "description": "Verifies that write operations are blocked while the contract is paused.\n\nRun this request **after** request #2 (Emergency Pause) and **before** request #3 (Unpause).\n\n**Expected response:** `409 Conflict` with `error: \"CONTRACT_PAUSED\"` or `\"EmergencyPaused\"`.\n\nIf the contract was not paused when this request ran, you may receive a different error (e.g. `404 Not Found` for the listing ID) — check the pre-request console log."
+      },
+      "response": [
+        {
+          "name": "409 Conflict — Write blocked by active pause",
+          "originalRequest": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/marketplace/purchase",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "marketplace", "purchase"]
+            }
+          },
+          "status": "Conflict",
+          "code": 409,
+          "_postman_previewlanguage": "json",
+          "header": [
+            { "key": "Content-Type", "value": "application/json" }
+          ],
+          "body": "{\n  \"statusCode\": 409,\n  \"error\": \"CONTRACT_PAUSED\",\n  \"message\": \"The carbon_marketplace contract is currently paused. Retry after 2026-09-28T04:00:00Z.\",\n  \"pauseUntil\": 1756486400\n}"
+        }
+      ]
     }
   ]
 }

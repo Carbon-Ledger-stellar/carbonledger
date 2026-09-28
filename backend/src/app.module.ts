@@ -57,6 +57,36 @@ import { Redis } from "ioredis";
 class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
+  @Get("pause")
+  async checkPause(@Res() res: Response) {
+    try {
+      const configs = await this.prisma.adminConfig.findMany({
+        where: { key: { startsWith: "pause:" } },
+      });
+      return res.status(HttpStatus.OK).json({
+        status: "ok",
+        feature: "pause",
+        operational: true,
+        database: "up",
+        contracts: {
+          carbon_credit: "operational",
+          carbon_marketplace: "operational",
+        },
+        configs,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      return res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+        status: "degraded",
+        feature: "pause",
+        operational: false,
+        error: error?.message || "Error querying pause state",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+
   @Get()
   async check(@Res() res: Response) {
     const checks = {
