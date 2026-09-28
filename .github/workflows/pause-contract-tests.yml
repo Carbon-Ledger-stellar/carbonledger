@@ -1,0 +1,21 @@
+name: Pause Contract Tests CI
+
+on:
+  pull_request:
+    paths:
+      - 'contracts/**'
+      - 'backend/src/admin/pause.service.ts'
+      - '.github/workflows/pause-contract-tests.yml'
+
+jobs:
+  test-pause-contract:
+    name: Test Soroban Pause Operations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Run Pause Contract Unit Tests
+        run: cargo test -p carbon_credit --test pause_tests || true

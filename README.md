@@ -913,5 +913,5 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 ## Handsoff notes
 
-<!-- handsoff-issue-1251 -->
-- #1251: Frontend - Create "Contract Paused" error message
+<!-- handsoff-issue-1240 -->
+- #1240: Backend - Create database health check for pause state

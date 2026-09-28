@@ -72,6 +72,64 @@ jobs:
           path: oracle/
           retention-days: 7
 
+  # ── Pause UI Error-State QA ───────────────────────────────────────────────────
+  # Covers issue #1187: verifies pause UI error states (network errors,
+  # permission denied, timeout, invalid state transitions), that messages are
+  # clear, retry options are present, no infinite loops/hangs occur, and the
+  # user can recover. Runs the pause error-state suite with a hard timeout so a
+  # hang fails fast instead of blocking the nightly run.
+  pause-ui-error-states:
+    name: Pause UI Error-State QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run pause UI error-state tests
+        # Hard timeout guards against infinite loops / hangs (acceptance
+        # criterion: "No infinite loops or hangs").
+        timeout-minutes: 10
+        run: |
+          npx playwright test \
+            --grep "pause.*error" \
+            --reporter=list,html \
+            --output=test-results/pause-error-states
+
+      - name: Upload pause error-state report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pause-error-states-${{ github.run_id }}
+          path: |
+            test-results/pause-error-states/
+            playwright-report/
+          retention-days: 14
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "### Pause UI Error-State QA — $(date -u +%Y-%m-%d)"
+            echo ""
+            echo "Covers issue #1187 error states:"
+            echo "- network errors"
+            echo "- permission denied"
+            echo "- timeout"
+            echo "- invalid state transitions"
+            echo ""
+            echo "Report: [pause-error-states-${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ── k6 Load Tests Against Staging ─────────────────────────────────────────────
   # Three scenarios:
   #   marketplace_browse     — 500 VUs × 5 min, paginated listing browse

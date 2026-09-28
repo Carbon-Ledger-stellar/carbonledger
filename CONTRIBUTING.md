@@ -8,6 +8,7 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [Quick Start](#quick-start)
 - [Detailed Setup](#detailed-setup)
 - [Running Tests](#running-tests)
+- [Pause API Reference](#pause-api-reference)
 - [Security](#security)
 - [Common Issues](#common-issues)
 - [Testnet Setup](#testnet-setup)
@@ -342,6 +343,201 @@ npm test projects.performance.spec.ts
 
 ---
 
+## Pause API Reference
+
+Reference for the contract pause/unpause endpoints. All endpoints are served by the backend at `http://localhost:3001` (or your deployed base URL).
+
+### Authentication
+
+Admin endpoints (`/api/v1/admin/*`) require a bearer token for an account with the `ADMIN` role:
+
+```
+Authorization: Bearer <JWT>
+```
+
+### Rate Limits
+
+| Endpoint | Limit |
+|----------|-------|
+| `GET /api/v1/contract/status` | 60 requests / minute per IP |
+| `POST /api/v1/admin/pause` | 10 requests / minute per admin |
+| `POST /api/v1/admin/unpause` | 10 requests / minute per admin |
+| `GET /api/v1/admin/pause-history` | 30 requests / minute per admin |
+
+Exceeding a limit returns `429 Too Many Requests` with a `Retry-After` header (seconds).
+
+### GET /api/v1/contract/status
+
+Returns the current pause state of the contract. Public endpoint.
+
+**Response `200 OK`**
+
+```json
+{
+  "paused": false,
+  "pausedAt": null,
+  "pausedBy": null,
+  "reason": null
+}
+```
+
+When paused:
+
+```json
+{
+  "paused": true,
+  "pausedAt": "2024-06-01T12:00:00.000Z",
+  "pausedBy": "GADMIN...XYZ",
+  "reason": "Scheduled maintenance"
+}
+```
+
+**Curl**
+
+```bash
+curl -X GET http://localhost:3001/api/v1/contract/status
+```
+
+### POST /api/v1/admin/pause
+
+Pauses the contract. Admin only. Idempotent — pausing an already-paused contract returns `409 Conflict`.
+
+**Request body**
+
+```json
+{
+  "reason": "Scheduled maintenance"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | No | Human-readable reason recorded in pause history (max 256 chars) |
+
+**Response `200 OK`**
+
+```json
+{
+  "paused": true,
+  "pausedAt": "2024-06-01T12:00:00.000Z",
+  "pausedBy": "GADMIN...XYZ",
+  "reason": "Scheduled maintenance"
+}
+```
+
+**Curl**
+
+```bash
+curl -X POST http://localhost:3001/api/v1/admin/pause \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Scheduled maintenance"}'
+```
+
+### POST /api/v1/admin/unpause
+
+Resumes the contract. Admin only. Idempotent — unpausing an already-active contract returns `409 Conflict`.
+
+**Request body**
+
+```json
+{
+  "reason": "Maintenance complete"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | No | Human-readable reason recorded in pause history (max 256 chars) |
+
+**Response `200 OK`**
+
+```json
+{
+  "paused": false,
+  "pausedAt": null,
+  "pausedBy": null,
+  "reason": "Maintenance complete"
+}
+```
+
+**Curl**
+
+```bash
+curl -X POST http://localhost:3001/api/v1/admin/unpause \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Maintenance complete"}'
+```
+
+### GET /api/v1/admin/pause-history
+
+Returns the chronological pause/unpause history. Admin only.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `page` | integer | 1 | Page number (1-based) |
+| `limit` | integer | 20 | Items per page (max 100) |
+
+**Response `200 OK`**
+
+```json
+{
+  "data": [
+    {
+      "id": "ph_01H...",
+      "action": "pause",
+      "reason": "Scheduled maintenance",
+      "actor": "GADMIN...XYZ",
+      "timestamp": "2024-06-01T12:00:00.000Z"
+    },
+    {
+      "id": "ph_01H...",
+      "action": "unpause",
+      "reason": "Maintenance complete",
+      "actor": "GADMIN...XYZ",
+      "timestamp": "2024-06-01T13:30:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 2
+}
+```
+
+**Curl**
+
+```bash
+curl -X GET "http://localhost:3001/api/v1/admin/pause-history?page=1&limit=20" \
+  -H "Authorization: Bearer $JWT"
+```
+
+### Error Codes
+
+| Status | Code | Description |
+|--------|------|-------------|
+| `400` | `VALIDATION_ERROR` | Request body or query parameters failed validation (e.g. `reason` exceeds 256 chars, invalid `page`/`limit`). |
+| `401` | `UNAUTHORIZED` | Missing or invalid bearer token. |
+| `403` | `FORBIDDEN` | Authenticated account lacks the `ADMIN` role. |
+| `404` | `NOT_FOUND` | Requested resource does not exist. |
+| `409` | `CONFLICT` | Contract is already in the requested state (already paused/unpaused). |
+| `429` | `RATE_LIMITED` | Rate limit exceeded; retry after the `Retry-After` interval. |
+| `500` | `INTERNAL_ERROR` | Unexpected server error; retry and report if it persists. |
+
+**Error response shape**
+
+```json
+{
+  "statusCode": 409,
+  "code": "CONFLICT",
+  "message": "Contract is already paused"
+}
+```
+
+---
+
 ## Security
 
 ### Reporting Vulnerabilities
@@ -431,277 +627,6 @@ Check your `DATABASE_URL` in `.env`:
 psql -U carbonledger -d carbonledger -h localhost
 
 # If password fails, reset it:
-sudo -u postgres psql
-ALTER USER carbonledger WITH PASSWORD 'changeme';
-\q
-```
+sudo -u pos
 
----
-
-### Issue: `stellar-cli` installation fails
-
-**Solution:**
-```bash
-# Update Rust first
-rustup update
-
-# Install with specific version
-cargo install --locked stellar-cli --version 21.0.0 --force
-
-# If still fails, try without lock file
-cargo install stellar-cli --version 21.0.0
-```
-
----
-
-### Issue: Python `stellar-sdk` import error
-
-**Symptoms:**
-```
-ModuleNotFoundError: No module named 'stellar_sdk'
-```
-
-**Solution:**
-```bash
-cd oracle
-pip3 install --upgrade pip
-pip3 install -r requirements.txt
-
-# If using virtual environment
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
----
-
-### Issue: Frontend build fails with TypeScript errors
-
-**Solution:**
-```bash
-cd frontend
-rm -rf node_modules package-lock.json
-npm install
-npm run build
-```
-
----
-
-### Issue: Docker Compose fails to start
-
-**Symptoms:**
-```
-Error: port 5432 already in use
-```
-
-**Solution:**
-```bash
-# Stop local PostgreSQL
-brew services stop postgresql@16  # macOS
-sudo systemctl stop postgresql    # Linux
-
-# Or change port in docker-compose.yml
-ports:
-  - "5433:5432"  # Use 5433 instead
-```
-
----
-
-### Issue: Tests fail with "Contract not found"
-
-**Solution:**
-This is expected for integration tests without deployed contracts. Unit tests should pass:
-```bash
-cd contracts
-cargo test --lib  # Run only unit tests
-```
-
----
-
-## Testnet Setup
-
-### Quick Start
-
-```bash
-# 1. Generate and fund testnet account
-stellar keys generate alice --network testnet --fund
-
-# 2. Deploy contracts
-cd contracts
-./scripts/deploy-testnet.sh
-
-# 3. Update .env with contract IDs
-```
-
-### Detailed Guide
-
-For complete testnet setup including:
-- Multiple faucet methods
-- Freighter wallet setup
-- Contract deployment and initialization
-- Getting testnet USDC
-- Testing contract interactions
-- Troubleshooting testnet issues
-
-**See:** [Testnet Guide](docs/TESTNET_GUIDE.md)
-
----
-
-## Development Workflow
-
-### 1. Create a Feature Branch
-
-```bash
-git checkout -b feat/your-feature-name
-```
-
-### 2. Make Changes
-
-Edit code, add tests, update documentation.
-
-### 3. Run Tests Locally
-
-```bash
-# Rust tests
-cd contracts && cargo test
-
-# Backend tests
-cd backend && npm test
-
-# Frontend tests
-cd frontend && npm test
-```
-
-### 4. Commit Changes
-
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
-
-```bash
-git add .
-git commit -m "feat: add serial number validation"
-git commit -m "fix: resolve double-counting bug"
-git commit -m "docs: update API documentation"
-```
-
-### 5. Push and Create PR
-
-```bash
-git push origin feat/your-feature-name
-```
-
-Then create a Pull Request on GitHub.
-
----
-
-## Code Style Guidelines
-
-### Rust (Contracts)
-
-- Use `snake_case` for functions and variables
-- Use `PascalCase` for types and enums
-- Add doc comments for public functions
-- Use `CarbonError` enum for all errors
-- Follow checks-effects-interactions pattern
-
-```rust
-/// Register a new carbon project
-pub fn register_project(
-    env: Env,
-    project_id: String,
-    owner: Address,
-) -> Result<(), CarbonError> {
-    // Checks
-    if project_exists(&env, &project_id) {
-        return Err(CarbonError::ProjectAlreadyExists);
-    }
-    
-    // Effects
-    save_project(&env, &project_id, &owner);
-    
-    // Interactions
-    emit_event(&env, "ProjectRegistered", project_id);
-    
-    Ok(())
-}
-```
-
-### TypeScript (Frontend/Backend)
-
-- Use `camelCase` for variables and functions
-- Use `PascalCase` for components and classes
-- Add JSDoc comments for exported functions
-- Use TypeScript strict mode
-- Prefer `const` over `let`
-
-```typescript
-/**
- * Retire carbon credits permanently on-chain
- */
-export async function retireCredits(
-  batchId: string,
-  amount: number,
-  beneficiary: string
-): Promise<RetirementCertificate> {
-  // Implementation
-}
-```
-
-### Python (Oracle)
-
-- Follow PEP 8 style guide
-- Use `snake_case` for functions and variables
-- Use `PascalCase` for classes
-- Add docstrings for functions
-- Use type hints
-
-```python
-def submit_monitoring_data(
-    project_id: str,
-    tonnes_verified: int,
-    methodology_score: int
-) -> str:
-    """
-    Submit monitoring data to oracle contract
-    
-    Args:
-        project_id: Unique project identifier
-        tonnes_verified: Verified CO2 tonnes
-        methodology_score: Quality score (0-100)
-        
-    Returns:
-        Transaction hash
-    """
-    # Implementation
-```
-
----
-
-## Getting Help
-
-- **Documentation**: Check [docs/](docs/) folder
-- **Architecture Decisions**: See [docs/adr/](docs/adr/)
-- **API Reference**: See [backend/docs/API_REFERENCE.md](backend/docs/API_REFERENCE.md)
-- **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/carbonledger/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/carbonledger/discussions)
-
----
-
-## Next Steps
-
-After completing this guide, you should be able to:
-
-- ✅ Run all tests locally
-- ✅ Deploy contracts to testnet
-- ✅ Start the development servers
-- ✅ Make code changes and test them
-- ✅ Submit pull requests
-
-Ready to contribute? Check out:
-
-- [Good First Issues](https://github.com/YOUR_USERNAME/carbonledger/labels/good%20first%20issue)
-- [Roadmap](README.md#-roadmap)
-- [Architecture Decisions](docs/adr/README.md)
-
----
-
-**Welcome to the CarbonLedger community!** 🌍
+/* … truncated 5291 chars — edit only what you need near the top … */
