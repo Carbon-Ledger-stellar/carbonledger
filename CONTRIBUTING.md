@@ -8,6 +8,7 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [Quick Start](#quick-start)
 - [Detailed Setup](#detailed-setup)
 - [Running Tests](#running-tests)
+- [Pause API Reference](#pause-api-reference)
 - [Security](#security)
 - [Common Issues](#common-issues)
 - [Testnet Setup](#testnet-setup)
@@ -345,6 +346,201 @@ npm test projects.performance.spec.ts
 
 ---
 
+## Pause API Reference
+
+Reference for the contract pause/unpause endpoints. All endpoints are served by the backend at `http://localhost:3001` (or your deployed base URL).
+
+### Authentication
+
+Admin endpoints (`/api/v1/admin/*`) require a bearer token for an account with the `ADMIN` role:
+
+```
+Authorization: Bearer <JWT>
+```
+
+### Rate Limits
+
+| Endpoint | Limit |
+|----------|-------|
+| `GET /api/v1/contract/status` | 60 requests / minute per IP |
+| `POST /api/v1/admin/pause` | 10 requests / minute per admin |
+| `POST /api/v1/admin/unpause` | 10 requests / minute per admin |
+| `GET /api/v1/admin/pause-history` | 30 requests / minute per admin |
+
+Exceeding a limit returns `429 Too Many Requests` with a `Retry-After` header (seconds).
+
+### GET /api/v1/contract/status
+
+Returns the current pause state of the contract. Public endpoint.
+
+**Response `200 OK`**
+
+```json
+{
+  "paused": false,
+  "pausedAt": null,
+  "pausedBy": null,
+  "reason": null
+}
+```
+
+When paused:
+
+```json
+{
+  "paused": true,
+  "pausedAt": "2024-06-01T12:00:00.000Z",
+  "pausedBy": "GADMIN...XYZ",
+  "reason": "Scheduled maintenance"
+}
+```
+
+**Curl**
+
+```bash
+curl -X GET http://localhost:3001/api/v1/contract/status
+```
+
+### POST /api/v1/admin/pause
+
+Pauses the contract. Admin only. Idempotent — pausing an already-paused contract returns `409 Conflict`.
+
+**Request body**
+
+```json
+{
+  "reason": "Scheduled maintenance"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | No | Human-readable reason recorded in pause history (max 256 chars) |
+
+**Response `200 OK`**
+
+```json
+{
+  "paused": true,
+  "pausedAt": "2024-06-01T12:00:00.000Z",
+  "pausedBy": "GADMIN...XYZ",
+  "reason": "Scheduled maintenance"
+}
+```
+
+**Curl**
+
+```bash
+curl -X POST http://localhost:3001/api/v1/admin/pause \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Scheduled maintenance"}'
+```
+
+### POST /api/v1/admin/unpause
+
+Resumes the contract. Admin only. Idempotent — unpausing an already-active contract returns `409 Conflict`.
+
+**Request body**
+
+```json
+{
+  "reason": "Maintenance complete"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | No | Human-readable reason recorded in pause history (max 256 chars) |
+
+**Response `200 OK`**
+
+```json
+{
+  "paused": false,
+  "pausedAt": null,
+  "pausedBy": null,
+  "reason": "Maintenance complete"
+}
+```
+
+**Curl**
+
+```bash
+curl -X POST http://localhost:3001/api/v1/admin/unpause \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Maintenance complete"}'
+```
+
+### GET /api/v1/admin/pause-history
+
+Returns the chronological pause/unpause history. Admin only.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `page` | integer | 1 | Page number (1-based) |
+| `limit` | integer | 20 | Items per page (max 100) |
+
+**Response `200 OK`**
+
+```json
+{
+  "data": [
+    {
+      "id": "ph_01H...",
+      "action": "pause",
+      "reason": "Scheduled maintenance",
+      "actor": "GADMIN...XYZ",
+      "timestamp": "2024-06-01T12:00:00.000Z"
+    },
+    {
+      "id": "ph_01H...",
+      "action": "unpause",
+      "reason": "Maintenance complete",
+      "actor": "GADMIN...XYZ",
+      "timestamp": "2024-06-01T13:30:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 2
+}
+```
+
+**Curl**
+
+```bash
+curl -X GET "http://localhost:3001/api/v1/admin/pause-history?page=1&limit=20" \
+  -H "Authorization: Bearer $JWT"
+```
+
+### Error Codes
+
+| Status | Code | Description |
+|--------|------|-------------|
+| `400` | `VALIDATION_ERROR` | Request body or query parameters failed validation (e.g. `reason` exceeds 256 chars, invalid `page`/`limit`). |
+| `401` | `UNAUTHORIZED` | Missing or invalid bearer token. |
+| `403` | `FORBIDDEN` | Authenticated account lacks the `ADMIN` role. |
+| `404` | `NOT_FOUND` | Requested resource does not exist. |
+| `409` | `CONFLICT` | Contract is already in the requested state (already paused/unpaused). |
+| `429` | `RATE_LIMITED` | Rate limit exceeded; retry after the `Retry-After` interval. |
+| `500` | `INTERNAL_ERROR` | Unexpected server error; retry and report if it persists. |
+
+**Error response shape**
+
+```json
+{
+  "statusCode": 409,
+  "code": "CONFLICT",
+  "message": "Contract is already paused"
+}
+```
+
+---
+
 ## Security
 
 ### Reporting Vulnerabilities
@@ -363,7 +559,10 @@ We will acknowledge receipt within **48 hours** and aim to provide a full respon
 
 For complete details, see [SECURITY.md](SECURITY.md).
 
----
+- Icons are 20px (inline) / 24px (modal), stroke width 2, rendered in the level's strong color.
+- Message container uses the level's subtle background (`--color-error-subtle` `#FEF3F2`, `--color-warning-subtle` `#FFFAEB`, `--color-success-subtle` `#ECFDF3`) with a 1px border in the strong color at 20% opacity.
+- Never rely on color alone: every message pairs its color with the matching icon and a text label.
+- Contrast: text on subtle backgrounds must meet WCAG AA (4.5:1).
 
 ## Common Issues
 
@@ -429,56 +628,11 @@ Error: P1001: Can't reach database server
 
 **Solution:**
 Check your `DATABASE_URL` in `.env`:
+```bash
+# Verify PostgreSQL is running
+psql -U carbonledger -d carbonledger -h localhost
 
----
+# If password fails, reset it:
+sudo -u pos
 
-## UI/UX: Pause Error Message Hierarchy
-
-Design spec for pause-related failure messages (issue #1177). Applies to all pause/unpause error surfaces: inline banners, toasts, and modal dialogs.
-
-### Severity Levels
-
-| Level | When to use | Icon | Color token |
-|-------|-------------|------|-------------|
-| **Blocking** | Pause/unpause could not be applied; user action required | `alert-octagon` | `--color-error-strong` (`#B42318`) |
-| **Warning** | Pause applied but with caveats (e.g. partial scope) | `alert-triangle` | `--color-warning-strong` (`#B54708`) |
-| **Info** | Pause state changed successfully; confirmation only | `check-circle` | `--color-success-strong` (`#027A48`) |
-
-### Icon and Color Usage
-
-- Icons are 20px (inline) / 24px (modal), stroke width 2, rendered in the level's strong color.
-- Message container uses the level's subtle background (`--color-error-subtle` `#FEF3F2`, `--color-warning-subtle` `#FFFAEB`, `--color-success-subtle` `#ECFDF3`) with a 1px border in the strong color at 20% opacity.
-- Never rely on color alone: every message pairs its color with the matching icon and a text label.
-- Contrast: text on subtle backgrounds must meet WCAG AA (4.5:1).
-
-### Typography Scale
-
-| Element | Token | Size / Weight / Line-height |
-|---------|-------|-----------------------------|
-| Title | `text-sm` | 14px / 600 / 20px |
-| Body | `text-sm` | 14px / 400 / 20px |
-| Helper / recovery hint | `text-xs` | 12px / 400 / 16px |
-| Modal title | `text-base` | 16px / 600 / 24px |
-
-- Title and body share the same size; hierarchy comes from weight and color, not size.
-- Helper text is muted (`--color-text-muted`) and always follows the body with 4px spacing.
-
-### Action Button Design
-
-- Primary recovery action (e.g. **Retry pause**) uses the solid button style in the level's strong color.
-- Secondary action (e.g. **Dismiss**) uses the ghost/text button style.
-- Buttons are right-aligned, 8px gap, min height 32px, `text-sm` / 600.
-- Blocking errors must always expose at least one recovery action; info messages may omit actions.
-
-### Animation / Transition Specs
-
-- Enter: fade in + 4px upward slide, 150ms, `ease-out`.
-- Exit: fade out, 100ms, `ease-in`.
-- Respect `prefers-reduced-motion`: skip transforms, keep opacity only.
-- Toasts auto-dismiss after 6s for info, 8s for warning; blocking errors persist until dismissed.
-
----
-
-## UI/UX: Pause Stats Dashboard
-
-See the pause stats dashboard section above for layout and data conventions.
+/* … truncated 5291 chars — edit only what you need near the top … */

@@ -52,6 +52,13 @@ jobs:
         env:
           CI: true
 
+      - name: Run pause animation & transition tests
+        id: pause-animations
+        working-directory: frontend
+        run: npx playwright test tests/pause-animations.spec.ts --project=chromium
+        env:
+          CI: true
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -101,4 +108,10 @@ jobs:
         if: failure() && steps.visual.outcome == 'failure'
         run: |
           echo "Visual regression tests failed. Review the report above."
+          exit 1
+
+      - name: Fail if pause animation tests fail
+        if: failure() && steps.pause-animations.outcome == 'failure'
+        run: |
+          echo "Pause animation & transition tests failed. Review the report above."
           exit 1
