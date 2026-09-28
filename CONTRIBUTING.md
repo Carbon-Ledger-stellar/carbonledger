@@ -13,6 +13,9 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [Common Issues](#common-issues)
 - [Testnet Setup](#testnet-setup)
 - [Development Workflow](#development-workflow)
+- [UI/UX: Disabled State Indicators](#uiux-disabled-state-indicators)
+- [UI/UX: Pause Stats Dashboard](#uiux-pause-stats-dashboard)
+- [UI/UX: Pause Error Message Hierarchy](#uiux-pause-error-message-hierarchy)
 
 ---
 
@@ -556,7 +559,10 @@ We will acknowledge receipt within **48 hours** and aim to provide a full respon
 
 For complete details, see [SECURITY.md](SECURITY.md).
 
----
+- Icons are 20px (inline) / 24px (modal), stroke width 2, rendered in the level's strong color.
+- Message container uses the level's subtle background (`--color-error-subtle` `#FEF3F2`, `--color-warning-subtle` `#FFFAEB`, `--color-success-subtle` `#ECFDF3`) with a 1px border in the strong color at 20% opacity.
+- Never rely on color alone: every message pairs its color with the matching icon and a text label.
+- Contrast: text on subtle backgrounds must meet WCAG AA (4.5:1).
 
 ## Common Issues
 

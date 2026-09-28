@@ -1,15 +1,12 @@
-# Asynchronous Retirement Certificate Generation - Implementation Guide
+# Implementation Guide
 
-## Summary
+This guide documents UI/UX design specifications for the pause feature set.
 
-This implementation adds asynchronous PDF certificate generation for carbon credit retirements. Certificates are generated as background jobs, uploaded to IPFS via Pinata, and users are notified via email when ready. This prevents API timeouts and improves user experience.
+## Pause Stats Dashboard (Issue #1176)
 
-## What Was Implemented
+Design specification for the pause statistics dashboard, presenting charts, tables, and key metrics about pause patterns.
 
-### 1. Database Schema Updates
-- Added certificate-related fields to `RetirementRecord` model
-- Fields track certificate status, IPFS CID, URL, retry count, and timestamps
-- Migration required: `npx prisma migrate dev --name add_certificate_fields`
+### Chart Type Designs
 
 ### 2. New Services
 
