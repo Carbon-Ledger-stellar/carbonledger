@@ -9,26 +9,26 @@ const statusConfig: Record<
 > = {
   operational: {
     label: 'Contract Active',
-    dotClass: 'bg-emerald-500 animate-pulse',
-    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
+    dotClass: 'bg-emerald-600 animate-pulse',
+    badgeClass: 'bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-200 dark:border-emerald-700',
     icon: '●',
   },
   paused: {
     label: 'Contract Paused',
-    dotClass: 'bg-rose-500',
-    badgeClass: 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800',
+    dotClass: 'bg-rose-600',
+    badgeClass: 'bg-rose-100 text-rose-950 border-rose-300 dark:bg-rose-950/60 dark:text-rose-200 dark:border-rose-700',
     icon: '⏸',
   },
   expiring_soon: {
     label: 'Pause Expiring Soon',
-    dotClass: 'bg-amber-500 animate-ping',
-    badgeClass: 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
+    dotClass: 'bg-amber-600 animate-ping',
+    badgeClass: 'bg-amber-100 text-amber-950 border-amber-300 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-700',
     icon: '⚠',
   },
   loading: {
     label: 'Checking Status...',
-    dotClass: 'bg-gray-400 animate-pulse',
-    badgeClass: 'bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-900 dark:text-gray-300 dark:border-gray-700',
+    dotClass: 'bg-gray-500 animate-pulse',
+    badgeClass: 'bg-gray-100 text-gray-900 border-gray-300 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700',
     icon: '◌',
   },
 };
@@ -69,6 +69,7 @@ export const PauseStatusIndicator: React.FC<PauseStatusIndicatorProps> = ({
     <div
       role="status"
       aria-live="polite"
+      aria-atomic="true"
       className={`inline-flex items-center font-medium rounded-full border transition-colors ${config.badgeClass} ${sizeClasses[size]} ${className}`}
       data-testid="pause-status-indicator"
     >
@@ -80,9 +81,10 @@ export const PauseStatusIndicator: React.FC<PauseStatusIndicatorProps> = ({
       </span>
       {showLabel && (
         <span className="whitespace-nowrap">
+          <span className="sr-only">Contract status: </span>
           {config.label}
           {formattedRemainingTime && status !== 'operational' && (
-            <span className="ml-1 opacity-75 font-normal">({formattedRemainingTime})</span>
+            <span className="ml-1 opacity-90 font-normal">({formattedRemainingTime})</span>
           )}
         </span>
       )}
