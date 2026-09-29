@@ -1,0 +1,208 @@
+# =============================================================================
+# SLO / SLI Definitions — CarbonLedger Pause Feature
+# =============================================================================
+# This file defines the Service Level Objectives (SLOs) and the Service Level
+# Indicators (SLIs) that measure them for the emergency pause / unpause feature.
+#
+# Format: each SLO entry describes:
+#   - The SLI metric expression (Prometheus PromQL)
+#   - The target threshold
+#   - The rolling window over which the SLO is evaluated
+#   - Error budget calculation
+#
+# Recording rules and alert rules generated from this spec live in:
+#   logging/prometheus/rules/slo-pause.yml
+# =============================================================================
+
+version: "1.0"
+service: carbonledger-pause-feature
+owner:   platform-team
+doc_url: https://docs.carbonledger.com/slo/pause-feature
+
+# ── SLO 1 — Pause/Unpause Success Rate ──────────────────────────────────────
+#
+# 99.9% of pause and unpause API calls must succeed (2xx response).
+# Failures include 4xx (bad request) and 5xx (server error) responses.
+# Auth errors (401/403) are excluded because they represent correct
+# rejection of unauthorized access, not a service reliability failure.
+#
+# Error budget (monthly rolling window):
+#   = 1 − 0.999 = 0.001
+#   = 0.1% of minutes in 30 days
+#   = 0.001 × 30 × 24 × 60 ≈ 43.2 minutes of allowed downtime/errors per month
+# ─────────────────────────────────────────────────────────────────────────────
+- id: slo-pause-success-rate
+  name: "Pause/Unpause API Success Rate"
+  description: >
+    99.9% of pause and unpause API requests (POST /api/v1/admin/pause and
+    POST /api/v1/admin/unpause) must return a 2xx HTTP response code.
+    Error budget is consumed by 4xx (excluding 401/403) and 5xx responses.
+
+  sli:
+    type: request-based
+    good_events:
+      metric: http_requests_total
+      filter:
+        handler: "/api/v1/admin/pause|/api/v1/admin/unpause"
+        status_code: "2xx"
+      promql: >
+        sum(rate(http_requests_total{
+          handler=~"/api/v1/admin/(un)?pause",
+          status_code=~"2[0-9]{2}"
+        }[5m]))
+    total_events:
+      metric: http_requests_total
+      filter:
+        handler: "/api/v1/admin/pause|/api/v1/admin/unpause"
+        # Exclude expected auth rejections
+        status_code_not: "401|403"
+      promql: >
+        sum(rate(http_requests_total{
+          handler=~"/api/v1/admin/(un)?pause",
+          status_code!~"401|403"
+        }[5m]))
+
+  target:
+    percentage: 99.9
+    window:      30d
+
+  error_budget:
+    allowed_failures_per_month: "43.2 minutes of bad requests"
+    burn_rate_alert_thresholds:
+      - severity: critical
+        burn_rate: 14.4   # 1h window consuming 2% of monthly budget
+        window: 1h
+      - severity: warning
+        burn_rate: 6.0    # 6h window consuming 5% of monthly budget
+        window: 6h
+
+  annotations:
+    runbook: https://docs.carbonledger.com/runbooks/emergency-pause
+    dashboard: https://grafana.carbonledger.com/d/pause-statistics
+
+# ── SLO 2 — Pause Response Latency (P95 < 1s) ───────────────────────────────
+#
+# 95% of pause API requests must complete within 1 second.
+# Measured at the backend API server, excluding network transit time.
+# ─────────────────────────────────────────────────────────────────────────────
+- id: slo-pause-response-latency
+  name: "Pause API Response Latency"
+  description: >
+    P95 latency for POST /api/v1/admin/pause and POST /api/v1/admin/unpause
+    must be below 1 second. The SLI measures the fraction of requests that
+    complete within 1000ms.
+
+  sli:
+    type: request-based
+    good_events:
+      promql: >
+        sum(rate(http_request_duration_seconds_bucket{
+          handler=~"/api/v1/admin/(un)?pause",
+          le="1.0"
+        }[5m]))
+    total_events:
+      promql: >
+        sum(rate(http_request_duration_seconds_count{
+          handler=~"/api/v1/admin/(un)?pause"
+        }[5m]))
+
+  target:
+    percentage: 95.0
+    window:      30d
+
+  error_budget:
+    allowed_failures_per_month: "5% of pause requests may exceed 1s latency"
+    burn_rate_alert_thresholds:
+      - severity: warning
+        burn_rate: 5.0
+        window: 1h
+      - severity: critical
+        burn_rate: 10.0
+        window: 30m
+
+  annotations:
+    runbook: https://docs.carbonledger.com/runbooks/emergency-pause#latency
+    dashboard: https://grafana.carbonledger.com/d/pause-statistics
+
+# ── SLO 3 — Pause Event Logging Latency (< 100ms) ───────────────────────────
+#
+# 99% of pause/unpause events must be written to the structured log (Loki /
+# Elasticsearch) within 100ms of the API response returning 2xx.
+# Measured via the pause_event_log_latency_ms histogram emitted by
+# PauseAnalyticsService.
+# ─────────────────────────────────────────────────────────────────────────────
+- id: slo-pause-event-log-latency
+  name: "Pause Event Log Write Latency"
+  description: >
+    99% of pause and unpause events must be written to the structured audit log
+    within 100ms. This ensures the audit trail is available for compliance and
+    incident response immediately after each operation.
+
+  sli:
+    type: request-based
+    good_events:
+      promql: >
+        sum(rate(pause_event_log_latency_ms_bucket{
+          action=~"pause|unpause",
+          le="100"
+        }[5m]))
+    total_events:
+      promql: >
+        sum(rate(pause_event_log_latency_ms_count{
+          action=~"pause|unpause"
+        }[5m]))
+
+  target:
+    percentage: 99.0
+    window:      30d
+
+  error_budget:
+    allowed_failures_per_month: "1% of log writes may take > 100ms"
+    burn_rate_alert_thresholds:
+      - severity: warning
+        burn_rate: 5.0
+        window: 1h
+
+  annotations:
+    runbook: https://docs.carbonledger.com/runbooks/emergency-pause#logging
+
+# ── SLO 4 — Pause Status Consistency ────────────────────────────────────────
+#
+# The pause status returned by GET /api/v1/status must be consistent with
+# the on-chain state > 99.9% of the time (measured per polling interval).
+# Inconsistency = off-chain cache shows "active" but contract is not paused,
+# or vice versa. Detected by the reconciliation job.
+# ─────────────────────────────────────────────────────────────────────────────
+- id: slo-pause-status-consistency
+  name: "Pause Status Cache Consistency"
+  description: >
+    The cached pause status exposed by GET /api/v1/status must match the
+    on-chain contract state in >99.9% of consistency checks. The reconciliation
+    service polls every 60 seconds and records mismatches via the
+    pause_status_consistency_total counter.
+
+  sli:
+    type: event-based
+    good_events:
+      promql: >
+        sum(rate(pause_status_consistency_total{result="consistent"}[5m]))
+    total_events:
+      promql: >
+        sum(rate(pause_status_consistency_total[5m]))
+
+  target:
+    percentage: 99.9
+    window:      30d
+
+  error_budget:
+    allowed_failures_per_month: "43.2 minutes of inconsistent state per month"
+    burn_rate_alert_thresholds:
+      - severity: critical
+        burn_rate: 14.4
+        window: 1h
+      - severity: warning
+        burn_rate: 3.0
+        window: 6h
+
+  annotations:
+    runbook: https://docs.carbonledger.com/runbooks/emergency-pause#consistency

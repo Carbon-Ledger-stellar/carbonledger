@@ -1,0 +1,426 @@
+{
+  "uid": "pause-slo-error-budget",
+  "title": "CarbonLedger — Pause Feature SLO / Error Budget",
+  "description": "Service Level Objective tracking for the pause feature: success rate (99.9%), response latency P95 < 1s, log write latency < 100ms, status consistency > 99.9%.",
+  "tags": ["carbonledger", "pause", "slo", "error-budget"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m", "15m"],
+    "time_options": ["24h", "7d", "30d", "90d"]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "SLO 1 — Pause API Success Rate (target: 99.9%)",
+      "description": "Current success rate for POST /api/v1/admin/(un)pause. Green = SLO met, red = SLO violated.",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "(1 - slo:pause_api_error_rate:1h) * 100",
+          "legendFormat": "Success Rate",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "orientation": "auto",
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true,
+        "minVizWidth": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 99,
+          "max": 100,
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 99.5},
+              {"color": "green", "value": 99.9}
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "SLO 2 — Pause Latency P95 < 1s (target: 95%)",
+      "description": "Fraction of pause API requests completing within 1 second. Target: 95%.",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "slo:pause_latency_under_1s:1h * 100",
+          "legendFormat": "< 1s Rate",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "orientation": "auto",
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 90,
+          "max": 100,
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 93},
+              {"color": "green", "value": 95}
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "SLO 3 — Log Write Latency < 100ms (target: 99%)",
+      "description": "Fraction of pause event log writes completing within 100ms. Target: 99%.",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "slo:pause_log_latency_under_100ms:5m * 100",
+          "legendFormat": "< 100ms Rate",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "orientation": "auto",
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 95,
+          "max": 100,
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 98},
+              {"color": "green", "value": 99}
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "SLO 4 — Pause Status Consistency (target: 99.9%)",
+      "description": "Fraction of consistency checks where off-chain status matches on-chain state. Target: 99.9%.",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "slo:pause_status_consistency_rate:5m * 100",
+          "legendFormat": "Consistency Rate",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "orientation": "auto",
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 99,
+          "max": 100,
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 99.5},
+              {"color": "green", "value": 99.9}
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Error Budget Remaining — SLO 1 (Pause Success Rate, 30d)",
+      "description": "Percentage of the monthly error budget still remaining. <10% triggers a warning; 0% = budget exhausted, SLO violated.",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "clamp_min(slo:pause_api_error_budget_remaining:30d * 100, 0)",
+          "legendFormat": "Budget Remaining",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "orange", "value": 10},
+              {"color": "yellow", "value": 25},
+              {"color": "green", "value": 50}
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Error Budget Remaining — SLO 4 (Status Consistency, 30d)",
+      "description": "Percentage of the monthly consistency error budget still remaining.",
+      "type": "gauge",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "clamp_min(slo:pause_status_error_budget_remaining:30d * 100, 0)",
+          "legendFormat": "Budget Remaining",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "orange", "value": 10},
+              {"color": "yellow", "value": 25},
+              {"color": "green", "value": 50}
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "SLI 1 — Pause API Error Rate Over Time",
+      "description": "Hourly error rate for the pause API. The red dashed line is the SLO budget (0.1%). Any sustained period above this line is consuming the error budget.",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "slo:pause_api_error_rate:1h * 100",
+          "legendFormat": "Error Rate (1h)"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "vector(0.1)",
+          "legendFormat": "SLO Budget (0.1%)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "SLO Budget (0.1%)"},
+            "properties": [
+              {"id": "custom.lineStyle", "value": {"dash": [10, 5], "fill": "dash"}},
+              {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
+      }
+    },
+    {
+      "id": 8,
+      "title": "SLI 2 — Pause API P95 Latency Over Time",
+      "description": "95th percentile latency for pause API requests. The dashed line is the 1s SLI target.",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{handler=~\"/api/v1/admin/(un)?pause\"}[5m])) by (le))",
+          "legendFormat": "P95 Latency"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{handler=~\"/api/v1/admin/(un)?pause\"}[5m])) by (le))",
+          "legendFormat": "P50 Latency"
+        },
+        {
+          "refId": "C",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "vector(1.0)",
+          "legendFormat": "SLI Target (1s)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {"lineWidth": 2}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "SLI Target (1s)"},
+            "properties": [
+              {"id": "custom.lineStyle", "value": {"dash": [10, 5], "fill": "dash"}},
+              {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "title": "SLI 3 — Log Write Latency Over Time",
+      "description": "P99 log write latency for pause events. Dashed line is 100ms target.",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "histogram_quantile(0.99, sum(rate(pause_event_log_latency_ms_bucket{action=~\"pause|unpause\"}[5m])) by (le))",
+          "legendFormat": "P99 Log Latency (ms)"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "vector(100)",
+          "legendFormat": "SLI Target (100ms)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {"lineWidth": 2}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "SLI Target (100ms)"},
+            "properties": [
+              {"id": "custom.lineStyle", "value": {"dash": [10, 5], "fill": "dash"}},
+              {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "title": "SLI 4 — Pause Status Consistency Over Time",
+      "description": "Hourly pause status consistency rate. Dashed line is 99.9% target.",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "slo:pause_status_consistency_rate:5m * 100",
+          "legendFormat": "Consistency Rate (%)"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "vector(99.9)",
+          "legendFormat": "SLO Target (99.9%)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 99,
+          "max": 100,
+          "custom": {"lineWidth": 2}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "SLO Target (99.9%)"},
+            "properties": [
+              {"id": "custom.lineStyle", "value": {"dash": [10, 5], "fill": "dash"}},
+              {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
