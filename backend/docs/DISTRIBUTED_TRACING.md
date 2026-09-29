@@ -43,3 +43,62 @@ Useful environment variables:
 | `OTEL_SERVICE_NAME` | `carbonledger-backend` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `${OTEL_EXPORTER_OTLP_ENDPOINT}/v1/traces` |
+## Pause feature traces (#1307)
+
+`PauseService` (`src/admin/pause.service.ts`) wraps every emergency pause and
+unpause in one trace, so the latency of each step is visible in Jaeger:
+
+```
+pause.pause_contract | pause.unpause_contract   root span
+  ├─ pause.contract_call   Soroban pause_operations / unpause_operations
+  ├─ pause.db_update       AdminConfig pause state + hash-chained AuditLog row
+  └─ pause.event_emit      contract.paused / contract.unpaused webhook dispatch
+```
+
+Endpoints (admin role required):
+
+| Method | Path | Body |
+| --- | --- | --- |
+| `GET` | `/admin/contracts/:contract/pause` | — |
+| `POST` | `/admin/contracts/:contract/pause` | `{ "untilTimestamp": <unix seconds, ≤ 72h ahead> }` |
+| `POST` | `/admin/contracts/:contract/unpause` | — |
+
+`:contract` is `carbon_credit` or `carbon_marketplace`.
+
+Span attributes:
+
+| Attribute | Span | Meaning |
+| --- | --- | --- |
+| `carbonledger.pause.action` | root | `pause` or `unpause` |
+| `carbonledger.contract.name` / `carbonledger.contract.id` | root | Target contract |
+| `carbonledger.admin` | root | Admin public key that requested the change |
+| `carbonledger.pause.until` | root | Pause expiry (unix seconds), pause only |
+| `stellar.tx_hash` | root, contract_call | Transaction hash |
+| `rpc.method`, `stellar.ledger`, `stellar.tx_status` | contract_call | Soroban invocation details |
+| `carbonledger.event.type` | event_emit | Webhook event dispatched |
+
+A failing step records the exception and sets `ERROR` status on both the step
+and the root span; later steps are not run, so a missing `pause.db_update`
+span means the contract call failed.
+
+### Finding a pause trace
+
+In Jaeger (`http://localhost:16686`), select service `carbonledger-backend`
+and operation `pause.pause_contract` or `pause.unpause_contract`, or search
+by tag `carbonledger.contract.name=carbon_credit`.
+
+### Correlating with logs
+
+The trace id is available in three places:
+
+- the API response (`traceId`) and the `X-Trace-ID` response header,
+- the structured `contract paused` / `contract unpaused` log line (`traceId` field),
+- the `AuditLog` row for the action (`metadata.traceId`, action `contract.pause` / `contract.unpause`).
+
+Paste any of these into Jaeger's trace-id search to open the trace. Going the
+other way, filter logs by the trace id shown in Jaeger.
+
+Pause operations are rare and high-impact. If `OTEL_TRACES_SAMPLER_ARG` is
+below `1.0`, a pause request may not be sampled. Send the request with a sampled
+`traceparent` header (flag `01`) to force a trace, because the root sampler is
+parent-based.

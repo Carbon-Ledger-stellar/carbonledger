@@ -53,8 +53,8 @@ fn register(env: &Env, client: &CarbonRegistryContractClient, admin: &Address, p
         &s(env, "VCS"),
         &s(env, "Brazil"),
         &s(env, "forestry"),
-        &75_u32,
         &2023_u32,
+        &75_u32,
         &BytesN::from_array(env, &[0u8; 32]),
     );
 }
@@ -74,8 +74,8 @@ fn test_register_project_emits_reg_proj_event() {
         &s(&env, "VCS"),
         &s(&env, "Brazil"),
         &s(&env, "forestry"),
-        &75_u32,
         &2023_u32,
+        &75_u32,
         &BytesN::from_array(&env, &[0u8; 32]),
     );
 

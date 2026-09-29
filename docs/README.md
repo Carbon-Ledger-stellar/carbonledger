@@ -31,6 +31,7 @@ Understanding the system:
 | Document | Description | Audience |
 |----------|-------------|----------|
 | **[Architecture Decision Records](adr/)** | Why we made key technical decisions | Developers |
+| **[Pause Architecture](pause-architecture.md)** | Updated architecture diagrams and pause flow diagrams | Developers |
 | **[Deployment Guide](deployment.md)** | Production deployment instructions | DevOps |
 | **[Full Stack Deployment Guide](FULL_STACK_DEPLOYMENT.md)** | Phase 4 Testnet & Mainnet VPS/Systemd deployment | DevOps |
 | **[TTL Cost Analysis](ttl-cost.md)** | Soroban storage cost analysis | Developers |
@@ -50,6 +51,15 @@ Technical references:
 |----------|-------------|----------|
 | **[Backend API Reference](../backend/docs/API_REFERENCE.md)** | Backend API endpoints and auth flow | Frontend devs, integrators |
 | **[Error Code Reference](error-codes.md)** | All 23 contract error codes with causes, resolutions, and frontend mapping | Frontend devs, integrators |
+| **[Pause API Reference](pause-api-reference.md)** | All pause function signatures, parameters, and CLI examples | Developers, operators |
+
+### 🔒 Security Documentation
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| **[Security Principles](SECURITY_PRINCIPLES.md)** | Overall security posture and policies | All |
+| **[Pause Security Analysis](pause-security-analysis.md)** | Threat model and risk mitigation for the pause mechanism | Security, Developers |
+| **[Pause Specification](pause-specification.md)** | Design decisions and state model for emergency pause | Developers |
 
 ---
 

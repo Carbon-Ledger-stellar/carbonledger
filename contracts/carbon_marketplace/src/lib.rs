@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token, vec, Address, BytesN,
-    Env, IntoVal, String, Vec,
+    Env, IntoVal, InvokeError, String, Vec,
 };
 
 const TTL_LEDGERS: u32 = 518_400;
@@ -84,6 +84,10 @@ pub enum DataKey {
     TotalFeesSwept,
     OracleContract,
     PriceFreshnessWindow,
+    /// Fallback: last known benchmark price for (methodology, vintage_year).
+    /// Written every time get_credit_price() successfully fetches a live price
+    /// so that callers can fall back to it when the oracle is temporarily unavailable.
+    LastKnownPrice(String, u32),
 }
 
 /// Governance-controlled fee configuration.
@@ -276,7 +280,6 @@ impl CarbonMarketplaceContract {
             .set(&DataKey::ContractVersion, &CURRENT_VERSION);
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
-        env.storage().persistent().set(&DataKey::ReentrancyGuard, &false);
         env.storage().persistent().set(&DataKey::CircuitBreaker, &false);
         env.storage().persistent().set(&DataKey::CircuitBreakerTrippedAt, &0_u64);
         Ok(())
@@ -463,6 +466,67 @@ impl CarbonMarketplaceContract {
             .unwrap_or(24 * 60 * 60)
     }
 
+    /// Returns the current benchmark price (USDC stroops per tonne of CO₂e) for
+    /// the given methodology and vintage year.
+    ///
+    /// Lookup order:
+    ///   1. Query the configured oracle contract via cross-contract call.  If the
+    ///      oracle responds successfully, cache the result as the new "last known
+    ///      price" and return it.
+    ///   2. If the oracle is unavailable or the call fails (no oracle configured,
+    ///      or the oracle returns `PriceNotSet`), return the last known price that
+    ///      was cached from a previous successful lookup.
+    ///   3. If no last known price exists either, return `Err(PriceNotSet)`.
+    ///
+    /// Closes #1001.
+    pub fn get_credit_price(
+        env: Env,
+        methodology: String,
+        vintage_year: u32,
+    ) -> Result<i128, CarbonError> {
+        let fallback_key = DataKey::LastKnownPrice(methodology.clone(), vintage_year);
+
+        // Attempt live oracle lookup when an oracle is configured.
+        if let Some(oracle_address) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::OracleContract)
+        {
+            // Use try_invoke_contract so a PriceNotSet or network error falls
+            // through to the cached fallback rather than panicking.
+            let live: Result<Result<i128, soroban_sdk::Error>, Result<CarbonError, InvokeError>> =
+                env.try_invoke_contract(
+                &oracle_address,
+                &soroban_sdk::Symbol::new(&env, "get_benchmark_price"),
+                soroban_sdk::vec![
+                    &env,
+                    methodology.clone().into_val(&env),
+                    vintage_year.into_val(&env),
+                ],
+            );
+
+            if let Ok(Ok(price)) = live {
+                // Cache as last-known fallback (persistent so it survives TTL expiry
+                // of the oracle's temporary storage).
+                env.storage()
+                    .persistent()
+                    .set(&fallback_key, &price);
+                env.storage().persistent().extend_ttl(
+                    &fallback_key,
+                    TTL_LEDGERS,
+                    TTL_LEDGERS,
+                );
+                return Ok(price);
+            }
+        }
+
+        // Oracle unavailable or price not set — try fallback cache.
+        env.storage()
+            .persistent()
+            .get::<DataKey, i128>(&fallback_key)
+            .ok_or(CarbonError::PriceNotSet)
+    }
+
     /// List carbon credits for sale at a fixed USDC price per credit (in stroops).
     pub fn list_credits(
         env: Env,
@@ -572,6 +636,10 @@ impl CarbonMarketplaceContract {
         }
         env.storage().persistent().set(&DataKey::PauseEnabled, &true);
         env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("paused")),
+            (admin, until_timestamp, now),
+        );
         Ok(())
     }
 
@@ -580,6 +648,10 @@ impl CarbonMarketplaceContract {
         Self::require_admin(&env, &admin)?;
         env.storage().persistent().set(&DataKey::PauseEnabled, &false);
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("unpaused")),
+            (admin, env.ledger().timestamp()),
+        );
         Ok(())
     }
 
@@ -1417,14 +1489,14 @@ impl CarbonMarketplaceContract {
     fn acquire_lock(env: &Env) -> Result<(), CarbonError> {
         let locked: bool = env
             .storage()
-            .persistent()
+            .temporary()
             .get::<DataKey, bool>(&DataKey::ReentrancyGuard)
             .unwrap_or(false);
         if locked {
             return Err(CarbonError::ReentrancyDetected);
         }
         env.storage()
-            .persistent()
+            .temporary()
             .set(&DataKey::ReentrancyGuard, &true);
         Ok(())
     }
@@ -1432,7 +1504,7 @@ impl CarbonMarketplaceContract {
     /// Release the re-entrancy lock.
     fn release_lock(env: &Env) {
         env.storage()
-            .persistent()
+            .temporary()
             .set(&DataKey::ReentrancyGuard, &false);
     }
 }

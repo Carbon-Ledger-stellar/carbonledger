@@ -1,4 +1,5 @@
 import { AdminModule } from "./admin/admin.module";
+import { PauseAnalyticsModule } from "./pause-analytics/pause-analytics.module";
 import { PublicApiModule } from "./public-api/public-api.module";
 import { StellarModule } from "./stellar/stellar.module";
 import { BlockchainModule } from './blockchain/blockchain.module';
@@ -55,6 +56,36 @@ import { Redis } from "ioredis";
 @Controller("health")
 class HealthController {
   constructor(private readonly prisma: PrismaService) {}
+
+  @Get("pause")
+  async checkPause(@Res() res: Response) {
+    try {
+      const configs = await this.prisma.adminConfig.findMany({
+        where: { key: { startsWith: "pause:" } },
+      });
+      return res.status(HttpStatus.OK).json({
+        status: "ok",
+        feature: "pause",
+        operational: true,
+        database: "up",
+        contracts: {
+          carbon_credit: "operational",
+          carbon_marketplace: "operational",
+        },
+        configs,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      return res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+        status: "degraded",
+        feature: "pause",
+        operational: false,
+        error: error?.message || "Error querying pause state",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
 
   @Get()
   async check(@Res() res: Response) {
@@ -163,6 +194,7 @@ class HealthController {
     AuditModule,
     VerifiersModule,
     AdminModule,
+    PauseAnalyticsModule,
     PublicApiModule,
     GraphqlModule,
     WebhookModule,

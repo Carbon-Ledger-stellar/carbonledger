@@ -49,8 +49,8 @@ fn register(env: &Env, client: &CarbonRegistryContractClient, admin: &Address, p
         &s(env, "VCS"),
         &s(env, "Brazil"),
         &s(env, "forestry"),
-        &80_u32,
         &2023_u32,
+        &80_u32,
         &hash(env),
     );
 }
@@ -241,8 +241,8 @@ fn test_register_project_rejected_when_paused() {
         &s(&env, "VCS"),
         &s(&env, "Brazil"),
         &s(&env, "forestry"),
-        &80_u32,
         &2023_u32,
+        &80_u32,
         &hash(&env),
     );
     assert_eq!(result, Err(Ok(CarbonError::EmergencyPaused)));

@@ -23,6 +23,10 @@ export enum AnalyticsEvent {
   PROJECT_VERIFIED         = 'project_verified',
   SERIAL_NUMBER_LOOKED_UP  = 'serial_number_looked_up',
 
+  // Emergency pause (#1324)
+  CONTRACT_PAUSED          = 'contract_paused',
+  CONTRACT_UNPAUSED        = 'contract_unpaused',
+
   // Errors & performance
   ERROR_OCCURRED           = 'error_occurred',
 }

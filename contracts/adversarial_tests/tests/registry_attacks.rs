@@ -45,13 +45,13 @@ fn test_register_duplicate() {
     client.register_project(
         &admin, &s(&env, "proj-dup"), &s(&env, "Legit Project"), &s(&env, "QmCID"),
         &verifier, &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &2023_u32, &hash(&env),
+        &2023_u32, &75_u32, &hash(&env),
     ).unwrap();
 
     let result = client.try_register_project(
         &admin, &s(&env, "proj-dup"), &s(&env, "Attacker Override"), &s(&env, "QmAttacker"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &2023_u32, &hash(&env),
+        &2023_u32, &75_u32, &hash(&env),
     );
     assert_eq!(result.unwrap_err().unwrap(), CarbonError::ProjectAlreadyExists);
 }
@@ -66,7 +66,7 @@ fn test_verify_unauthorized() {
     client.register_project(
         &admin, &s(&env, "proj-x"), &s(&env, "Test"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &2023_u32, &hash(&env),
+        &2023_u32, &75_u32, &hash(&env),
     ).unwrap();
 
     let result = client.try_verify_project(&rogue, &s(&env, "proj-x"));
@@ -101,7 +101,7 @@ fn test_reject_unauthorized() {
     client.register_project(
         &admin, &s(&env, "proj-y"), &s(&env, "Legit"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &2023_u32, &hash(&env),
+        &2023_u32, &75_u32, &hash(&env),
     ).unwrap();
 
     let result = client.try_reject_project(&rogue, &s(&env, "proj-y"), &s(&env, "sabotage"));
@@ -118,7 +118,7 @@ fn test_suspend_unauthorized() {
     client.register_project(
         &admin, &s(&env, "proj-z"), &s(&env, "Legit"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &2023_u32, &hash(&env),
+        &2023_u32, &75_u32, &hash(&env),
     ).unwrap();
 
     let result = client.try_suspend_project(&rogue, &s(&env, "proj-z"), &s(&env, "fake reason"));
@@ -135,7 +135,7 @@ fn test_oracle_update_unauthorized() {
     client.register_project(
         &admin, &s(&env, "proj-w"), &s(&env, "Legit"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &2023_u32, &hash(&env),
+        &2023_u32, &75_u32, &hash(&env),
     ).unwrap();
 
     let result = client.try_update_project_status(
@@ -154,7 +154,7 @@ fn test_increment_issued_unauthorized() {
     client.register_project(
         &admin, &s(&env, "proj-v"), &s(&env, "Legit"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &2023_u32, &hash(&env),
+        &2023_u32, &75_u32, &hash(&env),
     ).unwrap();
 
     let result = client.try_increment_issued(&rogue, &s(&env, "proj-v"), &1_000_000_i128);
@@ -170,7 +170,7 @@ fn test_register_low_score() {
     let result = client.try_register_project(
         &admin, &s(&env, "proj-score"), &s(&env, "Fake Proj"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &69_u32, &2023_u32, &hash(&env),
+        &2023_u32, &69_u32, &hash(&env),
     );
     assert!(result.is_err(), "score 69 must be rejected (below 70 minimum)");
 }
@@ -184,7 +184,7 @@ fn test_register_future_vintage() {
     let result = client.try_register_project(
         &admin, &s(&env, "proj-future"), &s(&env, "Time Traveller"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &3000_u32, &hash(&env),
+        &3000_u32, &75_u32, &hash(&env),
     );
     assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
 }
@@ -198,7 +198,7 @@ fn test_register_past_vintage() {
     let result = client.try_register_project(
         &admin, &s(&env, "proj-past"), &s(&env, "Time Traveller"), &s(&env, "QmCID"),
         &Address::generate(&env), &s(&env, "VCS"), &s(&env, "Brazil"), &s(&env, "forestry"),
-        &75_u32, &1889_u32, &hash(&env),
+        &1889_u32, &75_u32, &hash(&env),
     );
     assert_eq!(result.unwrap_err().unwrap(), CarbonError::InvalidVintageYear);
 }

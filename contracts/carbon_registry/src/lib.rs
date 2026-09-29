@@ -39,10 +39,11 @@ pub enum CarbonError {
     DuplicateApproval = 26,
     ThresholdNotMet = 27,
     StorageLimitExceeded = 28,
+    DuplicateSerial = 29,
     /// Contract is paused (emergency halt).
-    EmergencyPaused = 29,
+    EmergencyPaused = 30,
     /// The requested status transition is not allowed from the current state.
-    InvalidStatusTransition = 30,
+    InvalidStatusTransition = 31,
 }
 
 // ── Storage Keys ──────────────────────────────────────────────────────────────
@@ -57,11 +58,17 @@ pub enum DataKey {
     RegistryAdmin,
     ContractVersion,
     UpgradeHistory,
+    MaxHistoryEntries,
     MultiSigConfig,
     PendingUpgrade,
     ProposalCounter,
     /// Emergency pause flag.
     IsPaused,
+    IssuedSerialRanges,
+    /// Address of the carbon_credit contract that is allowed to register serial
+    /// ranges without admin auth.  Set by admin via `set_credit_contract()`.
+    /// Required for global serial uniqueness enforcement across minting calls.
+    CreditContract,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -88,13 +95,13 @@ pub struct CarbonProject {
     pub project_type: String,
     pub verifier_address: Address,
     pub metadata_cid: String,
+    pub metadata_hash: BytesN<32>,
     pub total_credits_issued: i128,
     pub total_credits_retired: i128,
     pub methodology_score: u32,
     pub status: ProjectStatus,
     pub vintage_year: u32,
     pub created_at: u64,
-    pub metadata_hash: BytesN<32>,
 }
 
 #[contracttype]
@@ -123,6 +130,15 @@ pub struct HistoryPrunedEvent {
 pub struct MultiSigConfig {
     pub signers: Vec<Address>,
     pub threshold: u32,
+}
+
+/// A serial number range [start, end] representing a batch of issued credits.
+/// Used to enforce global serial number uniqueness across all projects.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SerialRange {
+    pub start: u64,
+    pub end: u64,
 }
 
 /// A pending upgrade proposal waiting for approvals.
@@ -179,6 +195,7 @@ impl CarbonRegistryContract {
         env.storage()
             .persistent()
             .set(&DataKey::IsPaused, &false);
+            .set(&DataKey::IssuedSerialRanges, &Vec::<SerialRange>::new(&env));
         Ok(())
     }
 
@@ -561,8 +578,8 @@ impl CarbonRegistryContract {
         methodology: String,
         country: String,
         project_type: String,
-        methodology_score: u32,
         vintage_year: u32,
+        methodology_score: u32,
         metadata_hash: BytesN<32>,
     ) -> Result<(), CarbonError> {
         admin.require_auth();
@@ -623,13 +640,13 @@ impl CarbonRegistryContract {
             project_type: project_type.clone(),
             verifier_address: verifier_address.clone(),
             metadata_cid: metadata_cid.clone(),
+            metadata_hash: metadata_hash.clone(),
             total_credits_issued: 0,
             total_credits_retired: 0,
             methodology_score,
             status: ProjectStatus::Pending,
             vintage_year,
             created_at: env.ledger().timestamp(),
-            metadata_hash,
         };
         env.storage()
             .persistent()
@@ -923,6 +940,126 @@ impl CarbonRegistryContract {
         Ok(())
     }
 
+    // ── Serial Number Uniqueness Tracking (#999) ──────────────────────────────
+
+    /// Register a serial number range [serial_start, serial_end] for a credit
+    /// batch. Returns `DuplicateSerial` if the range overlaps with any
+    /// previously registered range, ensuring global uniqueness across all
+    /// projects and batches.
+    ///
+    /// Only callable by the registered admin. The oracle / credit contract
+    /// should call this before minting a new batch.
+    pub fn register_serial_range(
+        env: Env,
+        admin: Address,
+        serial_start: u64,
+        serial_end: u64,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+
+        if serial_start > serial_end {
+            return Err(CarbonError::InvalidSerialRange);
+        }
+
+        Self::check_and_register_serial_range(&env, serial_start, serial_end)
+    }
+
+    /// Internal helper: validates that [new_start, new_end] does not overlap
+    /// any existing range in `IssuedSerialRanges`, then appends it.
+    ///
+    /// Two ranges overlap when it is NOT the case that one ends before the
+    /// other begins:  overlap = !(new_end < existing.start || new_start > existing.end)
+    fn check_and_register_serial_range(
+        env: &Env,
+        new_start: u64,
+        new_end: u64,
+    ) -> Result<(), CarbonError> {
+        let mut ranges: Vec<SerialRange> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IssuedSerialRanges)
+            .unwrap_or_else(|| Vec::new(env));
+
+        for i in 0..ranges.len() {
+            let existing = ranges.get(i).unwrap();
+            let no_overlap = new_end < existing.start || new_start > existing.end;
+            if !no_overlap {
+                return Err(CarbonError::DuplicateSerial);
+            }
+        }
+
+        ranges.push_back(SerialRange {
+            start: new_start,
+            end: new_end,
+        });
+        env.storage()
+            .persistent()
+            .set(&DataKey::IssuedSerialRanges, &ranges);
+        Ok(())
+    }
+
+    /// Returns all registered serial ranges. Useful for auditing and
+    /// cross-contract double-counting checks.
+    pub fn get_issued_serial_ranges(env: Env) -> Vec<SerialRange> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::IssuedSerialRanges)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Set the address of the carbon_credit contract that is permitted to call
+    /// `register_serial_range_by_credit_contract` without admin auth.
+    ///
+    /// Only callable by the registry admin.  Must be called once after both
+    /// contracts have been deployed so that the credit contract can register
+    /// globally unique serial ranges at mint time.
+    pub fn set_credit_contract(
+        env: Env,
+        admin: Address,
+        credit_contract: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_admin(&env, &admin)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::CreditContract, &credit_contract);
+        Ok(())
+    }
+
+    /// Register a serial range from the carbon_credit contract without requiring
+    /// admin auth.  The caller MUST be the address stored under
+    /// `DataKey::CreditContract` (set by `set_credit_contract()`).
+    ///
+    /// This is the cross-contract entry point used by `carbon_credit::mint_credits`
+    /// to enforce global serial-number uniqueness (#999).  Returns
+    /// `DuplicateSerial` if the range overlaps any previously registered range.
+    pub fn register_serial_range_by_credit_contract(
+        env: Env,
+        credit_contract: Address,
+        serial_start: u64,
+        serial_end: u64,
+    ) -> Result<(), CarbonError> {
+        credit_contract.require_auth();
+
+        // Verify the caller is the registered credit contract.
+        let registered: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CreditContract)
+            .ok_or(CarbonError::UnauthorizedVerifier)?;
+
+        if credit_contract != registered {
+            return Err(CarbonError::UnauthorizedVerifier);
+        }
+
+        if serial_start > serial_end {
+            return Err(CarbonError::InvalidSerialRange);
+        }
+
+        Self::check_and_register_serial_range(&env, serial_start, serial_end)
+    }
+
     pub fn add_verifier(env: Env, admin: Address, verifier: Address) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_admin(&env, &admin)?;
@@ -1115,8 +1252,8 @@ mod tests {
             &make_str(env, "VCS"),
             &make_str(env, "Brazil"),
             &make_str(env, "forestry"),
-            &80_u32,
             &2023_u32,
+            &80_u32,
             &BytesN::from_array(env, &[0u8; 32]),
         );
     }
@@ -1151,8 +1288,8 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &75_u32,
             &2023_u32,
+            &75_u32,
             &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert!(result.is_err());
@@ -1265,8 +1402,8 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &69_u32,
             &2023_u32,
+            &69_u32,
             &BytesN::from_array(&env, &[1u8; 32]),
         );
         assert_eq!(result, Err(Ok(CarbonError::MethodologyScoreLow)));
@@ -1288,8 +1425,8 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &70_u32,
             &2023_u32,
+            &70_u32,
             &BytesN::from_array(&env, &[0u8; 32]),
         );
 
@@ -1315,8 +1452,8 @@ mod tests {
                 &make_str(&env, "VCS"),
                 &make_str(&env, "Brazil"),
                 &make_str(&env, "forestry"),
-                &75_u32,
                 &2023_u32,
+                &75_u32,
                 &BytesN::from_array(&env, &[0u8; 32]),
             );
         }
@@ -1330,8 +1467,8 @@ mod tests {
             &make_str(&env, "VCS"),
             &make_str(&env, "Brazil"),
             &make_str(&env, "forestry"),
-            &75_u32,
             &2023_u32,
+            &75_u32,
             &BytesN::from_array(&env, &[0u8; 32]),
         );
         assert_eq!(result.unwrap_err().unwrap(), CarbonError::StorageLimitExceeded);
@@ -1498,8 +1635,9 @@ mod edge_case_tests {
             &s(env, "VCS"),
             &s(env, "Brazil"),
             &s(env, "forestry"),
-            &75_u32,
             &2023_u32,
+            &75_u32,
+            &BytesN::from_array(env, &[0u8; 32]),
         );
     }
 
@@ -1553,8 +1691,9 @@ mod edge_case_tests {
             &s(&env, "VCS"),
             &s(&env, "BR"),
             &s(&env, "forestry"),
-            &75_u32,
             &2023_u32,
+            &75_u32,
+            &BytesN::from_array(&env, &[0u8; 32]),
         );
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -1577,8 +1716,9 @@ mod edge_case_tests {
             &s(&env, "VCS"),
             &s(&env, "BR"),
             &s(&env, "forestry"),
-            &75_u32,
             &1989_u32,
+            &75_u32,
+            &BytesN::from_array(&env, &[0u8; 32]),
         );
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -1616,8 +1756,9 @@ mod edge_case_tests {
             &s(&env, "VCS"),
             &s(&env, "BR"),
             &s(&env, "forestry"),
-            &75_u32,
             &1990_u32,
+            &75_u32,
+            &BytesN::from_array(&env, &[0u8; 32]),
         );
     }
 
@@ -1636,8 +1777,9 @@ mod edge_case_tests {
             &s(&env, "VCS"),
             &s(&env, "BR"),
             &s(&env, "forestry"),
-            &0_u32,
             &2023_u32,
+            &0_u32,
+            &BytesN::from_array(&env, &[0u8; 32]),
         );
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -1658,8 +1800,9 @@ mod edge_case_tests {
             &s(&env, "VCS"),
             &s(&env, "BR"),
             &s(&env, "forestry"),
-            &69_u32,
             &2023_u32,
+            &69_u32,
+            &BytesN::from_array(&env, &[0u8; 32]),
         );
         assert_eq!(
             result.unwrap_err().unwrap(),
@@ -1788,8 +1931,9 @@ mod oracle_suspend_tests {
             &s(env, "VCS"),
             &s(env, "Brazil"),
             &s(env, "forestry"),
-            &75_u32,
             &2023_u32,
+            &75_u32,
+            &BytesN::from_array(env, &[0u8; 32]),
         ).unwrap();
     }
 
