@@ -105,6 +105,9 @@ pub enum DataKey {
     UserBatches(Address),
     TotalSupply,
     Allowance(Address, Address),
+    /// Fractional balance for a batch, stored as integer units of 1/100 of a credit.
+    /// E.g., 0.5 credits = 50, 1.75 credits = 175.
+    FractionalBalance(String),
     /// Temporary storage flag used by the re-entrancy guard.
     /// Set to `true` before any mutating cross-contract call and cleared
     /// after.  A second entry while the flag is set returns `ReentrancyDetected`.
@@ -772,6 +775,195 @@ impl CarbonCreditContract {
             },
         );
         Ok(())
+    }
+
+    // ============================================
+    // Fractional Credit Minting (#1001)
+    // ============================================
+
+    /// Mint fractional credits with 2 decimal precision.
+    ///
+    /// `amount_scaled` is the credit amount multiplied by 100:
+    ///   - 0.50 credits → pass `50`
+    ///   - 1.75 credits → pass `175`
+    ///   - 100 credits  → pass `10000`
+    ///
+    /// A `FractionalBalance` entry stores the scaled total for the batch.
+    /// Retirement requires the full remaining fractional balance (no partial retire).
+    /// Transfer works with fractional amounts using the same scaled arithmetic.
+    pub fn fractional_mint(
+        env: Env,
+        admin: Address,
+        project_id: String,
+        amount_scaled: i128,
+        vintage_year: u32,
+        batch_id: String,
+        serial_start: u64,
+        serial_end: u64,
+        metadata_cid: String,
+        initial_owner: Address,
+    ) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+        Self::require_not_paused(&env)?;
+
+        if amount_scaled <= 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+        // Validate that amount_scaled represents a valid 2-decimal value (positive)
+        // max scaled is MAX_BATCH_SIZE * 100
+        if amount_scaled > MAX_BATCH_SIZE.checked_mul(100).ok_or(CarbonError::Arithmetic)? {
+            return Err(CarbonError::BatchTooLarge);
+        }
+
+        if project_id.is_empty() || project_id.len() > 64 {
+            return Err(CarbonError::ProjectNotFound);
+        }
+        if batch_id.is_empty() || batch_id.len() > 64 {
+            return Err(CarbonError::ProjectNotFound);
+        }
+        if metadata_cid.is_empty() || metadata_cid.len() > 128 {
+            return Err(CarbonError::ProjectNotFound);
+        }
+        if serial_start == 0 || serial_end <= serial_start {
+            return Err(CarbonError::InvalidSerialRange);
+        }
+
+        Self::validate_vintage_year(&env, vintage_year)?;
+
+        if env.storage().persistent().has(&DataKey::Batch(batch_id.clone())) {
+            return Err(CarbonError::SerialNumberConflict);
+        }
+
+        let batch_count_key = DataKey::ProjectBatchCount(project_id.clone());
+        let batch_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&batch_count_key)
+            .unwrap_or(0u32);
+        if batch_count >= MAX_BATCHES_PER_PROJECT {
+            return Err(CarbonError::StorageLimitExceeded);
+        }
+
+        if !Self::verify_serial_range_internal(&env, serial_start, serial_end) {
+            return Err(CarbonError::DoubleCountingDetected);
+        }
+
+        serial_index::insert(&env, serial_start, serial_end);
+
+        // Store the batch — amount field holds the whole-credit ceiling
+        // (amount_scaled / 100, rounded up) to keep serial ranges consistent.
+        let amount_whole = (amount_scaled + 99) / 100;
+        let batch = CreditBatch {
+            batch_id: batch_id.clone(),
+            project_id: project_id.clone(),
+            vintage_year,
+            amount: amount_whole,
+            serial_start,
+            serial_end,
+            issued_at: env.ledger().timestamp(),
+            status: CreditStatus::Active,
+            metadata_cid: metadata_cid.clone(),
+            owner: initial_owner.clone(),
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Batch(batch_id.clone()), &batch);
+        Self::extend_batch_ttl(&env, &batch_id);
+
+        // Store precise fractional balance (scaled × 100)
+        env.storage()
+            .persistent()
+            .set(&DataKey::FractionalBalance(batch_id.clone()), &amount_scaled);
+
+        let mut project_batches: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProjectBatches(project_id.clone()))
+            .unwrap_or_else(|| vec![&env]);
+        project_batches.push_back(batch_id.clone());
+        env.storage().persistent().set(
+            &DataKey::ProjectBatches(project_id.clone()),
+            &project_batches,
+        );
+        env.storage()
+            .persistent()
+            .set(&batch_count_key, &(batch_count + 1));
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("frac_mint")),
+            (
+                batch_id.clone(),
+                project_id.clone(),
+                amount_scaled,
+                initial_owner,
+                env.ledger().timestamp(),
+            ),
+        );
+        Ok(())
+    }
+
+    /// Returns the fractional balance for a batch (scaled × 100).
+    /// Returns `None` if the batch was not minted via `fractional_mint`.
+    pub fn get_fractional_balance(env: Env, batch_id: String) -> Option<i128> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FractionalBalance(batch_id))
+    }
+
+    // ============================================
+    // Emergency Pause (#1012)
+    // ============================================
+
+    /// Pause all state-mutating contract functions.
+    /// Admin-only. Emits a `PausedEvent`.
+    pub fn pause(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        env.storage().persistent().set(&DataKey::PauseEnabled, &true);
+        // PauseUntil = u64::MAX means indefinite pause
+        env.storage()
+            .persistent()
+            .set(&DataKey::PauseUntil, &u64::MAX);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("paused")),
+            (admin, env.ledger().timestamp()),
+        );
+        Ok(())
+    }
+
+    /// Unpause the contract, restoring normal operation.
+    /// Admin-only. Emits an `UnpausedEvent`.
+    pub fn unpause(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("unpaused")),
+            (admin, env.ledger().timestamp()),
+        );
+        Ok(())
+    }
+
+    /// Returns `true` if the contract is currently paused. Query functions work
+    /// regardless of pause state.
+    pub fn is_paused(env: Env) -> bool {
+        let paused: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PauseEnabled)
+            .unwrap_or(false);
+        let until: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PauseUntil)
+            .unwrap_or(0);
+        paused && until > env.ledger().timestamp()
     }
 
     // ============================================
