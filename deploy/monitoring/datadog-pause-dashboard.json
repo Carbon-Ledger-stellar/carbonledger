@@ -1,0 +1,173 @@
+﻿{
+  "title": "CarbonLedger - Smart Contract Pause Status & Timeline",
+  "description": "Real-time pause status monitoring, historical pause timeline, and event auditing for Soroban smart contracts (Issue #1300)",
+  "layout_type": "ordered",
+  "widgets": [
+    {
+      "definition": {
+        "type": "group",
+        "title": "Real-time Pause Status",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "query_value",
+              "title": "Carbon Credit Contract Status",
+              "requests": [
+                {
+                  "q": "avg:contract.is_paused{contract:carbon_credit,service:carbonledger}",
+                  "aggregator": "last",
+                  "conditional_formats": [
+                    {
+                      "comparator": "=",
+                      "value": 0,
+                      "palette": "white_on_green",
+                      "custom_unit": "OPERATIONAL"
+                    },
+                    {
+                      "comparator": ">=",
+                      "value": 1,
+                      "palette": "white_on_red",
+                      "custom_unit": "PAUSED"
+                    }
+                  ]
+                }
+              ],
+              "autoscale": false,
+              "precision": 0
+            }
+          },
+          {
+            "definition": {
+              "type": "query_value",
+              "title": "Carbon Marketplace Contract Status",
+              "requests": [
+                {
+                  "q": "avg:contract.is_paused{contract:carbon_marketplace,service:carbonledger}",
+                  "aggregator": "last",
+                  "conditional_formats": [
+                    {
+                      "comparator": "=",
+                      "value": 0,
+                      "palette": "white_on_green",
+                      "custom_unit": "OPERATIONAL"
+                    },
+                    {
+                      "comparator": ">=",
+                      "value": 1,
+                      "palette": "white_on_red",
+                      "custom_unit": "PAUSED"
+                    }
+                  ]
+                }
+              ],
+              "autoscale": false,
+              "precision": 0
+            }
+          },
+          {
+            "definition": {
+              "type": "query_value",
+              "title": "Time Until Pause Auto-Expiry",
+              "requests": [
+                {
+                  "q": "avg:contract.pause_seconds_remaining{service:carbonledger}",
+                  "aggregator": "last",
+                  "conditional_formats": [
+                    {
+                      "comparator": ">",
+                      "value": 3600,
+                      "palette": "white_on_yellow"
+                    },
+                    {
+                      "comparator": "<=",
+                      "value": 3600,
+                      "palette": "white_on_red"
+                    }
+                  ]
+                }
+              ],
+              "custom_unit": "sec"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Pause Timeline & Event Analysis",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Smart Contract Pause Timeline (contract.is_paused)",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "requests": [
+                {
+                  "q": "avg:contract.is_paused{service:carbonledger} by {contract}",
+                  "display_type": "bars",
+                  "style": {
+                    "palette": "warm",
+                    "line_type": "solid",
+                    "line_width": "normal"
+                  }
+                }
+              ],
+              "yaxis": {
+                "label": "Pause State (0=Active, 1=Paused)",
+                "min": "0",
+                "max": "1"
+              }
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Historical Pause & Unpause Events",
+              "show_legend": true,
+              "requests": [
+                {
+                  "q": "sum:contract.pause.events{service:carbonledger} by {action,contract}.as_count()",
+                  "display_type": "bars",
+                  "style": {
+                    "palette": "cool"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Transactions Rejected Due to Active Pause",
+              "requests": [
+                {
+                  "q": "sum:contract.rejected_transactions{reason:paused,service:carbonledger} by {contract}.as_count()",
+                  "display_type": "line",
+                  "style": {
+                    "palette": "red",
+                    "line_type": "solid"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "log_stream",
+        "title": "Contract Pause Audit Trail & Admin Logs",
+        "query": "service:carbonledger (event:contract_pause OR event:contract_pause_reason)",
+        "columns": ["timestamp", "contract", "action", "admin", "reason", "txHash"],
+        "show_date_column": true,
+        "show_message_column": true,
+        "message_display": "expanded"
+      }
+    }
+  ]
+}
