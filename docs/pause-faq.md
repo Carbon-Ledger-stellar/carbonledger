@@ -1,8 +1,8 @@
 # Emergency Pause — Frequently Asked Questions
 
-> **Closes:** #1209  
+> **Closes:** #1299
 > **Audience:** Administrators, marketplace users (buyers/sellers/project developers), and technical integrators  
-> **Last updated:** 2026-09-27  
+> **Last updated:** 2026-09-30  
 > **Related:** [Pause Feature Spec](pause-feature-spec.md) · [Pause Contract API](pause-contract-api.md) · [Pause Security Review](pause-security-review.md) · [Operations Guide](PAUSE_OPERATIONS_GUIDE.md)
 
 ---
