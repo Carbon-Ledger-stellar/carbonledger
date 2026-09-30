@@ -48,3 +48,22 @@ alerts:
     severity: warning
     notification: slack
     message: "Slow DB queries detected: {{count}} queries >500ms"
+
+  # Smart Contract Pause Status Monitoring (#1300)
+  - name: Contract Emergency Pause Activated
+    description: Alert on unexpected pause status change
+    condition: contract.is_paused > 0
+    metric: contract.is_paused
+    evaluation_period: 1m
+    severity: critical
+    notification: pagerduty, slack
+    message: "CRITICAL: Smart contract {{contract}} has entered EMERGENCY PAUSE status. Immediate investigation required!"
+
+  - name: Pause Expiration Window Approaching
+    description: Pause deadline expiring in less than 1 hour
+    condition: contract.pause_seconds_remaining < 3600 and contract.is_paused == 1
+    evaluation_period: 5m
+    severity: warning
+    notification: slack
+    message: "WARNING: Emergency pause for {{contract}} expires in less than 1 hour ({{contract.pause_seconds_remaining}}s remaining)."
+

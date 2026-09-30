@@ -1,0 +1,68 @@
+﻿{
+  "name": "CarbonLedger - Smart Contract Pause Status & Timeline (New Relic)",
+  "description": "New Relic One dashboard for pause status monitoring, timeline, and incident alerts (#1300)",
+  "permissions": "public_read_write",
+  "pages": [
+    {
+      "name": "Pause Overview",
+      "description": "Real-time state and incident history",
+      "widgets": [
+        {
+          "title": "Real-Time Pause Status by Contract",
+          "layout": { "column": 1, "row": 1, "width": 4, "height": 3 },
+          "visualization": { "id": "viz.billboard" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "SELECT latest(contract.is_paused) AS 'Pause Status (1=Paused)' FROM Metric FACET contract"
+              }
+            ],
+            "thresholds": [
+              { "alertSeverity": "CRITICAL", "value": 1 }
+            ]
+          }
+        },
+        {
+          "title": "Pause Status Timeline (24h)",
+          "layout": { "column": 5, "row": 1, "width": 8, "height": 3 },
+          "visualization": { "id": "viz.line" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "SELECT max(contract.is_paused) FROM Metric TIMESERIES 5 minutes FACET contract SINCE 24 hours ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Historical Pause Events (Last 30 Days)",
+          "layout": { "column": 1, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.bar" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "SELECT count(*) FROM Log WHERE event IN ('contract_pause', 'contract_unpause') FACET action, contract SINCE 30 days ago"
+              }
+            ]
+          }
+        },
+        {
+          "title": "Recent Contract Pause Audit Events",
+          "layout": { "column": 7, "row": 4, "width": 6, "height": 3 },
+          "visualization": { "id": "viz.table" },
+          "rawConfiguration": {
+            "nrqlQueries": [
+              {
+                "accountId": 0,
+                "query": "SELECT timestamp, contract, action, admin, reason, txHash FROM Log WHERE event IN ('contract_pause', 'contract_pause_reason') ORDER BY timestamp DESC LIMIT 50"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

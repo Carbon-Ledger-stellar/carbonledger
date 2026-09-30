@@ -65,3 +65,24 @@ Response:
   "status": "operational"
 }
 ```
+
+## 4. Datadog & New Relic Dashboards (#1300)
+
+Pre-built dashboards and alerting monitors are provided in `deploy/monitoring/`:
+
+- `deploy/monitoring/datadog-pause-dashboard.json`:
+  - **Metric:** `contract.is_paused` (gauge: 0 = operational, 1 = paused)
+  - **Widgets:**
+    - Real-time pause status display per contract (`carbon_credit`, `carbon_marketplace`)
+    - Pause timeline chart (`contract.is_paused` over time)
+    - Historical pause & unpause events bar chart (`contract.pause_events.count`)
+    - Rejected transaction spikes due to active pause (`contract.tx.rejected_paused`)
+    - Real-time audit log stream for pause events
+
+- `deploy/monitoring/datadog-pause-monitors.json`:
+  - Monitor for unexpected emergency pause status change (`contract.is_paused >= 1`)
+  - Monitor for pause auto-expiration window approaching (< 1 hour remaining)
+
+- `deploy/monitoring/newrelic-pause-dashboard.json`:
+  - New Relic One dashboard with NRQL queries for real-time billboard status, 7-day pause timeline, and audit table.
+
