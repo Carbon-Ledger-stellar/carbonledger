@@ -222,6 +222,7 @@ jobs:
       - name: Rollback if metrics gate failed
         if: ${{ steps.metrics-gate-2.outcome == 'failure' }}
         run: |
+          echo "Metrics gate failed at 25% — rolling back"
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
           kubectl scale deployment backend-canary -n carbonledger --replicas=0
@@ -271,14 +272,15 @@ jobs:
       - name: Rollback if metrics gate failed
         if: ${{ steps.metrics-gate-3.outcome == 'failure' }}
         run: |
+          echo "Metrics gate failed at 50% — rolling back"
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
           kubectl scale deployment backend-canary -n carbonledger --replicas=0
           exit 1
 
-  # ── Stage 4: 100% ─────────────────────────────────────────────────────────────
+  # ── Stage 4: 100% (automated promotion) ───────────────────────────────────────
   canary-stage-4:
-    name: Canary Stage 4 — 100%
+    name: Canary Stage 4 — 100% (promote)
     runs-on: ubuntu-latest
     needs: [canary-stage-3]
     environment: production
@@ -320,34 +322,78 @@ jobs:
       - name: Rollback if metrics gate failed
         if: ${{ steps.metrics-gate-4.outcome == 'failure' }}
         run: |
+          echo "Metrics gate failed at 100% — rolling back"
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
           kubectl scale deployment backend-canary -n carbonledger --replicas=0
           exit 1
 
-  # ── Error budget tracking (issue #1304) ──────────────────────────────────────
-  error-budget:
-    name: Pause Error Budget Tracking
+      - name: Notify — Canary promoted to 100%
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":white_check_mark: *Pause feature canary promoted to 100%*\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}"
+            }
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        continue-on-error: true
+
+  # ── Manual rollback ───────────────────────────────────────────────────────────
+  rollback:
+    name: Rollback canary
     runs-on: ubuntu-latest
-    needs: [canary-stage-4]
-    if: ${{ always() && (github.event_name == 'push' || inputs.action == 'deploy') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'rollback' }}
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
-      - name: Evaluate pause error budget
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Roll back canary to 0%
         run: |
-          echo "Pause SLO/SLI definitions:"
-          echo "  SLO success rate:            ${PAUSE_SLO_SUCCESS_RATE}"
-          echo "  SLI response time (ms):      ${PAUSE_SLI_RESPONSE_TIME_MS}"
-          echo "  SLI event log latency (ms):  ${PAUSE_SLI_EVENT_LOG_LATENCY_MS}"
-          echo "  SLI status consistency:      ${PAUSE_SLI_STATUS_CONSISTENCY}"
-          echo "  Error budget ratio:          ${PAUSE_ERROR_BUDGET_RATIO}"
-          echo "  Error budget window:         ${PAUSE_ERROR_BUDGET_WINDOW}"
-          echo "Error budget = (1 - ${PAUSE_SLO_SUCCESS_RATE}) over ${PAUSE_ERROR_BUDGET_WINDOW}"
-        env:
-          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
-          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
-          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
-          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
-          PAUSE_ERROR_BUDGET_RATIO: ${{ env.PAUSE_ERROR_BUDGET_RATIO }}
-          PAUSE_ERROR_BUDGET_WINDOW: ${{ env.PAUSE_ERROR_BUDGET_WINDOW }}
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+
+      - name: Notify — Rollback complete
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":warning: *Pause feature canary rolled back to 0%*\n• Actor: ${{ github.actor }}"
+            }
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        continue-on-error: true
+
+  # ── Status query ──────────────────────────────────────────────────────────────
+  status:
+    name: Canary status
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'status' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Query canary weight and replicas
+        run: |
+          echo "Canary weight:"
+          kubectl get ingress backend-canary -n carbonledger \
+            -o jsonpath='{.metadata.annotations.nginx\.ingress\.kubernetes\.io/canary-weight}'
+          echo ""
+          echo "Canary replicas:"
+          kubectl get deployment backend-canary -n carbonledger \
+            -o jsonpath='{.status.readyReplicas}/{.spec.replicas}'
+          echo ""

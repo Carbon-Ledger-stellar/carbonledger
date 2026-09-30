@@ -152,10 +152,77 @@ jobs:
         run: |
           curl -f https://staging.carbonledger.com/health || exit 1
 
+  deploy-canary:
+    name: Deploy Pause Feature Canary (5%)
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: production
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
+
+      - name: Deploy canary at 5% traffic
+        run: |
+          kubectl set image deployment/backend-canary backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
+          kubectl set image deployment/frontend-canary frontend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
+          kubectl annotate deployment/backend-canary traffic-split=5 --overwrite
+          kubectl annotate deployment/frontend-canary traffic-split=5 --overwrite
+          kubectl rollout status deployment/backend-canary
+          kubectl rollout status deployment/frontend-canary
+
+      - name: Test pause functionality on canary
+        run: |
+          curl -f -X POST https://canary.carbonledger.com/api/pause -H 'Content-Type: application/json' -d '{"action":"pause"}' || exit 1
+          curl -f -X POST https://canary.carbonledger.com/api/pause -H 'Content-Type: application/json' -d '{"action":"resume"}' || exit 1
+
+      - name: Compare canary metrics
+        run: |
+          curl -f https://canary.carbonledger.com/metrics/error-rate || exit 1
+          curl -f https://canary.carbonledger.com/metrics/latency || exit 1
+          curl -f https://canary.carbonledger.com/metrics/event-delivery || exit 1
+
+  promote-canary:
+    name: Promote Canary to 100%
+    runs-on: ubuntu-latest
+    needs: deploy-canary
+    environment: production
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Configure Kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
+
+      - name: Promote canary to 100%
+        run: |
+          kubectl annotate deployment/backend-canary traffic-split=100 --overwrite
+          kubectl annotate deployment/frontend-canary traffic-split=100 --overwrite
+          kubectl rollout status deployment/backend-canary
+          kubectl rollout status deployment/frontend-canary
+
   deploy-production:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: deploy-staging
+    needs: promote-canary
     environment: production
     if: github.ref == 'refs/heads/main'
 
@@ -186,7 +253,7 @@ jobs:
   rollback:
     name: Rollback
     runs-on: ubuntu-latest
-    needs: [deploy-production]
+    needs: [deploy-canary, promote-canary, deploy-production]
     if: failure()
     environment: production
 
@@ -205,6 +272,8 @@ jobs:
 
       - name: Rollback deployment
         run: |
+          kubectl annotate deployment/backend-canary traffic-split=0 --overwrite || true
+          kubectl annotate deployment/frontend-canary traffic-split=0 --overwrite || true
           kubectl rollout undo deployment/backend
           kubectl rollout undo deployment/frontend
           kubectl rollout status deployment/backend
