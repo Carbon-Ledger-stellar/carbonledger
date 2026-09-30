@@ -1,0 +1,221 @@
+# =============================================================================
+# Canary Deployment — CarbonLedger Pause Feature
+# =============================================================================
+# Implements a progressive traffic split:
+#   Stage 1:  5% canary  → 95% stable
+#   Stage 2: 25% canary  → 75% stable
+#   Stage 3: 50% canary  → 50% stable
+#   Stage 4: 100% canary → 0%  stable (full promotion)
+#
+# Rollback is triggered automatically if:
+#   - Canary error rate > 1.5× stable error rate for 5 minutes
+#   - Canary P95 latency > 2× stable P95 latency for 5 minutes
+#   - Pause event delivery fails on canary
+#
+# Each stage requires the metrics gate to pass for 10 minutes before promotion.
+#
+# Apply with:
+#   kubectl apply -f deploy/kubernetes/canary-pause.yaml
+# =============================================================================
+
+# ── Canary Deployment (pause-feature version) ─────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-canary
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: backend
+    track: canary
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    # Canary stage is controlled by the CANARY_TRAFFIC_PCT env var and the
+    # NGINX ingress canary weight annotation (kept in sync by the rollout script).
+    canary.carbonledger.com/stage: "1"
+    canary.carbonledger.com/traffic-pct: "5"
+    canary.carbonledger.com/feature: "pause"
+spec:
+  # Start with 1 replica (≈5% of traffic with 19 stable replicas).
+  # The rollout controller adjusts replicas as traffic % increases.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: carbonledger
+      component: backend
+      track: canary
+  template:
+    metadata:
+      labels:
+        app: carbonledger
+        component: backend
+        track: canary
+      annotations:
+        # Prometheus scrape annotation — lets Prometheus differentiate
+        # canary vs stable metrics via the `track` label.
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "3001"
+        prometheus.io/path:   "/metrics"
+    spec:
+      containers:
+      - name: backend
+        # Image tag is replaced by the CI/CD pipeline with the new version SHA.
+        image: ghcr.io/carbon-ledger-stellar/carbonledger/backend:canary
+        ports:
+        - containerPort: 3001
+          name: http
+        - containerPort: 9100
+          name: metrics
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: url
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: NODE_ENV
+          value: production
+        - name: LOG_LEVEL
+          value: info
+        - name: CANARY_DEPLOYMENT
+          value: "true"
+        - name: CANARY_FEATURE
+          value: "pause"
+        - name: OTEL_SERVICE_NAME
+          value: carbonledger-backend-canary
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://jaeger:4318
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "deployment.track=canary,feature.name=pause"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 2
+      # ── Graceful shutdown — wait for in-flight pause operations to complete
+      terminationGracePeriodSeconds: 30
+
+---
+# ── Canary Service ─────────────────────────────────────────────────────────────
+# Separate service so Prometheus can scrape canary pods independently.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-canary
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: backend
+    track: canary
+spec:
+  selector:
+    app: carbonledger
+    component: backend
+    track: canary
+  ports:
+  - name: http
+    port: 80
+    targetPort: 3001
+  - name: metrics
+    port: 9100
+    targetPort: 9100
+  type: ClusterIP
+
+---
+# ── NGINX Canary Ingress ───────────────────────────────────────────────────────
+# Uses nginx.ingress.kubernetes.io/canary annotations to split traffic.
+# The canary weight starts at 5 (5%) and is patched by the rollout controller.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-canary
+  namespace: carbonledger
+  annotations:
+    # Enable canary routing
+    nginx.ingress.kubernetes.io/canary: "true"
+    # Start with 5% of traffic routed to canary
+    nginx.ingress.kubernetes.io/canary-weight: "5"
+    # Allow sticky canary routing via cookie (for manual testing)
+    nginx.ingress.kubernetes.io/canary-by-cookie: "canary"
+    # Allow header override for explicit canary testing
+    nginx.ingress.kubernetes.io/canary-by-header: "X-Canary"
+    nginx.ingress.kubernetes.io/canary-by-header-value: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.carbonledger.com
+    secretName: carbonledger-tls
+  rules:
+  - host: api.carbonledger.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-canary
+            port:
+              number: 80
+
+---
+# ── PodDisruptionBudget — prevent simultaneous eviction of canary pods ────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-canary-pdb
+  namespace: carbonledger
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: carbonledger
+      component: backend
+      track: canary
+
+---
+# ── HorizontalPodAutoscaler — scale canary replicas with traffic% ─────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-canary-hpa
+  namespace: carbonledger
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend-canary
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

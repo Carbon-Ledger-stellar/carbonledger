@@ -1,0 +1,322 @@
+name: Canary Deployment — Pause Feature
+
+on:
+  # Trigger manually with options for stage, dry-run, and rollback
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy        # Start a new canary rollout
+          - rollback      # Immediately roll back canary to 0%
+          - status        # Query current canary stage and metrics
+      stages:
+        description: 'Canary stages (comma-separated %, e.g. 5,25,50,100)'
+        required: false
+        default: '5,25,50,100'
+      soak_minutes:
+        description: 'Soak duration per stage in minutes'
+        required: false
+        default: '10'
+      dry_run:
+        description: 'Dry run (print kubectl commands, do not apply)'
+        required: false
+        type: boolean
+        default: false
+
+  # Auto-trigger on merges to main that touch backend pause-related paths
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/src/**pause**'
+      - 'backend/src/**pause**/**'
+      - 'deploy/kubernetes/canary-pause.yaml'
+
+jobs:
+  # ── Gate: run tests before deploying canary ─────────────────────────────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || inputs.action == 'deploy' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+        working-directory: backend
+
+      - name: Run pause-related unit tests
+        run: npm test -- --testPathPattern='pause'
+        working-directory: backend
+
+  # ── Deploy canary at 5% ──────────────────────────────────────────────────────
+  canary-stage-1:
+    name: Canary Stage 1 — 5%
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: ${{ github.event_name == 'push' || inputs.action == 'deploy' }}
+    environment: staging
+    outputs:
+      canary_image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push canary image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/carbonledger/backend:canary
+            ghcr.io/${{ github.repository_owner }}/carbonledger/backend:canary-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            com.carbonledger.deployment.track=canary
+            com.carbonledger.deployment.feature=pause
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Apply canary deployment manifest
+        run: |
+          # Update image tag in manifest
+          sed -i "s|:canary$|:canary-${{ github.sha }}|" deploy/kubernetes/canary-pause.yaml
+          kubectl apply -f deploy/kubernetes/canary-pause.yaml
+          kubectl rollout status deployment/backend-canary -n carbonledger --timeout=5m
+
+      - name: Set canary weight to 5%
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=5 \
+            --overwrite
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Notify — Stage 1 deployed
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":rocket: *Canary Stage 1/4 deployed* — 5% traffic to pause feature canary\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}\n• Soak: ${{ inputs.soak_minutes || '10' }} minutes"
+            }
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        continue-on-error: true
+
+      # ── Metrics gate: wait for soak then check gates ─────────────────────────
+      - name: Soak — wait ${{ inputs.soak_minutes || '10' }} minutes
+        run: sleep $(( ${{ inputs.soak_minutes || '10' }} * 60 ))
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Check metrics gates at 5%
+        id: metrics-gate-1
+        run: |
+          node scripts/canary-pause-rollout.js
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus:9090' }}
+          CANARY_STAGES:  "5"
+          SOAK_DURATION_MS: "0"
+          DRY_RUN:        ${{ inputs.dry_run || 'false' }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+      - name: Rollback if metrics gate failed
+        if: ${{ steps.metrics-gate-1.outcome == 'failure' }}
+        run: |
+          echo "Metrics gate failed at 5% — rolling back"
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+          exit 1
+
+  # ── Stage 2: 25% ──────────────────────────────────────────────────────────────
+  canary-stage-2:
+    name: Canary Stage 2 — 25%
+    runs-on: ubuntu-latest
+    needs: [canary-stage-1]
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Promote to 25%
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=25 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=5
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Soak — 25%
+        run: sleep $(( ${{ inputs.soak_minutes || '10' }} * 60 ))
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Check metrics gates at 25%
+        id: metrics-gate-2
+        run: node scripts/canary-pause-rollout.js
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus:9090' }}
+          CANARY_STAGES: "25"
+          SOAK_DURATION_MS: "0"
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        continue-on-error: true
+
+      - name: Rollback if metrics gate failed
+        if: ${{ steps.metrics-gate-2.outcome == 'failure' }}
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+          exit 1
+
+  # ── Stage 3: 50% ──────────────────────────────────────────────────────────────
+  canary-stage-3:
+    name: Canary Stage 3 — 50%
+    runs-on: ubuntu-latest
+    needs: [canary-stage-2]
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Promote to 50%
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=50 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=10
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Soak — 50%
+        run: sleep $(( ${{ inputs.soak_minutes || '10' }} * 60 ))
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Check metrics gates at 50%
+        id: metrics-gate-3
+        run: node scripts/canary-pause-rollout.js
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus:9090' }}
+          CANARY_STAGES: "50"
+          SOAK_DURATION_MS: "0"
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        continue-on-error: true
+
+      - name: Rollback if metrics gate failed
+        if: ${{ steps.metrics-gate-3.outcome == 'failure' }}
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+          exit 1
+
+  # ── Stage 4: Full promotion to 100% ──────────────────────────────────────────
+  canary-promote-100:
+    name: Promote to 100%
+    runs-on: ubuntu-latest
+    needs: [canary-stage-3]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Promote canary to 100%
+        run: |
+          # Route all traffic to canary
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=100 --overwrite
+
+          # Scale canary to match full stable replica count
+          kubectl scale deployment backend-canary -n carbonledger --replicas=20
+
+          # Scale down stable deployment
+          kubectl scale deployment backend -n carbonledger --replicas=0
+
+          # Rename canary deployment labels to become the new stable
+          kubectl label deployment backend-canary -n carbonledger track=stable --overwrite
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Notify — Full promotion complete
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":white_check_mark: *Canary fully promoted* — pause feature is now 100% stable\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}"
+            }
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        continue-on-error: true
+
+  # ── Manual rollback job ────────────────────────────────────────────────────────
+  rollback:
+    name: Rollback Canary
+    runs-on: ubuntu-latest
+    if: ${{ inputs.action == 'rollback' }}
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Roll back canary to 0%
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+          echo "Canary rolled back to 0%."
+
+      - name: Notify — Rollback complete
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":warning: *Canary rolled back* — pause feature canary set to 0%\n• Actor: ${{ github.actor }}\n• SHA: `${{ github.sha }}`"
+            }
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        continue-on-error: true

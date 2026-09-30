@@ -1,0 +1,113 @@
+{
+  "index_patterns": ["carbonledger-pause-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1,
+      "index.lifecycle.name": "carbonledger-pause-policy",
+      "index.lifecycle.rollover_alias": "carbonledger-pause",
+      "analysis": {
+        "analyzer": {
+          "keyword_lowercase": {
+            "type": "custom",
+            "tokenizer": "keyword",
+            "filter": ["lowercase"]
+          }
+        }
+      }
+    },
+    "mappings": {
+      "dynamic": "true",
+      "dynamic_templates": [
+        {
+          "strings_as_keywords": {
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword",
+              "ignore_above": 512
+            }
+          }
+        }
+      ],
+      "properties": {
+        "@timestamp": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+        "level": {
+          "type": "keyword"
+        },
+        "service": {
+          "type": "keyword"
+        },
+        "sub_service": {
+          "type": "keyword"
+        },
+        "environment": {
+          "type": "keyword"
+        },
+        "context": {
+          "type": "keyword"
+        },
+        "message": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 1024
+            }
+          }
+        },
+        "pause_event": {
+          "type": "keyword"
+        },
+        "pause_action": {
+          "type": "keyword"
+        },
+        "pause_admin": {
+          "type": "keyword"
+        },
+        "pause_admin_display": {
+          "type": "keyword"
+        },
+        "pause_reason": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 512
+            }
+          }
+        },
+        "pause_contract": {
+          "type": "keyword"
+        },
+        "pause_tx_hash": {
+          "type": "keyword"
+        },
+        "pause_until": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis",
+          "ignore_malformed": true
+        },
+        "pause_duration_seconds": {
+          "type": "float"
+        },
+        "pause_requested_seconds": {
+          "type": "float"
+        },
+        "pause_event_id": {
+          "type": "keyword"
+        },
+        "tags": {
+          "type": "keyword"
+        }
+      }
+    }
+  },
+  "priority": 100,
+  "_meta": {
+    "description": "CarbonLedger pause event index template — enforces field types for Kibana dashboards",
+    "managed_by": "logstash"
+  }
+}

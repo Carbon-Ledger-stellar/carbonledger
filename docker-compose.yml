@@ -494,8 +494,15 @@ services:
       GF_USERS_ALLOW_SIGN_UP:     "false"
       GF_ALERTING_ENABLED:        "true"
       GF_UNIFIED_ALERTING_ENABLED: "true"
+      # Allow Grafana to read provisioned dashboards from disk
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: ""
     volumes:
       - ./logging/grafana/provisioning:/etc/grafana/provisioning:ro
+      # Mount dashboard JSON files so provisioning picks them up automatically.
+      # pause-statistics, pause-slo-error-budget, canary-monitoring, pause-analytics
+      - ./logging/grafana/dashboards:/etc/grafana/dashboards:ro
+      # Staging dashboards in a sub-folder
+      - ./logging/grafana/staging-dashboards:/etc/grafana/staging-dashboards:ro
       - grafana_data:/var/lib/grafana
     depends_on:
       loki:
