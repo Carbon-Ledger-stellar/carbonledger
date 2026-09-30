@@ -65,3 +65,60 @@ jobs:
             -H "Authorization: ApiKey $KIBANA_API_KEY" \
             -H 'kbn-xsrf: true' \
             --form file=@.github/kibana/pause-events-dashboard.ndjson
+
+  pause-slo-sli:
+    name: Pause SLO/SLI Definitions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate pause SLO/SLI definitions
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = '.github/slo/pause-slo.json';
+          if (!fs.existsSync(path)) {
+            console.error('Missing pause SLO/SLI definition file:', path);
+            process.exit(1);
+          }
+          const slo = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const errors = [];
+
+          // SLO: 99.9% pause/unpause success rate
+          const success = slo.objectives && slo.objectives.pauseUnpauseSuccessRate;
+          if (!success || success.target !== 0.999) {
+            errors.push('pauseUnpauseSuccessRate target must be 0.999');
+          }
+
+          // SLI: pause response time < 1s
+          const responseTime = slo.indicators && slo.indicators.pauseResponseTimeMs;
+          if (!responseTime || responseTime.threshold !== 1000 || responseTime.comparator !== '<') {
+            errors.push('pauseResponseTimeMs must be < 1000ms');
+          }
+
+          // SLI: pause event logged within 100ms
+          const logLatency = slo.indicators && slo.indicators.pauseEventLogLatencyMs;
+          if (!logLatency || logLatency.threshold !== 100 || logLatency.comparator !== '<') {
+            errors.push('pauseEventLogLatencyMs must be < 100ms');
+          }
+
+          // SLI: pause status consistency > 99.9%
+          const consistency = slo.indicators && slo.indicators.pauseStatusConsistency;
+          if (!consistency || consistency.threshold !== 0.999 || consistency.comparator !== '>') {
+            errors.push('pauseStatusConsistency must be > 0.999');
+          }
+
+          // Error budget tracking
+          const budget = slo.errorBudget;
+          if (!budget || typeof budget.windowDays !== 'number' || typeof budget.allowedFailureRatio !== 'number') {
+            errors.push('errorBudget must define windowDays and allowedFailureRatio');
+          } else if (Math.abs(budget.allowedFailureRatio - 0.001) > 1e-9) {
+            errors.push('errorBudget.allowedFailureRatio must be 0.001 for a 99.9% SLO');
+          }
+
+          if (errors.length) {
+            console.error('Pause SLO/SLI validation failed:');
+            errors.forEach((e) => console.error(' - ' + e));
+            process.exit(1);
+          }
+          console.log('Pause SLO/SLI definitions OK');
+          "

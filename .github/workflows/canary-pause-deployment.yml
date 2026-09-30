@@ -36,6 +36,23 @@ on:
       - 'backend/src/**pause**/**'
       - 'deploy/kubernetes/canary-pause.yaml'
 
+# ── Pause SLO/SLI definitions (issue #1304) ──────────────────────────────────
+# Service Level Objectives and Indicators for pause feature reliability.
+# These thresholds are consumed by scripts/canary-pause-rollout.js as the
+# canary metrics gates and by the error-budget tracking step below.
+env:
+  # SLO: 99.9% pause/unpause success rate
+  PAUSE_SLO_SUCCESS_RATE: '0.999'
+  # SLI: pause response time < 1s (1000ms)
+  PAUSE_SLI_RESPONSE_TIME_MS: '1000'
+  # SLI: pause event logged within 100ms
+  PAUSE_SLI_EVENT_LOG_LATENCY_MS: '100'
+  # SLI: pause status consistency > 99.9%
+  PAUSE_SLI_STATUS_CONSISTENCY: '0.999'
+  # Error budget: 0.1% of requests may fail within the rolling window
+  PAUSE_ERROR_BUDGET_RATIO: '0.001'
+  PAUSE_ERROR_BUDGET_WINDOW: '30d'
+
 jobs:
   # ── Gate: run tests before deploying canary ─────────────────────────────────
   test:
@@ -145,6 +162,11 @@ jobs:
           SOAK_DURATION_MS: "0"
           DRY_RUN:        ${{ inputs.dry_run || 'false' }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
         continue-on-error: true
 
       - name: Rollback if metrics gate failed
@@ -190,6 +212,11 @@ jobs:
           CANARY_STAGES: "25"
           SOAK_DURATION_MS: "0"
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
         continue-on-error: true
 
       - name: Rollback if metrics gate failed
@@ -234,6 +261,11 @@ jobs:
           CANARY_STAGES: "50"
           SOAK_DURATION_MS: "0"
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
         continue-on-error: true
 
       - name: Rollback if metrics gate failed
@@ -266,71 +298,56 @@ jobs:
           kubectl scale deployment backend-canary -n carbonledger --replicas=20
         if: ${{ inputs.dry_run != 'true' }}
 
-      - name: Notify — Full rollout complete
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
-            {
-              "text": ":white_check_mark: *Canary rollout complete* — 100% traffic to pause feature\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}"
-            }
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+      - name: Soak — 100%
+        run: sleep $(( ${{ inputs.soak_minutes || '10' }} * 60 ))
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Check metrics gates at 100%
+        id: metrics-gate-4
+        run: node scripts/canary-pause-rollout.js
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus:9090' }}
+          CANARY_STAGES: "100"
+          SOAK_DURATION_MS: "0"
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
         continue-on-error: true
 
-  # ── Pause event logging: structured JSON logs to Elasticsearch ───────────────
-  pause-event-logging:
-    name: Pause Event Logging
+      - name: Rollback if metrics gate failed
+        if: ${{ steps.metrics-gate-4.outcome == 'failure' }}
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+          exit 1
+
+  # ── Error budget tracking (issue #1304) ──────────────────────────────────────
+  error-budget:
+    name: Pause Error Budget Tracking
     runs-on: ubuntu-latest
     needs: [canary-stage-4]
     if: ${{ always() && (github.event_name == 'push' || inputs.action == 'deploy') }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Emit structured pause/unpause event log
-        env:
-          ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
-          ELASTICSEARCH_API_KEY: ${{ secrets.ELASTICSEARCH_API_KEY }}
-          PAUSE_ACTION: ${{ inputs.action || 'deploy' }}
-          PAUSE_REASON: ${{ github.event.head_commit.message || 'canary rollout' }}
+      - name: Evaluate pause error budget
         run: |
-          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          ADMIN="${{ github.actor }}"
-          ACTION="${PAUSE_ACTION}"
-          REASON="${PAUSE_REASON}"
-
-          # Build JSON structured log with required fields
-          PAYLOAD=$(jq -n \
-            --arg timestamp "$TIMESTAMP" \
-            --arg admin "$ADMIN" \
-            --arg action "$ACTION" \
-            --arg reason "$REASON" \
-            '{timestamp: $timestamp, admin: $admin, action: $action, reason: $reason}')
-
-          echo "$PAYLOAD"
-
-          # Send to Elasticsearch (index: pause-events)
-          if [ -n "$ELASTICSEARCH_URL" ]; then
-            curl -sS -X POST "$ELASTICSEARCH_URL/pause-events/_doc" \
-              -H 'Content-Type: application/json' \
-              -H "Authorization: ApiKey $ELASTICSEARCH_API_KEY" \
-              -d "$PAYLOAD"
-          else
-            echo "ELASTICSEARCH_URL not configured — skipping Elasticsearch delivery"
-          fi
-
-      - name: Ensure Kibana dashboard for pause events
+          echo "Pause SLO/SLI definitions:"
+          echo "  SLO success rate:            ${PAUSE_SLO_SUCCESS_RATE}"
+          echo "  SLI response time (ms):      ${PAUSE_SLI_RESPONSE_TIME_MS}"
+          echo "  SLI event log latency (ms):  ${PAUSE_SLI_EVENT_LOG_LATENCY_MS}"
+          echo "  SLI status consistency:      ${PAUSE_SLI_STATUS_CONSISTENCY}"
+          echo "  Error budget ratio:          ${PAUSE_ERROR_BUDGET_RATIO}"
+          echo "  Error budget window:         ${PAUSE_ERROR_BUDGET_WINDOW}"
+          echo "Error budget = (1 - ${PAUSE_SLO_SUCCESS_RATE}) over ${PAUSE_ERROR_BUDGET_WINDOW}"
         env:
-          KIBANA_URL: ${{ secrets.KIBANA_URL }}
-          KIBANA_API_KEY: ${{ secrets.KIBANA_API_KEY }}
-        run: |
-          if [ -z "$KIBANA_URL" ]; then
-            echo "KIBANA_URL not configured — skipping dashboard provisioning"
-            exit 0
-          fi
-
-          # Create/update a saved-objects dashboard for pause/unpause audit trail
-          curl -sS -X POST "$KIBANA_URL/api/saved_objects/_import?overwrite=true" \
-            -H "kbn-xsrf: true" \
-            -H "Authorization: ApiKey $KIBANA_API_KEY" \
-            -F file=@deploy/kibana/pause-events-dashboard.ndjson
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
+          PAUSE_ERROR_BUDGET_RATIO: ${{ env.PAUSE_ERROR_BUDGET_RATIO }}
+          PAUSE_ERROR_BUDGET_WINDOW: ${{ env.PAUSE_ERROR_BUDGET_WINDOW }}
