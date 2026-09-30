@@ -60,6 +60,12 @@ The CarbonLedger Pause UI components (PauseStatusIndicator, PauseButton, PauseBa
    - **Remediation**: Added bidirectional focus trap listener handling both `Tab` and `Shift+Tab`.
 3. **Issue**: Banner dismissal lacked descriptive label.
    - **Remediation**: Added `aria-label="Dismiss pause notification"`.
+4. **Issue (#1270)**: Interactive buttons lacked high-visibility outline focus rings in keyboard navigation modes.
+   - **Remediation**: Configured `focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2` across `PauseBanner`, `PauseButton`, `PauseConfirmModal`, and `PauseErrorFallback`.
+5. **Issue (#1270)**: Form controls in `PauseConfirmModal` lacked explicit programmatic `htmlFor` association with their IDs.
+   - **Remediation**: Linked `pause-duration-select` and `pause-reason-input` with explicit IDs, `htmlFor`, and `aria-describedby` helper IDs.
+6. **Issue (#1270)**: Outline variant button text contrast on light background was marginally below 4.5:1.
+   - **Remediation**: Updated text styling to emerald-700 / rose-700 providing > 5.5:1 contrast ratio.
 
 ---
 

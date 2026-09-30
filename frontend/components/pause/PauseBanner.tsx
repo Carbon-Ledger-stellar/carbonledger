@@ -38,10 +38,11 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
 
   return (
     <aside
-      role="alert" aria-live="polite" className="motion-reduce:transition-none"
+      role="alert"
       aria-live="assertive"
+      aria-atomic="true"
       data-testid="pause-banner"
-      className={`w-full bg-rose-600 text-white px-4 py-3 shadow-md dark:bg-rose-950 dark:border-b dark:border-rose-800 ${className}`}
+      className={`w-full bg-rose-700 text-white px-4 py-3 shadow-md motion-reduce:transition-none dark:bg-rose-950 dark:border-b dark:border-rose-800 ${className}`}
     >
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
         <div className="flex items-start sm:items-center space-x-3 text-sm">
@@ -67,7 +68,7 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
             <span className="font-medium">
               CarbonLedger contract operations are temporarily paused.
             </span>{' '}
-            <span className="text-white/90">
+            <span className="text-white/95">
               {reason || 'Transfers, minting, and retirements are temporarily halted for system security.'}
             </span>
             {remaining && (
@@ -83,7 +84,7 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
             <button
               type="button"
               onClick={onViewDetails}
-              className="text-xs font-semibold bg-white text-rose-700 hover:bg-rose-50 px-3 py-1.5 rounded shadow-sm transition dark:bg-rose-900 dark:text-rose-100 dark:hover:bg-rose-800"
+              className="text-xs font-semibold bg-white text-rose-800 hover:bg-rose-50 px-3 py-1.5 rounded shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-white dark:bg-rose-900 dark:text-rose-100 dark:hover:bg-rose-800 dark:focus-visible:ring-rose-300"
             >
               Details
             </button>
@@ -94,7 +95,7 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
               type="button"
               onClick={handleDismiss}
               aria-label="Dismiss pause notification"
-              className="p-1 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition"
+              className="p-1 rounded-md text-white/90 hover:text-white hover:bg-white/10 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-white"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path

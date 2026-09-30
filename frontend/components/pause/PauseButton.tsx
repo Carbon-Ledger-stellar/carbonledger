@@ -27,23 +27,23 @@ export const PauseButton: React.FC<PauseButtonProps> = ({
       // Unpause action (green/emerald primary)
       switch (variant) {
         case 'secondary':
-          return 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200 border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-200 dark:border-emerald-700';
+          return 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200 border-emerald-400 focus-visible:ring-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-200 dark:border-emerald-700';
         case 'outline':
-          return 'bg-transparent text-emerald-600 border-emerald-500 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-400 dark:hover:bg-emerald-950/30';
+          return 'bg-transparent text-emerald-700 border-emerald-600 hover:bg-emerald-50 focus-visible:ring-emerald-600 dark:text-emerald-300 dark:border-emerald-400 dark:hover:bg-emerald-950/30';
         case 'primary':
         default:
-          return 'bg-emerald-600 text-white hover:bg-emerald-700 border-transparent shadow-sm dark:bg-emerald-500 dark:hover:bg-emerald-600';
+          return 'bg-emerald-700 text-white hover:bg-emerald-800 border-transparent shadow-sm focus-visible:ring-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700';
       }
     } else {
       // Pause action (rose/red danger)
       switch (variant) {
         case 'secondary':
-          return 'bg-rose-100 text-rose-900 hover:bg-rose-200 border-rose-300 dark:bg-rose-900/40 dark:text-rose-200 dark:border-rose-700';
+          return 'bg-rose-100 text-rose-900 hover:bg-rose-200 border-rose-400 focus-visible:ring-rose-600 dark:bg-rose-900/40 dark:text-rose-200 dark:border-rose-700';
         case 'outline':
-          return 'bg-transparent text-rose-600 border-rose-500 hover:bg-rose-50 dark:text-rose-400 dark:border-rose-400 dark:hover:bg-rose-950/30';
+          return 'bg-transparent text-rose-700 border-rose-600 hover:bg-rose-50 focus-visible:ring-rose-600 dark:text-rose-300 dark:border-rose-400 dark:hover:bg-rose-950/30';
         case 'primary':
         default:
-          return 'bg-rose-600 text-white hover:bg-rose-700 border-transparent shadow-sm dark:bg-rose-500 dark:hover:bg-rose-600';
+          return 'bg-rose-700 text-white hover:bg-rose-800 border-transparent shadow-sm focus-visible:ring-rose-600 dark:bg-rose-600 dark:hover:bg-rose-700';
       }
     }
   };
@@ -56,7 +56,7 @@ export const PauseButton: React.FC<PauseButtonProps> = ({
       aria-busy={isLoading}
       aria-label={isPaused ? 'Unpause contract operations' : 'Pause contract operations'}
       data-testid="pause-action-button"
-      className={`inline-flex items-center justify-center font-medium rounded-md border transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 ${sizeClasses[size]} ${getButtonStyles()} ${className}`}
+      className={`inline-flex items-center justify-center font-medium rounded-md border transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${sizeClasses[size]} ${getButtonStyles()} ${className}`}
     >
       {isLoading ? (
         <>

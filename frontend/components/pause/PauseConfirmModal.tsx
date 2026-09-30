@@ -123,39 +123,45 @@ export const PauseConfirmModal: React.FC<PauseConfirmModalProps> = ({
           {isPause ? (
             <>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label htmlFor="pause-duration-select" className="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
                   Pause Duration Window
                 </label>
                 <select
+                  id="pause-duration-select"
+                  name="pauseDuration"
+                  aria-describedby="pause-duration-helper"
                   value={durationHours}
                   onChange={(e) => setDurationHours(Number(e.target.value))}
-                  className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                 >
                   <option value={1}>1 Hour (Quick Maintenance)</option>
                   <option value={6}>6 Hours (Incident Triage)</option>
                   <option value={24}>24 Hours (Standard Investigation)</option>
                   <option value={72}>72 Hours (Maximum Time-Bound Window)</option>
                 </select>
-                <p className="text-xs text-gray-500 mt-1">
+                <p id="pause-duration-helper" className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                   In compliance with safety policy, pause automatically expires after a maximum of 72 hours.
                 </p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Incident Reason & Scope <span className="text-rose-500">*</span>
+                <label htmlFor="pause-reason-input" className="block text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
+                  Incident Reason & Scope <span className="text-rose-600 dark:text-rose-400">*</span>
                 </label>
                 <textarea
+                  id="pause-reason-input"
+                  name="pauseReason"
                   required
+                  aria-required="true"
                   rows={3}
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder="e.g. Investigating unexpected oracle variance in batch #402"
-                  className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500"
+                  className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
                 />
               </div>
 
-              <div className="bg-amber-50 dark:bg-amber-950/30 p-3 rounded-md border border-amber-200 dark:border-amber-900/50 text-xs text-amber-800 dark:text-amber-300">
+              <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-md border border-amber-300 dark:border-amber-800 text-xs text-amber-950 dark:text-amber-200">
                 <span className="font-semibold block mb-0.5">Affected Services:</span>
                 • Soroban CarbonCredit minting, transfer & retirement<br />
                 • Carbon Marketplace order placement & fulfillment<br />
@@ -166,45 +172,47 @@ export const PauseConfirmModal: React.FC<PauseConfirmModalProps> = ({
                 <input
                   type="checkbox"
                   id="confirm-pause-ack"
+                  name="confirmPauseAck"
+                  aria-required="true"
                   checked={confirmedCheck}
                   onChange={(e) => setConfirmedCheck(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500 mt-0.5"
+                  className="h-4 w-4 rounded border-gray-400 text-rose-600 focus:ring-rose-500 mt-0.5 focus-visible:ring-2 focus-visible:ring-offset-2"
                 />
-                <label htmlFor="confirm-pause-ack" className="text-xs text-gray-600 dark:text-gray-400">
+                <label htmlFor="confirm-pause-ack" className="text-xs font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
                   I understand that this is an emergency operation that will immediately interrupt all active users and trigger on-chain pause events.
                 </label>
               </div>
             </>
           ) : (
             <div className="space-y-3">
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p className="text-sm text-gray-800 dark:text-gray-200 font-medium">
                 Are you sure you want to lift the emergency pause and resume normal operations?
               </p>
               {currentStatus?.reason && (
-                <div className="text-xs bg-gray-100 dark:bg-gray-800 p-3 rounded text-gray-600 dark:text-gray-400">
-                  <strong>Initial pause reason:</strong> {currentStatus.reason}
+                <div className="text-xs bg-gray-100 dark:bg-gray-800 p-3 rounded text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
+                  <strong className="font-semibold">Initial pause reason:</strong> {currentStatus.reason}
                 </div>
               )}
             </div>
           )}
 
-          <div className="pt-4 flex items-center justify-end space-x-3 border-t border-gray-100 dark:border-gray-800">
+          <div className="pt-4 flex items-center justify-end space-x-3 border-t border-gray-200 dark:border-gray-800">
             <button
               ref={cancelBtnRef}
               type="button"
               onClick={onCancel}
               disabled={isLoading}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700 dark:hover:bg-gray-700"
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-gray-500 dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700 dark:hover:bg-gray-700"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isLoading || (isPause && (!reason.trim() || !confirmedCheck))}
-              className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+              className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed ${
                 isPause
-                  ? 'bg-rose-600 hover:bg-rose-700 focus:ring-rose-500'
-                  : 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500'
+                  ? 'bg-rose-700 hover:bg-rose-800 focus-visible:ring-rose-600 dark:bg-rose-600 dark:hover:bg-rose-700'
+                  : 'bg-emerald-700 hover:bg-emerald-800 focus-visible:ring-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700'
               }`}
             >
               {isLoading

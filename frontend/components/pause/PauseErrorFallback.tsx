@@ -96,7 +96,7 @@ export const PauseErrorFallback: React.FC<PauseErrorFallbackProps> = ({
               <button
                 type="button"
                 onClick={onRetry}
-                className="rounded bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-1 dark:bg-rose-700 dark:hover:bg-rose-600"
+                className="rounded bg-rose-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-600 focus-visible:ring-offset-2 dark:bg-rose-600 dark:hover:bg-rose-700"
               >
                 Retry Request
               </button>
@@ -105,7 +105,7 @@ export const PauseErrorFallback: React.FC<PauseErrorFallbackProps> = ({
               <button
                 type="button"
                 onClick={onDismiss}
-                className="text-xs font-medium text-rose-700 hover:text-rose-900 dark:text-rose-300 dark:hover:text-rose-100"
+                className="rounded px-2.5 py-1 text-xs font-semibold text-rose-800 hover:text-rose-950 hover:bg-rose-100/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-600 focus-visible:ring-offset-2 dark:text-rose-200 dark:hover:text-rose-100 dark:hover:bg-rose-900/40"
               >
                 Dismiss
               </button>
