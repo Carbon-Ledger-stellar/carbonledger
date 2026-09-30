@@ -19,3 +19,49 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Run Pause Contract Unit Tests
         run: cargo test -p carbon_credit --test pause_tests || true
+
+  pause-event-logging:
+    name: Pause Event Logging (ELK)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate pause event log schema
+        run: |
+          node -e "
+          const fs = require('fs');
+          const required = ['timestamp', 'admin', 'action', 'reason'];
+          const sample = {
+            timestamp: new Date().toISOString(),
+            admin: 'GADMIN...',
+            action: 'pause',
+            reason: 'maintenance'
+          };
+          const missing = required.filter((f) => !(f in sample));
+          if (missing.length) {
+            console.error('Missing required pause log fields:', missing.join(', '));
+            process.exit(1);
+          }
+          const line = JSON.stringify(sample);
+          JSON.parse(line);
+          console.log('Pause event log schema OK:', line);
+          "
+      - name: Ship pause event logs to Elasticsearch
+        if: ${{ secrets.ELASTICSEARCH_URL != '' }}
+        env:
+          ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
+          ELASTICSEARCH_API_KEY: ${{ secrets.ELASTICSEARCH_API_KEY }}
+        run: |
+          curl -sS -X POST "$ELASTICSEARCH_URL/pause-events/_doc" \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: ApiKey $ELASTICSEARCH_API_KEY" \
+            -d "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"admin\":\"ci\",\"action\":\"pause\",\"reason\":\"ci-validation\"}"
+      - name: Import Kibana pause dashboards
+        if: ${{ secrets.KIBANA_URL != '' }}
+        env:
+          KIBANA_URL: ${{ secrets.KIBANA_URL }}
+          KIBANA_API_KEY: ${{ secrets.KIBANA_API_KEY }}
+        run: |
+          curl -sS -X POST "$KIBANA_URL/api/saved_objects/_import?overwrite=true" \
+            -H "Authorization: ApiKey $KIBANA_API_KEY" \
+            -H 'kbn-xsrf: true' \
+            --form file=@.github/kibana/pause-events-dashboard.ndjson

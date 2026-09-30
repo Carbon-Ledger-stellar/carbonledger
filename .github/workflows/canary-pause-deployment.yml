@@ -244,9 +244,9 @@ jobs:
           kubectl scale deployment backend-canary -n carbonledger --replicas=0
           exit 1
 
-  # ── Stage 4: Full promotion to 100% ──────────────────────────────────────────
-  canary-promote-100:
-    name: Promote to 100%
+  # ── Stage 4: 100% ─────────────────────────────────────────────────────────────
+  canary-stage-4:
+    name: Canary Stage 4 — 100%
     runs-on: ubuntu-latest
     needs: [canary-stage-3]
     environment: production
@@ -259,64 +259,78 @@ jobs:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
 
-      - name: Promote canary to 100%
+      - name: Promote to 100%
         run: |
-          # Route all traffic to canary
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=100 --overwrite
-
-          # Scale canary to match full stable replica count
           kubectl scale deployment backend-canary -n carbonledger --replicas=20
-
-          # Scale down stable deployment
-          kubectl scale deployment backend -n carbonledger --replicas=0
-
-          # Rename canary deployment labels to become the new stable
-          kubectl label deployment backend-canary -n carbonledger track=stable --overwrite
         if: ${{ inputs.dry_run != 'true' }}
 
-      - name: Notify — Full promotion complete
+      - name: Notify — Full rollout complete
         uses: slackapi/slack-github-action@v1.26.0
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
             {
-              "text": ":white_check_mark: *Canary fully promoted* — pause feature is now 100% stable\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}"
+              "text": ":white_check_mark: *Canary rollout complete* — 100% traffic to pause feature\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}"
             }
         if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
         continue-on-error: true
 
-  # ── Manual rollback job ────────────────────────────────────────────────────────
-  rollback:
-    name: Rollback Canary
+  # ── Pause event logging: structured JSON logs to Elasticsearch ───────────────
+  pause-event-logging:
+    name: Pause Event Logging
     runs-on: ubuntu-latest
-    if: ${{ inputs.action == 'rollback' }}
-    environment: staging
+    needs: [canary-stage-4]
+    if: ${{ always() && (github.event_name == 'push' || inputs.action == 'deploy') }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure kubectl
-        uses: azure/k8s-set-context@v3
-        with:
-          method: kubeconfig
-          kubeconfig: ${{ secrets.KUBE_CONFIG }}
-
-      - name: Roll back canary to 0%
+      - name: Emit structured pause/unpause event log
+        env:
+          ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
+          ELASTICSEARCH_API_KEY: ${{ secrets.ELASTICSEARCH_API_KEY }}
+          PAUSE_ACTION: ${{ inputs.action || 'deploy' }}
+          PAUSE_REASON: ${{ github.event.head_commit.message || 'canary rollout' }}
         run: |
-          kubectl annotate ingress backend-canary -n carbonledger \
-            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
-          kubectl scale deployment backend-canary -n carbonledger --replicas=0
-          echo "Canary rolled back to 0%."
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          ADMIN="${{ github.actor }}"
+          ACTION="${PAUSE_ACTION}"
+          REASON="${PAUSE_REASON}"
 
-      - name: Notify — Rollback complete
-        uses: slackapi/slack-github-action@v1.26.0
-        with:
-          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
-            {
-              "text": ":warning: *Canary rolled back* — pause feature canary set to 0%\n• Actor: ${{ github.actor }}\n• SHA: `${{ github.sha }}`"
-            }
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
-        continue-on-error: true
+          # Build JSON structured log with required fields
+          PAYLOAD=$(jq -n \
+            --arg timestamp "$TIMESTAMP" \
+            --arg admin "$ADMIN" \
+            --arg action "$ACTION" \
+            --arg reason "$REASON" \
+            '{timestamp: $timestamp, admin: $admin, action: $action, reason: $reason}')
+
+          echo "$PAYLOAD"
+
+          # Send to Elasticsearch (index: pause-events)
+          if [ -n "$ELASTICSEARCH_URL" ]; then
+            curl -sS -X POST "$ELASTICSEARCH_URL/pause-events/_doc" \
+              -H 'Content-Type: application/json' \
+              -H "Authorization: ApiKey $ELASTICSEARCH_API_KEY" \
+              -d "$PAYLOAD"
+          else
+            echo "ELASTICSEARCH_URL not configured — skipping Elasticsearch delivery"
+          fi
+
+      - name: Ensure Kibana dashboard for pause events
+        env:
+          KIBANA_URL: ${{ secrets.KIBANA_URL }}
+          KIBANA_API_KEY: ${{ secrets.KIBANA_API_KEY }}
+        run: |
+          if [ -z "$KIBANA_URL" ]; then
+            echo "KIBANA_URL not configured — skipping dashboard provisioning"
+            exit 0
+          fi
+
+          # Create/update a saved-objects dashboard for pause/unpause audit trail
+          curl -sS -X POST "$KIBANA_URL/api/saved_objects/_import?overwrite=true" \
+            -H "kbn-xsrf: true" \
+            -H "Authorization: ApiKey $KIBANA_API_KEY" \
+            -F file=@deploy/kibana/pause-events-dashboard.ndjson
