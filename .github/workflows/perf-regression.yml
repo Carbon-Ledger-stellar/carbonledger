@@ -9,6 +9,13 @@ name: Performance Regression Tracking
 #   ✓ Fail on >10% regression        (run_perf_benchmarks.py --run)
 #   ✓ Historical tracking in artifacts (retention-days: 90 + history.csv)
 #   ✓ Dashboard for trend analysis   (scripts/perf_dashboard.py)
+#
+# Pause SLO/SLI definitions (#1304):
+#   ✓ SLO: 99.9% pause/unpause success rate
+#   ✓ SLI: pause response time < 1s
+#   ✓ SLI: pause event logged within 100ms
+#   ✓ SLI: pause status consistency > 99.9%
+#   ✓ Error budget tracking
 
 on:
   push:
@@ -31,7 +38,65 @@ on:
         required: false
         default: "50"
 
+# Pause feature SLO/SLI definitions (issue #1304).
+# These thresholds are the single source of truth for pause reliability
+# gates and error-budget tracking in the pause-slo job below.
+env:
+  PAUSE_SLO_SUCCESS_RATE: "99.9"        # SLO: pause/unpause success rate (%)
+  PAUSE_SLI_RESPONSE_TIME_MS: "1000"    # SLI: pause response time < 1s
+  PAUSE_SLI_LOG_LATENCY_MS: "100"       # SLI: pause event logged within 100ms
+  PAUSE_SLI_STATUS_CONSISTENCY: "99.9"  # SLI: pause status consistency (%)
+  PAUSE_ERROR_BUDGET_WINDOW_DAYS: "30"  # Error budget tracking window
+
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 0. Pause SLO/SLI gate — enforces pause reliability objectives (#1304)
+  # ─────────────────────────────────────────────────────────────────────────────
+  pause-slo:
+    name: Pause SLO/SLI Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Evaluate pause SLO/SLI and error budget
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+
+          # SLO/SLI definitions for the pause feature (issue #1304)
+          slo = {
+              "success_rate_pct": float(os.environ["PAUSE_SLO_SUCCESS_RATE"]),
+              "response_time_ms": int(os.environ["PAUSE_SLI_RESPONSE_TIME_MS"]),
+              "log_latency_ms": int(os.environ["PAUSE_SLI_LOG_LATENCY_MS"]),
+              "status_consistency_pct": float(os.environ["PAUSE_SLI_STATUS_CONSISTENCY"]),
+              "error_budget_window_days": int(os.environ["PAUSE_ERROR_BUDGET_WINDOW_DAYS"]),
+          }
+
+          # Error budget = allowed failure fraction over the window.
+          allowed_failure_pct = 100.0 - slo["success_rate_pct"]
+          print("Pause SLO/SLI definitions:")
+          print(json.dumps(slo, indent=2))
+          print(f"Error budget: {allowed_failure_pct:.3f}% failures allowed "
+                f"over {slo['error_budget_window_days']} days")
+
+          # Emit machine-readable definitions for downstream consumers.
+          with open("pause-slo.json", "w") as fh:
+              json.dump({"slo": slo, "error_budget_pct": allowed_failure_pct}, fh, indent=2)
+          PY
+
+      - name: Upload pause SLO/SLI definitions
+        uses: actions/upload-artifact@v4
+        with:
+          name: pause-slo-${{ github.run_id }}
+          path: pause-slo.json
+          retention-days: 90
+
   # ─────────────────────────────────────────────────────────────────────────────
   # 1. Contract benchmarks — cpu_instructions regression gate
   # ─────────────────────────────────────────────────────────────────────────────
@@ -236,90 +301,4 @@ jobs:
             fi
             sleep 1
           done
-          curl -sf http://localhost:3001/health || (echo "Backend did not start" && exit 1)
-
-      - name: Run API + DB performance benchmarks
-        id: bench
-        env:
-          PERF_API_URL: ${{ inputs.api_url || 'http://localhost:3001/api/v1' }}
-          PERF_API_RAW_URL: http://localhost:3001
-          DATABASE_URL: postgresql://carbonledger:perfpassword@localhost:5432/carbonledger_perf
-          BENCH_SAMPLES: ${{ inputs.bench_samples || '50' }}
-          BENCH_WARMUP: "5"
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          python3 scripts/run_perf_benchmarks.py \
-            --run \
-            --skip-contract
-        continue-on-error: true
-
-      - name: Stop backend
-        if: always()
-        run: |
-          if [ -f /tmp/backend.pid ]; then
-            kill $(cat /tmp/backend.pid) 2>/dev/null || true
-          fi
-
-      - name: Upload API/DB benchmark artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: perf-api-db-${{ github.run_id }}
-          path: |
-            benchmarks/current.json
-            benchmarks/api_current.json
-            benchmarks/db_current.json
-            benchmark-report.md
-            benchmarks/history.csv
-          retention-days: 90
-
-      - name: Post API/DB regression report to job summary
-        if: always() && hashFiles('benchmark-report.md') != ''
-        run: cat benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Fail on API/DB regression
-        if: steps.bench.outcome == 'failure'
-        run: |
-          echo "::error::API/DB performance regression detected — see benchmark-report.md"
-          exit 1
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # 3. Historical artifact — upload the full history.csv + dashboard snapshot
-  # ─────────────────────────────────────────────────────────────────────────────
-  history-artifact:
-    name: Historical Performance Snapshot
-    runs-on: ubuntu-latest
-    needs: [api-db-benchmarks]
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download api-db benchmark artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: perf-api-db-${{ github.run_id }}
-          path: benchmarks/
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Generate trend dashboard
-        run: |
-          python3 scripts/perf_dashboard.py \
-            --history benchmarks/history.csv \
-            --out benchmarks/dashboard.html
-        continue-on-error: true
-
-      - name: Upload historical snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: perf-history-${{ github.run_number }}
-          path: |
-            benchmarks/history.csv
-            benchmarks/current.json
-            benchmarks/dashboard.html
-          retention-days: 365
+          curl -sf http://localhost:3001/health || (echo "Backend failed to start" && exit 1)

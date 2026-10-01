@@ -36,6 +36,23 @@ on:
       - 'backend/src/**pause**/**'
       - 'deploy/kubernetes/canary-pause.yaml'
 
+# ── Pause SLO/SLI definitions (issue #1304) ──────────────────────────────────
+# Service Level Objectives and Indicators for pause feature reliability.
+# These thresholds are consumed by scripts/canary-pause-rollout.js as the
+# canary metrics gates and by the error-budget tracking step below.
+env:
+  # SLO: 99.9% pause/unpause success rate
+  PAUSE_SLO_SUCCESS_RATE: '0.999'
+  # SLI: pause response time < 1s (1000ms)
+  PAUSE_SLI_RESPONSE_TIME_MS: '1000'
+  # SLI: pause event logged within 100ms
+  PAUSE_SLI_EVENT_LOG_LATENCY_MS: '100'
+  # SLI: pause status consistency > 99.9%
+  PAUSE_SLI_STATUS_CONSISTENCY: '0.999'
+  # Error budget: 0.1% of requests may fail within the rolling window
+  PAUSE_ERROR_BUDGET_RATIO: '0.001'
+  PAUSE_ERROR_BUDGET_WINDOW: '30d'
+
 jobs:
   # ── Gate: run tests before deploying canary ─────────────────────────────────
   test:
@@ -145,6 +162,11 @@ jobs:
           SOAK_DURATION_MS: "0"
           DRY_RUN:        ${{ inputs.dry_run || 'false' }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
         continue-on-error: true
 
       - name: Rollback if metrics gate failed
@@ -190,11 +212,17 @@ jobs:
           CANARY_STAGES: "25"
           SOAK_DURATION_MS: "0"
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
         continue-on-error: true
 
       - name: Rollback if metrics gate failed
         if: ${{ steps.metrics-gate-2.outcome == 'failure' }}
         run: |
+          echo "Metrics gate failed at 25% — rolling back"
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
           kubectl scale deployment backend-canary -n carbonledger --replicas=0
@@ -234,19 +262,25 @@ jobs:
           CANARY_STAGES: "50"
           SOAK_DURATION_MS: "0"
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
         continue-on-error: true
 
       - name: Rollback if metrics gate failed
         if: ${{ steps.metrics-gate-3.outcome == 'failure' }}
         run: |
+          echo "Metrics gate failed at 50% — rolling back"
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
           kubectl scale deployment backend-canary -n carbonledger --replicas=0
           exit 1
 
-  # ── Stage 4: Full promotion to 100% ──────────────────────────────────────────
-  canary-promote-100:
-    name: Promote to 100%
+  # ── Stage 4: 100% (automated promotion) ───────────────────────────────────────
+  canary-stage-4:
+    name: Canary Stage 4 — 100% (promote)
     runs-on: ubuntu-latest
     needs: [canary-stage-3]
     environment: production
@@ -259,40 +293,59 @@ jobs:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
 
-      - name: Promote canary to 100%
+      - name: Promote to 100%
         run: |
-          # Route all traffic to canary
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=100 --overwrite
-
-          # Scale canary to match full stable replica count
           kubectl scale deployment backend-canary -n carbonledger --replicas=20
-
-          # Scale down stable deployment
-          kubectl scale deployment backend -n carbonledger --replicas=0
-
-          # Rename canary deployment labels to become the new stable
-          kubectl label deployment backend-canary -n carbonledger track=stable --overwrite
         if: ${{ inputs.dry_run != 'true' }}
 
-      - name: Notify — Full promotion complete
+      - name: Soak — 100%
+        run: sleep $(( ${{ inputs.soak_minutes || '10' }} * 60 ))
+        if: ${{ inputs.dry_run != 'true' }}
+
+      - name: Check metrics gates at 100%
+        id: metrics-gate-4
+        run: node scripts/canary-pause-rollout.js
+        env:
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL || 'http://prometheus:9090' }}
+          CANARY_STAGES: "100"
+          SOAK_DURATION_MS: "0"
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          # Pause SLO/SLI gates (issue #1304)
+          PAUSE_SLO_SUCCESS_RATE: ${{ env.PAUSE_SLO_SUCCESS_RATE }}
+          PAUSE_SLI_RESPONSE_TIME_MS: ${{ env.PAUSE_SLI_RESPONSE_TIME_MS }}
+          PAUSE_SLI_EVENT_LOG_LATENCY_MS: ${{ env.PAUSE_SLI_EVENT_LOG_LATENCY_MS }}
+          PAUSE_SLI_STATUS_CONSISTENCY: ${{ env.PAUSE_SLI_STATUS_CONSISTENCY }}
+        continue-on-error: true
+
+      - name: Rollback if metrics gate failed
+        if: ${{ steps.metrics-gate-4.outcome == 'failure' }}
+        run: |
+          echo "Metrics gate failed at 100% — rolling back"
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+          exit 1
+
+      - name: Notify — Canary promoted to 100%
         uses: slackapi/slack-github-action@v1.26.0
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
             {
-              "text": ":white_check_mark: *Canary fully promoted* — pause feature is now 100% stable\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}"
+              "text": ":white_check_mark: *Pause feature canary promoted to 100%*\n• SHA: `${{ github.sha }}`\n• Actor: ${{ github.actor }}"
             }
         if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
         continue-on-error: true
 
-  # ── Manual rollback job ────────────────────────────────────────────────────────
+  # ── Manual rollback ───────────────────────────────────────────────────────────
   rollback:
-    name: Rollback Canary
+    name: Rollback canary
     runs-on: ubuntu-latest
-    if: ${{ inputs.action == 'rollback' }}
-    environment: staging
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'rollback' }}
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
@@ -307,7 +360,6 @@ jobs:
           kubectl annotate ingress backend-canary -n carbonledger \
             nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
           kubectl scale deployment backend-canary -n carbonledger --replicas=0
-          echo "Canary rolled back to 0%."
 
       - name: Notify — Rollback complete
         uses: slackapi/slack-github-action@v1.26.0
@@ -316,7 +368,32 @@ jobs:
           webhook-type: incoming-webhook
           payload: |
             {
-              "text": ":warning: *Canary rolled back* — pause feature canary set to 0%\n• Actor: ${{ github.actor }}\n• SHA: `${{ github.sha }}`"
+              "text": ":warning: *Pause feature canary rolled back to 0%*\n• Actor: ${{ github.actor }}"
             }
         if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
         continue-on-error: true
+
+  # ── Status query ──────────────────────────────────────────────────────────────
+  status:
+    name: Canary status
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.action == 'status' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Query canary weight and replicas
+        run: |
+          echo "Canary weight:"
+          kubectl get ingress backend-canary -n carbonledger \
+            -o jsonpath='{.metadata.annotations.nginx\.ingress\.kubernetes\.io/canary-weight}'
+          echo ""
+          echo "Canary replicas:"
+          kubectl get deployment backend-canary -n carbonledger \
+            -o jsonpath='{.status.readyReplicas}/{.spec.replicas}'
+          echo ""
