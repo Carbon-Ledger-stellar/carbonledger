@@ -21,6 +21,7 @@ import { RealtimeWebSocketClient } from "../lib/realtime/websocket";
 import { RealtimeEventType } from "../lib/realtime/events";
 import type { CreditsRetiredConfirmedPayload } from "../lib/realtime/events";
 import { dispatchRealtimeEvent } from "../hooks/useTransactionStatus";
+import { usePauseStatusToast } from "../hooks/usePauseStatusToast";
 import Toast, { useToast } from "./Toast";
 
 function deriveWsUrl(): string | null {
@@ -56,6 +57,14 @@ export default function RealtimeNotificationProvider({
   const { toasts, addToast, dismiss } = useToast();
   const [wsStatus, setWsStatus] = useState<string>("idle");
 
+  // Handle CONTRACT_PAUSED / CONTRACT_UNPAUSED push events (#1253).
+  // Polling fallback is enabled so non-authenticated users (no wallet) also
+  // see pause notifications even before they connect.
+  const { handlePauseEvent } = usePauseStatusToast({
+    addToast,
+    enablePolling: true,
+  });
+
   const client = useMemo(() => {
     const wsUrl = deriveWsUrl();
     if (!wsUrl) return null;
@@ -80,6 +89,15 @@ export default function RealtimeNotificationProvider({
             txHash: payload.txHash,
           });
         }
+
+        // Handle contract pause/unpause notifications (#1253).
+        if (
+          event.type === RealtimeEventType.CONTRACT_PAUSED ||
+          event.type === RealtimeEventType.CONTRACT_UNPAUSED
+        ) {
+          handlePauseEvent(event);
+        }
+
         // Always dispatch to the event bus so other hooks can react.
         dispatchRealtimeEvent(event);
       },

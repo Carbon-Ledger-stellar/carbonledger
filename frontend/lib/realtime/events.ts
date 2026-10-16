@@ -8,6 +8,10 @@
 /** Event type constants sent by the server. */
 export const RealtimeEventType = {
   CREDITS_RETIRED_CONFIRMED: "CREDITS_RETIRED_CONFIRMED",
+  /** Fired when a Soroban contract is paused by an admin (#1253). */
+  CONTRACT_PAUSED: "CONTRACT_PAUSED",
+  /** Fired when a Soroban contract resumes normal operation (#1253). */
+  CONTRACT_UNPAUSED: "CONTRACT_UNPAUSED",
 } as const;
 
 export type RealtimeEventType =
@@ -25,8 +29,35 @@ export interface CreditsRetiredConfirmedPayload {
   retiredAt: string;
 }
 
+/** Payload for a CONTRACT_PAUSED event (#1253). */
+export interface ContractPausedPayload {
+  /** Human-readable contract name, e.g. "carbon_credit". */
+  contract: string;
+  /** On-chain Soroban contract ID. */
+  contractId: string;
+  /** Human-readable reason supplied by the admin, if any. */
+  reason?: string | null;
+  /** ISO-8601 string of when the pause auto-expires, if applicable. */
+  pausedUntil?: string | null;
+  /** ISO-8601 timestamp of when the status changed. */
+  changedAt: string;
+}
+
+/** Payload for a CONTRACT_UNPAUSED event (#1253). */
+export interface ContractUnpausedPayload {
+  /** Human-readable contract name, e.g. "carbon_credit". */
+  contract: string;
+  /** On-chain Soroban contract ID. */
+  contractId: string;
+  /** ISO-8601 timestamp of when the status changed. */
+  changedAt: string;
+}
+
 /** Union of all known event payloads. */
-export type RealtimeEventPayload = CreditsRetiredConfirmedPayload;
+export type RealtimeEventPayload =
+  | CreditsRetiredConfirmedPayload
+  | ContractPausedPayload
+  | ContractUnpausedPayload;
 
 /** A parsed event delivered by the WebSocket connection. */
 export interface RealtimeEvent {

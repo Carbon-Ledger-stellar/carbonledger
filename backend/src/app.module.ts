@@ -47,6 +47,7 @@ import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
 import { PortfolioModule } from "./portfolio/portfolio.module";
 import { TwoFactorModule } from "./two-factor/two-factor.module";
+import { ContractSyncModule } from "./contract-sync/contract-sync.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -204,6 +205,7 @@ class HealthController {
     ReconciliationModule,
     PortfolioModule,
     TwoFactorModule,
+    ContractSyncModule,
   ],
   controllers: [HealthController],
   providers: [
