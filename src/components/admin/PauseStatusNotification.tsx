@@ -15,6 +15,8 @@ export interface PauseStatusNotificationProps {
   reason?: string;
   pausedBy?: string;
   pausedAt?: string;
+  error?: string;
+  onRetry?: () => void;
   onPause?: (reason: string) => void;
   onResume?: () => void;
 }
@@ -36,6 +38,8 @@ export function PauseStatusNotification({
   reason,
   pausedBy,
   pausedAt,
+  error,
+  onRetry,
   onPause,
   onResume,
 }: PauseStatusNotificationProps) {
@@ -133,6 +137,21 @@ export function PauseStatusNotification({
           )}
         </div>
       </div>
+
+      {error && (
+        <div className="pause-error" role="alert" aria-live="assertive">
+          <span aria-hidden="true">⚠</span>
+          <div>
+            <div className="pause-error__title">Pause action failed</div>
+            <p className="pause-error__message">{error}</p>
+          </div>
+          {onRetry && (
+            <button type="button" className="pause-error__action" onClick={onRetry}>
+              Try again
+            </button>
+          )}
+        </div>
+      )}
 
       {sheetOpen && (
         <div
