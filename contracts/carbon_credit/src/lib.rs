@@ -250,6 +250,33 @@ pub struct HistoryPrunedEvent {
     pub pruned_at:      u64,
 }
 
+/// Emitted by `pause_contract()` (closes #1212).
+///
+/// Typed event struct so indexers can decode pause events without relying on
+/// positional tuple inspection.
+///
+/// Fields:
+///   admin      – address of the admin who triggered the pause.
+///   paused_at  – ledger timestamp (seconds) at the moment of the call.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PausedEvent {
+    pub admin:     Address,
+    pub paused_at: u64,
+}
+
+/// Emitted by `unpause_contract()` (closes #1213).
+///
+/// Fields:
+///   admin        – address of the admin who cleared the pause.
+///   unpaused_at  – ledger timestamp (seconds) at the moment of the call.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpausedEvent {
+    pub admin:       Address,
+    pub unpaused_at: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZkProof {
@@ -948,6 +975,90 @@ impl CarbonCreditContract {
             (admin, env.ledger().timestamp()),
         );
         Ok(())
+    }
+
+    // ============================================
+    // Named Pause / Unpause Entry Points (closes #1211, #1212, #1213)
+    // ============================================
+
+    /// Set the `is_paused` flag to `true`, halting all state-mutating operations.
+    ///
+    /// This is an indefinite pause (no expiry window). It is admin-only and
+    /// idempotent: calling it when the contract is already paused succeeds
+    /// without error.
+    ///
+    /// Emits a typed [`PausedEvent`] so indexers can parse pause events without
+    /// relying on positional tuple inspection.
+    ///
+    /// Closes #1212.
+    pub fn pause_contract(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        // Idempotent: always write the flag even if already paused.
+        env.storage().persistent().set(&DataKey::PauseEnabled, &true);
+        // PauseUntil = u64::MAX means indefinite — the lazy-expiry check in
+        // require_not_paused only clears the flag when until <= now, and
+        // u64::MAX will never be <= any real timestamp.
+        env.storage()
+            .persistent()
+            .set(&DataKey::PauseUntil, &u64::MAX);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("paused")),
+            PausedEvent {
+                admin,
+                paused_at: env.ledger().timestamp(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Set the `is_paused` flag to `false`, restoring normal contract operation.
+    ///
+    /// Admin-only and idempotent: calling it when the contract is already
+    /// unpaused succeeds without error.
+    ///
+    /// Emits a typed [`UnpausedEvent`].
+    ///
+    /// Closes #1213.
+    pub fn unpause_contract(env: Env, admin: Address) -> Result<(), CarbonError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, Role::Admin)?;
+
+        // Idempotent: always write the flag even if already unpaused.
+        env.storage().persistent().set(&DataKey::PauseEnabled, &false);
+        env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("unpaused")),
+            UnpausedEvent {
+                admin,
+                unpaused_at: env.ledger().timestamp(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Returns `true` if the `is_paused` flag is currently set.
+    ///
+    /// This query reads the same `DataKey::PauseEnabled` / `DataKey::PauseUntil`
+    /// storage as `require_not_paused`, ensuring callers observe the same state
+    /// that the contract enforces at runtime. Closes #1211.
+    pub fn get_pause_state(env: Env) -> bool {
+        let paused: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PauseEnabled)
+            .unwrap_or(false);
+        let until: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PauseUntil)
+            .unwrap_or(0);
+        // An indefinite pause (until == u64::MAX) is always active.
+        // A timed pause is active while ledger.timestamp() < until.
+        paused && (until == u64::MAX || until > env.ledger().timestamp())
     }
 
     /// Returns `true` if the contract is currently paused. Query functions work
