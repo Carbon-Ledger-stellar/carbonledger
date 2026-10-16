@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { retireCredits } from "../../lib/api";
+import { retireCredits, useMarketplacePauseState } from "../../lib/api";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
@@ -20,6 +20,8 @@ import {
   TRANSACTION_MAX_POLLS,
 } from "../../hooks/useTransactionPoller";
 import { simulateRetirementPreview } from "../../lib/soroban";
+import { usePauseWebSocket } from "../../lib/realtime/usePauseWebSocket";
+import PausedOperationButton from "../../components/PausedOperationButton";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -146,6 +148,23 @@ function RetirePageContent() {
   const { toasts, addToast, dismiss } = useToast();
   const { status: walletStatus, address: walletKey, refresh: refreshWallet } =
     useWalletStatus();
+
+  // ── Pause state — Issue #1254 ─────────────────────────────────────────────
+  // The retire operation calls the carbon_credit contract, so we check that
+  // contract's pause state. We reuse useMarketplacePauseState for now — a
+  // dedicated credit-contract hook can be introduced separately.
+  const { pauseState: pollingPauseState } = useMarketplacePauseState();
+  const { isPaused, pauseState: creditPauseState } = usePauseWebSocket({
+    contract: "carbon_credit",
+    pollingState: {
+      isPaused: pollingPauseState.paused,
+      pausedBy: pollingPauseState.pausedBy,
+      reason: pollingPauseState.reason,
+      pausedUntil: pollingPauseState.pausedUntil
+        ? pollingPauseState.pausedUntil * 1000
+        : undefined,
+    },
+  });
 
   // ── Simulation state ─────────────────────────────────────────────────────────
   const [preview, setPreview] = useState<PreviewState>({
@@ -631,29 +650,31 @@ function RetirePageContent() {
             />
           ) : !showPreview ? (
             /* Before preview: "Review & Preview" CTA */
-            <button
-              type="button"
-              onClick={handleShowPreview}
-              disabled={isDisabled}
-              aria-disabled={isDisabled}
-              aria-describedby="retire-warning"
-              style={{
-                background: isDisabled ? colors.neutral[300] : "#dc2626",
-                color: "#fff",
-                border: "none",
-                borderRadius: "0.5rem",
-                padding: "0.875rem",
-                fontSize: "1rem",
-                fontWeight: 700,
-                cursor: isDisabled ? "not-allowed" : "pointer",
-              }}
-            >
-              {txStatus === "confirmed"
-                ? t("retiredCheck")
-                : busy
-                  ? t("processing")
-                  : "Review retirement →"}
-            </button>
+            <PausedOperationButton isPaused={isPaused} pauseReason={creditPauseState.reason}>
+              <button
+                type="button"
+                onClick={handleShowPreview}
+                disabled={isDisabled}
+                aria-disabled={isDisabled}
+                aria-describedby="retire-warning"
+                style={{
+                  background: isDisabled ? colors.neutral[300] : "#dc2626",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "0.5rem",
+                  padding: "0.875rem",
+                  fontSize: "1rem",
+                  fontWeight: 700,
+                  cursor: isDisabled ? "not-allowed" : "pointer",
+                }}
+              >
+                {txStatus === "confirmed"
+                  ? t("retiredCheck")
+                  : busy
+                    ? t("processing")
+                    : "Review retirement →"}
+              </button>
+            </PausedOperationButton>
           ) : null}
         </div>
 
