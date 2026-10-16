@@ -56,6 +56,36 @@ export interface SuspendProjectPayload {
   reason:    string;
 }
 
+export type PausableContract = 'carbon_credit' | 'carbon_marketplace';
+
+export interface PauseStatus {
+  contract: PausableContract;
+  paused: boolean;
+  pausedUntil: number | null;
+}
+
+export interface PauseActionResult extends PauseStatus {
+  contractId: string;
+  txHash: string;
+  traceId: string;
+}
+
+export interface PausePeriod {
+  contract: string;
+  admin: string;
+  reason: string;
+  txHash: string;
+  startedAt: string;
+  endedAt: string;
+  requestedSeconds: number | null;
+  durationSeconds: number;
+  endedBy: 'manual' | 'expired' | 'renewed' | 'ongoing';
+}
+
+export interface PauseSummary {
+  periods: PausePeriod[];
+}
+
 // ─── Auth helper ──────────────────────────────────────────────────────────────
 
 function authHeaders(): HeadersInit {
@@ -92,6 +122,32 @@ export const fetchAdminStats    = () => request<AdminStats>('/admin/stats');
 export const fetchOracleHealth  = () => request<OracleHealth[]>('/admin/oracle-health');
 export const fetchVerifiers     = () => request<VerifierActivity[]>('/admin/verifiers');
 export const fetchAdminProjects = () => request<AdminProject[]>('/admin/projects');
+
+export const fetchPauseState = (contract: PausableContract) =>
+  request<PauseStatus>(`/admin/contracts/${contract}/pause`);
+
+export const pauseContract = (contract: PausableContract, untilTimestamp: number) =>
+  request<PauseActionResult>(`/admin/contracts/${contract}/pause`, {
+    method: 'POST',
+    body: JSON.stringify({ untilTimestamp }),
+  });
+
+export const unpauseContract = (contract: PausableContract) =>
+  request<PauseActionResult>(`/admin/contracts/${contract}/unpause`, { method: 'POST' });
+
+export const recordPauseReason = (payload: {
+  contract: 'credit' | 'marketplace';
+  action: 'pause' | 'unpause';
+  txHash: string;
+  reason: string;
+  pausedUntil?: string;
+}) => request('/admin/pause-analytics/events', {
+  method: 'POST',
+  body: JSON.stringify(payload),
+});
+
+export const fetchPauseSummary = () =>
+  request<PauseSummary>('/admin/pause-analytics/summary');
 
 /**
  * Calls POST /admin/projects/suspend
