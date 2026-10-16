@@ -1,4 +1,5 @@
 import { IsString, IsOptional, Length, IsIn, IsInt, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
 import { IsStellarAddress } from '../common/validators';
 
 /**
@@ -100,4 +101,40 @@ export class PauseContractDto {
   @IsInt()
   @Min(1)
   untilTimestamp: number;
+}
+
+/**
+ * DTO for querying pause history (#1228).
+ *
+ * All fields are optional — omitting them returns the full history.
+ */
+export class PauseHistoryQueryDto {
+  @IsOptional()
+  @IsIn(['credit', 'marketplace'])
+  contract?: string;
+
+  @IsOptional()
+  @IsIn(['pause', 'unpause'])
+  action?: string;
+
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @Type(() => Number)
+  limit?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  offset?: number;
 }
