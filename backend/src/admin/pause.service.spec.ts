@@ -24,6 +24,7 @@ describe('PauseService - tracing (#1307)', () => {
   const mockPrisma = {
     $transaction: jest.fn().mockResolvedValue([]),
     adminConfig: { upsert: jest.fn(), findMany: jest.fn() },
+    auditLogEntry: { create: jest.fn().mockResolvedValue({ id: 'ale-test' }) },
   };
   const mockAudit = { createLog: jest.fn() };
   const mockWebhooks = { dispatch: jest.fn() };

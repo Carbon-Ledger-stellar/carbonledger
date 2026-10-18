@@ -207,6 +207,15 @@ model MarketListing {
   methodology     String
   country         String
   status          String   @default("Active")
+  /// Whether this listing is currently paused and unavailable for purchase.
+  /// Defaults to false so existing rows remain active without a data migration.
+  is_paused       Boolean  @default(false)
+  /// Timestamp when this listing was paused; null when not paused.
+  paused_at       DateTime?
+  /// Stellar public key of the admin who triggered the pause.
+  paused_by       String?
+  /// Human-readable reason for the pause (e.g. "Security investigation").
+  pause_reason    String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
@@ -222,6 +231,8 @@ model MarketListing {
   @@index([status, createdAt])
   // Performance optimization indexes
   @@index([status, createdAt])  // Optimize listing browsing with pagination
+  // Issue #1231: fast lookup of all currently-paused listings
+  @@index([is_paused, paused_at])
 }
 
 model MonitoringData {
@@ -855,4 +866,70 @@ model PauseEvent {
   @@index([contract, occurredAt])
   @@index([occurredAt])
   @@map("pause_events")
+}
+
+/// Tracks the cached pause status for each Soroban contract polled by
+/// ContractStateSyncService (#1230). One row per contract.
+/// Updated on every sync cycle; triggers a change event when isPaused flips.
+model ContractSyncState {
+  id               String    @id @default(cuid())
+  /// On-chain contract ID (Soroban address)
+  contractId       String    @unique
+  /// Human-readable contract name, e.g. "carbon_credit"
+  contractName     String
+  /// Cached pause status — reflects the last successful poll
+  isPaused         Boolean   @default(false)
+  /// Human-readable pause reason returned by the contract
+  pauseReason      String?
+  /// Auto-expiry timestamp for the current pause window; null if unpaused
+  pausedUntil      DateTime?
+  /// When this row was last successfully synced from the chain
+  lastSyncedAt     DateTime  @default(now())
+  /// Last error message (null if last sync was successful)
+  lastError        String?
+  /// When the last error occurred
+  lastErrorAt      DateTime?
+  /// 'idle' | 'syncing' | 'completed' | 'failed'
+  syncStatus       String    @default("idle")
+  /// Number of consecutive sync errors; reset to 0 on success
+  consecutiveErrors Int      @default(0)
+  updatedAt        DateTime  @updatedAt
+
+  @@index([contractName])
+  @@index([isPaused])
+  @@index([lastSyncedAt])
+  @@map("contract_sync_state")
+}
+
+/// Audit trail of every alert sent (email / Slack / webhook) when a
+/// contract pause status changes (#1229). Used to enforce per-contract
+/// cooldown windows and provide an ops notification history.
+model PauseAlertLog {
+  id            String    @id @default(cuid())
+  /// On-chain contract ID
+  contractId    String
+  /// Human-readable contract name
+  contractName  String
+  /// 'pause' | 'unpause'
+  action        String
+  /// 'email' | 'slack' | 'webhook'
+  channel       String
+  /// Recipient address / URL / identifier (may be redacted in logs)
+  recipient     String?
+  /// Pause reason passed to the alert
+  reason        String?
+  /// Auto-expiry for the pause window (if applicable)
+  pausedUntil   DateTime?
+  /// 'sent' | 'failed' | 'skipped_cooldown'
+  status        String    @default("sent")
+  /// Error detail when status = 'failed'
+  error         String?
+  sentAt        DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  @@index([contractId, sentAt(sort: Desc)])
+  @@index([channel, sentAt(sort: Desc)])
+  @@index([action])
+  @@index([sentAt(sort: Desc)])
+  @@map("pause_alert_log")
 }

@@ -80,6 +80,80 @@ export class PauseService {
     return { contract, paused, pausedUntil: paused ? pausedUntil : null };
   }
 
+  /**
+   * Retrieve the full pause/unpause history with pagination and optional
+   * date-range filtering (#1228).
+   *
+   * Results are ordered newest-first.  The caller may filter by:
+   *   - contract     'credit' | 'marketplace'
+   *   - action       'pause' | 'unpause'
+   *   - startDate    ISO-8601; events at or after this timestamp
+   *   - endDate      ISO-8601; events at or before this timestamp
+   *   - limit        page size (default 20, max 100)
+   *   - offset       zero-based row offset for page navigation
+   */
+  async getPauseHistory(query: {
+    contract?: string;
+    action?: string;
+    startDate?: string;
+    endDate?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    data: Array<{
+      id: string;
+      contract: string;
+      action: string;
+      admin: string;
+      reason: string | null;
+      pausedUntil: Date | null;
+      txHash: string;
+      eventId: string | null;
+      occurredAt: Date;
+      createdAt: Date;
+    }>;
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const limit = Math.min(Math.max(Number(query.limit ?? 20), 1), 100);
+    const offset = Math.max(Number(query.offset ?? 0), 0);
+
+    const where: Record<string, unknown> = {};
+    if (query.contract) where['contract'] = query.contract;
+    if (query.action) where['action'] = query.action;
+    if (query.startDate || query.endDate) {
+      where['occurredAt'] = {
+        ...(query.startDate ? { gte: new Date(query.startDate) } : {}),
+        ...(query.endDate ? { lte: new Date(query.endDate) } : {}),
+      };
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.pauseEvent.findMany({
+        where,
+        orderBy: { occurredAt: 'desc' },
+        take: limit,
+        skip: offset,
+        select: {
+          id: true,
+          contract: true,
+          action: true,
+          admin: true,
+          reason: true,
+          pausedUntil: true,
+          txHash: true,
+          eventId: true,
+          occurredAt: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.pauseEvent.count({ where }),
+    ]);
+
+    return { data, total, limit, offset };
+  }
+
   private async run(
     action: PauseAction,
     contract: PausableContract,
@@ -135,6 +209,27 @@ export class PauseService {
             txHash: receipt.txHash,
             after: { contract, paused, pausedUntil: untilTimestamp },
             metadata: { traceId },
+          });
+          // Write a dedicated AuditLogEntry (sensitive-ops audit trail, #1227).
+          // This entry is immutable — the audit_logs table has no delete/update
+          // in application code, making it the canonical record for compliance.
+          await this.prisma.auditLogEntry.create({
+            data: {
+              actor_id: adminAddress,
+              action: `contract.${action}`,
+              resource_type: 'PauseEvent',
+              resource_id: contractId,
+              details: {
+                contract,
+                action,
+                admin: adminAddress,
+                paused,
+                pausedUntil: untilTimestamp,
+                txHash: receipt.txHash,
+                traceId,
+                occurredAt: new Date().toISOString(),
+              },
+            },
           });
         });
 
