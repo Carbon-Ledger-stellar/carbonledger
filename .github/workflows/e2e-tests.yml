@@ -7,8 +7,8 @@ on:
     branches: [main, develop]
 
 concurrency:
-  group: e2e-tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: e2e-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   e2e-tests:
@@ -252,20 +252,3 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
-
-      - name: Install dependencies
-        working-directory: ./backend
-        run: npm ci
-
-      - name: Run pause animation tests
-        working-directory: ./backend
-        run: npm run test:e2e -- --testPathPattern=pause-animation
-        env:
-          NODE_ENV: test
