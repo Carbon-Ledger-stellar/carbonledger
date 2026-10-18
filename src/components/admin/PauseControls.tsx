@@ -186,6 +186,7 @@ export const PauseControls: React.FC<PauseControlsProps> = ({
     onPause?.(trimmed);
     setSheetOpen(false);
   };
+  const unavailableReason = isSubmitting ? 'Please wait while the pause request is processed.' : undefined;
 
   return (
     <div style={styles.container}>
@@ -214,32 +215,41 @@ export const PauseControls: React.FC<PauseControlsProps> = ({
 
       {/* Primary action: full-width, touch-friendly */}
       {isPaused ? (
-        <button
-          type="button"
-          onClick={onResume}
-          disabled={isSubmitting}
-          style={{
-            ...styles.button,
-            ...styles.resumeButton,
-            ...(isSubmitting ? styles.disabled : null),
-          }}
-        >
-          {isSubmitting ? 'Resuming…' : 'Resume system'}
-        </button>
+        <span className="pause-action-wrap" data-tooltip={unavailableReason}>
+          <button
+            type="button"
+            onClick={onResume}
+            disabled={isSubmitting}
+            className={isSubmitting ? 'pause-action--disabled' : undefined}
+            aria-describedby={unavailableReason ? 'pause-action-help' : undefined}
+            style={{
+              ...styles.button,
+              ...styles.resumeButton,
+              ...(isSubmitting ? styles.disabled : null),
+            }}
+          >
+            {isSubmitting ? 'Resuming…' : 'Resume system'}
+          </button>
+        </span>
       ) : (
-        <button
-          type="button"
-          onClick={openSheet}
-          disabled={isSubmitting}
-          style={{
-            ...styles.button,
-            ...styles.pauseButton,
-            ...(isSubmitting ? styles.disabled : null),
-          }}
-        >
-          Pause system
-        </button>
+        <span className="pause-action-wrap" data-tooltip={unavailableReason}>
+          <button
+            type="button"
+            onClick={openSheet}
+            disabled={isSubmitting}
+            className={isSubmitting ? 'pause-action--disabled' : undefined}
+            aria-describedby={unavailableReason ? 'pause-action-help' : undefined}
+            style={{
+              ...styles.button,
+              ...styles.pauseButton,
+              ...(isSubmitting ? styles.disabled : null),
+            }}
+          >
+            Pause system
+          </button>
+        </span>
       )}
+      {unavailableReason && <span id="pause-action-help" role="status" className="sr-only">{unavailableReason}</span>}
 
       {/* Bottom sheet for pause reason */}
       {isSheetOpen ? (
