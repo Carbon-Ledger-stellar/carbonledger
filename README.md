@@ -918,3 +918,6 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 <!-- handsoff-issue-1302 -->
 - #1302: DevOps - Create pause metrics dashboard
+
+<!-- handsoff-issue-1549 -->
+- #1549: DevOps - Cache cargo builds in CI
