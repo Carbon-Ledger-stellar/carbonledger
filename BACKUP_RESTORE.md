@@ -18,6 +18,63 @@ This document describes the automated PostgreSQL backup and restore infrastructu
 
 ---
 
+## Automated Scheduling (CronJobs)
+
+The backup and restore-test jobs are scheduled automatically. Two deployment options are supported; use whichever matches the environment.
+
+### Option A: Kubernetes CronJobs
+
+| CronJob | Schedule | Purpose |
+|---------|----------|---------|
+| `carbonledger-db-backup` | `0 2 * * *` (daily, 02:00 UTC) | Full-database `pg_dump` to object storage |
+| `carbonledger-pause-events-backup` | `0 * * * *` (hourly) | `pause_events` table dump to object storage |
+| `carbonledger-restore-test` | `0 3 1 * *` (monthly, 1st at 03:00 UTC) | Restore test against the latest backup |
+
+Each CronJob runs the corresponding script from `scripts/` (see [Components](#components)) and inherits the same environment variables (`DATABASE_URL`, `BACKUP_S3_BUCKET`, optional `ADMIN_ALERT_WEBHOOK`).
+
+### Option B: systemd Timers
+
+On hosts without Kubernetes, the same schedules are provided by systemd timers:
+
+- `carbonledger-db-backup.timer` — daily at 02:00 UTC
+- `carbonledger-pause-events-backup.timer` — hourly at minute 0
+- `carbonledger-restore-test.timer` — monthly on the 1st at 03:00 UTC
+
+### Retention (30 days)
+
+Full-database backups are retained for **30 days**. Retention is enforced by an S3 lifecycle rule scoped to the full-backup prefix, so it does not affect the 365-day `pause-events/` retention:
+
+```terraform
+rule {
+  id     = "expire-full-backups-after-30-days"
+  status = "Enabled"
+
+  filter {
+    prefix = "backups/"
+  }
+
+  expiration {
+    days = 30
+  }
+
+  noncurrent_version_expiration {
+    noncurrent_days = 30
+  }
+}
+```
+
+### Monthly Restore Test
+
+The restore test runs on the 1st of each month at 03:00 UTC. It downloads the latest full-database backup, restores it into a scratch database, and asserts:
+
+- `pg_restore --list` succeeds (backup is not corrupt)
+- Core table row counts match the counts recorded at backup time
+- Restore completes within the 30-minute SLA
+
+A JSON report is written to `/tmp/restore-test-report-TIMESTAMP.json` and a webhook notification is sent on completion or failure.
+
+---
+
 ## Pause Events Backup Strategy
 
 The `pause_events` table is the immutable audit trail for all pause/unpause actions. To guarantee this audit trail is never lost, it has a dedicated backup strategy that is independent of the full-database backup.
@@ -189,248 +246,6 @@ The pause-events restore path is validated on a recurring schedule so the audit 
 
 **Runs**: Daily at 02:00 UTC via systemd timer
 
-**Environment Variables Required**:
-- `DATABASE_URL`: PostgreSQL connection string
-- `BACKUP_S3_BUCKET`: S3 bucket name for backups
+**Environmen
 
-**Optional Environment Variables**:
-- `ADMIN_ALERT_WEBHOOK`: Slack/Discord webhook for notifications
-
-**Process**:
-1. Dumps database using `pg_dump --format=custom` (binary format)
-2. Uploads to S3 with `STANDARD_IA` storage class
-3. Tracks metrics: backup size, dump time, upload time
-4. Logs metrics to JSON file for monitoring
-5. Alerts on failure
-
-**Output**:
-- Metrics logged to: `/var/log/carbonledger/backup-metrics.json`
-- Logs to: `/var/log/carbonledger/backup.log`
-
-### 2. Restore Script: `scripts/restore-db.sh`
-
-**Usage**:
-```bash
-# Restore latest backup to default database
-./restore-db.sh
-
-# Restore specific backup to named database
-./restore-db.sh --backup-key s3://bucket/path/backup.dump --target-db staging_db
-
-# Verify backup without restoring
-./restore-db.sh --backup-key s3://bucket/path/backup.dump --verify-only
-```
-
-**Features**:
-- Downloads backup from S3
-- Verifies backup integrity with `pg_restore --list`
-- Creates fresh target database
-- Restores via `pg_restore`
-- Validates restored data
-- Tracks restore metrics in database
-- Alerts on failure
-
-**Restore Time Targets**:
-- Download time: Typically < 5 minutes (depends on backup size)
-- Restore time: Target < 30 minutes (SLA)
-- Verification time: Typically < 2 minutes
-- **Total restore time SLA: < 30 minutes**
-
-### 3. Monthly Restore Test: `scripts/test-restore-monthly.sh`
-
-**Runs**: 1st of each month at 03:00 UTC via systemd timer
-
-**Process**:
-1. Finds latest backup in S3
-2. Creates temporary staging database
-3. Runs full restore procedure
-4. Validates restore time against 30-minute SLA
-5. Verifies data integrity (table count, row sampling)
-6. Generates JSON report
-7. Sends webhook notification
-8. Cleans up temporary database
-
-**Report Location**: `/tmp/restore-test-report-TIMESTAMP.json`
-
-**Exit Codes**:
-- `0`: Test passed, restore time within SLA
-- `1`: Test failed (critical error)
-- `2`: Test passed but restore time exceeded SLA (warning)
-
----
-
-## Systemd Configuration
-
-### Backup Timer
-
-**File**: `scripts/systemd/carbonledger-backup.service`
-- Executes: `/opt/carbonledger/scripts/backup-db.sh`
-- User: `carbonledger`
-- Environment: Loads from `/opt/carbonledger/.env`
-- Output: Appended to `/var/log/carbonledger/backup.log`
-
-**File**: `scripts/systemd/carbonledger-backup.timer`
-- Schedule: `*-*-* 02:00:00 UTC` (daily at 02:00 UTC)
-- Persistent: Yes (will catch up if system reboots)
-
-**Installation**:
-```bash
-sudo cp scripts/systemd/carbonledger-backup.* /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable carbonledger-backup.timer
-sudo systemctl start carbonledger-backup.timer
-```
-
-**Verification**:
-```bash
-# Check timer status
-sudo systemctl status carbonledger-backup.timer
-
-# List scheduled runs
-sudo systemctl list-timers carbonledger-backup.timer
-
-# View recent logs
-sudo journalctl -u carbonledger-backup.service -n 50 -f
-```
-
-### Pause Events Backup Timer
-
-**File**: `scripts/systemd/carbonledger-pause-events-backup.service`
-- Executes: `/opt/carbonledger/scripts/backup-pause-events.sh`
-- User: `carbonledger`
-- Environment: Loads from `/opt/carbonledger/.env`
-- Output: Appended to `/var/log/carbonledger/pause-events-backup.log`
-
-**File**: `scripts/systemd/carbonledger-pause-events-backup.timer`
-- Schedule: `*-*-* *:00:00 UTC` (hourly at minute 0)
-- Persistent: Yes
-
-**Installation**:
-```bash
-sudo cp scripts/systemd/carbonledger-pause-events-backup.* /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable carbonledger-pause-events-backup.timer
-sudo systemctl start carbonledger-pause-events-backup.timer
-```
-
-### Restore Test Timer
-
-**File**: `scripts/systemd/carbonledger-restore-test.service`
-- Executes: `/opt/carbonledger/scripts/test-restore-monthly.sh`
-- Timeout: 60 minutes (allows for large restore operations)
-
-**File**: `scripts/systemd/carbonledger-restore-test.timer`
-- Schedule: `*-*-01 03:00:00 UTC` (1st of month at 03:00 UTC)
-- Persistent: Yes
-
-**Installation**:
-```bash
-sudo cp scripts/systemd/carbonledger-restore-test.* /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable carbonledger-restore-test.timer
-sudo systemctl start carbonledger-restore-test.timer
-```
-
----
-
-## AWS Infrastructure (Terraform)
-
-### S3 Backup Bucket Configuration
-
-**Location**: `infra/main/storage.tf`
-
-**Features**:
-- **Name**: `{project}-db-backups-{workspace}` (e.g., `carbonledger-db-backups-production`)
-- **Encryption**: AES-256 server-side encryption
-- **Versioning**: Enabled (keeps previous versions for 30 days)
-- **Lifecycle Policy**:
-  - Expires objects after 30 days
-  - Removes noncurrent versions after 30 days
-  - Expires objects under the `pause-events/` prefix after 365 days
-- **Access Control**: All public access blocked
-- **Storage Class**: `STANDARD_IA` (infrequent access for cost optimization)
-
-**Lifecycle Configuration**:
-```terraform
-rule {
-  id     = "expire-after-30-days"
-  status = "Enabled"
-
-  expiration {
-    days = 30
-  }
-
-  noncurrent_version_expiration {
-    noncurrent_days = 30
-  }
-}
-
-rule {
-  id     = "expire-pause-events-after-365-days"
-  status = "Enabled"
-
-  filter {
-    prefix = "pause-events/"
-  }
-
-  expiration {
-    days = 365
-  }
-
-  noncurrent_version_expiration {
-    noncurrent_days = 365
-  }
-}
-```
-
-**IAM Policy**:
-- App EC2 role has permissions to:
-  - `s3:GetObject` (download backups)
-  - `s3:PutObject` (upload backups)
-  - `s3:DeleteObject` (for cleanup)
-  - `s3:ListBucket` (find backups)
-
----
-
-## Database Schema
-
-### backup_metrics Table
-
-Tracks all backup and restore operations for monitoring and auditing.
-
-**Columns**:
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | SERIAL | Primary key |
-| `backup_key` | TEXT | S3 path to backup (unique) |
-| `backup_size_bytes` | BIGINT | Size in bytes |
-| `dump_time_seconds` | INTEGER | Time to dump database |
-| `upload_time_seconds` | INTEGER | Time to upload to S3 |
-| `download_time_seconds` | INTEGER | Time to download from S3 |
-| `restore_time_seconds` | INTEGER | Time to restore backup |
-| `verify_time_seconds` | INTEGER | Time to verify restored DB |
-| `restored_at` | TIMESTAMP | When backup was restored (NULL if not restored) |
-| `created_at` | TIMESTAMP | When row was created (backup time) |
-| `updated_at` | TIMESTAMP | When row was last updated |
-
-**Indexes**:
-- `created_at DESC` (for recent backups)
-- `restored_at DESC` (for restore history)
-- `backup_size_bytes` (for size monitoring)
-
-**Migration**: `backend/prisma/migrations/20260829000001_add_backup_metrics/migration.sql`
-
----
-
-## Monitoring & Alerting
-
-### Backup Metrics
-
-Metrics are logged to `/var/log/carbonledger/backup-metrics.json` in newline-delimited JSON format. Pause-events backups log to `/var/log/carbonledger/pause-events-backup-metrics.json` with the same schema, plus a `row_count` field for the `pause_events` table.
-
-### Alerts
-
-- **Backup failure**: Webhook alert if any hourly `pause_events` backup fails.
-- **Missing backup**: Alert if no `pause_events` backup has been recorded in the last 2 hours.
-- **Restore test failure**: Alert if the monthly pause-events restore test exits non-zero.
-- **Retention drift**: Alert if the oldest `pause_events` backup in S3 is younger than 300 days (indicates retention misconfiguration).
+/* … truncated 7359 chars — edit only what you need near the top … */
