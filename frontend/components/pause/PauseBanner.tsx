@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { PauseBannerProps } from './types';
 
 export const PauseBanner: React.FC<PauseBannerProps> = ({
@@ -14,6 +14,13 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
   className = '',
 }) => {
   const [dismissed, setDismissed] = useState(false);
+  const [, setClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!isPaused || !pausedUntil) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [isPaused, pausedUntil]);
 
   if (!isPaused || dismissed) {
     return null;
@@ -42,11 +49,11 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
       aria-live="assertive"
       aria-atomic="true"
       data-testid="pause-banner"
-      className={`w-full bg-rose-700 text-white px-4 py-3 shadow-md motion-reduce:transition-none dark:bg-rose-950 dark:border-b dark:border-rose-800 ${className}`}
+      className={`pause-system-banner ${className}`}
     >
-      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="flex items-start sm:items-center space-x-3 text-sm">
-          <span className="flex-shrink-0 bg-white/20 p-1.5 rounded-full" aria-hidden="true">
+      <div className="pause-system-banner__inner">
+        <div className="pause-system-banner__message">
+          <span className="pause-system-banner__icon" aria-hidden="true">
             <svg
               className="h-5 w-5 text-white"
               fill="none"
@@ -61,30 +68,30 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
               />
             </svg>
           </span>
-          <div className="leading-snug">
-            <span className="font-semibold tracking-wide uppercase text-xs mr-2 bg-white/20 px-2 py-0.5 rounded">
+          <div className="pause-system-banner__copy">
+            <span className="pause-system-banner__eyebrow">
               Emergency Notice
             </span>
-            <span className="font-medium">
+            <strong>
               CarbonLedger contract operations are temporarily paused.
-            </span>{' '}
-            <span className="text-white/95">
+            </strong>
+            <span>
               {reason || 'Transfers, minting, and retirements are temporarily halted for system security.'}
             </span>
             {remaining && (
-              <span className="block sm:inline sm:ml-2 text-rose-100 font-medium">
+              <span className="pause-system-banner__remaining">
                 (Estimated resolution: {remaining})
               </span>
             )}
           </div>
         </div>
 
-        <div className="flex items-center space-x-3 flex-shrink-0 self-end sm:self-center">
+        <div className="pause-system-banner__actions">
           {onViewDetails && (
             <button
               type="button"
               onClick={onViewDetails}
-              className="text-xs font-semibold bg-white text-rose-800 hover:bg-rose-50 px-3 py-1.5 rounded shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-white dark:bg-rose-900 dark:text-rose-100 dark:hover:bg-rose-800 dark:focus-visible:ring-rose-300"
+              className="pause-system-banner__details"
             >
               Details
             </button>
@@ -95,7 +102,7 @@ export const PauseBanner: React.FC<PauseBannerProps> = ({
               type="button"
               onClick={handleDismiss}
               aria-label="Dismiss pause notification"
-              className="p-1 rounded-md text-white/90 hover:text-white hover:bg-white/10 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-white"
+              className="pause-system-banner__dismiss"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path

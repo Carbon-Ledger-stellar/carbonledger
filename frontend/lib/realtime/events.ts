@@ -8,9 +8,9 @@
 /** Event type constants sent by the server. */
 export const RealtimeEventType = {
   CREDITS_RETIRED_CONFIRMED: "CREDITS_RETIRED_CONFIRMED",
-  /** Fired when a Soroban contract is paused by an admin (#1253). */
+  /** Emitted when an admin pauses a contract or marketplace listing. */
   CONTRACT_PAUSED: "CONTRACT_PAUSED",
-  /** Fired when a Soroban contract resumes normal operation (#1253). */
+  /** Emitted when an admin resumes a previously paused contract or listing. */
   CONTRACT_UNPAUSED: "CONTRACT_UNPAUSED",
 } as const;
 
@@ -29,28 +29,38 @@ export interface CreditsRetiredConfirmedPayload {
   retiredAt: string;
 }
 
-/** Payload for a CONTRACT_PAUSED event (#1253). */
+/**
+ * Payload for a CONTRACT_PAUSED event.
+ * Mirrors the fields from the PauseEvent DB model so the frontend can update
+ * its local pause state without polling.
+ */
 export interface ContractPausedPayload {
-  /** Human-readable contract name, e.g. "carbon_credit". */
+  /** "credit" | "marketplace" */
   contract: string;
-  /** On-chain Soroban contract ID. */
-  contractId: string;
-  /** Human-readable reason supplied by the admin, if any. */
-  reason?: string | null;
-  /** ISO-8601 string of when the pause auto-expires, if applicable. */
-  pausedUntil?: string | null;
-  /** ISO-8601 timestamp of when the status changed. */
-  changedAt: string;
+  /** Stellar public key of the admin that initiated the pause. */
+  pausedBy: string;
+  /** Human-readable reason for the pause; may be absent for emergency pauses. */
+  reason?: string;
+  /** Unix timestamp (ms) when the pause auto-expires; null means indefinite. */
+  pausedUntil?: number;
+  /** ISO-8601 timestamp when the pause took effect. */
+  occurredAt: string;
+  /** Stellar transaction hash for the pause operation. */
+  txHash: string;
 }
 
-/** Payload for a CONTRACT_UNPAUSED event (#1253). */
+/**
+ * Payload for a CONTRACT_UNPAUSED event.
+ */
 export interface ContractUnpausedPayload {
-  /** Human-readable contract name, e.g. "carbon_credit". */
+  /** "credit" | "marketplace" */
   contract: string;
-  /** On-chain Soroban contract ID. */
-  contractId: string;
-  /** ISO-8601 timestamp of when the status changed. */
-  changedAt: string;
+  /** Stellar public key of the admin that resumed operations. */
+  unpausedBy: string;
+  /** ISO-8601 timestamp when the unpause took effect. */
+  occurredAt: string;
+  /** Stellar transaction hash for the unpause operation. */
+  txHash: string;
 }
 
 /** Union of all known event payloads. */

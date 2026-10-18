@@ -37,6 +37,15 @@ Understanding the system:
 | **[TTL Cost Analysis](ttl-cost.md)** | Soroban storage cost analysis | Developers |
 | **[Verifier Onboarding](verifier-onboarding.md)** | Guide for carbon verifiers | Verifiers |
 
+### 🎨 UX Documentation
+
+User experience and interaction design:
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| **[Pause UX Guide](pause-ux-guide.md)** | Comprehensive UX guide — personas, interaction patterns, error handling, accessibility, mobile (closes #1301) | Frontend devs, designers |
+| **[Pause User Flow Diagrams](pause-user-flow-diagrams.md)** | Mermaid sequence diagrams for all pause scenarios: activation, blocked user, auto-expiry, manual unpause, escalation (closes #1269) | Frontend devs, QA, designers |
+
 ### 🌿 Carbon Domain References
 
 | Document | Description | Audience |

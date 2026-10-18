@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
-import { useListings, useProjectsForMap, MarketListing, ListingSortField, SortOrder } from "../../lib/api";
+import { useListings, useProjectsForMap, MarketListing, ListingSortField, SortOrder, useMarketplacePauseState } from "../../lib/api";
 import { useCartStore } from "../../lib/use-cart-store";
 import { formatTonnes } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
@@ -20,6 +20,9 @@ import Toast, { useToast } from "../../components/Toast";
 import Highlight from "../../components/Highlight";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import MarketplaceError from "../../components/MarketplaceError";
+import { PauseBanner } from "../../components/pause";
+import PausedOperationButton from "../../components/PausedOperationButton";
+import { usePauseWebSocket } from "../../lib/realtime/usePauseWebSocket";
 
 // Heavy components — loaded only when the page renders, not at initial bundle time.
 // OrderBookChart uses Recharts (chart library) — ssr: false because Recharts reads
@@ -65,6 +68,27 @@ function MarketplaceContent() {
     if (nextSortBy) params.set("order", nextSortOrder); else params.delete("order");
     router.push(`?${params.toString()}`, { scroll: false });
   }
+
+  // ── Pause state — Issue #1255 / #1256 ──────────────────────────────────────
+  // Poll the API every 30 s as the baseline; the WS hook overlays real-time
+  // updates on top and falls back to polling if the socket fails.
+  const { pauseState: pollingPauseState } = useMarketplacePauseState();
+  const { isPaused, pauseState } = usePauseWebSocket({
+    contract: "carbon_marketplace",
+    pollingState: {
+      isPaused: pollingPauseState.paused,
+      pausedBy: pollingPauseState.pausedBy,
+      reason: pollingPauseState.reason,
+      pausedUntil: pollingPauseState.pausedUntil
+        ? pollingPauseState.pausedUntil * 1000 // convert s → ms
+        : undefined,
+    },
+  });
+
+  // Derive a Unix-seconds timestamp for the PauseBanner (it expects seconds)
+  const pausedUntilSeconds = pauseState.pausedUntil
+    ? Math.floor(pauseState.pausedUntil / 1000)
+    : undefined;
 
   // refreshInterval defaults to 30s inside useListings — keeps displayed prices well under the 60s staleness bound.
   const { data, isLoading, error, mutate } = useListings({
@@ -177,6 +201,16 @@ function MarketplaceContent() {
   return (
     <ErrorBoundary>
       <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2.5rem 2rem" }}>
+        {/* Pause banner — Issue #1255: shown when marketplace is paused */}
+        <PauseBanner
+          isPaused={isPaused}
+          reason={pauseState.reason}
+          pausedUntil={pausedUntilSeconds}
+          pausedBy={pauseState.pausedBy}
+          onViewDetails={() => { window.location.href = "/status"; }}
+          isDismissible
+        />
+
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
           <div>
@@ -201,6 +235,34 @@ function MarketplaceContent() {
             🛒 {cartCount > 0 ? t("cartWithCount", { count: cartCount }) : t("cart")}
           </a>
         </div>
+
+        {/* Market paused message — inline notice below header */}
+        {isPaused && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              background: "#fef2f2",
+              border: "1px solid #fca5a5",
+              borderRadius: "0.5rem",
+              padding: "0.875rem 1rem",
+              marginBottom: "1.25rem",
+              fontSize: "0.875rem",
+              color: "#991b1b",
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+            }}
+          >
+            <span aria-hidden="true">🔒</span>
+            <span>
+              <strong>Market Paused</strong> — Purchases are currently unavailable.
+              {pauseState.reason && ` Reason: ${pauseState.reason}.`}
+              {pausedUntilSeconds && ` Expected to resume in ${Math.max(0, Math.floor((pausedUntilSeconds - Date.now() / 1000) / 60))} minutes.`}
+              {" "}<a href="/status" style={{ color: "#991b1b", textDecoration: "underline" }}>View status</a>
+            </span>
+          </div>
+        )}
 
         <MarketplaceFilter filters={filters} onChange={setFilters} suggestions={searchSuggestions} />
 
@@ -330,28 +392,32 @@ function MarketplaceContent() {
 
                           {/* Actions */}
                           <div style={{ display: "flex", gap: "0.5rem" }}>
-                            <a
-                              href={`/buy?listing=${listing.listingId}`}
-                              style={{
-                                padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
-                                border: `1px solid ${colors.primary[300]}`, borderRadius: "0.375rem",
-                                color: colors.primary[700], textDecoration: "none", background: colors.primary[50],
-                              }}
-                            >
-                              {t("buyNow")}
-                            </a>
-                            <button
-                              onClick={() => handleAddToCart(listing)}
-                              disabled={inCart}
-                              style={{
-                                padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
-                                border: "none", borderRadius: "0.375rem", cursor: inCart ? "default" : "pointer",
-                                background: inCart ? colors.primary[100] : colors.primary[600],
-                                color: inCart ? colors.primary[700] : "#fff",
-                              }}
-                            >
-                              {inCart ? t("inCart") : t("addToCart")}
-                            </button>
+                            <PausedOperationButton isPaused={isPaused} pauseReason={pauseState.reason}>
+                              <a
+                                href={`/buy?listing=${listing.listingId}`}
+                                style={{
+                                  padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
+                                  border: `1px solid ${colors.primary[300]}`, borderRadius: "0.375rem",
+                                  color: colors.primary[700], textDecoration: "none", background: colors.primary[50],
+                                }}
+                              >
+                                {t("buyNow")}
+                              </a>
+                            </PausedOperationButton>
+                            <PausedOperationButton isPaused={isPaused} pauseReason={pauseState.reason}>
+                              <button
+                                onClick={() => handleAddToCart(listing)}
+                                disabled={inCart}
+                                style={{
+                                  padding: "0.5rem 0.875rem", fontSize: "0.8rem", fontWeight: 600,
+                                  border: "none", borderRadius: "0.375rem", cursor: inCart ? "default" : "pointer",
+                                  background: inCart ? colors.primary[100] : colors.primary[600],
+                                  color: inCart ? colors.primary[700] : "#fff",
+                                }}
+                              >
+                                {inCart ? t("inCart") : t("addToCart")}
+                              </button>
+                            </PausedOperationButton>
                           </div>
                         </div>
                       );

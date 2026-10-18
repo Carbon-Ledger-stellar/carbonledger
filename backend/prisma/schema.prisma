@@ -207,6 +207,15 @@ model MarketListing {
   methodology     String
   country         String
   status          String   @default("Active")
+  /// Whether this listing is currently paused and unavailable for purchase.
+  /// Defaults to false so existing rows remain active without a data migration.
+  is_paused       Boolean  @default(false)
+  /// Timestamp when this listing was paused; null when not paused.
+  paused_at       DateTime?
+  /// Stellar public key of the admin who triggered the pause.
+  paused_by       String?
+  /// Human-readable reason for the pause (e.g. "Security investigation").
+  pause_reason    String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
@@ -222,6 +231,8 @@ model MarketListing {
   @@index([status, createdAt])
   // Performance optimization indexes
   @@index([status, createdAt])  // Optimize listing browsing with pagination
+  // Issue #1231: fast lookup of all currently-paused listings
+  @@index([is_paused, paused_at])
 }
 
 model MonitoringData {
