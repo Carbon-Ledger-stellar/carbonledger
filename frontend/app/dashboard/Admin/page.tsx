@@ -31,6 +31,7 @@ import { SummaryCards }    from '../Admin/SummaryCards';
 import { OracleHealthGrid } from '../Admin/OracleHealthGrid'
 import { VerifiersTable }  from '../Admin/VerifiersTable';
 import { ProjectsTable }   from '../Admin/ProjectsTable';
+import PauseAdminPanel from '../../../components/pause/PauseAdminPanel';
 
 export default function AdminDashboardPage() {
   const { state: authState, email } = useAdminAuth();
@@ -301,6 +302,9 @@ export default function AdminDashboardPage() {
               Live figures from on-chain state · Stellar Testnet
             </p>
           </div>
+
+          {/* Emergency pause controls, status banner, and audit timeline (#1261–#1264) */}
+          <PauseAdminPanel />
 
           {/* Error banner */}
           {fetchError && (
