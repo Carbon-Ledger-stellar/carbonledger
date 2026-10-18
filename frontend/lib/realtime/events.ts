@@ -8,6 +8,10 @@
 /** Event type constants sent by the server. */
 export const RealtimeEventType = {
   CREDITS_RETIRED_CONFIRMED: "CREDITS_RETIRED_CONFIRMED",
+  /** Emitted when an admin pauses a contract or marketplace listing. */
+  CONTRACT_PAUSED: "CONTRACT_PAUSED",
+  /** Emitted when an admin resumes a previously paused contract or listing. */
+  CONTRACT_UNPAUSED: "CONTRACT_UNPAUSED",
 } as const;
 
 export type RealtimeEventType =
@@ -25,8 +29,45 @@ export interface CreditsRetiredConfirmedPayload {
   retiredAt: string;
 }
 
+/**
+ * Payload for a CONTRACT_PAUSED event.
+ * Mirrors the fields from the PauseEvent DB model so the frontend can update
+ * its local pause state without polling.
+ */
+export interface ContractPausedPayload {
+  /** "credit" | "marketplace" */
+  contract: string;
+  /** Stellar public key of the admin that initiated the pause. */
+  pausedBy: string;
+  /** Human-readable reason for the pause; may be absent for emergency pauses. */
+  reason?: string;
+  /** Unix timestamp (ms) when the pause auto-expires; null means indefinite. */
+  pausedUntil?: number;
+  /** ISO-8601 timestamp when the pause took effect. */
+  occurredAt: string;
+  /** Stellar transaction hash for the pause operation. */
+  txHash: string;
+}
+
+/**
+ * Payload for a CONTRACT_UNPAUSED event.
+ */
+export interface ContractUnpausedPayload {
+  /** "credit" | "marketplace" */
+  contract: string;
+  /** Stellar public key of the admin that resumed operations. */
+  unpausedBy: string;
+  /** ISO-8601 timestamp when the unpause took effect. */
+  occurredAt: string;
+  /** Stellar transaction hash for the unpause operation. */
+  txHash: string;
+}
+
 /** Union of all known event payloads. */
-export type RealtimeEventPayload = CreditsRetiredConfirmedPayload;
+export type RealtimeEventPayload =
+  | CreditsRetiredConfirmedPayload
+  | ContractPausedPayload
+  | ContractUnpausedPayload;
 
 /** A parsed event delivered by the WebSocket connection. */
 export interface RealtimeEvent {
