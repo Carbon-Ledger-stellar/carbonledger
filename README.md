@@ -918,3 +918,6 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 <!-- handsoff-issue-1302 -->
 - #1302: DevOps - Create pause metrics dashboard
+
+<!-- handsoff-issue-1438 -->
+- #1438: Backend - Marketplace listing price stored as float
