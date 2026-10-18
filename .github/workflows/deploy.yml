@@ -118,7 +118,7 @@ jobs:
         run: npm ci
 
       - name: Run migrations
-        run: npm run migrate
+        run: npx prisma migrate deploy
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
@@ -270,16 +270,9 @@ jobs:
           mkdir -p $HOME/.kube
           echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
 
-      - name: Rollback deployment
+      - name: Rollback deployments
         run: |
-          kubectl annotate deployment/backend-canary traffic-split=0 --overwrite || true
-          kubectl annotate deployment/frontend-canary traffic-split=0 --overwrite || true
           kubectl rollout undo deployment/backend
           kubectl rollout undo deployment/frontend
           kubectl rollout status deployment/backend
           kubectl rollout status deployment/frontend
-
-      - name: Notify rollback
-        run: |
-          echo "⚠️ Production deployment rolled back due to failure"
-          # Send notification to Slack/Discord
