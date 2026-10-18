@@ -5,6 +5,13 @@ on:
     branches: [main, develop, feature/**]
   pull_request:
     branches: [main, develop]
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
 
 jobs:
   test:
@@ -32,7 +39,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: ${{ inputs.node-version }}
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
 

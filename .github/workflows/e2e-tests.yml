@@ -264,23 +264,8 @@ jobs:
         working-directory: ./backend
         run: npm ci
 
-      - name: Install Playwright browsers
+      - name: Run pause animation tests
         working-directory: ./backend
-        run: npx playwright install --with-deps chromium
-
-      - name: Run pause animation & transition tests
-        working-directory: ./backend
-        run: npm run test:e2e -- --testPathPattern=pause-animations
+        run: npm run test:e2e -- --testPathPattern=pause-animation
         env:
           NODE_ENV: test
-          PLAYWRIGHT_BROWSERS_PATH: '0'
-
-      - name: Upload animation test artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pause-animation-test-results
-          path: |
-            ./backend/coverage
-            ./backend/test/e2e/screenshots
-          retention-days: 7
