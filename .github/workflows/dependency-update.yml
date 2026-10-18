@@ -5,6 +5,23 @@ on:
     # Every Monday at 09:00 UTC — after the security scan (08:00) has run
     - cron: "0 9 * * 1"
   workflow_dispatch:
+    inputs:
+      report-only:
+        description: "Skip failing the build — generate report even when checks fail"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      dry-run:
+        description: "Dry run — run all checks but do NOT create or update the summary issue"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: read
@@ -115,6 +132,7 @@ jobs:
           retention-days: 30
 
       - name: Fail if high-severity vulnerabilities found
+        if: inputs.report-only != 'true'
         run: |
           FAILED=0
           [ "${{ steps.audit_backend.outputs.exit_code }}"  != "0" ] && \
@@ -170,6 +188,7 @@ jobs:
           retention-days: 30
 
       - name: Fail on unsafe crates
+        if: inputs.report-only != 'true'
         run: |
           [ "${{ steps.cargo_audit.outputs.exit_code }}" != "0" ] && \
             echo "::error::cargo audit found advisories for unsafe or vulnerable crates" && exit 1 || true
@@ -211,52 +230,154 @@ jobs:
           retention-days: 30
 
       - name: Fail on vulnerabilities
+        if: inputs.report-only != 'true'
         run: |
           [ "${{ steps.pip_audit.outputs.exit_code }}" != "0" ] && \
             echo "::error::pip-audit found vulnerabilities in oracle dependencies" && exit 1 || true
 
-  # ── 5. Weekly summary issue ───────────────────────────────────────────────
+  # ── 5. Consolidated report artifact ───────────────────────────────────────
+  consolidated-report:
+    name: Generate consolidated dependency report
+    runs-on: ubuntu-latest
+    needs: [npm-outdated, npm-security-audit, cargo-audit, pip-audit]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download npm-outdated artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-outdated-report-${{ github.run_id }}
+          path: audit-artifacts/npm-outdated-report
+        continue-on-error: true
+
+      - name: Download npm-audit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-audit-report-${{ github.run_id }}
+          path: audit-artifacts/npm-audit-report
+        continue-on-error: true
+
+      - name: Download cargo-audit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cargo-audit-report-${{ github.run_id }}
+          path: audit-artifacts/cargo-audit-report
+        continue-on-error: true
+
+      - name: Download pip-audit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pip-audit-report-${{ github.run_id }}
+          path: audit-artifacts/pip-audit-report
+        continue-on-error: true
+
+      - name: Generate consolidated Markdown report
+        env:
+          NPM_OUTDATED_RESULT: ${{ needs.npm-outdated.result }}
+          NPM_AUDIT_RESULT: ${{ needs.npm-security-audit.result }}
+          CARGO_AUDIT_RESULT: ${{ needs.cargo-audit.result }}
+          PIP_AUDIT_RESULT: ${{ needs.pip-audit.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPORT_DATE: ${{ github.run_started_at }}
+        run: |
+          chmod +x scripts/generate-dependency-report.sh
+          scripts/generate-dependency-report.sh audit-artifacts dependency-report.md
+
+      - name: Upload consolidated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-report-${{ github.run_id }}
+          path: dependency-report.md
+          retention-days: 90
+
+  # ── 6. Weekly summary issue ───────────────────────────────────────────────
   summary:
     name: Create weekly summary issue
     runs-on: ubuntu-latest
     needs: [npm-outdated, npm-security-audit, cargo-audit, pip-audit]
-    if: always() && github.event_name == 'schedule'
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.dry-run != 'true'))
     steps:
       - name: Create or update weekly dependency summary issue
         uses: actions/github-script@v7
         with:
           script: |
             const outcomes = {
-              npm_outdated:    '${{ needs.npm-outdated.result }}',
-              npm_audit:       '${{ needs.npm-security-audit.result }}',
-              cargo_audit:     '${{ needs.cargo-audit.result }}',
-              pip_audit:       '${{ needs.pip-audit.result }}',
+              npm_outdated: '${{ needs.npm-outdated.result }}',
+              npm_audit:    '${{ needs.npm-security-audit.result }}',
+              cargo_audit:  '${{ needs.cargo-audit.result }}',
+              pip_audit:    '${{ needs.pip-audit.result }}',
             };
 
-            const icon = (r) => r === 'success' ? '✅' : r === 'skipped' ? '⏭️' : '❌';
-            const allGood = Object.values(outcomes).every(r => r === 'success' || r === 'skipped');
+            const icon  = (r) => r === 'success' ? '✅' : r === 'skipped' ? '⏭️' : '❌';
+            const label = (r) => r === 'success' ? 'success' : r === 'skipped' ? 'skipped' : 'failure';
 
+            const allGood = Object.values(outcomes).every(
+              r => r === 'success' || r === 'skipped'
+            );
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const reportOnly = '${{ inputs.report-only }}' === 'true';
             const date = new Date().toISOString().split('T')[0];
             const title = `[Automated] Weekly dependency update check — ${date}`;
+
+            const statusBadge = allGood
+              ? '**Status: ✅ All checks passed**'
+              : '**Status: ❌ One or more checks failed**';
+
+            const reportArtifactNote = [
+              '### 📦 Artifacts',
+              '',
+              `A [consolidated Markdown report](${runUrl}) is attached to the workflow run as artifact \`dependency-report-${context.runId}\`.`,
+              'Individual scan reports are also available:',
+              `- \`npm-outdated-report-${context.runId}\` — outdated backend + frontend packages (JSON)`,
+              `- \`npm-audit-report-${context.runId}\` — npm security audit output (JSON + text)`,
+              `- \`cargo-audit-report-${context.runId}\` — cargo audit + outdated crates (text)`,
+              `- \`pip-audit-report-${context.runId}\` — pip-audit results (Markdown table)`,
+            ].join('\n');
 
             const body = [
               `## 🗓️ Weekly Dependency Update Report — ${date}`,
               '',
+              statusBadge,
+              '',
+              '---',
+              '',
+              '## Check Results',
+              '',
               '| Check | Result |',
               '|-------|--------|',
-              `| npm outdated (backend + frontend) | ${icon(outcomes.npm_outdated)} ${outcomes.npm_outdated} |`,
-              `| npm security audit | ${icon(outcomes.npm_audit)} ${outcomes.npm_audit} |`,
-              `| cargo audit (Rust contracts) | ${icon(outcomes.cargo_audit)} ${outcomes.cargo_audit} |`,
-              `| pip-audit (Python oracle) | ${icon(outcomes.pip_audit)} ${outcomes.pip_audit} |`,
+              `| npm outdated (backend + frontend) | ${icon(outcomes.npm_outdated)} ${label(outcomes.npm_outdated)} |`,
+              `| npm security audit | ${icon(outcomes.npm_audit)} ${label(outcomes.npm_audit)} |`,
+              `| cargo audit (Rust contracts) | ${icon(outcomes.cargo_audit)} ${label(outcomes.cargo_audit)} |`,
+              `| pip-audit (Python oracle) | ${icon(outcomes.pip_audit)} ${label(outcomes.pip_audit)} |`,
+              '',
+              '---',
+              '',
+              reportArtifactNote,
+              '',
+              '---',
               '',
               allGood
-                ? '**All checks passed.** No action required.'
-                : '**⚠️ One or more checks failed.** Review the [workflow run](' +
-                  `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}` +
-                  ') and update affected dependencies.',
+                ? '**✅ All checks passed.** No action required.'
+                : [
+                    '**⚠️ One or more checks failed.** Please take action:',
+                    '',
+                    '1. Review the [workflow run logs](' + runUrl + ') for details',
+                    '2. Download the consolidated report artifact for the full audit output',
+                    '3. Update affected packages and re-run this workflow to confirm',
+                    reportOnly ? '4. ℹ️ This run used `report-only` mode — the build was NOT failed.' : '',
+                  ].filter(Boolean).join('\n'),
+              '',
+              '---',
               '',
               '> Dependabot will open PRs automatically for patched versions.',
-              `> Workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `> Workflow run: ${runUrl}`,
+              `> Triggered by: \`${context.eventName}\``,
             ].join('\n');
 
             // Search for an open issue from this week to avoid duplicates
