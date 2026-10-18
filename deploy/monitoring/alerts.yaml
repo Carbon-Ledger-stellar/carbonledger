@@ -67,3 +67,22 @@ alerts:
     notification: slack
     message: "WARNING: Emergency pause for {{contract}} expires in less than 1 hour ({{contract.pause_seconds_remaining}}s remaining)."
 
+  # Issue #1367 — unpause and reason-validation alerts
+  - name: Contract Unpause Event
+    description: Alert when a previously paused contract resumes normal operations
+    condition: contract.is_paused == 0 and contract.previous_is_paused == 1
+    metric: contract.is_paused
+    evaluation_period: 1m
+    severity: info
+    notification: slack, email
+    message: "INFO: Smart contract {{contract}} has been UNPAUSED and has resumed normal operations. Admin: {{contract.admin_address}}. Reason: {{contract.pause_reason}}. Paused duration: {{contract.pause_duration_seconds}}s."
+
+  - name: Pause Reason Required
+    description: Alert when a pause event is recorded without a mandatory reason field
+    condition: contract.is_paused == 1 and contract.pause_reason == ""
+    metric: contract.pause_reason
+    evaluation_period: 2m
+    severity: warning
+    notification: slack
+    message: "WARNING: Emergency pause on {{contract}} is missing a required reason. An admin must supply a reason via the admin API within 5 minutes or the pause will be escalated to PagerDuty automatically."
+
