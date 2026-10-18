@@ -92,3 +92,4 @@ jest.mock("@nestjs/schedule", () => {
 // In-memory Soroban/Horizon mock — see src/__mocks__/stellar.provider.ts.
 // Ensures no backend test ever depends on a live Stellar network connection.
 jest.mock("@stellar/stellar-sdk", () => require("./__mocks__/stellar.provider").stellarSdkMock);
+jest.mock("winston-cloudwatch", () => jest.fn());

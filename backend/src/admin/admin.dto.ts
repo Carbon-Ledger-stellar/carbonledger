@@ -104,6 +104,48 @@ export class PauseContractDto {
 }
 
 /**
+ * DTO for POST /admin/pause (#1221).
+ *
+ * Validation:
+ *  - contract: optional pausable contract name (defaults to 'carbon_credit' if omitted)
+ *  - reason: optional free-text rationale, recorded in audit log and pause events
+ *  - untilTimestamp: optional unix seconds (up to 72h window)
+ */
+export class AdminPauseDto {
+  @IsOptional()
+  @IsIn(['carbon_credit', 'carbon_marketplace', 'credit', 'marketplace'])
+  contract?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  reason?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  untilTimestamp?: number;
+}
+
+/**
+ * DTO for POST /admin/unpause (#1222).
+ *
+ * Validation:
+ *  - contract: optional pausable contract name (defaults to 'carbon_credit' if omitted)
+ *  - reason: optional free-text rationale, recorded in audit log
+ */
+export class AdminUnpauseDto {
+  @IsOptional()
+  @IsIn(['carbon_credit', 'carbon_marketplace', 'credit', 'marketplace'])
+  contract?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  reason?: string;
+}
+
+/**
  * DTO for querying pause history (#1228).
  *
  * All fields are optional — omitting them returns the full history.

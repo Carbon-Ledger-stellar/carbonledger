@@ -28,6 +28,8 @@ export interface PauseResult {
   pausedUntil: number | null;
   txHash: string;
   traceId: string;
+  reason?: string | null;
+  status?: string;
 }
 
 /**
@@ -56,18 +58,116 @@ export class PauseService {
     @Inject('IBlockchainProvider') private readonly blockchain: IBlockchainProvider,
   ) {}
 
-  async pauseContract(contract: PausableContract, adminAddress: string, untilTimestamp: number): Promise<PauseResult> {
+  async pauseContract(
+    contract: PausableContract,
+    adminAddress: string,
+    untilTimestamp: number,
+    reason?: string,
+  ): Promise<PauseResult> {
     const now = Math.floor(Date.now() / 1000);
     if (untilTimestamp <= now || untilTimestamp > now + MAX_PAUSE_WINDOW_SECONDS) {
       throw new BadRequestException(
         `untilTimestamp must be in the future and at most ${MAX_PAUSE_WINDOW_SECONDS}s from now`,
       );
     }
-    return this.run('pause', contract, adminAddress, untilTimestamp);
+    return this.run('pause', contract, adminAddress, untilTimestamp, reason);
   }
 
-  async unpauseContract(contract: PausableContract, adminAddress: string): Promise<PauseResult> {
-    return this.run('unpause', contract, adminAddress, null);
+  async unpauseContract(
+    contract: PausableContract,
+    adminAddress: string,
+    reason?: string,
+  ): Promise<PauseResult> {
+    return this.run('unpause', contract, adminAddress, null, reason);
+  }
+
+  /**
+   * Idempotently pause a contract (#1221).
+   * Accepts reason parameter (optional), emits event, returns updated status.
+   * If already paused, returns updated status without error.
+   */
+  async pause(
+    contract: PausableContract,
+    adminAddress: string,
+    untilTimestamp?: number,
+    reason?: string,
+  ) {
+    const currentState = await this.getPauseState(contract);
+    if (currentState.paused) {
+      this.logger.log(
+        JSON.stringify({
+          msg: 'contract already paused, returning status idempotently',
+          contract,
+          reason,
+        }),
+      );
+      return {
+        contract,
+        contractId: this.resolveContractId(contract),
+        paused: true,
+        pausedUntil: currentState.pausedUntil,
+        status: 'paused',
+        reason: reason ?? null,
+        message: 'Contract is already paused',
+      };
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const targetUntil = untilTimestamp ?? now + MAX_PAUSE_WINDOW_SECONDS;
+
+    const result = await this.pauseContract(contract, adminAddress, targetUntil, reason);
+    return {
+      ...result,
+      status: 'paused',
+      reason: reason ?? null,
+    };
+  }
+
+  /**
+   * Idempotently unpause a contract (#1222).
+   * Logs unpause action for audit trail, emits event, returns updated status.
+   * If already unpaused, returns updated status without error.
+   */
+  async unpause(
+    contract: PausableContract,
+    adminAddress: string,
+    reason?: string,
+  ) {
+    const currentState = await this.getPauseState(contract);
+    if (!currentState.paused) {
+      this.logger.log(
+        JSON.stringify({
+          msg: 'contract already unpaused, returning status idempotently',
+          contract,
+          reason,
+        }),
+      );
+      const contractId = this.resolveContractId(contract);
+      // Log unpause action for audit trail (#1222)
+      await this.auditService.createLog({
+        userId: adminAddress,
+        action: 'contract.unpause',
+        resourceId: contractId,
+        result: 'Success',
+        after: { contract, paused: false, pausedUntil: null, reason: reason ?? null },
+      });
+      return {
+        contract,
+        contractId,
+        paused: false,
+        pausedUntil: null,
+        status: 'unpaused',
+        reason: reason ?? null,
+        message: 'Contract is already unpaused',
+      };
+    }
+
+    const result = await this.unpauseContract(contract, adminAddress, reason);
+    return {
+      ...result,
+      status: 'unpaused',
+      reason: reason ?? null,
+    };
   }
 
   async getPauseState(contract: PausableContract) {
@@ -159,6 +259,7 @@ export class PauseService {
     contract: PausableContract,
     adminAddress: string,
     untilTimestamp: number | null,
+    reason?: string,
   ): Promise<PauseResult> {
     const contractId = this.resolveContractId(contract);
     const method = action === 'pause' ? 'pause_operations' : 'unpause_operations';
@@ -170,6 +271,7 @@ export class PauseService {
         'carbonledger.contract.name': contract,
         'carbonledger.contract.id': contractId,
         'carbonledger.admin': adminAddress,
+        ...(reason && { 'carbonledger.pause.reason': reason }),
         ...(untilTimestamp !== null && { 'carbonledger.pause.until': untilTimestamp }),
       });
 
@@ -207,8 +309,8 @@ export class PauseService {
             resourceId: contractId,
             result: 'Success',
             txHash: receipt.txHash,
-            after: { contract, paused, pausedUntil: untilTimestamp },
-            metadata: { traceId },
+            after: { contract, paused, pausedUntil: untilTimestamp, ...(reason ? { reason } : {}) },
+            metadata: { traceId, ...(reason ? { reason } : {}) },
           });
           // Write a dedicated AuditLogEntry (sensitive-ops audit trail, #1227).
           // This entry is immutable — the audit_logs table has no delete/update
@@ -223,6 +325,7 @@ export class PauseService {
                 contract,
                 action,
                 admin: adminAddress,
+                reason: reason ?? null,
                 paused,
                 pausedUntil: untilTimestamp,
                 txHash: receipt.txHash,
@@ -231,6 +334,34 @@ export class PauseService {
               },
             },
           });
+          // Write PauseEvent row for pause-history (#1228, #1232)
+          try {
+            if ((this.prisma as any).pauseEvent?.upsert) {
+              const dbContract = contract === 'carbon_marketplace' ? 'marketplace' : 'credit';
+              await (this.prisma as any).pauseEvent.upsert({
+                where: {
+                  txHash_action: {
+                    txHash: receipt.txHash,
+                    action,
+                  },
+                },
+                create: {
+                  contract: dbContract,
+                  action,
+                  admin: adminAddress,
+                  reason: reason ?? null,
+                  pausedUntil: untilTimestamp ? new Date(untilTimestamp * 1000) : null,
+                  txHash: receipt.txHash,
+                  occurredAt: new Date(),
+                },
+                update: {
+                  reason: reason ?? null,
+                },
+              });
+            }
+          } catch (e) {
+            this.logger.warn(`Failed to create or update PauseEvent: ${e}`);
+          }
         });
 
         await this.step('pause.event_emit', async (span) => {
@@ -242,14 +373,15 @@ export class PauseService {
             pausedUntil: untilTimestamp,
             txHash: receipt.txHash,
             admin: adminAddress,
+            reason: reason ?? null,
           });
         });
 
         this.logger.log(
-          JSON.stringify({ msg: `contract ${action}d`, contract, contractId, txHash: receipt.txHash, traceId }),
+          JSON.stringify({ msg: `contract ${action}d`, contract, contractId, txHash: receipt.txHash, traceId, reason }),
         );
 
-        return { contract, contractId, paused, pausedUntil: untilTimestamp, txHash: receipt.txHash, traceId };
+        return { contract, contractId, paused, pausedUntil: untilTimestamp, txHash: receipt.txHash, traceId, reason: reason ?? null };
       } catch (error) {
         recordError(root, error);
         this.logger.error(

@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Delete, Body, Param, Query, Req,
-  UseGuards, HttpCode, HttpStatus, BadRequestException,
+  UseGuards, HttpCode, HttpStatus, BadRequestException, UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators';
@@ -9,6 +9,7 @@ import { PauseService, PAUSABLE_CONTRACTS, type PausableContract } from './pause
 import {
   VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto, UpdateCanaryDto,
   ReviewQuarantineDto, SoftDeleteDto, PauseContractDto, PauseHistoryQueryDto,
+  AdminPauseDto, AdminUnpauseDto,
 } from './admin.dto';
 import {
   CheckPolicies, PoliciesGuard, UserSubject, AuditLogSubject, OracleDataSubject,
@@ -27,7 +28,7 @@ import {
 export class AdminController {
   constructor(
     private readonly admin: AdminService,
-    private readonly pause: PauseService,
+    private readonly pauseService: PauseService,
   ) {}
 
   // ── Role assignment ─────────────────────────────────────────────────────────
@@ -103,7 +104,7 @@ export class AdminController {
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('read', 'all'))
   getPauseState(@Param('contract') contract: string) {
-    return this.pause.getPauseState(parsePausableContract(contract));
+    return this.pauseService.getPauseState(parsePausableContract(contract));
   }
 
   @Post('contracts/:contract/pause')
@@ -111,7 +112,7 @@ export class AdminController {
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('update', 'all'))
   pauseContract(@Param('contract') contract: string, @Body() dto: PauseContractDto, @Req() req: any) {
-    return this.pause.pauseContract(parsePausableContract(contract), req.user?.publicKey, dto.untilTimestamp);
+    return this.pauseService.pauseContract(parsePausableContract(contract), req.user?.publicKey, dto.untilTimestamp);
   }
 
   @Post('contracts/:contract/unpause')
@@ -119,7 +120,45 @@ export class AdminController {
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('update', 'all'))
   unpauseContract(@Param('contract') contract: string, @Req() req: any) {
-    return this.pause.unpauseContract(parsePausableContract(contract), req.user?.publicKey);
+    return this.pauseService.unpauseContract(parsePausableContract(contract), req.user?.publicKey);
+  }
+
+  /**
+   * POST /admin/pause (#1221)
+   *
+   * Admin-only endpoint to pause the contract.
+   * Accepts reason parameter (optional), emits event, returns updated contract status.
+   * Returns 401 if not admin. Idempotent — no error if already paused.
+   */
+  @Post('pause')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', 'all'))
+  async pause(@Body() dto: AdminPauseDto, @Req() req: any) {
+    if (!req.user || req.user.role !== 'admin') {
+      throw new UnauthorizedException('Admin role required');
+    }
+    const contract = parsePausableContract(dto?.contract ?? 'carbon_credit');
+    return this.pauseService.pause(contract, req.user.publicKey, dto?.untilTimestamp, dto?.reason);
+  }
+
+  /**
+   * POST /admin/unpause (#1222)
+   *
+   * Admin-only endpoint to unpause the contract.
+   * Logs the action for audit trail, emits event, returns updated contract status.
+   * Returns 401 if not admin. Idempotent — no error if already unpaused.
+   */
+  @Post('unpause')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('update', 'all'))
+  async unpause(@Body() dto: AdminUnpauseDto, @Req() req: any) {
+    if (!req.user || req.user.role !== 'admin') {
+      throw new UnauthorizedException('Admin role required');
+    }
+    const contract = parsePausableContract(dto?.contract ?? 'carbon_credit');
+    return this.pauseService.unpause(contract, req.user.publicKey, dto?.reason);
   }
 
   /**
@@ -148,7 +187,7 @@ export class AdminController {
     if (query.endDate && isNaN(Date.parse(query.endDate))) {
       throw new BadRequestException('endDate must be a valid ISO 8601 date');
     }
-    return this.pause.getPauseHistory(query);
+    return this.pauseService.getPauseHistory(query);
   }
 
   // ── Soft delete / recovery (#964) ───────────────────────────────────────────
@@ -280,6 +319,8 @@ export class AdminController {
 }
 
 function parsePausableContract(contract: string): PausableContract {
+  if (contract === 'credit') return 'carbon_credit';
+  if (contract === 'marketplace') return 'carbon_marketplace';
   if (!(PAUSABLE_CONTRACTS as readonly string[]).includes(contract)) {
     throw new BadRequestException(`contract must be one of: ${PAUSABLE_CONTRACTS.join(', ')}`);
   }
