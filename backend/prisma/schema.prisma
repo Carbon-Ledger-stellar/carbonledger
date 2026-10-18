@@ -229,8 +229,6 @@ model MarketListing {
   @@index([deletedAt])
   // Supports ORDER BY status, createdAt DESC on the listings browse page
   @@index([status, createdAt])
-  // Performance optimization indexes
-  @@index([status, createdAt])  // Optimize listing browsing with pagination
   // Issue #1231: fast lookup of all currently-paused listings
   @@index([is_paused, paused_at])
 }
