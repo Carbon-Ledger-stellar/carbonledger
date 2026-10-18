@@ -8,7 +8,7 @@ import { AdminService } from './admin.service';
 import { PauseService, PAUSABLE_CONTRACTS, type PausableContract } from './pause.service';
 import {
   VerifierWhitelistDto, UpdateTreasuryDto, AssignRoleDto, UpdateCanaryDto,
-  ReviewQuarantineDto, SoftDeleteDto, PauseContractDto,
+  ReviewQuarantineDto, SoftDeleteDto, PauseContractDto, PauseHistoryQueryDto,
 } from './admin.dto';
 import {
   CheckPolicies, PoliciesGuard, UserSubject, AuditLogSubject, OracleDataSubject,
@@ -120,6 +120,35 @@ export class AdminController {
   @CheckPolicies((ability) => ability.can('update', 'all'))
   unpauseContract(@Param('contract') contract: string, @Req() req: any) {
     return this.pause.unpauseContract(parsePausableContract(contract), req.user?.publicKey);
+  }
+
+  /**
+   * GET /admin/pause-history
+   *
+   * Retrieve all pause/unpause events with admin, timestamp, reason and
+   * pagination (#1228).
+   *
+   * Query params:
+   *   contract  — filter by 'credit' | 'marketplace'
+   *   action    — filter by 'pause' | 'unpause'
+   *   startDate — ISO 8601 lower bound (inclusive)
+   *   endDate   — ISO 8601 upper bound (inclusive)
+   *   limit     — page size (1–100, default 20)
+   *   offset    — zero-based row offset for next-page navigation
+   *
+   * Returns: { data, total, limit, offset }
+   */
+  @Get('pause-history')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', AuditLogSubject))
+  getPauseHistory(@Query() query: PauseHistoryQueryDto) {
+    if (query.startDate && isNaN(Date.parse(query.startDate))) {
+      throw new BadRequestException('startDate must be a valid ISO 8601 date');
+    }
+    if (query.endDate && isNaN(Date.parse(query.endDate))) {
+      throw new BadRequestException('endDate must be a valid ISO 8601 date');
+    }
+    return this.pause.getPauseHistory(query);
   }
 
   // ── Soft delete / recovery (#964) ───────────────────────────────────────────
