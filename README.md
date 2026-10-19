@@ -921,3 +921,6 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 <!-- handsoff-issue-1214 -->
 - #1214: Backend - Add pause check to mint() function
+
+<!-- handsoff-issue-1215 -->
+- #1215: Backend - Add pause check to transfer() function
