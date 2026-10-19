@@ -7,6 +7,7 @@ import AppProviders from '../components/AppProviders';
 import RealtimeNotificationProvider from '../components/RealtimeNotificationProvider';
 import LocaleProvider from '../components/LocaleProvider';
 import ErrorBoundary from '../components/ErrorBoundary';
+import PauseBanner from '../components/PauseBanner';
 import en from '../public/locales/en/common.json';
 
 export const dynamic = 'force-dynamic';
@@ -22,11 +23,30 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+async function getPauseStatus(): Promise<boolean> {
+  const baseUrl =
+    process.env.NEXT_PUBLIC_API_URL ??
+    process.env.NEXT_PUBLIC_APP_URL ??
+    'http://localhost:3000';
+  try {
+    const res = await fetch(`${baseUrl}/api/pause-status`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { paused?: boolean };
+    return data?.paused === true;
+  } catch {
+    return false;
+  }
+}
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const isPaused = await getPauseStatus();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -69,6 +89,7 @@ export default function RootLayout({
                <AppProviders>
                  <RealtimeNotificationProvider>
                    <Navbar />
+                   {isPaused && <PauseBanner />}
                    <main id="main-content">
                      {children}
                    </main>
@@ -80,4 +101,4 @@ export default function RootLayout({
        </body>
     </html>
   );
-} 
+}
