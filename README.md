@@ -918,3 +918,6 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 <!-- handsoff-issue-1302 -->
 - #1302: DevOps - Create pause metrics dashboard
+
+<!-- handsoff-issue-1428 -->
+- #1428: Backend - Add database indexes for retirement lookups by corporation
