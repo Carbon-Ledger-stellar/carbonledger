@@ -921,3 +921,6 @@ cargo test --test lifecycle_integration_test -- --nocapture
 
 <!-- handsoff-issue-1406 -->
 - #1406: Frontend - Add unit tests for ComparisonTray
+
+<!-- handsoff-issue-1545 -->
+- #1545: DevOps - Backend container doesn't load .env in docker-compose
