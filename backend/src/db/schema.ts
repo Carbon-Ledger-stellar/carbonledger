@@ -68,5 +68,36 @@ export const pauseStateVersionsImmutable = sql`
     FOR EACH ROW EXECUTE FUNCTION pause_state_versions_immutable();
 `;
 
+/**
+ * Contract-sync cursor (issue #1430)
+ *
+ * Persists the last ledger processed by contract-sync so that on boot the
+ * sync resumes from the stored cursor instead of the latest ledger, avoiding
+ * gaps in processed events after a backend restart. A single row per
+ * contract-sync stream is keyed by `stream` (e.g. the contract id).
+ */
+export const contractSyncCursors = pgTable(
+  "contract_sync_cursors",
+  {
+    id: serial("id").primaryKey(),
+    // Identifies the sync stream (e.g. contract id or "default").
+    stream: varchar("stream", { length: 255 }).notNull(),
+    // Last ledger sequence number that was fully processed.
+    lastProcessedLedger: integer("last_processed_ledger").notNull(),
+    // When the cursor was last advanced.
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    // One cursor row per stream; enables atomic upsert on resume.
+    streamIdx: uniqueIndex("contract_sync_cursors_stream_idx").on(
+      table.stream,
+    ),
+  }),
+);
+
 export type PauseStateVersion = typeof pauseStateVersions.$inferSelect;
 export type NewPauseStateVersion = typeof pauseStateVersions.$inferInsert;
+export type ContractSyncCursor = typeof contractSyncCursors.$inferSelect;
+export type NewContractSyncCursor = typeof contractSyncCursors.$inferInsert;

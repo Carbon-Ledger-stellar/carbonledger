@@ -47,11 +47,13 @@ export default function RootLayout({
         {/* Favicon */}
         <link rel="icon" href="/icons/icon-192.png" type="image/png" />
         {/*
-          Sets data-theme synchronously before first paint (#967). Without
-          this, ThemeProvider's useEffect (which reads localStorage) can't
-          run until after hydration, so every load flashes the light theme
-          for a moment even when the user picked dark — this blocking script
-          runs before the browser paints anything, so there's no flash.
+          Sets data-theme synchronously before first paint (#967, #1410).
+          Without this, ThemeProvider's useEffect (which reads localStorage)
+          can't run until after hydration, so every load flashes the light
+          theme for a moment even when the user picked dark — this blocking
+          script runs before the browser paints anything, so there's no flash.
+          It restores the persisted preference from localStorage and falls
+          back to the system theme via prefers-color-scheme when none is set.
         */}
         <script
           suppressHydrationWarning
@@ -80,4 +82,4 @@ export default function RootLayout({
        </body>
     </html>
   );
-} 
+}

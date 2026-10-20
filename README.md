@@ -919,5 +919,8 @@ cargo test --test lifecycle_integration_test -- --nocapture
 <!-- handsoff-issue-1302 -->
 - #1302: DevOps - Create pause metrics dashboard
 
-<!-- handsoff-issue-1443 -->
-- #1443: Backend - Add audit log entries for admin pause/unpause actions
+<!-- handsoff-issue-1406 -->
+- #1406: Frontend - Add unit tests for ComparisonTray
+
+<!-- handsoff-issue-1545 -->
+- #1545: DevOps - Backend container doesn't load .env in docker-compose
