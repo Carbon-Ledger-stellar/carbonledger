@@ -23,8 +23,8 @@
 //! | `set_max_history_entries`  | `c_ledger / hist_prune`  | `HistoryPrunedEvent`                |
 //! | `set_oracle_contract`      | `c_ledger / ora_set`     | `(admin, oracle)`                   |
 //! | `set_verified_periods`     | `c_ledger / per_set`     | `(project_id, periods_count)`       |
-//! | `pause_operations`         | `c_ledger / paused`      | `(admin, until_timestamp, paused_at)` |
-//! | `unpause_operations`       | `c_ledger / unpaused`    | `(admin, unpaused_at)`              |
+//! | `pause_operations`         | `c_ledger / paused`      | `PausedEvent`                       |
+//! | `unpause_operations`       | `c_ledger / unpaused`    | `UnpausedEvent`                     |
 //!
 //! Functions that change state but emit **no** events (storage-only changes):
 //!   `initialize`, `set_vintage_year_bounds`, `grant_role`, `revoke_role`
@@ -34,6 +34,7 @@
 
 use carbon_credit::{
     CarbonCreditContract, CarbonCreditContractClient, CreditMintedEvent, CreditRetiredEvent,
+    PausedEvent, UnpausedEvent,
 };
 use soroban_sdk::{
     symbol_short,
@@ -728,7 +729,8 @@ fn evt_noevent_01_initialize_emits_no_events() {
     );
 }
 
-/// EVT-NOEVENT-02: `pause_operations` emits no events.
+/// EVT-NOEVENT-02 (updated for #1218): `pause_operations` emits exactly one
+/// `(c_ledger, paused)` event with a `PausedEvent` payload.
 #[test]
 fn evt_noevent_02_pause_operations_emits_no_events() {
     let env = Env::default();
@@ -740,24 +742,25 @@ fn evt_noevent_02_pause_operations_emits_no_events() {
 
     assert_eq!(
         env.events().all().len(),
-        0,
-        "EVT-NOEVENT-02: pause_operations must not emit any events"
+        1,
+        "EVT-NOEVENT-02: pause_operations must emit exactly one PausedEvent"
     );
 }
 
-/// EVT-NOEVENT-03: `unpause_operations` emits no events.
+/// EVT-NOEVENT-03 (updated for #1218): `unpause_operations` emits exactly one
+/// `(c_ledger, unpaused)` event with an `UnpausedEvent` payload.
 #[test]
 fn evt_noevent_03_unpause_operations_emits_no_events() {
     let env = Env::default();
     let (client, admin, _registry, _id) = setup(&env);
-    // unpause_operations simply sets PauseEnabled = false; it succeeds even
-    // when not currently paused and emits no event.
+    // unpause_operations sets PauseEnabled = false; it succeeds even
+    // when not currently paused and now emits an UnpausedEvent.
     client.unpause_operations(&admin);
 
     assert_eq!(
         env.events().all().len(),
-        0,
-        "EVT-NOEVENT-03: unpause_operations must not emit any events"
+        1,
+        "EVT-NOEVENT-03: unpause_operations must emit exactly one UnpausedEvent"
     );
 }
 
@@ -1157,8 +1160,8 @@ fn evt_data_05_per_set_event_tuple_field_order() {
 // PAUSE EVENTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// EVT-PAUSE-01: `pause_operations` emits one `paused` event with payload
-/// `(admin, until_timestamp, paused_at)`.
+/// EVT-PAUSE-01: `pause_operations` emits one `paused` event with a typed
+/// `PausedEvent` payload containing admin address, timestamp, and reason (#1218).
 #[test]
 fn evt_pause_01_pause_emits_paused_event() {
     let env = Env::default();
@@ -1175,15 +1178,19 @@ fn evt_pause_01_pause_emits_paused_event() {
             (
                 id,
                 (symbol_short!("c_ledger"), symbol_short!("paused")).into_val(&env),
-                (admin.clone(), until, now).into_val(&env),
+                PausedEvent {
+                    admin: admin.clone(),
+                    paused_at: now,
+                    reason: None,
+                }.into_val(&env),
             )
         ],
-        "EVT-PAUSE-01: paused event with (admin, until, paused_at) payload"
+        "EVT-PAUSE-01: paused event with PausedEvent payload"
     );
 }
 
-/// EVT-PAUSE-02: a pause → unpause cycle emits `paused` then `unpaused`, the
-/// latter with payload `(admin, unpaused_at)`.
+/// EVT-PAUSE-02: a pause → unpause cycle emits `paused` then `unpaused`, both
+/// with typed struct payloads (`PausedEvent` and `UnpausedEvent`) (#1218).
 #[test]
 fn evt_pause_02_unpause_emits_unpaused_event() {
     let env = Env::default();
@@ -1201,15 +1208,23 @@ fn evt_pause_02_unpause_emits_unpaused_event() {
             (
                 id.clone(),
                 (symbol_short!("c_ledger"), symbol_short!("paused")).into_val(&env),
-                (admin.clone(), now + 3_600, now).into_val(&env),
+                PausedEvent {
+                    admin: admin.clone(),
+                    paused_at: now,
+                    reason: None,
+                }.into_val(&env),
             ),
             (
                 id,
                 (symbol_short!("c_ledger"), symbol_short!("unpaused")).into_val(&env),
-                (admin.clone(), now + 600).into_val(&env),
+                UnpausedEvent {
+                    admin: admin.clone(),
+                    unpaused_at: now + 600,
+                    reason: None,
+                }.into_val(&env),
             )
         ],
-        "EVT-PAUSE-02: paused then unpaused, in order"
+        "EVT-PAUSE-02: paused then unpaused, in order, with typed struct payloads"
     );
 }
 

@@ -245,6 +245,7 @@ fn pc02_pause_contract_emits_paused_event() {
     let expected_event = PausedEvent {
         admin: f.admin.clone(),
         paused_at: now,
+        reason: None,
     };
 
     assert_eq!(
@@ -418,6 +419,7 @@ fn up02_unpause_contract_emits_unpaused_event() {
     let expected_event = UnpausedEvent {
         admin: f.admin.clone(),
         unpaused_at: now_after,
+        reason: None,
     };
 
     assert_eq!(

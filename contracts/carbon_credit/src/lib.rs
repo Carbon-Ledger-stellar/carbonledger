@@ -253,28 +253,43 @@ pub struct HistoryPrunedEvent {
 /// Emitted by `pause_contract()` (closes #1212).
 ///
 /// Typed event struct so indexers can decode pause events without relying on
-/// positional tuple inspection.
+/// positional tuple inspection (#1218).
+///
+/// Emitted by every pause entry-point (`pause`, `pause_contract`,
+/// `pause_operations`).  The two-element topic `(c_ledger, paused)` is the
+/// stable key that allows Horizon / event-stream indexers to filter all
+/// pause events across all ledgers with a single topic filter.
 ///
 /// Fields:
 ///   admin      – address of the admin who triggered the pause.
 ///   paused_at  – ledger timestamp (seconds) at the moment of the call.
+///   reason     – optional human-readable rationale (max ~200 chars recommended).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PausedEvent {
     pub admin:     Address,
     pub paused_at: u64,
+    /// Optional rationale for the pause. Stored on-chain; visible to indexers.
+    pub reason:    Option<String>,
 }
 
-/// Emitted by `unpause_contract()` (closes #1213).
+/// Emitted by every unpause entry-point (`unpause`, `unpause_contract`,
+/// `unpause_operations`).
+///
+/// The two-element topic `(c_ledger, unpaused)` is the stable key that lets
+/// indexers filter all unpause events across all ledgers (#1218).
 ///
 /// Fields:
 ///   admin        – address of the admin who cleared the pause.
 ///   unpaused_at  – ledger timestamp (seconds) at the moment of the call.
+///   reason       – optional human-readable rationale.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnpausedEvent {
     pub admin:       Address,
     pub unpaused_at: u64,
+    /// Optional rationale for lifting the pause. Stored on-chain; visible to indexers.
+    pub reason:      Option<String>,
 }
 
 #[contracttype]
@@ -577,7 +592,11 @@ impl CarbonCreditContract {
         env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("paused")),
-            (admin, until_timestamp, now),
+            PausedEvent {
+                admin,
+                paused_at: now,
+                reason:    None,
+            },
         );
         Ok(())
     }
@@ -589,7 +608,11 @@ impl CarbonCreditContract {
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("unpaused")),
-            (admin, env.ledger().timestamp()),
+            UnpausedEvent {
+                admin,
+                unpaused_at: env.ledger().timestamp(),
+                reason:      None,
+            },
         );
         Ok(())
     }
@@ -943,7 +966,7 @@ impl CarbonCreditContract {
     // ============================================
 
     /// Pause all state-mutating contract functions.
-    /// Admin-only. Emits a `PausedEvent`.
+    /// Admin-only. Emits a typed [`PausedEvent`] (#1218).
     pub fn pause(env: Env, admin: Address) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -956,13 +979,17 @@ impl CarbonCreditContract {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("paused")),
-            (admin, env.ledger().timestamp()),
+            PausedEvent {
+                admin,
+                paused_at: env.ledger().timestamp(),
+                reason:    None,
+            },
         );
         Ok(())
     }
 
     /// Unpause the contract, restoring normal operation.
-    /// Admin-only. Emits an `UnpausedEvent`.
+    /// Admin-only. Emits a typed [`UnpausedEvent`] (#1218).
     pub fn unpause(env: Env, admin: Address) -> Result<(), CarbonError> {
         admin.require_auth();
         Self::require_role(&env, &admin, Role::Admin)?;
@@ -972,7 +999,11 @@ impl CarbonCreditContract {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("unpaused")),
-            (admin, env.ledger().timestamp()),
+            UnpausedEvent {
+                admin,
+                unpaused_at: env.ledger().timestamp(),
+                reason:      None,
+            },
         );
         Ok(())
     }
@@ -1009,6 +1040,7 @@ impl CarbonCreditContract {
             PausedEvent {
                 admin,
                 paused_at: env.ledger().timestamp(),
+                reason:    None,
             },
         );
         Ok(())
@@ -1035,6 +1067,7 @@ impl CarbonCreditContract {
             UnpausedEvent {
                 admin,
                 unpaused_at: env.ledger().timestamp(),
+                reason:      None,
             },
         );
         Ok(())
