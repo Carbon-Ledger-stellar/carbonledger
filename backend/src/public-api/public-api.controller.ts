@@ -17,7 +17,8 @@ import { CreateApiKeyDto } from './public-api.dto';
 /**
  * Public read-only API for third-party ESG platforms and data providers.
  * Authentication: X-Api-Key header (no wallet required).
- * Rate limit: 1000 req/day per API key (enforced via throttler).
+ * Rate limit: enforced per API key via ApiKeyThrottlerGuard, with limits
+ * configurable per key tier (default/basic/premium).
  */
 @Controller('v1')
 @UseGuards(ApiKeyGuard)
