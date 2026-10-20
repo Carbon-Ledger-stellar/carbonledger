@@ -919,11 +919,8 @@ cargo test --test lifecycle_integration_test -- --nocapture
 <!-- handsoff-issue-1302 -->
 - #1302: DevOps - Create pause metrics dashboard
 
-<!-- handsoff-issue-1214 -->
-- #1214: Backend - Add pause check to mint() function
+<!-- handsoff-issue-1406 -->
+- #1406: Frontend - Add unit tests for ComparisonTray
 
-<!-- handsoff-issue-1215 -->
-- #1215: Backend - Add pause check to transfer() function
-
-<!-- handsoff-issue-1216 -->
-- #1216: Backend - Add pause check to retire() function
+<!-- handsoff-issue-1545 -->
+- #1545: DevOps - Backend container doesn't load .env in docker-compose

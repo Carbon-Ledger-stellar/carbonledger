@@ -1,9 +1,62 @@
 "use client";
 
+import { useEffect } from 'react';
 import { useTheme } from '../lib/theme-context';
+
+const THEME_STORAGE_KEY = 'theme';
+
+function getSystemTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme: 'light' | 'dark' | 'system') {
+  if (typeof document === 'undefined') return;
+  const resolved = theme === 'system' ? getSystemTheme() : theme;
+  document.documentElement.setAttribute('data-theme', resolved);
+  document.documentElement.style.colorScheme = resolved;
+}
 
 export default function ThemeToggle() {
   const { theme, setTheme, resolvedTheme } = useTheme();
+
+  // Restore persisted preference (or system default) and keep DOM in sync.
+  useEffect(() => {
+    let stored: 'light' | 'dark' | 'system' | null = null;
+    try {
+      const raw = window.localStorage.getItem(THEME_STORAGE_KEY);
+      if (raw === 'light' || raw === 'dark' || raw === 'system') {
+        stored = raw;
+      }
+    } catch {
+      // localStorage may be unavailable (private mode, etc.)
+    }
+
+    if (stored && stored !== theme) {
+      setTheme(stored);
+      return;
+    }
+
+    applyTheme(theme);
+  }, [theme, setTheme]);
+
+  // Persist the user's choice whenever it changes.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // ignore persistence failures
+    }
+  }, [theme]);
+
+  // Follow system changes while in system mode.
+  useEffect(() => {
+    if (theme !== 'system' || typeof window === 'undefined' || !window.matchMedia) return;
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => applyTheme('system');
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, [theme]);
 
   const toggleTheme = () => {
     if (theme === 'light') {
