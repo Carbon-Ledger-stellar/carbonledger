@@ -78,8 +78,19 @@ export class ReconciliationService {
       },
     };
 
+    this.exportMismatchMetric(divergencesFound);
+
     this.logger.log('Reconciliation completed', result);
     return result;
+  }
+
+  /**
+   * Exposes the number of DB/chain mismatches detected in the latest run as a
+   * Prometheus gauge so the `ReconciliationMismatchDetected` alert rule can
+   * fire whenever the value is greater than zero.
+   */
+  private exportMismatchMetric(mismatchCount: number): void {
+    contractCallsRegistry.setGauge('reconciliation_mismatches', mismatchCount);
   }
 
   private async detectDivergence(batch: { batchId: string; status: string; amount: number; projectId: string; vintageYear: number }) {
