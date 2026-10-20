@@ -919,5 +919,8 @@ cargo test --test lifecycle_integration_test -- --nocapture
 <!-- handsoff-issue-1302 -->
 - #1302: DevOps - Create pause metrics dashboard
 
-<!-- handsoff-issue-1549 -->
-- #1549: DevOps - Cache cargo builds in CI
+<!-- handsoff-issue-1406 -->
+- #1406: Frontend - Add unit tests for ComparisonTray
+
+<!-- handsoff-issue-1545 -->
+- #1545: DevOps - Backend container doesn't load .env in docker-compose
