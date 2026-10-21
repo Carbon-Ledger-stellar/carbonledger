@@ -135,6 +135,42 @@ pub struct CircuitBreakerEvent {
     pub tripped_at: u64,
 }
 
+/// Emitted by `pause_operations()` (#1218).
+///
+/// The two-element topic `(c_ledger, paused)` is the stable key used by
+/// Horizon / event-stream indexers to filter all marketplace pause events.
+///
+/// Fields:
+///   admin      – address of the admin who triggered the pause.
+///   paused_at  – ledger timestamp (seconds) at the moment of the call.
+///   reason     – optional human-readable rationale for the pause.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PausedEvent {
+    pub admin:     Address,
+    pub paused_at: u64,
+    /// Optional rationale for the pause. Stored on-chain; visible to indexers.
+    pub reason:    Option<String>,
+}
+
+/// Emitted by `unpause_operations()` (#1218).
+///
+/// The two-element topic `(c_ledger, unpaused)` is the stable key used by
+/// Horizon / event-stream indexers to filter all marketplace unpause events.
+///
+/// Fields:
+///   admin        – address of the admin who cleared the pause.
+///   unpaused_at  – ledger timestamp (seconds) at the moment of the call.
+///   reason       – optional human-readable rationale for lifting the pause.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpausedEvent {
+    pub admin:       Address,
+    pub unpaused_at: u64,
+    /// Optional rationale for lifting the pause. Stored on-chain; visible to indexers.
+    pub reason:      Option<String>,
+}
+
 /// Compile-time default fee constants (1%).
 /// Used as fallback when FeeConfig has not been set via governance.
 pub const DEFAULT_FEE_NUMERATOR: i128 = 1;
@@ -638,7 +674,11 @@ impl CarbonMarketplaceContract {
         env.storage().persistent().set(&DataKey::PauseUntil, &until_timestamp);
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("paused")),
-            (admin, until_timestamp, now),
+            PausedEvent {
+                admin,
+                paused_at: now,
+                reason:    None,
+            },
         );
         Ok(())
     }
@@ -650,7 +690,11 @@ impl CarbonMarketplaceContract {
         env.storage().persistent().set(&DataKey::PauseUntil, &0_u64);
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("unpaused")),
-            (admin, env.ledger().timestamp()),
+            UnpausedEvent {
+                admin,
+                unpaused_at: env.ledger().timestamp(),
+                reason:      None,
+            },
         );
         Ok(())
     }
