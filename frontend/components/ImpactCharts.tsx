@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from "next/dynamic";
 import {
   LineChart,
   Line,
@@ -93,6 +94,43 @@ const tooltipContentStyle: React.CSSProperties = {
   fontSize: "0.875rem",
   boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)",
 };
+
+// ─── Skeleton fallback ─────────────────────────────────────────────────────────
+
+function ChartSkeleton({ label }: { label: string }) {
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label={`Loading ${label}`}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "0.75rem",
+        height: "300px",
+        padding: "0.5rem 0",
+      }}
+    >
+      <div
+        style={{
+          height: "1rem",
+          width: "40%",
+          borderRadius: "0.25rem",
+          backgroundColor: "var(--skeleton-bg, #e5e7eb)",
+          opacity: 0.6,
+        }}
+      />
+      <div
+        style={{
+          flex: 1,
+          borderRadius: "0.5rem",
+          backgroundColor: "var(--skeleton-bg, #e5e7eb)",
+          opacity: 0.4,
+        }}
+      />
+    </div>
+  );
+}
 
 // ─── Empty state ───────────────────────────────────────────────────────────────
 
@@ -259,120 +297,75 @@ function ProjectMilestonesChart({ data }: { data: MilestoneDataPoint[] }) {
             formatter={(value: number, name: string, props: any) => [
               `${value} credits`,
               props?.payload?.status
-                ? STATUS_LABELS[props.payload.status] || props.payload.status
+                ? STATUS_LABELS[props.payload.status] ?? props.payload.status
                 : name,
             ]}
           />
           <Legend />
-          {Object.entries(STATUS_COLORS).map(([status, color]) => (
-            <Bar
-              key={status}
-              dataKey={(d: MilestoneDataPoint) => (d.status === status ? d.credits : 0)}
-              stackId="a"
-              fill={color}
-              name={STATUS_LABELS[status]}
-              radius={[0, 4, 4, 0]}
-            />
-          ))}
+          <Bar dataKey="credits" name="Credits" radius={[0, 4, 4, 0]}>
+            {data.map((entry, index) => (
+              <Bar
+                key={`cell-${index}`}
+                dataKey="credits"
+                fill={STATUS_COLORS[entry.status] ?? "#3b82f6"}
+              />
+            ))}
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </div>
   );
 }
 
+// ─── Lazy-loaded chart wrappers ────────────────────────────────────────────────
+// Charts are code-split via next/dynamic so the recharts bundle is only fetched
+// on routes that actually render them. ssr:false avoids hydration mismatches
+// from ResponsiveContainer measuring the DOM on the client only.
+
+const LazyCO2OffsetChart = dynamic(
+  () => Promise.resolve({ default: CO2OffsetChart }),
+  {
+    ssr: false,
+    loading: () => <ChartSkeleton label="CO₂ offset chart" />,
+  }
+);
+
+const LazyPricingTrendChart = dynamic(
+  () => Promise.resolve({ default: PricingTrendChart }),
+  {
+    ssr: false,
+    loading: () => <ChartSkeleton label="pricing trend chart" />,
+  }
+);
+
+const LazyProjectMilestonesChart = dynamic(
+  () => Promise.resolve({ default: ProjectMilestonesChart }),
+  {
+    ssr: false,
+    loading: () => <ChartSkeleton label="project milestones chart" />,
+  }
+);
+
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function ImpactCharts({
-  co2Data,
-  pricingData,
-  milestoneData,
+  co2Data = DEFAULT_CO2_DATA,
+  pricingData = DEFAULT_PRICING_DATA,
+  milestoneData = DEFAULT_MILESTONE_DATA,
 }: ImpactChartsProps) {
   const isMobile = useIsMobile();
-
-  const co2 = co2Data ?? DEFAULT_CO2_DATA;
-  const pricing = pricingData ?? DEFAULT_PRICING_DATA;
-  const milestones = milestoneData ?? DEFAULT_MILESTONE_DATA;
-
-  const hasAnyData = co2.length > 0 || pricing.length > 0 || milestones.length > 0;
 
   return (
     <div
       style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "2rem",
-        padding: isMobile ? "1rem" : "1.5rem",
-        background: "var(--card-bg, #fff)",
-        borderRadius: "1rem",
-        border: "1px solid var(--card-border, #e5e7eb)",
+        display: "grid",
+        gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))",
+        gap: "1.5rem",
       }}
     >
-      <h2
-        style={{
-          fontSize: "1.25rem",
-          fontWeight: 800,
-          color: "var(--text-primary, #1f2937)",
-          margin: 0,
-        }}
-      >
-        Impact Metrics
-      </h2>
-
-      {!hasAnyData ? (
-        <div
-          style={{
-            textAlign: "center",
-            padding: "3rem 1rem",
-            color: "var(--text-secondary, #6b7280)",
-          }}
-        >
-          <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>📊</div>
-          <p style={{ fontSize: "0.875rem", margin: 0 }}>
-            Impact data will appear here once credit activity is recorded.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-              gap: "2rem",
-            }}
-          >
-            <div
-              style={{
-                background: "var(--card-bg, #fff)",
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                border: "1px solid var(--card-border, #e5e7eb)",
-              }}
-            >
-              <CO2OffsetChart data={co2} />
-            </div>
-            <div
-              style={{
-                background: "var(--card-bg, #fff)",
-                padding: "1rem",
-                borderRadius: "0.75rem",
-                border: "1px solid var(--card-border, #e5e7eb)",
-              }}
-            >
-              <PricingTrendChart data={pricing} />
-            </div>
-          </div>
-          <div
-            style={{
-              background: "var(--card-bg, #fff)",
-              padding: "1rem",
-              borderRadius: "0.75rem",
-              border: "1px solid var(--card-border, #e5e7eb)",
-            }}
-          >
-            <ProjectMilestonesChart data={milestones} />
-          </div>
-        </>
-      )}
+      <LazyCO2OffsetChart data={co2Data} />
+      <LazyPricingTrendChart data={pricingData} />
+      <LazyProjectMilestonesChart data={milestoneData} />
     </div>
   );
 }

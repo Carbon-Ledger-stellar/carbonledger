@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
+import dynamic from "next/dynamic";
 import { colors, borderRadius, shadows, spacing, typography } from "../styles/design-system";
 import { formatTonnes } from "../lib/carbon-utils";
 import LoadingSkeleton from "./LoadingSkeleton";
@@ -71,7 +72,29 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function OrderBookChart({ title = "Live SDEX order book" }: OrderBookChartProps) {
+function OrderBookChartSkeleton() {
+  return (
+    <section
+      aria-busy="true"
+      aria-label="Loading order book chart"
+      style={{
+        background: colors.neutral[0],
+        border: `1px solid ${colors.neutral[200]}`,
+        borderRadius: borderRadius.lg,
+        boxShadow: shadows.sm,
+        padding: spacing[5],
+        display: "flex",
+        flexDirection: "column",
+        gap: spacing[3],
+      }}
+    >
+      <LoadingSkeleton width="40%" height="20px" />
+      <LoadingSkeleton width="100%" height="360px" />
+    </section>
+  );
+}
+
+function OrderBookChartImpl({ title = "Live SDEX order book" }: OrderBookChartProps) {
   const pair = useMemo(() => createDefaultSdexPair(), []);
   const pairLabel = pair?.label ?? "CARBON/USDC";
   const chartId = useId();
@@ -229,282 +252,123 @@ export default function OrderBookChart({ title = "Live SDEX order book" }: Order
 
   return (
     <section
-      aria-labelledby={chartId}
+      aria-labelledby={`${chartId}-title`}
       style={{
-        background: `linear-gradient(180deg, ${colors.surface} 0%, ${colors.surfaceAlt} 100%)`,
+        background: colors.neutral[0],
         border: `1px solid ${colors.neutral[200]}`,
-        borderRadius: borderRadius.xl,
+        borderRadius: borderRadius.lg,
         boxShadow: shadows.sm,
-        overflow: "hidden",
+        padding: spacing[5],
+        display: "flex",
+        flexDirection: "column",
+        gap: spacing[4],
       }}
     >
-      <style>{`
-        .sdex-widget-grid {
-          display: grid;
-          grid-template-columns: 1.2fr 0.8fr;
-          gap: ${spacing[5]};
-        }
-
-        .sdex-chart-shell {
-          position: relative;
-          border-radius: ${borderRadius.lg};
-          background: ${colors.neutral[50]};
-          border: 1px solid ${colors.neutral[200]};
-          overflow: hidden;
-        }
-
-        .sdex-chart {
-          width: 100%;
-          height: 360px;
-          display: block;
-        }
-
-        .sdex-compact-only {
-          display: block;
-        }
-
-        @media (max-width: 767px) {
-          .sdex-widget-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .sdex-chart {
-            height: 280px;
-          }
-
-          .sdex-compact-only {
-            display: none;
-          }
-        }
-      `}</style>
-
-      <div style={{ padding: `${spacing[5]} ${spacing[5]} ${spacing[4]}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: spacing[4], alignItems: "flex-start", marginBottom: spacing[4] }}>
-          <div>
-            <p style={{ margin: 0, fontSize: typography.fontSize.xs, fontWeight: typography.fontWeight.semibold, color: colors.primary[600], textTransform: "uppercase", letterSpacing: "0.08em" }}>
-              SDEX price discovery
-            </p>
-            <h2 id={chartId} style={{ margin: "0.25rem 0 0", fontSize: typography.fontSize.xl, fontWeight: typography.fontWeight.bold, color: colors.neutral[900] }}>
-              {title}
-            </h2>
-            <p style={{ margin: "0.35rem 0 0", fontSize: typography.fontSize.sm, color: colors.neutral[500] }}>
-              Live depth for {pairLabel} with polling paused when the tab is hidden.
-            </p>
-          </div>
-
-          <div className="sdex-compact-only" style={{ textAlign: "right" }}>
-            <div style={{ fontSize: typography.fontSize.xs, color: colors.neutral[500] }}>Status</div>
-            <div style={{ fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.semibold, color: colors.neutral[900] }}>
-              {loading ? "Loading…" : error ? "Unavailable" : "Live"}
-            </div>
-          </div>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: spacing[3] }}>
+        <div>
+          <h2 id={`${chartId}-title`} style={{ margin: 0, fontSize: typography.fontSize.lg, fontWeight: typography.fontWeight.semibold, color: colors.neutral[900] }}>
+            {title}
+          </h2>
+          <p style={{ margin: `${spacing[1]} 0 0`, fontSize: typography.fontSize.xs, color: colors.neutral[500] }}>
+            {pairLabel} · updates every {Math.round(ORDER_BOOK_POLL_MS / 1000)}s
+          </p>
         </div>
+        {loading && <span style={{ fontSize: typography.fontSize.xs, color: colors.neutral[500] }}>Refreshing…</span>}
+      </header>
 
-        {loading && !orderBook && !error ? (
-          <LoadingSkeleton variant="PricingTable" />
-        ) : (
-        <div className="sdex-widget-grid">
-          <div>
-            {error ? (
-              <div style={{ padding: spacing[5], borderRadius: borderRadius.lg, background: colors.neutral[50], border: `1px solid ${colors.neutral[200]}` }}>
-                <p style={{ margin: 0, color: colors.suspended.text, fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.medium }}>{error}</p>
-                <p style={{ margin: `${spacing[2]} 0 0`, color: colors.neutral[500], fontSize: typography.fontSize.xs }}>
-                  Check the Horizon endpoint and SDEX issuer configuration.
-                </p>
-              </div>
-            ) : (
-              <div className="sdex-chart-shell">
-                <svg
-                  viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
-                  preserveAspectRatio="none"
-                  className="sdex-chart"
-                  onMouseMove={handleMove}
-                  onMouseLeave={() => setHovered(null)}
-                  role="img"
-                  aria-label="Order book step chart"
-                >
-                  <defs>
-                    <linearGradient id="sdex-ask-fill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#ef4444" stopOpacity="0.28" />
-                      <stop offset="100%" stopColor="#ef4444" stopOpacity="0.06" />
-                    </linearGradient>
-                  </defs>
-
-                  <line x1={MARGIN.left} y1={VIEWBOX_HEIGHT - MARGIN.bottom} x2={VIEWBOX_WIDTH - MARGIN.right} y2={VIEWBOX_HEIGHT - MARGIN.bottom} stroke={colors.neutral[300]} strokeWidth={1} />
-                  <line x1={MARGIN.left} y1={MARGIN.top} x2={MARGIN.left} y2={VIEWBOX_HEIGHT - MARGIN.bottom} stroke={colors.neutral[300]} strokeWidth={1} />
-
-                  {chart?.fillRect && (
-                    <rect
-                      x={chart.fillRect.x}
-                      y={MARGIN.top}
-                      width={Math.max(2, chart.fillRect.width)}
-                      height={VIEWBOX_HEIGHT - MARGIN.top - MARGIN.bottom}
-                      fill="url(#sdex-ask-fill)"
-                    />
-                  )}
-
-                  {chart?.bidPath && <path d={chart.bidPath} fill="none" stroke="#16a34a" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />}
-                  {chart?.askPath && <path d={chart.askPath} fill="none" stroke="#dc2626" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />}
-
-                  {hovered && chart && <circle cx={hovered.x} cy={hovered.y} r={6} fill={hovered.side === "ask" ? "#dc2626" : "#16a34a"} stroke="#fff" strokeWidth={2} />}
-
-                  {chart && orderBook && [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-                    const price = chart.minPrice + ratio * (chart.maxPrice - chart.minPrice);
-                    const x = chart.xScale(price);
-                    return (
-                      <g key={ratio}>
-                        <line x1={x} y1={VIEWBOX_HEIGHT - MARGIN.bottom} x2={x} y2={VIEWBOX_HEIGHT - MARGIN.bottom + 6} stroke={colors.neutral[300]} />
-                        <text x={x} y={VIEWBOX_HEIGHT - 14} textAnchor="middle" fill={colors.neutral[500]} fontSize={11}>
-                          {formatOrderBookPrice(price)}
-                        </text>
-                      </g>
-                    );
-                  })}
-
-                  {chart && orderBook && [0, 0.33, 0.66, 1].map((ratio) => {
-                    const volume = ratio * chart.maxVolume;
-                    const y = chart.yScale(volume);
-                    return (
-                      <g key={ratio}>
-                        <line x1={MARGIN.left - 6} y1={y} x2={MARGIN.left} y2={y} stroke={colors.neutral[300]} />
-                        <text x={MARGIN.left - 10} y={y + 4} textAnchor="end" fill={colors.neutral[500]} fontSize={11}>
-                          {formatOrderBookVolume(volume)}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </svg>
-
-                {hovered && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: spacing[3],
-                      right: spacing[3],
-                      minWidth: "240px",
-                      padding: spacing[3],
-                      background: "rgba(255,255,255,0.96)",
-                      border: `1px solid ${colors.neutral[200]}`,
-                      borderRadius: borderRadius.lg,
-                      boxShadow: shadows.md,
-                    }}
-                  >
-                    <div style={{ fontSize: typography.fontSize.xs, color: colors.neutral[500], marginBottom: spacing[1] }}>
-                      {hovered.side === "ask" ? "Ask depth" : "Bid depth"}
-                    </div>
-                    <div style={{ fontSize: typography.fontSize.base, fontWeight: typography.fontWeight.bold, color: colors.neutral[900] }}>
-                      {formatOrderBookPrice(hovered.level.price)} USDC / tCO₂e
-                    </div>
-                    <div style={{ fontSize: typography.fontSize.sm, color: colors.neutral[600], marginTop: spacing[1] }}>
-                      {hovered.side === "ask"
-                        ? `Cumulative volume available at or below this price: ${formatTonnes(hovered.level.cumulative)}`
-                        : `Cumulative volume available at or above this price: ${formatTonnes(hovered.level.cumulative)}`}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <aside style={{ display: "flex", flexDirection: "column", gap: spacing[4] }}>
-            <div style={{ padding: spacing[4], background: colors.neutral[50], borderRadius: borderRadius.lg, border: `1px solid ${colors.neutral[200]}` }}>
-              <label htmlFor="sdex-quantity" style={{ display: "block", fontSize: typography.fontSize.sm, fontWeight: typography.fontWeight.semibold, color: colors.neutral[700], marginBottom: spacing[2] }}>
-                Estimated fill
-              </label>
-              <input
-                id="sdex-quantity"
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={quantity}
-                onChange={(event) => setQuantity(event.target.value)}
-                aria-label="Estimated fill quantity"
-                style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  padding: `${spacing[3]} ${spacing[3]}`,
-                  borderRadius: borderRadius.md,
-                  border: `1px solid ${colors.neutral[300]}`,
-                  fontSize: typography.fontSize.base,
-                  fontWeight: typography.fontWeight.semibold,
-                  color: colors.neutral[900],
-                  marginBottom: spacing[3],
-                }}
-              />
-
-              {quote ? (
-                <>
-                  <Metric label="Estimated fill price" value={`${formatOrderBookPrice(quote.estimatedPricePerTonne)} USDC / tCO₂e`} />
-                  <Metric label="Average execution price" value={`${formatOrderBookPrice(quote.averageExecutionPrice)} USDC / tCO₂e`} />
-                  <Metric label="Estimated total" value={`${formatOrderBookPrice(quote.estimatedTotalPrice)} USDC`} />
-                  <Metric label="Filled volume" value={formatTonnes(quote.filledQuantity)} />
-                  {quote.remainingQuantity > 0 && <Metric label="Unfilled remainder" value={formatTonnes(quote.remainingQuantity)} />}
-                </>
-              ) : (
-                <p style={{ margin: 0, color: colors.neutral[500], fontSize: typography.fontSize.sm }}>
-                  Enter a quantity to preview the price band that would be consumed by the current asks.
-                </p>
-              )}
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: spacing[2], marginTop: spacing[4] }}>
-                <button
-                  type="button"
-                  disabled={!quote}
-                  onClick={applyEstimateToCart}
-                  style={{
-                    background: quote ? colors.primary[600] : colors.neutral[300],
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: borderRadius.md,
-                    padding: `${spacing[2]} ${spacing[3]}`,
-                    fontWeight: typography.fontWeight.semibold,
-                    cursor: quote ? "pointer" : "not-allowed",
-                  }}
-                >
-                  Use estimate in cart
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearSdexEstimate();
-                    setSavedEstimate(null);
-                  }}
-                  style={{
-                    background: colors.neutral[100],
-                    color: colors.neutral[700],
-                    border: `1px solid ${colors.neutral[200]}`,
-                    borderRadius: borderRadius.md,
-                    padding: `${spacing[2]} ${spacing[3]}`,
-                    fontWeight: typography.fontWeight.semibold,
-                    cursor: "pointer",
-                  }}
-                >
-                  Clear estimate
-                </button>
-              </div>
-            </div>
-
-            <div style={{ padding: spacing[4], background: colors.neutral[50], borderRadius: borderRadius.lg, border: `1px solid ${colors.neutral[200]}` }}>
-              <Metric label="Best bid" value={formatOrderBookPrice(orderBook?.bestBid ?? null)} />
-              <Metric label="Best ask" value={formatOrderBookPrice(orderBook?.bestAsk ?? null)} />
-              <Metric label="Spread" value={orderBook?.spread !== null && orderBook?.spread !== undefined ? `${formatOrderBookPrice(orderBook.spread)} USDC` : "—"} />
-              <Metric label="Ask depth" value={formatTonnes(orderBook?.totalAskVolume ?? 0)} />
-              <Metric label="Bid depth" value={formatTonnes(orderBook?.totalBidVolume ?? 0)} />
-              {savedEstimate && (
-                <p style={{ margin: `${spacing[3]} 0 0`, color: colors.primary[700], fontSize: typography.fontSize.xs }}>
-                  Saved quote for {formatTonnes(savedEstimate.requestedQuantity)} on {savedEstimate.sellingAsset}/{savedEstimate.buyingAsset}.
-                </p>
-              )}
-              {loading && (
-                <p style={{ margin: `${spacing[3]} 0 0`, color: colors.neutral[500], fontSize: typography.fontSize.xs }}>
-                  Refreshing every 30 seconds while visible.
-                </p>
-              )}
-            </div>
-          </aside>
+      {error && (
+        <div role="alert" style={{ color: colors.semantic?.error ?? colors.neutral[700], fontSize: typography.fontSize.sm }}>
+          {error}
         </div>
-        )}
+      )}
+
+      {!chart ? (
+        <LoadingSkeleton width="100%" height="360px" />
+      ) : (
+        <svg
+          role="img"
+          aria-label={`${pairLabel} order book depth chart`}
+          viewBox={`0 0 ${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT}`}
+          style={{ width: "100%", height: "auto", display: "block" }}
+          onMouseMove={handleMove}
+          onMouseLeave={() => setHovered(null)}
+        >
+          <line x1={MARGIN.left} y1={VIEWBOX_HEIGHT - MARGIN.bottom} x2={VIEWBOX_WIDTH - MARGIN.right} y2={VIEWBOX_HEIGHT - MARGIN.bottom} stroke={colors.neutral[200]} />
+          <line x1={MARGIN.left} y1={MARGIN.top} x2={MARGIN.left} y2={VIEWBOX_HEIGHT - MARGIN.bottom} stroke={colors.neutral[200]} />
+
+          {chart.fillRect && (
+            <rect x={chart.fillRect.x} y={MARGIN.top} width={chart.fillRect.width} height={VIEWBOX_HEIGHT - MARGIN.top - MARGIN.bottom} fill={colors.primary?.[100] ?? colors.neutral[100]} opacity={0.6} />
+          )}
+
+          <path d={chart.bidPath} fill="none" stroke={colors.semantic?.success ?? colors.neutral[700]} strokeWidth={2} />
+          <path d={chart.askPath} fill="none" stroke={colors.semantic?.error ?? colors.neutral[700]} strokeWidth={2} />
+
+          {hovered && (
+            <g>
+              <circle cx={hovered.x} cy={hovered.y} r={4} fill={hovered.side === "ask" ? (colors.semantic?.error ?? colors.neutral[700]) : (colors.semantic?.success ?? colors.neutral[700])} />
+              <text x={hovered.x + 8} y={hovered.y - 8} fontSize={typography.fontSize.xs} fill={colors.neutral[900]}>
+                {formatOrderBookPrice(hovered.level.price)} · {formatOrderBookVolume(hovered.level.cumulative)}
+              </text>
+            </g>
+          )}
+        </svg>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: spacing[4] }}>
+        <div>
+          <Metric label="Best ask" value={orderBook?.bestAsk != null ? formatOrderBookPrice(orderBook.bestAsk) : "—"} />
+          <Metric label="Best bid" value={orderBook?.bestBid != null ? formatOrderBookPrice(orderBook.bestBid) : "—"} />
+          <Metric label="Ask volume" value={formatTonnes(orderBook?.totalAskVolume ?? 0)} />
+          <Metric label="Bid volume" value={formatTonnes(orderBook?.totalBidVolume ?? 0)} />
+        </div>
+        <div>
+          <label style={{ display: "block", fontSize: typography.fontSize.xs, color: colors.neutral[500], marginBottom: spacing[1] }} htmlFor={`${chartId}-qty`}>
+            Estimate quantity
+          </label>
+          <input
+            id={`${chartId}-qty`}
+            type="number"
+            min={0}
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+            style={{ width: "100%", padding: spacing[2], borderRadius: borderRadius.md, border: `1px solid ${colors.neutral[200]}`, fontSize: typography.fontSize.sm }}
+          />
+          <Metric label="Avg fill price" value={quote ? formatOrderBookPrice(quote.averagePrice) : "—"} />
+          <Metric label="Total cost" value={quote ? formatOrderBookPrice(quote.totalCost) : "—"} />
+          <button
+            type="button"
+            onClick={applyEstimateToCart}
+            disabled={!quote}
+            style={{
+              marginTop: spacing[2],
+              width: "100%",
+              padding: `${spacing[2]} ${spacing[3]}`,
+              borderRadius: borderRadius.md,
+              border: "none",
+              background: colors.primary?.[600] ?? colors.neutral[900],
+              color: colors.neutral[0],
+              fontSize: typography.fontSize.sm,
+              fontWeight: typography.fontWeight.semibold,
+              cursor: quote ? "pointer" : "not-allowed",
+              opacity: quote ? 1 : 0.6,
+            }}
+          >
+            Apply to cart
+          </button>
+          {savedEstimate && (
+            <p style={{ margin: `${spacing[2]} 0 0`, fontSize: typography.fontSize.xs, color: colors.neutral[500] }}>
+              Saved estimate: {formatOrderBookPrice(savedEstimate.averagePrice)}
+            </p>
+          )}
+        </div>
       </div>
     </section>
   );
 }
+
+const OrderBookChart = dynamic(() => Promise.resolve(OrderBookChartImpl), {
+  ssr: false,
+  loading: () => <OrderBookChartSkeleton />,
+});
+
+export default OrderBookChart;

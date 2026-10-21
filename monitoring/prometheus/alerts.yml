@@ -1,0 +1,13 @@
+groups:
+  - name: reconciliation
+    rules:
+      - alert: ReconciliationMismatchDetected
+        expr: reconciliation_mismatch_count > 0
+        for: 0m
+        labels:
+          severity: critical
+          component: reconciliation
+        annotations:
+          summary: "Reconciliation detected {{ $value }} mismatch(es) between DB and chain"
+          description: "The reconciliation job found {{ $value }} mismatch(es) between the database and on-chain state. Investigate immediately."
+          runbook_url: "https://github.com/handsoff/docs/blob/main/runbooks/reconciliation-mismatch.md"

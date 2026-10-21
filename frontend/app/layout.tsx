@@ -7,6 +7,7 @@ import AppProviders from '../components/AppProviders';
 import RealtimeNotificationProvider from '../components/RealtimeNotificationProvider';
 import LocaleProvider from '../components/LocaleProvider';
 import ErrorBoundary from '../components/ErrorBoundary';
+import PauseBanner from '../components/PauseBanner';
 import en from '../public/locales/en/common.json';
 
 export const dynamic = 'force-dynamic';
@@ -22,11 +23,30 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+async function getPauseStatus(): Promise<boolean> {
+  const baseUrl =
+    process.env.NEXT_PUBLIC_API_URL ??
+    process.env.NEXT_PUBLIC_APP_URL ??
+    'http://localhost:3000';
+  try {
+    const res = await fetch(`${baseUrl}/api/pause-status`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { paused?: boolean };
+    return data?.paused === true;
+  } catch {
+    return false;
+  }
+}
+
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const isPaused = await getPauseStatus();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -47,11 +67,13 @@ export default function RootLayout({
         {/* Favicon */}
         <link rel="icon" href="/icons/icon-192.png" type="image/png" />
         {/*
-          Sets data-theme synchronously before first paint (#967). Without
-          this, ThemeProvider's useEffect (which reads localStorage) can't
-          run until after hydration, so every load flashes the light theme
-          for a moment even when the user picked dark — this blocking script
-          runs before the browser paints anything, so there's no flash.
+          Sets data-theme synchronously before first paint (#967, #1410).
+          Without this, ThemeProvider's useEffect (which reads localStorage)
+          can't run until after hydration, so every load flashes the light
+          theme for a moment even when the user picked dark — this blocking
+          script runs before the browser paints anything, so there's no flash.
+          It restores the persisted preference from localStorage and falls
+          back to the system theme via prefers-color-scheme when none is set.
         */}
         <script
           suppressHydrationWarning
@@ -69,6 +91,7 @@ export default function RootLayout({
                <AppProviders>
                  <RealtimeNotificationProvider>
                    <Navbar />
+                   {isPaused && <PauseBanner />}
                    <main id="main-content">
                      {children}
                    </main>
@@ -80,4 +103,4 @@ export default function RootLayout({
        </body>
     </html>
   );
-} 
+}
