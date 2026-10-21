@@ -9,6 +9,91 @@ The task is to write about the implementation for security and code quality of s
 
 ---
 
+## UI/UX Design: Pause Status Visual Hierarchy (#1170)
+
+Design specification for the pause status visual hierarchy across the admin dashboard — color schemes, typography, and icon design for paused/unpaused states.
+
+### 1. Color Palette
+
+**Primary — Pause Red**
+
+| Token | Hex | Usage |
+| --- | --- | --- |
+| `pause-red-600` | `#DC2626` | Paused badge background, primary pause icon |
+| `pause-red-500` | `#EF4444` | Hover / active pause states |
+| `pause-red-100` | `#FEE2E2` | Paused row tint (light mode) |
+| `pause-red-900` | `#7F1D1D` | Paused text on light tint |
+
+**Secondary — Neutral Gray**
+
+| Token | Hex | Usage |
+| --- | --- | --- |
+| `gray-900` | `#111827` | Primary text (light mode) |
+| `gray-600` | `#4B5563` | Secondary text, unpaused labels |
+| `gray-300` | `#D1D5DB` | Borders, dividers |
+| `gray-100` | `#F3F4F6` | Unpaused badge background |
+| `gray-50` | `#F9FAFB` | Surface background (light mode) |
+
+**Semantic accents**
+
+| Token | Hex | Usage |
+| --- | --- | --- |
+| `success-600` | `#16A34A` | Unpaused / running indicator |
+| `warning-500` | `#F59E0B` | Pause pending / transitional |
+
+### 2. Icon Designs
+
+**Paused state**
+- Two vertical rounded bars (pause glyph), 2px stroke, `pause-red-600` fill.
+- Contained in a 24×24 viewBox; bars 6×16 with 2px radius, 4px gap, centered.
+- Optional circular badge: 32px diameter, `pause-red-100` fill, `pause-red-600` glyph.
+
+**Unpaused / running state**
+- Solid right-pointing triangle (play glyph), 2px stroke, `success-600` fill.
+- Same 24×24 viewBox; triangle 14×16, rounded 2px corners.
+- Circular badge: 32px diameter, `gray-100` fill, `success-600` glyph.
+
+**Sizes:** 16px (inline/table), 24px (default), 32px (badge), 48px (empty state / hero).
+
+### 3. Typography
+
+| Element | Font | Size | Weight | Line height |
+| --- | --- | --- | --- | --- |
+| Status badge label | Inter | 12px | 600 | 16px |
+| Section heading | Inter | 18px | 600 | 24px |
+| Card title | Inter | 14px | 500 | 20px |
+| Body / table cell | Inter | 14px | 400 | 20px |
+| Metric value | Inter | 28px | 700 | 32px |
+| Caption / helper | Inter | 12px | 400 | 16px |
+
+- Badge labels use uppercase with 0.02em letter-spacing.
+- Numeric metrics use tabular figures (`font-variant-numeric: tabular-nums`).
+
+### 4. Light / Dark Mode Variants
+
+| Token | Light | Dark |
+| --- | --- | --- |
+| Surface | `#F9FAFB` | `#0F172A` |
+| Primary text | `#111827` | `#F9FAFB` |
+| Secondary text | `#4B5563` | `#9CA3AF` |
+| Border | `#D1D5DB` | `#334155` |
+| Paused badge bg | `#FEE2E2` | `#7F1D1D` |
+| Paused badge text | `#7F1D1D` | `#FEE2E2` |
+| Unpaused badge bg | `#F3F4F6` | `#1E293B` |
+| Unpaused badge text | `#4B5563` | `#D1D5DB` |
+
+- Pause red stays `#DC2626` in both modes for icon fill; text swaps to the light tint on dark surfaces for contrast.
+- All text/background pairs meet WCAG AA (≥ 4.5:1) contrast.
+
+### 5. Visual Hierarchy Rules
+
+1. Paused state always takes precedence — red badge + pause icon rendered before any secondary metadata.
+2. Unpaused state is de-emphasized with neutral gray so paused items draw the eye.
+3. Status badge is the highest-contrast element in a row; duration and reason follow in secondary text.
+4. Ongoing pauses use a subtle pulsing dot (2s ease-in-out) on the badge to signal active state.
+
+---
+
 ## UI/UX Design: Pause Stats Dashboard (#1176)
 
 Design specification for a dashboard surfacing pause statistics — charts, tables, and key metrics about pause patterns.

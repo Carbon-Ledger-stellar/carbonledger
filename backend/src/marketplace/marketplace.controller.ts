@@ -10,6 +10,7 @@ import {
   ForbiddenException,
   BadRequestException,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { MarketplaceService } from './marketplace.service';
@@ -23,8 +24,10 @@ import {
 } from '../policies';
 import { subject } from '@casl/ability';
 import { AbilityFactory } from '../policies/ability.factory';
+import { ContractPauseResponseInterceptor } from '../common/contract-pause-response.interceptor';
 
 @Controller('marketplace')
+@UseInterceptors(ContractPauseResponseInterceptor)
 export class MarketplaceController {
   constructor(
     private readonly marketplaceService: MarketplaceService,
