@@ -11,6 +11,7 @@ import {
   HttpCode,
   Header,
   UseGuards,
+  UseInterceptors,
   HttpStatus,
 } from '@nestjs/common';
 import { Response } from 'express';
@@ -33,6 +34,7 @@ import {
 } from '../policies';
 import { subject } from '@casl/ability';
 import { AbilityFactory } from '../policies/ability.factory';
+import { ContractPauseResponseInterceptor } from '../common/contract-pause-response.interceptor';
 
 class VerifyCertificateDto {
   @IsString() retirementId: string;
@@ -49,6 +51,7 @@ class VerifyCertificateSignatureDto {
 }
 
 @Controller('retirements')
+@UseInterceptors(ContractPauseResponseInterceptor)
 export class RetirementsController {
   constructor(
     private readonly retirementsService: RetirementsService,

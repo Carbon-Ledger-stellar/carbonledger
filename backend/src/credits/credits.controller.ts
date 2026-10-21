@@ -1,16 +1,39 @@
-import { Controller, Get, Post, Param, Query, Body, Request, UseGuards, BadRequestException, Res } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, Body, Request, UseGuards, BadRequestException, Res, UseInterceptors } from '@nestjs/common';
 import { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { CreditsService } from './credits.service';
 import { MintCreditsDto, RetireCreditsDto, BatchMintCreditsDto, BatchRetireCreditsDto, BulkMintCreditsDto } from './credits.dto';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, CreditBatchSubject, RetirementSubject } from '../policies';
+import { ContractPauseResponseInterceptor } from '../common/contract-pause-response.interceptor';
+
+const MAX_PAGE_LIMIT = 100;
+const DEFAULT_PAGE_LIMIT = 20;
 
 @Controller('credits')
+@UseInterceptors(ContractPauseResponseInterceptor)
 export class CreditsController {
   constructor(private readonly creditsService: CreditsService) {}
 
   // ── Public read endpoints ────────────────────────────────────────────────
+
+  /**
+   * GET /credits?limit=20&cursor=<opaque>
+   *
+   * Cursor-based pagination over all credit batches. `limit` is capped at
+   * 100 (defaults to 20). The response includes `nextCursor`, which is null
+   * when there are no further pages.
+   */
+  @Get()
+  @Public()
+  getCredits(@Query('limit') limit?: string, @Query('cursor') cursor?: string) {
+    const parsedLimit = limit === undefined ? DEFAULT_PAGE_LIMIT : Number(limit);
+    if (!Number.isInteger(parsedLimit) || parsedLimit < 1) {
+      throw new BadRequestException('limit must be a positive integer');
+    }
+    const effectiveLimit = Math.min(parsedLimit, MAX_PAGE_LIMIT);
+    return this.creditsService.getCreditsPaginated({ limit: effectiveLimit, cursor });
+  }
 
   @Get('project/:projectId/batches')
   @Public()
@@ -184,4 +207,3 @@ export class CreditsController {
     return this.creditsService.batchRetireCredits(authedItems);
   }
 }
-

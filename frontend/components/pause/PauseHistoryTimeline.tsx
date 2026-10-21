@@ -29,6 +29,20 @@ function formatDate(value: string): string {
   }).format(date);
 }
 
+function formatDay(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+  }).format(date);
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
 export function formatPauseDuration(seconds: number): string {
   const safe = Math.max(0, Math.floor(seconds));
   const days = Math.floor(safe / 86400);
@@ -76,51 +90,66 @@ export default function PauseHistoryTimeline({ periods, loading, error, onRetry 
         </div>
       ) : (
         <ol className="pause-timeline-list">
-          {sortedPeriods.map((period) => {
+          {sortedPeriods.map((period, index) => {
             const id = `${period.txHash}-${period.startedAt}`;
             const expanded = expandedId === id;
             const ongoing = period.endedBy === 'ongoing';
+            const isLast = index === sortedPeriods.length - 1;
             return (
-              <li key={id} className="pause-timeline-item">
-                <span className={`pause-timeline-marker ${ongoing ? 'is-ongoing' : ''}`} aria-hidden="true" />
-                <article className={`pause-event-card ${expanded ? 'is-expanded' : ''}`}>
-                  <button
-                    type="button"
-                    className="pause-event-card__button"
-                    aria-expanded={expanded}
-                    onClick={() => setExpandedId(expanded ? null : id)}
-                  >
-                    <span className="pause-event-card__topline">
-                      <span className={`pause-event-badge ${ongoing ? 'is-ongoing' : ''}`}>
-                        {ongoing ? 'Active now' : 'Pause window'}
-                      </span>
-                      <time dateTime={period.startedAt}>{formatDate(period.startedAt)}</time>
-                    </span>
-                    <span className="pause-event-card__main">
-                      <span className="pause-avatar" aria-hidden="true">{initials(period.admin)}</span>
-                      <span className="pause-event-card__content">
-                        <strong>{period.reason || 'No reason provided'}</strong>
-                        <span className="pause-event-meta">
-                          <span>by <b>{shortAdmin(period.admin)}</b></span>
-                          <span aria-hidden="true">·</span>
-                          <span>{formatPauseDuration(period.durationSeconds)} {ongoing ? 'elapsed' : 'duration'}</span>
+              <li key={id} className={`pause-timeline-item ${isLast ? 'is-last' : ''}`}>
+                <div className="pause-timeline-rail" aria-hidden="true">
+                  <span className={`pause-timeline-marker ${ongoing ? 'is-ongoing' : ''}`} />
+                  {!isLast && <span className="pause-timeline-connector" />}
+                </div>
+                <div className="pause-timeline-body">
+                  <div className="pause-timeline-date">
+                    <time dateTime={period.startedAt}>{formatDay(period.startedAt)}</time>
+                    <span className="pause-timeline-time">{formatTime(period.startedAt)}</span>
+                  </div>
+                  <article className={`pause-event-card ${expanded ? 'is-expanded' : ''} ${ongoing ? 'is-ongoing' : ''}`}>
+                    <button
+                      type="button"
+                      className="pause-event-card__button"
+                      aria-expanded={expanded}
+                      onClick={() => setExpandedId(expanded ? null : id)}
+                    >
+                      <span className="pause-event-card__topline">
+                        <span className={`pause-event-badge ${ongoing ? 'is-ongoing' : ''}`}>
+                          {ongoing ? 'Active now' : 'Pause window'}
+                        </span>
+                        <span className="pause-event-duration" title="Pause duration">
+                          <span className="pause-event-duration__icon" aria-hidden="true">⏱</span>
+                          {formatPauseDuration(period.durationSeconds)}
+                          <span className="pause-event-duration__label">{ongoing ? 'elapsed' : 'total'}</span>
                         </span>
                       </span>
-                      <span className="pause-event-chevron" aria-hidden="true">{expanded ? '−' : '+'}</span>
-                    </span>
-                  </button>
-                  {expanded && (
-                    <div className="pause-event-details">
-                      <dl>
-                        <div><dt>Contract</dt><dd>{period.contract === 'carbon_credit' ? 'Carbon credits' : 'Marketplace'}</dd></div>
-                        <div><dt>Started</dt><dd>{formatDate(period.startedAt)}</dd></div>
-                        <div><dt>Ended</dt><dd>{ongoing ? 'Still paused' : formatDate(period.endedAt)}</dd></div>
-                        <div><dt>Ended by</dt><dd>{ongoing ? 'Pause remains active' : period.endedBy}</dd></div>
-                        <div><dt>Transaction</dt><dd className="pause-mono">{shortAdmin(period.txHash)}</dd></div>
-                      </dl>
-                    </div>
-                  )}
-                </article>
+                      <span className="pause-event-card__main">
+                        <span className="pause-avatar" aria-hidden="true">{initials(period.admin)}</span>
+                        <span className="pause-event-card__content">
+                          <strong>{period.reason || 'No reason provided'}</strong>
+                          <span className="pause-event-meta">
+                            <span className="pause-event-admin">by <b>{shortAdmin(period.admin)}</b></span>
+                            <span aria-hidden="true">·</span>
+                            <span>{ongoing ? 'Still paused' : `Ended ${formatDate(period.endedAt)}`}</span>
+                          </span>
+                        </span>
+                        <span className="pause-event-chevron" aria-hidden="true">{expanded ? '−' : '+'}</span>
+                      </span>
+                    </button>
+                    {expanded && (
+                      <div className="pause-event-details">
+                        <dl>
+                          <div><dt>Contract</dt><dd>{period.contract === 'carbon_credit' ? 'Carbon credits' : 'Marketplace'}</dd></div>
+                          <div><dt>Started</dt><dd>{formatDate(period.startedAt)}</dd></div>
+                          <div><dt>Ended</dt><dd>{ongoing ? 'Still paused' : formatDate(period.endedAt)}</dd></div>
+                          <div><dt>Duration</dt><dd>{formatPauseDuration(period.durationSeconds)}</dd></div>
+                          <div><dt>Ended by</dt><dd>{ongoing ? 'Pause remains active' : period.endedBy}</dd></div>
+                          <div><dt>Transaction</dt><dd className="pause-mono">{shortAdmin(period.txHash)}</dd></div>
+                        </dl>
+                      </div>
+                    )}
+                  </article>
+                </div>
               </li>
             );
           })}
