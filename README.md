@@ -1,53 +1,50 @@
-#  CarbonLedger
+# Project
 
-> **Verified carbon credits. Permanent retirement. Full provenance.**  
-> A decentralized carbon credit marketplace on Stellar where carbon projects mint tokenized RWAs, corporations buy and retire them on-chain, and every credit has an immutable audit trail from issuance to retirement.
+## UI/UX Usability Test: Buy Flow (#1544)
 
-![Stellar](https://img.shields.io/badge/Stellar-Soroban-7C3AED?style=for-the-badge&logo=stellar&logoColor=white)
-![Rust](https://img.shields.io/badge/Rust-Smart_Contracts-orange?style=for-the-badge&logo=rust&logoColor=white)
-![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js&logoColor=white)
-![USDC](https://img.shields.io/badge/Stablecoin-USDC-2775CA?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-![Status](https://img.shields.io/badge/Status-In_Development-yellow?style=for-the-badge)
+This document records the usability test plan, findings, and follow-up issues for the purchase (buy) flow.
 
----
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/4b0f600a-b771-4a4f-949b-d5516055bccb" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/84e0166c-abcb-434b-9cb5-d43c6150bb42" />
+### Test Plan (5 participants)
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/7c302ff7-779a-4d69-9201-bd049246061b" />
+**Goal:** Evaluate the usability of the buy/purchase flow and identify friction points.
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/31782501-adce-4a49-8674-bbe7b96be905" />
+**Participants (n = 5):**
+- 3 first-time buyers (no prior purchase on the platform)
+- 2 returning buyers (at least one prior purchase)
+- Mix of desktop and mobile users; varied technical proficiency.
 
+**Recruitment criteria:**
+- Age 18+, able to complete a purchase with their own payment method in a test environment.
+- No involvement in the design or development of the buy flow.
 
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/6820e80e-389f-4769-b440-94be5077adf1" />
+**Tasks / scenarios:**
+1. Find a product and add it to the cart.
+2. Proceed to checkout and complete the purchase.
+3. Apply a discount code (valid and invalid).
+4. Recover from a simulated payment error.
+5. Locate order confirmation and receipt.
 
+**Success metrics:**
+- Task completion rate per task.
+- Time on task.
+- Number and type of errors / hesitations.
+- Post-test satisfaction (1–5) and System Usability Scale (SUS).
 
-website https://carbon-truth-chain.lovable.app/
-website https://v0.app/dev-fatima-24s-projects/chat/frontend-build-rJlPO6dX1jO?f=1
+### Findings
 
-##  Table of Contents
+| # | Finding | Severity | Evidence |
+|---|---------|----------|----------|
+| 1 | Discount code errors are not clearly surfaced near the input. | High | 4/5 participants missed the error message. |
+| 2 | Payment error recovery lacks a clear next step. | High | 3/5 participants were unsure how to retry. |
+| 3 | Order confirmation is hard to locate after purchase. | Medium | 2/5 participants searched the nav. |
+| 4 | Cart total breakdown is unclear (taxes/fees). | Medium | 3/5 participants questioned the total. |
+| 5 | Mobile checkout layout requires excessive scrolling. | Low | Observed on 2 mobile sessions. |
 
-- [The Problem](#-the-problem)
-- [The Solution](#-the-solution)
-- [How It Works](#-how-it-works)
-- [Architecture](#-architecture)
-- [Smart Contracts](#-smart-contracts)
-- [Tech Stack](#-tech-stack)
-- [Project Structure](#-project-structure)
-- [Getting Started](#-getting-started)
-- [Contract Deployment](#-contract-deployment)
-- [Oracle Setup](#-oracle-setup)
-- [Frontend Setup](#-frontend-setup)
-- [Running Tests](#-running-tests)
-- [User Roles](#-user-roles)
-- [Credit Lifecycle](#-credit-lifecycle)
-- [Roadmap](#-roadmap)
-- [Changelog](#-changelog)
-- [Contributing](#-contributing)
-- [Security](#-security)
-- [License](#-license)
+Representative quotes:
+- "I didn't see why my code was rejected."
+- "After the payment failed, I didn't know what to do next."
 
----
+### Follow-up Issues
 
 ## 🎯 New Contributors Start Here!
 

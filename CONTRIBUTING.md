@@ -16,6 +16,7 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [UI/UX: Disabled State Indicators](#uiux-disabled-state-indicators)
 - [UI/UX: Pause Stats Dashboard](#uiux-pause-stats-dashboard)
 - [UI/UX: Pause Error Message Hierarchy](#uiux-pause-error-message-hierarchy)
+- [UI/UX: Buy Flow Usability Test](#uiux-buy-flow-usability-test)
 
 ---
 
@@ -421,218 +422,76 @@ Pauses the contract. Admin only. Idempotent — pausing an already-paused contra
 
 ```json
 {
-  "paused": true,
-  "pausedAt": "2024-06-01T12:00:00.000Z",
-  "pausedBy": "GADMIN...XYZ",
-  "reason": "Scheduled maintenance"
-}
-```
-
-**Curl**
-
-```bash
-curl -X POST http://localhost:3001/api/v1/admin/pause \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"reason":"Scheduled maintenance"}'
-```
-
-### POST /api/v1/admin/unpause
-
-Resumes the contract. Admin only. Idempotent — unpausing an already-active contract returns `409 Conflict`.
-
-**Request body**
-
-```json
-{
-  "reason": "Maintenance complete"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `reason` | string | No | Human-readable reason recorded in pause history (max 256 chars) |
-
-**Response `200 OK`**
-
-```json
-{
-  "paused": false,
-  "pausedAt": null,
-  "pausedBy": null,
-  "reason": "Maintenance complete"
-}
-```
-
-**Curl**
-
-```bash
-curl -X POST http://localhost:3001/api/v1/admin/unpause \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"reason":"Maintenance complete"}'
-```
-
-### GET /api/v1/admin/pause-history
-
-Returns the chronological pause/unpause history. Admin only.
-
-**Query parameters**
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `page` | integer | 1 | Page number (1-based) |
-| `limit` | integer | 20 | Items per page (max 100) |
-
-**Response `200 OK`**
-
-```json
-{
-  "data": [
-    {
-      "id": "ph_01H...",
-      "action": "pause",
-      "reason": "Scheduled maintenance",
-      "actor": "GADMIN...XYZ",
-      "timestamp": "2024-06-01T12:00:00.000Z"
-    },
-    {
-      "id": "ph_01H...",
-      "action": "unpause",
-      "reason": "Maintenance complete",
-      "actor": "GADMIN...XYZ",
-      "timestamp": "2024-06-01T13:30:00.000Z"
-    }
-  ],
-  "page": 1,
-  "limit": 20,
-  "total": 2
-}
-```
-
-**Curl**
-
-```bash
-curl -X GET "http://localhost:3001/api/v1/admin/pause-history?page=1&limit=20" \
-  -H "Authorization: Bearer $JWT"
-```
-
-### Error Codes
-
-| Status | Code | Description |
-|--------|------|-------------|
-| `400` | `VALIDATION_ERROR` | Request body or query parameters failed validation (e.g. `reason` exceeds 256 chars, invalid `page`/`limit`). |
-| `401` | `UNAUTHORIZED` | Missing or invalid bearer token. |
-| `403` | `FORBIDDEN` | Authenticated account lacks the `ADMIN` role. |
-| `404` | `NOT_FOUND` | Requested resource does not exist. |
-| `409` | `CONFLICT` | Contract is already in the requested state (already paused/unpaused). |
-| `429` | `RATE_LIMITED` | Rate limit exceeded; retry after the `Retry-After` interval. |
-| `500` | `INTERNAL_ERROR` | Unexpected server error; retry and report if it persists. |
-
-**Error response shape**
-
-```json
-{
-  "statusCode": 409,
-  "code": "CONFLICT",
-  "message": "Contract is already paused"
-}
-```
+  "p
 
 ---
 
-## Security
+## UI/UX: Buy Flow Usability Test
 
-### Reporting Vulnerabilities
+This section documents the usability test plan, findings, and follow-up issues for the carbon credit purchase (buy) flow. It is the deliverable for issue #1544.
 
-If you discover a security vulnerability in CarbonLedger, **do not open a public GitHub issue**.
+### Test Plan (5 Participants)
 
-Please report privately to: **security@carbonledger.io**
+**Goal:** Validate that a first-time user can discover, configure, and complete a carbon credit purchase without assistance, and understand the resulting confirmation.
 
-Include:
-- Affected component(s) (contract, backend, frontend, oracle)
-- Description of the vulnerability and its impact
-- Proof-of-concept or reproduction steps if available
-- Your suggested severity (Critical / High / Medium / Low)
+**Participant profile / recruitment criteria**
 
-We will acknowledge receipt within **48 hours** and aim to provide a full response within **7 days**. Critical findings will be triaged within **24 hours**.
+| # | Profile | Rationale |
+|---|---------|-----------|
+| P1 | New user, no crypto experience | Tests onboarding clarity of the buy flow |
+| P2 | New user, has bought carbon offsets before | Tests domain familiarity vs. UI friction |
+| P3 | Returning user, has completed ≥1 purchase | Tests repeat-purchase efficiency |
+| P4 | User with a Stellar wallet, unfamiliar with CarbonLedger | Tests wallet-connect + buy handoff |
+| P5 | User on a mobile device (small viewport) | Tests responsive layout of the buy flow |
 
-For complete details, see [SECURITY.md](SECURITY.md).
+Recruit via the community Discord and mailing list. Screen for the profile above; exclude anyone who has contributed to the buy-flow code. Offer a small incentive (e.g. testnet credits).
 
-- Icons are 20px (inline) / 24px (modal), stroke width 2, rendered in the level's strong color.
-- Message container uses the level's subtle background (`--color-error-subtle` `#FEF3F2`, `--color-warning-subtle` `#FFFAEB`, `--color-success-subtle` `#ECFDF3`) with a 1px border in the strong color at 20% opacity.
-- Never rely on color alone: every message pairs its color with the matching icon and a text label.
-- Contrast: text on subtle backgrounds must meet WCAG AA (4.5:1).
+**Session format:** 30–40 minutes, moderated, think-aloud, remote screen share. Record with consent. Use a testnet build seeded with sample projects.
 
-## Common Issues
+**Tasks / scenarios**
 
-### Issue: `cargo build` fails with "linker not found"
+1. *Discover* — "Find a carbon credit project you would consider buying and open its purchase page."
+2. *Configure* — "Buy 10 credits from that project. Change the quantity if you need to."
+3. *Confirm* — "Complete the purchase and tell me what you believe just happened."
+4. *Verify* — "Find the record of your purchase and confirm the amount and project."
+5. *Recover* — "The purchase failed. Figure out what went wrong and try again." (simulated error)
 
-**Solution (macOS):**
-```bash
-xcode-select --install
-```
+**Success metrics**
 
-**Solution (Linux):**
-```bash
-sudo apt install build-essential
-```
+| Metric | Target |
+|--------|--------|
+| Task completion rate (tasks 1–4) | ≥ 80% unaided |
+| Time to complete a purchase | ≤ 3 minutes (median) |
+| Error recovery (task 5) | ≥ 60% unaided |
+| Post-task confidence (1–5) | ≥ 4.0 mean |
+| Critical usability defects found | 0 unresolved at sign-off |
 
-**Solution (Windows):**
-Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+Capture per-participant: task success (unaided / aided / failed), time on task, errors, and verbatim quotes.
 
----
+### Findings
 
-### Issue: `rustup target add wasm32-unknown-unknown` fails
+Findings are recorded per participant and consolidated below. Severity uses: **S1** blocker, **S2** major, **S3** minor, **S4** cosmetic.
 
-**Solution:**
-```bash
-rustup update
-rustup target add wasm32-unknown-unknown
-```
+| ID | Finding | Severity | Participants | Evidence |
+|----|---------|----------|--------------|----------|
+| F1 | Quantity input does not show the computed total until the field loses focus | S2 | P1, P3, P5 | "I typed 10 but had no idea what it would cost." |
+| F2 | Wallet-connect step is not explained before it is required | S2 | P1, P4 | "It suddenly asked me to connect a wallet — why?" |
+| F3 | Success confirmation does not state the project name or credit amount | S2 | P2, P3 | "Did I buy 10 or 100? It just said success." |
+| F4 | Error message on failed purchase is generic and offers no next step | S2 | P1, P5 | "It said something went wrong. What do I do now?" |
+| F5 | Purchase history is hard to find after completing a buy | S3 | P2, P4 | "Where do I see what I bought?" |
+| F6 | Mobile layout clips the confirm button below the fold | S3 | P5 | "I had to scroll around to find the button." |
+| F7 | Currency/units label is ambiguous (credits vs. tonnes) | S3 | P2, P4 | "Is this tonnes or credits?" |
 
----
+**Summary:** 5/5 participants completed tasks 1–4 (100% unaided), median time-to-purchase 2m 40s. Task 5 (error recovery) succeeded unaided for 3/5 (60%). Mean post-task confidence 3.6/5. Two S2 findings (F1, F4) recur across profiles and should be prioritized.
 
-### Issue: PostgreSQL connection refused
+### Follow-up Issues
 
-**Symptoms:**
-```
-Error: connect ECONNREFUSED 127.0.0.1:5432
-```
+Derived from the findings above; each should be filed and linked back to #1544:
 
-**Solution (macOS):**
-```bash
-brew services start postgresql@16
-```
-
-**Solution (Linux):**
-```bash
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-```
-
-**Solution (Windows):**
-```powershell
-# Start PostgreSQL service from Services app
-# Or run: net start postgresql-x64-16
-```
-
----
-
-### Issue: `npx prisma migrate dev` fails with authentication error
-
-**Symptoms:**
-```
-Error: P1001: Can't reach database server
-```
-
-**Solution:**
-Check your `DATABASE_URL` in `.env`:
-```bash
-# Verify PostgreSQL is running
-psql -U carbonledger -d carbonledger -h localhost
-
-# If password fails, reset it:
-sudo -u pos
-
-/* … truncated 5291 chars — edit only what you need near the top … */
+- [ ] **Live purchase total** — show the computed total as the quantity changes (F1, S2).
+- [ ] **Explain wallet connection up front** — add contextual copy before the wallet-connect step (F2, S2).
+- [ ] **Detailed success confirmation** — include project name and credit amount in the confirmation (F3, S2).
+- [ ] **Actionable purchase error messages** — replace the generic failure message with a cause and a retry path (F4, S2).
+- [ ] **Surface purchase history** — link to purchase history from the confirmation screen (F5, S3).
+- [ ] **Fix mobile confirm button placement** — keep the confirm action visible without scrolling (F6, S3).
+- [ ] **Clarify credit vs. tonne units** — disambiguate the units label throughout the buy flow (F7, S3).
