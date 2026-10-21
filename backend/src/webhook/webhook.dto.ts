@@ -16,6 +16,8 @@ export const WEBHOOK_EVENTS = [
   'project.verified',
   'monitoring.data_submitted',
   'oracle.price_updated',
+  'contract.paused',
+  'contract.unpaused',
 ] as const;
 
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];

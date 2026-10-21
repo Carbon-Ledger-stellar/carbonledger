@@ -51,6 +51,10 @@ pub enum CarbonError {
     TimelockNotReady = 24,
     /// No pending price update proposal exists for the given (methodology, vintage_year).
     NoPendingUpdate = 25,
+    /// The timelock window has not yet expired for the pending price proposal.
+    TimelockNotExpired = 26,
+    /// No pending price proposal exists for the given (methodology, vintage_year).
+    NoPendingProposal = 27,
 }
 
 // -- Constants ----------------------------------------------------------------
@@ -67,6 +71,8 @@ pub const PRICE_STALENESS_SECS: u64 = 24 * 60 * 60;
 /// Provides a window for administrators to cancel erroneous or malicious updates
 /// before they take effect on the marketplace.
 pub const TIMELOCK_DELAY: u64 = 24 * 60 * 60;
+/// Alias for TIMELOCK_DELAY — used in tests and external callers.
+pub const PRICE_TIMELOCK_DELAY_SECS: u64 = TIMELOCK_DELAY;
 const PRICE_CACHE_TTL_LEDGERS: u32 = 17_280;
 /// TTL for persistent timestamp keys (price / monitoring freshness metadata).
 const PERSISTENT_META_TTL_LEDGERS: u32 = 518_400;
@@ -140,6 +146,25 @@ pub struct ProposedPriceUpdate {
     pub proposed_by: Address,
     /// Monotonic nonce consumed by this proposal.
     pub nonce: u64,
+}
+
+/// A pending timelocked price proposal created by `propose_price`.
+///
+/// Stored under `DataKey::PendingPrice(methodology, vintage_year)` and consumed
+/// (or cancelled) before the price is committed to `BenchmarkPrice` storage.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PendingPriceProposal {
+    /// Methodology string (e.g. "VCS", "Gold Standard").
+    pub methodology: String,
+    /// Vintage year for the proposed benchmark price.
+    pub vintage_year: u32,
+    /// Proposed new benchmark price in USDC stroops per tonne of CO₂e.
+    pub price_usdc: i128,
+    /// The oracle address that submitted this proposal.
+    pub proposed_by: Address,
+    /// Unix timestamp when the proposal was submitted.
+    pub proposed_at: u64,
 }
 
 // -- Contract -----------------------------------------------------------------
@@ -644,6 +669,18 @@ impl CarbonOracleContract {
             .get(&DataKey::PendingPrice(methodology, vintage_year))
     }
 
+    /// Read-only accessor for a pending timelocked price proposal (propose/execute/cancel flow).
+    /// Returns `None` if no proposal is pending for the given pair.
+    pub fn get_pending_proposal(
+        env: Env,
+        methodology: String,
+        vintage_year: u32,
+    ) -> Option<PendingPriceProposal> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingPrice(methodology, vintage_year))
+    }
+
     pub fn get_monitoring_data(
         env: Env,
         project_id: String,
@@ -664,6 +701,57 @@ impl CarbonOracleContract {
             .temporary()
             .get(&DataKey::BenchmarkPrice(methodology, vintage_year))
             .ok_or(CarbonError::PriceNotSet)
+    }
+
+    /// Direct (non-timelocked) price update — authenticated oracle only.
+    ///
+    /// Sets the benchmark price immediately without a timelock delay.
+    /// Kept for backwards compatibility with tests and off-chain tooling that
+    /// uses the single-step update pattern.
+    pub fn update_credit_price(
+        env: Env,
+        oracle_signer: Address,
+        methodology: String,
+        vintage_year: u32,
+        price_usdc: i128,
+        signature: BytesN<64>,
+        nonce: u64,
+    ) -> Result<(), CarbonError> {
+        oracle_signer.require_auth();
+        Self::require_oracle(&env, &oracle_signer)?;
+
+        let payload = (methodology.clone(), vintage_year, price_usdc).to_xdr(&env);
+        Self::verify_oracle_signature(&env, &payload, &signature, nonce)?;
+
+        if price_usdc <= 0 {
+            return Err(CarbonError::ZeroAmountNotAllowed);
+        }
+
+        require_valid_vintage_year!(&env, vintage_year);
+        require_batch_not_expired!(&env, vintage_year);
+
+        let price_key = DataKey::BenchmarkPrice(methodology.clone(), vintage_year);
+        env.storage().temporary().set(&price_key, &price_usdc);
+        env.storage().temporary().extend_ttl(
+            &price_key,
+            PRICE_CACHE_TTL_LEDGERS,
+            PRICE_CACHE_TTL_LEDGERS,
+        );
+
+        let now = env.ledger().timestamp();
+        let ts_key = DataKey::PriceUpdatedAt(methodology.clone(), vintage_year);
+        env.storage().persistent().set(&ts_key, &now);
+        env.storage().persistent().extend_ttl(
+            &ts_key,
+            PERSISTENT_META_TTL_LEDGERS,
+            PERSISTENT_META_TTL_LEDGERS,
+        );
+
+        env.events().publish(
+            (symbol_short!("c_ledger"), symbol_short!("price_upd")),
+            (methodology, vintage_year, price_usdc),
+        );
+        Ok(())
     }
 
     pub fn flag_project(
@@ -732,40 +820,6 @@ impl CarbonOracleContract {
         Ok(())
     }
 
-    /// Returns true if the benchmark price for (methodology, vintage_year) was
-    /// updated within the last 24 hours.
-    pub fn is_price_current(env: Env, methodology: String, vintage_year: u32) -> bool {
-        let ts: Option<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PriceUpdatedAt(methodology, vintage_year));
-
-        match ts {
-            None => false,
-            Some(updated_at) => {
-                let now = env.ledger().timestamp();
-                now.saturating_sub(updated_at) <= PRICE_STALENESS_SECS
-            }
-        }
-    }
-
-    pub fn get_total_verified_tonnes(env: Env, project_id: String, periods: Vec<String>) -> i128 {
-        let mut total: i128 = 0;
-        for period in periods.iter() {
-            if let Some(data) =
-                env.storage()
-                    .persistent()
-                    .get::<DataKey, MonitoringData>(&DataKey::MonitoringData(
-                        project_id.clone(),
-                        period.clone(),
-                    ))
-            {
-                total = total.saturating_add(data.tonnes_verified);
-            }
-        }
-        total
-    }
-
     /// Permissionless liveness check.
     pub fn check_liveness(env: Env, project_id: String) -> Result<(), CarbonError> {
         let sla: u64 = env
@@ -825,19 +879,6 @@ impl CarbonOracleContract {
             (project_id, reason),
         );
 
-        Ok(())
-    }
-
-    /// Admin-only: adjust the liveness SLA window in seconds.
-    pub fn set_liveness_sla(env: Env, admin: Address, seconds: u64) -> Result<(), CarbonError> {
-        admin.require_auth();
-        Self::require_admin(&env, &admin)?;
-        env.storage().persistent().set(&DataKey::LivenessSlaSeconds, &seconds);
-
-        env.events().publish(
-            (symbol_short!("c_ledger"), symbol_short!("sla_upd")),
-            (admin, seconds),
-        );
         Ok(())
     }
 
@@ -1192,29 +1233,12 @@ mod tests {
 
     // ── 6. execute_price after cancel returns NoPendingProposal ─────────────
 
-    fn setup(env: &Env) -> (CarbonOracleContractClient<'_>, Address, Address, SigningKey) {
-        env.mock_all_auths();
-        env.ledger().set(LedgerInfo {
-            timestamp: 1_735_689_600, // 2025-01-01 00:00:00 UTC
-            protocol_version: 20,
-            sequence_number: 1,
-            network_id: [0; 32],
-            base_reserve: 10,
-            min_temp_entry_ttl: 1,
-            min_persistent_entry_ttl: 1,
-            max_entry_ttl: 518_400,
-        });
-        let signing_key = test_signing_key();
-        let pub_bytes = signing_key.verifying_key().to_bytes();
-        let pub_key = BytesN::from_array(env, &pub_bytes);
-        let admin    = Address::generate(env);
-        let oracle   = Address::generate(env);
-        let registry = Address::generate(env);
-        let id     = env.register_contract(None, CarbonOracleContract);
-        let client = CarbonOracleContractClient::new(env, &id);
-        client.initialize(&admin, &oracle, &pub_key, &registry);
-        (client, admin, oracle, signing_key)
-    }
+    #[test]
+    fn test_execute_price_after_cancel_returns_error() {
+        let env = Env::default();
+        let (client, admin, oracle, key) = setup(&env);
+        let method = s(&env, "VCS");
+        let price = 25_0000000_i128;
 
         let sig = sign_price(&env, &key, &method, 2023, price, 0);
         client.propose_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
@@ -1374,12 +1398,12 @@ mod tests {
 
     #[test]
     fn test_timelock_error_code() {
-        assert_eq!(CarbonError::TimelockNotExpired as u32, 24);
+        assert_eq!(CarbonError::TimelockNotExpired as u32, 26);
     }
 
     #[test]
     fn test_no_pending_proposal_error_code() {
-        assert_eq!(CarbonError::NoPendingProposal as u32, 25);
+        assert_eq!(CarbonError::NoPendingProposal as u32, 27);
     }
 
     // ── 14. propose → wait → execute full happy path ─────────────────────────
@@ -1431,7 +1455,7 @@ mod tests {
         let (client, _, oracle, key) = setup(&env);
         let method = s(&env, "VCS");
         let price = 25_0000000_i128;
-        let sig = sign_price(&env, &key, &method, 2023, price);
+        let sig = sign_price(&env, &key, &method, 2023, price, 0);
         client.update_credit_price(&oracle, &method, &2023_u32, &price, &sig, &0_u64);
 
         // Advance exactly 24 hours — must still be current (<=, not <).

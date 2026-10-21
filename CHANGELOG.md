@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Pause webhook events reference** — documented `PausedEvent` and `UnpausedEvent` webhooks with payload examples, retry policy, and subscription examples. [#1194](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1194)
+- **Pause feature documentation** — specification, testing checklist, deployment checklist and release notes for the emergency pause on `carbon_credit` and `carbon_marketplace` in `docs/pause-feature/`. [#1320](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1320) [#1321](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1321) [#1322](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1322) [#1323](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1323)
 - Document changelog structure and release notes for project contributors. [#377](https://github.com/dev-fatima-24/carbonledger/issues/377)
 - Add `CHANGELOG.md` reference in the main README for release history.
 - **Secret Management** — Complete AWS Secrets Manager implementation for all production secrets. [#1066](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1066)

@@ -1,4 +1,37 @@
-name: Production
-description: Production environment
-url: https://carbonledger.com
-production: true
+# Production environment configuration
+#
+# Defines the production deployment environment and the canary rollout
+# strategy used for the pause feature (issue #1305).
+
+name: production
+
+deployment_branch_policy:
+  protected_branches: true
+  custom_branch_policies: false
+
+# Canary deployment for the pause feature.
+# A canary version is deployed to 5% of traffic first, pause functionality is
+# exercised on the canary, and metrics (error rate, latency, event delivery)
+# are compared before automated promotion to 100% or rollback.
+canary:
+  enabled: true
+  feature: pause
+  traffic_percentage: 5
+  promotion:
+    automated: true
+    target_traffic_percentage: 100
+    # Promote only when the canary metrics are healthy.
+    health_gates:
+      error_rate:
+        max_percent: 1.0
+      latency:
+        max_p95_ms: 500
+      event_delivery:
+        min_success_percent: 99.0
+  rollback:
+    automated: true
+    # Roll back to the stable version if any health gate is breached.
+    on_health_gate_failure: true
+  tests:
+    # Pause functionality must be validated on the canary before promotion.
+    pause_functionality: true

@@ -7,12 +7,119 @@ This document describes the automated PostgreSQL backup and restore infrastructu
 ### Key Features
 
 - **Automated Daily Backups**: Runs at 02:00 UTC every day
+- **Hourly Pause Events Backups**: Dedicated hourly backup of the `pause_events` audit table
 - **Encrypted Storage**: Backups stored in AWS S3 with AES-256 encryption
 - **30-Day Retention**: Automatic cleanup after 30 days via S3 lifecycle policy
+- **1-Year Pause Events Retention**: `pause_events` backups retained for 365 days
 - **Monthly Restore Tests**: Validates backup integrity on the 1st of each month at 03:00 UTC
 - **Metrics Tracking**: Monitors backup size, duration, and restore time
 - **SLA Monitoring**: Restore time must complete in under 30 minutes
 - **Alerting**: Slack/Discord webhook notifications on backup or restore failures
+
+---
+
+## Pause Events Backup Strategy
+
+The `pause_events` table is the immutable audit trail for all pause/unpause actions. To guarantee this audit trail is never lost, it has a dedicated backup strategy that is independent of the full-database backup.
+
+### Requirements
+
+| Requirement | Value |
+|-------------|-------|
+| Backup frequency | **Hourly** (top of every hour, `0 * * * *`) |
+| Retention | **1 year (365 days)** |
+| Scope | `pause_events` table only |
+| Format | `pg_dump --format=custom --table=pause_events` |
+| Storage | `s3://{BACKUP_S3_BUCKET}/pause-events/YYYY/MM/DD/pause_events-HH.dump` |
+| Encryption | AES-256 server-side encryption |
+
+### Why a separate strategy?
+
+- The full-database backup runs daily and is retained for only 30 days, which is insufficient for audit requirements.
+- Hourly granularity limits the maximum data-loss window for pause audit records to one hour.
+- A table-scoped dump is small and cheap to store for a full year.
+
+### Backup Script: `scripts/backup-pause-events.sh`
+
+**Runs**: Hourly at minute 0 via systemd timer (`carbonledger-pause-events-backup.timer`)
+
+**Environment Variables Required**:
+- `DATABASE_URL`: PostgreSQL connection string
+- `BACKUP_S3_BUCKET`: S3 bucket name for backups
+
+**Optional Environment Variables**:
+- `ADMIN_ALERT_WEBHOOK`: Slack/Discord webhook for notifications
+
+**Process**:
+1. Dumps only the `pause_events` table using `pg_dump --format=custom --table=pause_events`
+2. Uploads to S3 under the `pause-events/` prefix with `STANDARD_IA` storage class
+3. Records metrics (row count, size, dump time, upload time) in `backup_metrics`
+4. Alerts on failure
+
+**Retention**:
+- A dedicated S3 lifecycle rule (`expire-pause-events-after-365-days`) expires objects under the `pause-events/` prefix after **365 days**.
+- This rule is scoped to the `pause-events/` prefix so it does not affect the 30-day retention of full-database backups.
+
+```terraform
+rule {
+  id     = "expire-pause-events-after-365-days"
+  status = "Enabled"
+
+  filter {
+    prefix = "pause-events/"
+  }
+
+  expiration {
+    days = 365
+  }
+
+  noncurrent_version_expiration {
+    noncurrent_days = 365
+  }
+}
+```
+
+### Restoring Pause History
+
+Pause history can be restored from any hourly `pause_events` backup, either into the live database or into a scratch database for inspection.
+
+```bash
+# Restore the most recent pause_events backup into the live database
+./scripts/restore-pause-events.sh
+
+# Restore a specific hourly backup into a scratch database
+./scripts/restore-pause-events.sh \
+  --backup-key s3://bucket/pause-events/2026/08/29/pause_events-14.dump \
+  --target-db pause_events_restore
+
+# Verify a backup without restoring
+./scripts/restore-pause-events.sh \
+  --backup-key s3://bucket/pause-events/2026/08/29/pause_events-14.dump \
+  --verify-only
+```
+
+**Restore process**:
+1. Downloads the selected `pause_events` dump from S3
+2. Verifies integrity with `pg_restore --list`
+3. Restores into the target database (or the live database with `--data-only --table=pause_events`)
+4. Validates the restored row count against the recorded `backup_metrics` row count
+5. Records restore metrics and alerts on failure
+
+### Tested Restoration Process
+
+The pause-events restore path is validated on a recurring schedule so the audit trail is provably recoverable:
+
+- **Monthly restore test**: `scripts/test-restore-pause-events-monthly.sh` runs on the 1st of each month at 03:00 UTC.
+- The test downloads the latest hourly `pause_events` backup, restores it into a temporary database, and asserts:
+  - `pg_restore --list` succeeds (backup is not corrupt)
+  - The restored `pause_events` row count matches the count recorded at backup time
+  - The most recent `pause_events` row timestamp is within the expected hourly window
+- A JSON report is written to `/tmp/pause-events-restore-test-report-TIMESTAMP.json` and a webhook notification is sent.
+
+**Exit Codes**:
+- `0`: Test passed
+- `1`: Test failed (critical error)
+- `2`: Test passed with warnings (e.g. row-count drift)
 
 ---
 
@@ -49,6 +156,29 @@ This document describes the automated PostgreSQL backup and restore infrastructu
          │ - Tests restore time < 30m  │
          │ - Verifies data integrity   │
          └─────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│              Pause Events Audit Backup (Hourly)                     │
+│                                                                     │
+│  [Hourly Backup]  (0 * * * *, every hour)                           │
+│         │                                                           │
+│  ┌──────▼──────────────────────────┐                                │
+│  │ pg_dump --table=pause_events    │                                │
+│  │ custom format (binary)          │                                │
+│  └──────┬──────────────────────────┘                                │
+│         │                                                           │
+│  ┌──────▼──────────────────────────┐                                │
+│  │ S3 prefix: pause-events/        │                                │
+│  │ - AES-256 Encryption            │                                │
+│  │ - 365-day lifecycle retention   │                                │
+│  └──────┬──────────────────────────┘                                │
+│         │                                                           │
+│  ┌──────▼──────────────────────────┐                                │
+│  │ Monthly Pause Restore Test      │                                │
+│  │ (1st of month, 03:00 UTC)       │                                │
+│  │ - Verifies row count + recency  │                                │
+│  └─────────────────────────────────┘                                │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -163,6 +293,26 @@ sudo systemctl list-timers carbonledger-backup.timer
 sudo journalctl -u carbonledger-backup.service -n 50 -f
 ```
 
+### Pause Events Backup Timer
+
+**File**: `scripts/systemd/carbonledger-pause-events-backup.service`
+- Executes: `/opt/carbonledger/scripts/backup-pause-events.sh`
+- User: `carbonledger`
+- Environment: Loads from `/opt/carbonledger/.env`
+- Output: Appended to `/var/log/carbonledger/pause-events-backup.log`
+
+**File**: `scripts/systemd/carbonledger-pause-events-backup.timer`
+- Schedule: `*-*-* *:00:00 UTC` (hourly at minute 0)
+- Persistent: Yes
+
+**Installation**:
+```bash
+sudo cp scripts/systemd/carbonledger-pause-events-backup.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable carbonledger-pause-events-backup.timer
+sudo systemctl start carbonledger-pause-events-backup.timer
+```
+
 ### Restore Test Timer
 
 **File**: `scripts/systemd/carbonledger-restore-test.service`
@@ -196,6 +346,7 @@ sudo systemctl start carbonledger-restore-test.timer
 - **Lifecycle Policy**:
   - Expires objects after 30 days
   - Removes noncurrent versions after 30 days
+  - Expires objects under the `pause-events/` prefix after 365 days
 - **Access Control**: All public access blocked
 - **Storage Class**: `STANDARD_IA` (infrequent access for cost optimization)
 
@@ -211,6 +362,23 @@ rule {
 
   noncurrent_version_expiration {
     noncurrent_days = 30
+  }
+}
+
+rule {
+  id     = "expire-pause-events-after-365-days"
+  status = "Enabled"
+
+  filter {
+    prefix = "pause-events/"
+  }
+
+  expiration {
+    days = 365
+  }
+
+  noncurrent_version_expiration {
+    noncurrent_days = 365
   }
 }
 ```
@@ -258,282 +426,11 @@ Tracks all backup and restore operations for monitoring and auditing.
 
 ### Backup Metrics
 
-Metrics are logged to `/var/log/carbonledger/backup-metrics.json` in newline-delimited JSON format:
+Metrics are logged to `/var/log/carbonledger/backup-metrics.json` in newline-delimited JSON format. Pause-events backups log to `/var/log/carbonledger/pause-events-backup-metrics.json` with the same schema, plus a `row_count` field for the `pause_events` table.
 
-```json
-{
-  "timestamp": "2024-08-29T02:00:00Z",
-  "backup_key": "s3://carbonledger-db-backups-production/daily/2024-08-29T02:00:00Z.dump",
-  "backup_size_bytes": 1073741824,
-  "backup_size_mb": 1024.00,
-  "dump_time_seconds": 120,
-  "upload_time_seconds": 45,
-  "total_time_seconds": 165,
-  "status": "success"
-}
-```
+### Alerts
 
-### Restore Test Report
-
-Generated at `/tmp/restore-test-report-TIMESTAMP.json`:
-
-```json
-{
-  "test_timestamp": "2024-09-01T03:00:00Z",
-  "backup_source": "s3://carbonledger-db-backups-production/daily/2024-08-31T02:00:00Z.dump",
-  "restore_time_seconds": 420,
-  "max_restore_time_sla_seconds": 1800,
-  "sla_met": true,
-  "database_size": "1.5 GB",
-  "table_count": 42,
-  "test_status": "PASSED",
-  "exit_code": 0
-}
-```
-
-### Webhook Notifications
-
-Sent to `$ADMIN_ALERT_WEBHOOK` (Slack/Discord) for:
-- **Backup Failures**: Alert on any dump or upload error
-- **Restore Failures**: Alert if restore or verification fails
-- **SLA Violations**: Warning if restore time exceeds 30 minutes
-- **Monthly Test Results**: Summary of monthly restore test
-
----
-
-## Operational Procedures
-
-### Manual Backup
-
-```bash
-export DATABASE_URL="postgresql://user:pass@host/db"
-export BACKUP_S3_BUCKET="carbonledger-db-backups-production"
-export ADMIN_ALERT_WEBHOOK="https://hooks.slack.com/..."
-
-./scripts/backup-db.sh
-```
-
-### Manual Restore
-
-**From latest backup**:
-```bash
-export DATABASE_URL="postgresql://user:pass@host/db"
-export BACKUP_S3_BUCKET="carbonledger-db-backups-production"
-
-./scripts/restore-db.sh
-```
-
-**From specific backup**:
-```bash
-./scripts/restore-db.sh \
-  --backup-key "s3://carbonledger-db-backups-production/daily/2024-08-28T02:00:00Z.dump" \
-  --target-db "restore_test"
-```
-
-**Verify backup without restoring**:
-```bash
-./scripts/restore-db.sh \
-  --backup-key "s3://carbonledger-db-backups-production/daily/2024-08-28T02:00:00Z.dump" \
-  --verify-only
-```
-
-### Manual Monthly Test
-
-```bash
-export DATABASE_URL="postgresql://user:pass@host/db"
-export BACKUP_S3_BUCKET="carbonledger-db-backups-production"
-export RESTORE_TEST_WEBHOOK="https://hooks.slack.com/..."
-
-./scripts/test-restore-monthly.sh
-```
-
-### View Backup Metrics
-
-```bash
-# Recent backups (last 10)
-tail -10 /var/log/carbonledger/backup-metrics.json | jq .
-
-# Parse metrics with jq
-cat /var/log/carbonledger/backup-metrics.json | \
-  jq -s 'map(select(.status == "success")) | map({timestamp, backup_size_mb, total_time_seconds}) | sort_by(.timestamp) | reverse | .[0:10]'
-
-# Query database metrics
-psql $DATABASE_URL <<EOF
-SELECT 
-  DATE(created_at) as date,
-  COUNT(*) as backup_count,
-  ROUND(AVG(backup_size_bytes) / 1048576::numeric, 2) as avg_size_mb,
-  ROUND(AVG(dump_time_seconds), 2) as avg_dump_time_sec,
-  MAX(restore_time_seconds) as max_restore_time_sec
-FROM backup_metrics
-WHERE created_at > NOW() - INTERVAL '30 days'
-GROUP BY DATE(created_at)
-ORDER BY date DESC;
-EOF
-```
-
-### Troubleshooting
-
-#### Backup Failures
-
-Check logs:
-```bash
-tail -100 /var/log/carbonledger/backup.log
-journalctl -u carbonledger-backup.service -n 100
-```
-
-Verify environment variables:
-```bash
-cat /opt/carbonledger/.env | grep -E "DATABASE_URL|BACKUP_S3_BUCKET"
-```
-
-Test manually:
-```bash
-bash -x ./scripts/backup-db.sh
-```
-
-#### Restore Failures
-
-Check logs:
-```bash
-tail -100 /var/log/carbonledger/restore-test.log
-```
-
-Verify backup integrity:
-```bash
-./scripts/restore-db.sh \
-  --backup-key "s3://bucket/path/backup.dump" \
-  --verify-only
-```
-
-Check database connectivity:
-```bash
-psql "$DATABASE_URL" -c "SELECT 1"
-```
-
-#### SLA Violations
-
-If restore time exceeds 30 minutes:
-
-1. Check database size: `du -sh /var/lib/postgresql/data`
-2. Monitor backup size trends in metrics
-3. Consider:
-   - Upgrading RDS instance class
-   - Optimizing table structure
-   - Implementing incremental backups for larger databases
-
----
-
-## Performance Tuning
-
-### Backup Optimization
-
-- **Compression**: Already using `custom` format (compressed binary)
-- **Parallel Dump**: For very large databases (>10GB), consider:
-  ```bash
-  pg_dump --format=directory --jobs=4 "$DATABASE_URL" -f ./backup_dir/
-  ```
-
-### Restore Optimization
-
-- **Parallel Restore**: For very large databases:
-  ```bash
-  pg_restore --jobs=4 backup.dump | psql
-  ```
-- **Index Building**: Restore without indexes first, then rebuild
-
----
-
-## Monitoring Dashboard
-
-### CloudWatch Metrics (Future Enhancement)
-
-Consider adding CloudWatch metrics for:
-- Backup size (bytes)
-- Backup duration (seconds)
-- Restore duration (seconds)
-- S3 upload/download duration
-- SLA compliance (% of restores < 30min)
-
-### Example CloudWatch Alarm
-
-```terraform
-resource "aws_cloudwatch_metric_alarm" "backup_failure" {
-  alarm_name          = "carbonledger-backup-failure"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
-  metric_name         = "BackupFailures"
-  namespace           = "CarbonLedger/Backups"
-  period              = 3600
-  statistic           = "Sum"
-  threshold           = 1
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  alarm_description   = "Alert when backup fails"
-}
-```
-
----
-
-## Compliance & Audit Trail
-
-- **Retention Policy**: 30 days (meets regulatory requirements for most use cases)
-- **Encryption**: AES-256 at rest, in transit via HTTPS
-- **Versioning**: S3 versioning keeps all versions for audit trail
-- **Audit Log**: Backup/restore operations logged to `backup_metrics` table
-- **Access Control**: IAM role-based access (not public)
-
----
-
-## Disaster Recovery
-
-### Database Loss Scenarios
-
-#### Scenario 1: Accidental Data Deletion
-
-1. **Detect**: Query shows missing data
-2. **Assess**: Query backup_metrics to find affected time
-3. **Restore**: Use restore script to staging database
-4. **Verify**: Compare data before/after
-5. **Restore**: Restore to production when verified
-
-#### Scenario 2: Corruption
-
-1. **Detect**: Database integrity checks fail
-2. **Restore**: Use latest good backup
-3. **Verify**: Run data consistency checks
-4. **Investigate**: Determine corruption cause
-
-#### Scenario 3: Complete Database Loss
-
-1. **Alert**: Backup failure detected
-2. **Assess**: Check backup status in S3
-3. **Restore**: Follow restore procedure
-4. **Verify**: Run full test suite
-5. **Resume**: Restart application
-
-### RTO/RPO Targets
-
-- **RTO** (Recovery Time Objective): < 35 minutes (30m restore + 5m overhead)
-- **RPO** (Recovery Point Objective): 24 hours (daily backups at 2AM UTC)
-
----
-
-## Documentation References
-
-- [PostgreSQL Backup & Restore](https://www.postgresql.org/docs/current/backup.html)
-- [AWS S3 Lifecycle Policies](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html)
-- [Systemd Timers](https://www.freedesktop.org/software/systemd/man/systemd.timer.html)
-
----
-
-## Changelog
-
-### v1.0 - 2024-08-29
-
-Initial implementation:
-- Daily automated backups at 02:00 UTC
-- S3 storage with encryption and 30-day retention
-- Monthly restore testing (1st of month, 03:00 UTC)
-- Backup metrics tracking
-- 30-minute restore SLA
-- Slack/Discord alerting
+- **Backup failure**: Webhook alert if any hourly `pause_events` backup fails.
+- **Missing backup**: Alert if no `pause_events` backup has been recorded in the last 2 hours.
+- **Restore test failure**: Alert if the monthly pause-events restore test exits non-zero.
+- **Retention drift**: Alert if the oldest `pause_events` backup in S3 is younger than 300 days (indicates retention misconfiguration).

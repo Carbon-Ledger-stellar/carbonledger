@@ -23,10 +23,11 @@
 //! | `set_max_history_entries`  | `c_ledger / hist_prune`  | `HistoryPrunedEvent`                |
 //! | `set_oracle_contract`      | `c_ledger / ora_set`     | `(admin, oracle)`                   |
 //! | `set_verified_periods`     | `c_ledger / per_set`     | `(project_id, periods_count)`       |
+//! | `pause_operations`         | `c_ledger / paused`      | `(admin, until_timestamp, paused_at)` |
+//! | `unpause_operations`       | `c_ledger / unpaused`    | `(admin, unpaused_at)`              |
 //!
 //! Functions that change state but emit **no** events (storage-only changes):
-//!   `initialize`, `pause_operations`, `unpause_operations`,
-//!   `set_vintage_year_bounds`, `grant_role`, `revoke_role`
+//!   `initialize`, `set_vintage_year_bounds`, `grant_role`, `revoke_role`
 
 #![cfg(test)]
 #![allow(deprecated)] // `env.register_contract` matches the rest of the test suite.
@@ -1150,4 +1151,77 @@ fn evt_data_05_per_set_event_tuple_field_order() {
 
     assert_eq!(proj,  s(&env, "proj-data-05"), "EVT-DATA-05: tuple[0] == project_id");
     assert_eq!(count, 2_u32,                   "EVT-DATA-05: tuple[1] == 2 (period count)");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAUSE EVENTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// EVT-PAUSE-01: `pause_operations` emits one `paused` event with payload
+/// `(admin, until_timestamp, paused_at)`.
+#[test]
+fn evt_pause_01_pause_emits_paused_event() {
+    let env = Env::default();
+    let (client, admin, _registry, id) = setup(&env);
+    let now = env.ledger().timestamp();
+    let until = now + 3_600;
+
+    client.pause_operations(&admin, &until);
+
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                id,
+                (symbol_short!("c_ledger"), symbol_short!("paused")).into_val(&env),
+                (admin.clone(), until, now).into_val(&env),
+            )
+        ],
+        "EVT-PAUSE-01: paused event with (admin, until, paused_at) payload"
+    );
+}
+
+/// EVT-PAUSE-02: a pause → unpause cycle emits `paused` then `unpaused`, the
+/// latter with payload `(admin, unpaused_at)`.
+#[test]
+fn evt_pause_02_unpause_emits_unpaused_event() {
+    let env = Env::default();
+    let (client, admin, _registry, id) = setup(&env);
+    let now = env.ledger().timestamp();
+    client.pause_operations(&admin, &(now + 3_600));
+
+    env.ledger().with_mut(|l| l.timestamp = now + 600);
+    client.unpause_operations(&admin);
+
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                id.clone(),
+                (symbol_short!("c_ledger"), symbol_short!("paused")).into_val(&env),
+                (admin.clone(), now + 3_600, now).into_val(&env),
+            ),
+            (
+                id,
+                (symbol_short!("c_ledger"), symbol_short!("unpaused")).into_val(&env),
+                (admin.clone(), now + 600).into_val(&env),
+            )
+        ],
+        "EVT-PAUSE-02: paused then unpaused, in order"
+    );
+}
+
+/// EVT-PAUSE-03: a rejected pause window publishes no event.
+#[test]
+fn evt_pause_03_invalid_window_emits_nothing() {
+    let env = Env::default();
+    let (client, admin, _registry, _id) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = client.try_pause_operations(&admin, &(now + 73 * 60 * 60));
+
+    assert!(result.is_err());
+    assert_eq!(env.events().all().len(), 0, "EVT-PAUSE-03: no event on rejected pause");
 }

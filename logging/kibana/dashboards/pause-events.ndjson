@@ -1,0 +1,117 @@
+{
+  "version": "8.11.0",
+  "objects": [
+    {
+      "id": "carbonledger-pause-index-pattern",
+      "type": "index-pattern",
+      "attributes": {
+        "title": "carbonledger-pause-*",
+        "timeFieldName": "@timestamp",
+        "fields": "[]"
+      },
+      "references": [],
+      "migrationVersion": {
+        "index-pattern": "7.6.0"
+      }
+    },
+    {
+      "id": "carbonledger-pause-audit-search",
+      "type": "search",
+      "attributes": {
+        "title": "CarbonLedger — Pause Audit Trail",
+        "description": "Full chronological audit trail of all pause and unpause events. Searchable by admin, contract, reason, or transaction hash.",
+        "columns": [
+          "@timestamp",
+          "pause_action",
+          "pause_contract",
+          "pause_admin_display",
+          "pause_reason",
+          "pause_duration_seconds",
+          "pause_tx_hash",
+          "environment"
+        ],
+        "sort": [["@timestamp", "desc"]],
+        "kibanaSavedObjectMeta": {
+          "searchSourceJSON": "{\"index\":\"carbonledger-pause-index-pattern\",\"filter\":[],\"query\":{\"language\":\"kuery\",\"query\":\"\"},\"highlight\":{\"pre_tags\":[\"@kibana-highlighted-field@\"],\"post_tags\":[\"@/kibana-highlighted-field@\"],\"fields\":{\"*\":{}},\"fragment_size\":2147483647}}"
+        }
+      },
+      "references": [
+        {
+          "id": "carbonledger-pause-index-pattern",
+          "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+          "type": "index-pattern"
+        }
+      ]
+    },
+    {
+      "id": "carbonledger-pause-dashboard",
+      "type": "dashboard",
+      "attributes": {
+        "title": "CarbonLedger — Pause Events (ELK)",
+        "description": "Pause and unpause event analytics sourced from Elasticsearch. Fields: timestamp, admin, action, reason, contract, tx hash.",
+        "timeFrom": "now-7d",
+        "timeTo": "now",
+        "timeRestore": true,
+        "refreshInterval": {
+          "pause": false,
+          "value": 30000
+        },
+        "kibanaSavedObjectMeta": {
+          "searchSourceJSON": "{\"query\":{\"language\":\"kuery\",\"query\":\"\"},\"filter\":[]}"
+        },
+        "panelsJSON": "[{\"version\":\"8.11.0\",\"type\":\"visualization\",\"gridData\":{\"x\":0,\"y\":0,\"w\":12,\"h\":8,\"i\":\"1\"},\"panelIndex\":\"1\",\"embeddableConfig\":{\"vis\":{\"type\":\"metric\"},\"title\":\"Total Pause Count\"},\"title\":\"Total Pause Count\",\"savedObjectId\":\"carbonledger-pause-count-viz\"},{\"version\":\"8.11.0\",\"type\":\"visualization\",\"gridData\":{\"x\":12,\"y\":0,\"w\":12,\"h\":8,\"i\":\"2\"},\"panelIndex\":\"2\",\"embeddableConfig\":{\"vis\":{\"type\":\"metric\"},\"title\":\"Total Unpause Count\"},\"title\":\"Total Unpause Count\",\"savedObjectId\":\"carbonledger-unpause-count-viz\"},{\"version\":\"8.11.0\",\"type\":\"lens\",\"gridData\":{\"x\":0,\"y\":8,\"w\":24,\"h\":12,\"i\":\"3\"},\"panelIndex\":\"3\",\"embeddableConfig\":{\"title\":\"Pause Events Over Time\"},\"title\":\"Pause Events Over Time\",\"savedObjectId\":\"carbonledger-pause-timeseries-lens\"},{\"version\":\"8.11.0\",\"type\":\"lens\",\"gridData\":{\"x\":0,\"y\":20,\"w\":12,\"h\":12,\"i\":\"4\"},\"panelIndex\":\"4\",\"embeddableConfig\":{\"title\":\"Reason Breakdown\"},\"title\":\"Reason Breakdown\",\"savedObjectId\":\"carbonledger-pause-reason-lens\"},{\"version\":\"8.11.0\",\"type\":\"lens\",\"gridData\":{\"x\":12,\"y\":20,\"w\":12,\"h\":12,\"i\":\"5\"},\"panelIndex\":\"5\",\"embeddableConfig\":{\"title\":\"Admin Activity\"},\"title\":\"Admin Activity\",\"savedObjectId\":\"carbonledger-pause-admin-lens\"},{\"version\":\"8.11.0\",\"type\":\"search\",\"gridData\":{\"x\":0,\"y\":32,\"w\":24,\"h\":16,\"i\":\"6\"},\"panelIndex\":\"6\",\"embeddableConfig\":{\"title\":\"Pause Audit Trail\"},\"title\":\"Pause Audit Trail\",\"savedObjectId\":\"carbonledger-pause-audit-search\"}]",
+        "optionsJSON": "{\"useMargins\":true,\"syncColors\":false,\"hidePanelTitles\":false}"
+      },
+      "references": [
+        {
+          "id": "carbonledger-pause-index-pattern",
+          "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+          "type": "index-pattern"
+        },
+        {
+          "id": "carbonledger-pause-audit-search",
+          "name": "panel_6",
+          "type": "search"
+        }
+      ]
+    },
+    {
+      "id": "carbonledger-pause-count-viz",
+      "type": "visualization",
+      "attributes": {
+        "title": "Total Pause Count",
+        "description": "Number of pause events in the selected time range.",
+        "visState": "{\"type\":\"metric\",\"aggs\":[{\"id\":\"1\",\"enabled\":true,\"type\":\"count\",\"schema\":\"metric\",\"params\":{}}],\"params\":{\"addTooltip\":true,\"addLegend\":false,\"type\":\"metric\",\"metric\":{\"percentageMode\":false,\"useRanges\":false,\"colorSchema\":\"Green to Red\",\"metricColorMode\":\"Background\",\"colorsRange\":[{\"from\":0,\"to\":5},{\"from\":5,\"to\":10},{\"from\":10,\"to\":9999}],\"labels\":{\"show\":true},\"invertColors\":false,\"style\":{\"bgFill\":\"#000\",\"bgColor\":false,\"labelColor\":false,\"subText\":\"\",\"fontSize\":60}}},\"title\":\"Total Pause Count\"}",
+        "kibanaSavedObjectMeta": {
+          "searchSourceJSON": "{\"index\":\"carbonledger-pause-index-pattern\",\"filter\":[{\"meta\":{\"index\":\"carbonledger-pause-index-pattern\",\"negate\":false,\"disabled\":false,\"alias\":null,\"type\":\"phrase\",\"key\":\"pause_action\",\"value\":\"pause\"},\"query\":{\"match\":{\"pause_action\":{\"query\":\"pause\",\"type\":\"phrase\"}}},\"$state\":{\"store\":\"appState\"}}],\"query\":{\"language\":\"kuery\",\"query\":\"\"}}"
+        }
+      },
+      "references": [
+        {
+          "id": "carbonledger-pause-index-pattern",
+          "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+          "type": "index-pattern"
+        }
+      ]
+    },
+    {
+      "id": "carbonledger-unpause-count-viz",
+      "type": "visualization",
+      "attributes": {
+        "title": "Total Unpause Count",
+        "description": "Number of unpause events in the selected time range.",
+        "visState": "{\"type\":\"metric\",\"aggs\":[{\"id\":\"1\",\"enabled\":true,\"type\":\"count\",\"schema\":\"metric\",\"params\":{}}],\"params\":{\"addTooltip\":true,\"addLegend\":false,\"type\":\"metric\",\"metric\":{\"percentageMode\":false,\"useRanges\":false,\"colorSchema\":\"Green to Red\",\"metricColorMode\":\"Background\",\"colorsRange\":[{\"from\":0,\"to\":5},{\"from\":5,\"to\":10},{\"from\":10,\"to\":9999}],\"labels\":{\"show\":true},\"invertColors\":false,\"style\":{\"bgFill\":\"#000\",\"bgColor\":false,\"labelColor\":false,\"subText\":\"\",\"fontSize\":60}}},\"title\":\"Total Unpause Count\"}",
+        "kibanaSavedObjectMeta": {
+          "searchSourceJSON": "{\"index\":\"carbonledger-pause-index-pattern\",\"filter\":[{\"meta\":{\"index\":\"carbonledger-pause-index-pattern\",\"negate\":false,\"disabled\":false,\"alias\":null,\"type\":\"phrase\",\"key\":\"pause_action\",\"value\":\"unpause\"},\"query\":{\"match\":{\"pause_action\":{\"query\":\"unpause\",\"type\":\"phrase\"}}},\"$state\":{\"store\":\"appState\"}}],\"query\":{\"language\":\"kuery\",\"query\":\"\"}}"
+        }
+      },
+      "references": [
+        {
+          "id": "carbonledger-pause-index-pattern",
+          "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+          "type": "index-pattern"
+        }
+      ]
+    }
+  ]
+}

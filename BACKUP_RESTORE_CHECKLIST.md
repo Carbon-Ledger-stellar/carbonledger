@@ -8,6 +8,70 @@
 - [x] **Restore time < 30 minutes** - SLA enforcement and alerting
 - [x] **Encrypted storage (AWS S3)** - AES-256 encryption with versioning
 
+## 🛡️ Pause Events Backup Strategy (Issue #1237)
+
+The `pause_events` table is the audit trail for all pause/resume actions and must never be lost. It is covered by a dedicated hourly backup with 1-year retention, separate from the daily full-database backup.
+
+### Acceptance Criteria Status
+
+- [x] **Pause events backed up hourly** - `scripts/backup-pause-events.sh` runs `pg_dump --table=pause_events` hourly via `carbonledger-pause-events-backup.timer`
+- [x] **Backup retention: 1 year** - S3 lifecycle rule expires `pause-events/` objects after 365 days
+- [x] **Can restore pause history from backups** - `scripts/restore-pause-events.sh` restores into `pause_events` (or a target table for verification)
+- [x] **Tested restoration process** - `scripts/test-restore-pause-events.sh` restores the latest hourly backup into a scratch table and validates row counts
+
+### Hourly Backup
+
+- [x] Backup script (`scripts/backup-pause-events.sh`)
+  - Runs `pg_dump --format=custom --table=pause_events`
+  - Uploads to `s3://${BACKUP_S3_BUCKET}/pause-events/YYYY/MM/DD/pause_events-HHMMSS.dump`
+  - Records size and duration in `backup_metrics`
+  - Alerts on failure via `ADMIN_ALERT_WEBHOOK`
+
+- [x] Systemd service (`scripts/systemd/carbonledger-pause-events-backup.service`)
+  - Loads environment from `/opt/carbonledger/.env`
+  - Logs to `/var/log/carbonledger/pause-events-backup.log`
+
+- [x] Systemd timer (`scripts/systemd/carbonledger-pause-events-backup.timer`)
+  - Schedule: `*-*-* *:00:00 UTC` (hourly, on the hour)
+  - Persistent: Yes
+
+### Retention (1 Year)
+
+- [x] S3 lifecycle rule on the `pause-events/` prefix
+  - Expiration: 365 days
+  - Storage class: STANDARD_IA
+  - Versioning: Enabled (protects against accidental deletion)
+
+### Restoration
+
+- [x] Restore script (`scripts/restore-pause-events.sh`)
+  - Downloads the selected hourly backup from S3
+  - Verifies backup integrity before restoring
+  - Restores into `pause_events` (or `--target-table` for verification)
+  - Supports `--backup-key` to pick a specific hourly backup
+
+- [x] Restoration test (`scripts/test-restore-pause-events.sh`)
+  - Finds the latest hourly pause-events backup
+  - Restores into a scratch table
+  - Compares row counts against the source table
+  - Cleans up the scratch table
+
+### Verification Commands
+
+```bash
+# Run an hourly pause-events backup manually
+bash scripts/backup-pause-events.sh
+
+# List hourly pause-events backups
+aws s3 ls s3://${BACKUP_S3_BUCKET}/pause-events/ --recursive
+
+# Restore pause history from the latest backup
+bash scripts/restore-pause-events.sh --target-table pause_events_restore_check
+
+# Validate the restoration process
+bash scripts/test-restore-pause-events.sh
+```
+
 ## 📋 Implementation Checklist
 
 ### Phase 1: Infrastructure ✅
@@ -154,6 +218,7 @@
   ```bash
   sudo cp scripts/systemd/carbonledger-backup.* /etc/systemd/system/
   sudo cp scripts/systemd/carbonledger-restore-test.* /etc/systemd/system/
+  sudo cp scripts/systemd/carbonledger-pause-events-backup.* /etc/systemd/system/
   sudo systemctl daemon-reload
   ```
 
@@ -167,6 +232,7 @@
   ```bash
   sudo systemctl enable carbonledger-backup.timer
   sudo systemctl enable carbonledger-restore-test.timer
+  sudo systemctl enable carbonledger-pause-events-backup.timer
   ```
 
 ### Testing (Week 1)
@@ -237,6 +303,8 @@
 | Restore success rate (on test) | 100% | ✅ |
 | Encryption | AES-256 | ✅ |
 | Availability | 99.99% (managed by S3) | ✅ |
+| Pause events backup frequency | Hourly | ✅ |
+| Pause events retention | 1 year | ✅ |
 
 ## 🔄 Maintenance Schedule
 
@@ -244,6 +312,10 @@
 - Automatic backup at 02:00 UTC
 - Monitor backup logs for errors
 - Verify webhook notifications
+
+### Hourly
+- Automatic pause_events backup on the hour
+- Monitor `/var/log/carbonledger/pause-events-backup.log` for errors
 
 ### Weekly
 - Review backup size trends

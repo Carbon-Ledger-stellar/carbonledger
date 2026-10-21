@@ -4,12 +4,15 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { createHmac } from 'crypto';
 import { scValToNative } from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma.service';
 import { Prisma } from '@prisma/client';
 import { CreditEventType } from '../events/credit-event.types';
+import { PauseAnalyticsService } from '../pause-analytics/pause-analytics.service';
+import { PauseAction, PauseContract } from '../pause-analytics/pause-analytics.types';
 
 /**
  * Injection token for the Soroban RPC client. Provided by QueueModule as a
@@ -36,6 +39,7 @@ export interface SorobanEventClient {
       txIndex?: number;
       opIndex?: number;
       contractId?: string;
+      txHash?: string;
       topic: unknown[];
       data?: unknown;
     }>;
@@ -95,6 +99,7 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(SOROBAN_RPC_CLIENT) private readonly rpc: SorobanEventClient,
     private readonly prisma: PrismaService,
+    @Optional() private readonly pauseAnalytics?: PauseAnalyticsService,
   ) {}
 
   // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -374,6 +379,8 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
       topic: unknown[];
       data?: unknown;
       ledger?: number;
+      contractId?: string;
+      txHash?: string;
     },
     tx?: Tx,
   ): Promise<void> {
@@ -417,11 +424,57 @@ export class EventIndexerService implements OnModuleInit, OnModuleDestroy {
       case 'mkt_susp':
         await this.applyProjectStatus(client, this.firstString(data), 'Suspended');
         break;
+      case 'paused':
+      case 'unpaused':
+        await this.applyPause(action === 'paused' ? 'pause' : 'unpause', data, event, client);
+        break;
       default:
         // listed / delisted / purchase / upgraded / … are handled by their
         // own flows or carry no CreditBatch/Project status change.
         break;
     }
+  }
+
+  /**
+   * `(c_ledger, paused)`   → `(admin, until_timestamp, paused_at)`
+   * `(c_ledger, unpaused)` → `(admin, unpaused_at)`
+   *
+   * Recorded as a PauseEvent row for pause analytics (#1324).
+   */
+  private async applyPause(
+    action: PauseAction,
+    data: unknown[],
+    event: { id?: string; contractId?: string; txHash?: string; ledger?: number },
+    client: Tx,
+  ): Promise<void> {
+    if (!this.pauseAnalytics) return;
+    // Some RPC shapes deliver the tuple as a single native array.
+    const fields = data.length === 1 && Array.isArray(data[0]) ? (data[0] as unknown[]) : data;
+    const contract = this.pauseContractFor(event.contractId);
+    if (!contract || !event.txHash || fields[0] == null) {
+      this.logger.warn(`Skipping ${action} event at ledger ${event.ledger}: missing contract/txHash/admin`);
+      return;
+    }
+
+    const toDate = (v: unknown) => new Date(Number(v) * 1000);
+    await this.pauseAnalytics.recordOnChain(
+      {
+        contract,
+        action,
+        admin: String(fields[0]),
+        txHash: event.txHash,
+        eventId: event.id,
+        pausedUntil: action === 'pause' ? toDate(fields[1]) : null,
+        occurredAt: toDate(action === 'pause' ? fields[2] : fields[1]),
+      },
+      client as never,
+    );
+  }
+
+  private pauseContractFor(contractId?: string): PauseContract | null {
+    if (contractId && contractId === process.env.CARBON_CREDIT_CONTRACT_ID) return 'credit';
+    if (contractId && contractId === process.env.CARBON_MARKETPLACE_CONTRACT_ID) return 'marketplace';
+    return null;
   }
 
   private firstString(data: unknown[]): string {

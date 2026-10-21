@@ -15,6 +15,7 @@ import { RetirementsModule } from '../retirements/retirements.module';
 import { CertificateProcessor } from '../certificates/certificate.processor';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { CreditsModule } from '../credits/credits.module';
+import { PauseAnalyticsModule } from '../pause-analytics/pause-analytics.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { CreditsModule } from '../credits/credits.module';
     forwardRef(() => RetirementsModule),
     forwardRef(() => CreditsModule),
     CertificatesModule,
+    PauseAnalyticsModule,
   ],
   providers: [
     QueueService,

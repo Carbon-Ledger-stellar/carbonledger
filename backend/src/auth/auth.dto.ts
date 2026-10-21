@@ -29,3 +29,17 @@ export class LogoutDto {
   @IsString()
   refreshToken?: string;
 }
+
+/** Step 1 — request a server nonce tied to a Freighter wallet public key. */
+export class WalletNonceDto {
+  @IsString() publicKey: string;
+}
+
+/** Step 2 — submit the signed nonce to receive a JWT access token. */
+export class WalletLoginDto {
+  @IsString() publicKey: string;
+  /** Ed25519 signature of `carbonledger-wallet:<nonce>` encoded as hex. */
+  @IsString() signature: string;
+  /** The nonce previously returned by GET /auth/wallet-nonce. */
+  @IsString() nonce: string;
+}

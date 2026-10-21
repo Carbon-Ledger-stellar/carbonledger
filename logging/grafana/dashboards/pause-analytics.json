@@ -1,0 +1,361 @@
+{
+  "uid": "pause-analytics",
+  "title": "CarbonLedger — Emergency Pause Analytics",
+  "tags": [
+    "carbonledger",
+    "pause",
+    "analytics"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Pauses",
+      "description": "Number of pause_operations calls in the selected range.",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause\" | message_action=\"pause\" [$__interval]))",
+          "legendFormat": "pauses"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 2,
+      "title": "Unpauses",
+      "description": "Number of manual unpause_operations calls in the selected range. Expired pauses are not counted here.",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause\" | message_action=\"unpause\" [$__interval]))",
+          "legendFormat": "unpauses"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      }
+    },
+    {
+      "id": 3,
+      "title": "Mean pause duration (manual unpause)",
+      "description": "Average time between a pause and the manual unpause that ended it. Pauses that expired on their own are covered by GET /admin/pause-analytics/summary.",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "avg(avg_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause\" | message_action=\"unpause\" | message_pauseDurationSeconds!=\"\" | unwrap message_pauseDurationSeconds [$__range]))",
+          "legendFormat": "mean"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Mean requested pause window",
+      "description": "Average until_timestamp - now requested by admins (contract maximum is 72h).",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "avg(avg_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause\" | message_action=\"pause\" | message_requestedSeconds!=\"\" | unwrap message_requestedSeconds [$__range]))",
+          "legendFormat": "requested"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "max": 259200
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Pause frequency by contract",
+      "description": "Pauses per hour, split by contract.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (message_contract) (count_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause\" | message_action=\"pause\" [1h]))",
+          "legendFormat": "{{message_contract}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Pause reasons",
+      "description": "Reasons recorded via POST /admin/pause-analytics/events.",
+      "type": "piechart",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 0,
+        "y": 13
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (message_reason) (count_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause_reason\" | message_action=\"pause\" [$__range]))",
+          "legendFormat": "{{message_reason}}",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Pauses by admin",
+      "description": "Which admin keys are pausing the contracts.",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 13
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (message_admin) (count_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause\" | message_action=\"pause\" [$__range]))",
+          "legendFormat": "{{message_admin}}",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic"
+      }
+    },
+    {
+      "id": 8,
+      "title": "Pause duration per unpause",
+      "description": "Duration of each manually ended pause.",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 13
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "max by (message_contract) (max_over_time({service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=\"contract_pause\" | message_action=\"unpause\" | message_pauseDurationSeconds!=\"\" | unwrap message_pauseDurationSeconds [1h]))",
+          "legendFormat": "{{message_contract}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 8
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Pause / unpause log",
+      "description": "Every pause, unpause and reason as recorded by the backend.",
+      "type": "logs",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{service=\"backend\"} | json | context=\"PauseAnalyticsService\" | message_event=~\"contract_pause|contract_pause_reason\"",
+          "legendFormat": ""
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ]
+}

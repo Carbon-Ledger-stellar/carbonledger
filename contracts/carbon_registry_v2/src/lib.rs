@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror,
+    contract, contractimpl, contracttype, contracterror, contractevent,
     Address, Env, String, Vec, Map,
     symbol_short, vec,
 };
@@ -88,6 +88,70 @@ pub struct UpgradeRecord {
     pub upgraded_by:  Address,
 }
 
+// ── Events ────────────────────────────────────────────────────────────────────
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ProjectRegistered {
+    #[topic]
+    pub project_id: String,
+    pub name: String,
+    pub methodology: String,
+    pub country: String,
+    pub verifier_address: Address,
+    pub vintage_year: u32,
+    pub timestamp: u64,
+    pub actor: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ProjectVerified {
+    #[topic]
+    pub project_id: String,
+    pub verifier_address: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct ProjectCertified {
+    #[topic]
+    pub project_id: String,
+    pub credit_score: u32,
+    pub timestamp: u64,
+    pub actor: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct CreditsRetired {
+    #[topic]
+    pub project_id: String,
+    pub amount: i128,
+    pub timestamp: u64,
+    pub actor: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct CreditsIssued {
+    #[topic]
+    pub project_id: String,
+    pub amount: i128,
+    pub timestamp: u64,
+    pub oracle: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct RegistryUpgraded {
+    pub from_version: u32,
+    pub to_version: u32,
+    pub timestamp: u64,
+    pub upgraded_by: Address,
+}
+
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -140,7 +204,18 @@ impl CarbonRegistryContractV2 {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("upgraded")),
-            (1_u32, 2_u32, admin),
+            (1_u32, 2_u32, admin.clone()),
+        );
+
+        // Structured event for audit trail
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("upgraded")),
+            RegistryUpgraded {
+                from_version: 1,
+                to_version: 2,
+                timestamp: env.ledger().timestamp(),
+                upgraded_by: admin,
+            },
         );
         Ok(())
     }
@@ -193,7 +268,22 @@ impl CarbonRegistryContractV2 {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("reg_proj")),
-            (project_id, methodology, country, vintage_year),
+            (project_id.clone(), methodology.clone(), country.clone(), vintage_year),
+        );
+
+        // Structured event for audit trail
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("project_registered")),
+            ProjectRegistered {
+                project_id: project_id.clone(),
+                name: name.clone(),
+                methodology: methodology.clone(),
+                country: country.clone(),
+                verifier_address: verifier_address.clone(),
+                vintage_year,
+                timestamp: env.ledger().timestamp(),
+                actor: admin,
+            },
         );
         Ok(())
     }
@@ -216,7 +306,17 @@ impl CarbonRegistryContractV2 {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("verified")),
-            (project_id, verifier_address),
+            (project_id.clone(), verifier_address.clone()),
+        );
+
+        // Structured event for audit trail
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("project_verified")),
+            ProjectVerified {
+                project_id: project_id.clone(),
+                verifier_address: verifier_address.clone(),
+                timestamp: env.ledger().timestamp(),
+            },
         );
         Ok(())
     }
@@ -249,7 +349,18 @@ impl CarbonRegistryContractV2 {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("certified")),
-            (project_id, credit_score),
+            (project_id.clone(), credit_score),
+        );
+
+        // Structured event for audit trail
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("project_certified")),
+            ProjectCertified {
+                project_id: project_id.clone(),
+                credit_score,
+                timestamp: env.ledger().timestamp(),
+                actor: admin,
+            },
         );
         Ok(())
     }
@@ -279,7 +390,18 @@ impl CarbonRegistryContractV2 {
 
         env.events().publish(
             (symbol_short!("c_ledger"), symbol_short!("retired")),
-            (project_id, amount),
+            (project_id.clone(), amount),
+        );
+
+        // Structured event for audit trail
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("credits_retired")),
+            CreditsRetired {
+                project_id: project_id.clone(),
+                amount,
+                timestamp: env.ledger().timestamp(),
+                actor: admin,
+            },
         );
         Ok(())
     }
@@ -315,7 +437,18 @@ impl CarbonRegistryContractV2 {
         Self::require_oracle(&env, &oracle_address)?;
         let mut project = Self::load_project(&env, &project_id)?;
         project.total_credits_issued = project.total_credits_issued.checked_add(amount).ok_or(CarbonError::Arithmetic)?;
-        env.storage().persistent().set(&DataKey::Project(project_id), &project);
+        env.storage().persistent().set(&DataKey::Project(project_id.clone()), &project);
+
+        // Structured event for audit trail
+        env.events().publish(
+            (symbol_short!("registry"), symbol_short!("credits_issued")),
+            CreditsIssued {
+                project_id: project_id.clone(),
+                amount,
+                timestamp: env.ledger().timestamp(),
+                oracle: oracle_address.clone(),
+            },
+        );
         Ok(())
     }
 

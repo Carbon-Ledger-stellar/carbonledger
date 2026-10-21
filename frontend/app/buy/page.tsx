@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useListing, purchaseCredits } from "../../lib/api";
+import { useListing, purchaseCredits, useMarketplacePauseState } from "../../lib/api";
 import { useBuyButton } from "../../lib/useBuyButton";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
@@ -17,6 +17,8 @@ import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
 import { simulatePurchasePreview } from "../../lib/soroban";
+import { usePauseWebSocket } from "../../lib/realtime/usePauseWebSocket";
+import PausedOperationButton from "../../components/PausedOperationButton";
 
 // ── Inner component (wrapped in Suspense so useSearchParams is safe) ─────────
 
@@ -31,6 +33,20 @@ function BuyPageContent() {
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
+
+  // Pause state — Issue #1254
+  const { pauseState: pollingPauseState } = useMarketplacePauseState();
+  const { isPaused, pauseState } = usePauseWebSocket({
+    contract: "carbon_marketplace",
+    pollingState: {
+      isPaused: pollingPauseState.paused,
+      pausedBy: pollingPauseState.pausedBy,
+      reason: pollingPauseState.reason,
+      pausedUntil: pollingPauseState.pausedUntil
+        ? pollingPauseState.pausedUntil * 1000
+        : undefined,
+    },
+  });
 
   // Simulation state: starts idle; set to loading when amount/listing changes
   const [preview, setPreview] = useState<PreviewState>({
@@ -412,29 +428,31 @@ function BuyPageContent() {
               />
             ) : !showPreview ? (
               /* Before preview: show "Preview purchase" button */
-              <button
-                type="button"
-                onClick={handlePreviewRequest}
-                disabled={
-                  txStatus === "submitted" || txStatus === "pending"
-                }
-                aria-disabled={
-                  txStatus === "submitted" || txStatus === "pending"
-                }
-                style={{
-                  background: colors.primary[600],
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "0.5rem",
-                  padding: "0.875rem",
-                  fontSize: "1rem",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  transition: "background 0.2s",
-                }}
-              >
-                Preview purchase →
-              </button>
+              <PausedOperationButton isPaused={isPaused} pauseReason={pauseState.reason}>
+                <button
+                  type="button"
+                  onClick={handlePreviewRequest}
+                  disabled={
+                    txStatus === "submitted" || txStatus === "pending"
+                  }
+                  aria-disabled={
+                    txStatus === "submitted" || txStatus === "pending"
+                  }
+                  style={{
+                    background: colors.primary[600],
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "0.5rem",
+                    padding: "0.875rem",
+                    fontSize: "1rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "background 0.2s",
+                  }}
+                >
+                  Preview purchase →
+                </button>
+              </PausedOperationButton>
             ) : null}
           </div>
         )}

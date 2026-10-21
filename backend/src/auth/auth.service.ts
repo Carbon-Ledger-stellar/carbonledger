@@ -14,6 +14,7 @@ import * as jwt from 'jsonwebtoken';
 import { TokenFamilyService } from './token-family.service';
 import { TokenBlacklistService } from './token-blacklist.service';
 import { SecretsRefreshService } from '../key-rotation/secrets-refresh.service';
+import { RedisService } from '../redis.service';
 
 export type UserRole = 'project_developer' | 'corporation' | 'verifier' | 'admin';
 
@@ -45,9 +46,11 @@ export class AuthService {
   constructor(
     private readonly jwt: JwtService,
     private readonly prisma: PrismaService,
+    private readonly lockout: AccountLockoutService,
     private readonly tokenFamily: TokenFamilyService,
     private readonly tokenBlacklist: TokenBlacklistService,
     private readonly secretsRefresh: SecretsRefreshService,
+    private readonly redis: RedisService,
   ) { }
 
   /** Issue a one-time challenge nonce for the given Stellar public key. */
@@ -264,6 +267,115 @@ export class AuthService {
       return keypair.verify(msgBuffer, sigBuffer);
     } catch {
       return false;
+    }
+  }
+
+  // ── Wallet-login (issue #1023) ────────────────────────────────────────────
+
+  /**
+   * Redis key for a wallet-login nonce.
+   * Format: `auth:nonce:<stellarPublicKey>`
+   */
+  private walletNonceKey(publicKey: string): string {
+    return `auth:nonce:${publicKey}`;
+  }
+
+  /**
+   * Generate and persist a server-side nonce in Redis for the given Stellar
+   * public key.  The nonce is a 32-byte (64-char hex) random value and
+   * expires after 5 minutes — single-use enforcement is done in walletLogin.
+   *
+   * Using Redis instead of the module-level Map makes the nonce durable across
+   * process restarts and correct in multi-instance deployments.
+   */
+  async generateWalletNonce(
+    publicKey: string,
+  ): Promise<{ nonce: string; expiresAt: number }> {
+    this.validatePublicKey(publicKey);
+
+    const nonce = crypto.randomBytes(32).toString('hex');
+    const ttlSeconds = 5 * 60; // 5 minutes
+    const expiresAt = Date.now() + ttlSeconds * 1000;
+
+    await this.redis.set(this.walletNonceKey(publicKey), { nonce, expiresAt }, ttlSeconds);
+
+    return { nonce, expiresAt };
+  }
+
+  /**
+   * Verify a Freighter wallet signature and issue a JWT + opaque refresh token.
+   *
+   * The client must sign the exact string `carbonledger-wallet:<nonce>`.
+   *
+   * Flow:
+   *  1. Load and validate nonce from Redis.
+   *  2. Delete the nonce immediately (single-use).
+   *  3. Verify the Ed25519 signature via Stellar SDK.
+   *  4. Upsert the user in Postgres.
+   *  5. Create a new token family in Redis → return access + refresh tokens.
+   */
+  async walletLogin(
+    publicKey: string,
+    signature: string,
+    nonce: string,
+  ): Promise<{ access_token: string; refresh_token: string }> {
+    this.validatePublicKey(publicKey);
+
+    // 1. Check lockout before touching Redis
+    if (this.lockout.isLockedOut(publicKey)) {
+      throw new UnauthorizedException(
+        'Account temporarily locked. Too many failed attempts.',
+      );
+    }
+
+    // 2. Load stored nonce from Redis
+    const key = this.walletNonceKey(publicKey);
+    const stored = await this.redis.get<{ nonce: string; expiresAt: number }>(key);
+
+    if (!stored || stored.nonce !== nonce) {
+      this.lockout.recordFailedAttempt(publicKey);
+      throw new UnauthorizedException('Invalid or expired nonce');
+    }
+
+    if (Date.now() > stored.expiresAt) {
+      // TTL-expired entry still returned by Redis stub in tests — guard explicitly
+      await this.redis.del(key);
+      this.lockout.recordFailedAttempt(publicKey);
+      throw new UnauthorizedException('Nonce expired');
+    }
+
+    // 3. Invalidate nonce immediately (single-use)
+    await this.redis.del(key);
+
+    // 4. Verify Ed25519 signature
+    const message = `carbonledger-wallet:${nonce}`;
+    if (!this.verifySignature(publicKey, message, signature)) {
+      this.lockout.recordFailedAttempt(publicKey);
+      throw new UnauthorizedException('Signature verification failed');
+    }
+
+    // 5. Upsert user and issue tokens
+    try {
+      const existingUser = await this.prisma.user.findUnique({ where: { publicKey } });
+      if (existingUser?.deletedAt) {
+        throw new UnauthorizedException('Account has been deleted');
+      }
+
+      const user = await this.prisma.user.upsert({
+        where: { publicKey },
+        update: {},
+        create: { publicKey, role: 'corporation' },
+      });
+
+      const { rawToken } = await this.tokenFamily.createFamily(user.publicKey);
+      const access_token = this.signAccessToken(user.publicKey, user.role as UserRole);
+
+      return { access_token, refresh_token: rawToken };
+    } catch (error: any) {
+      if (error?.code === 'P2024') {
+        throw new ServiceUnavailableException('Service temporarily unavailable — please retry');
+      }
+      throw error;
     }
   }
 }

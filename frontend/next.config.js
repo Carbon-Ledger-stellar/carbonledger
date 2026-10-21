@@ -184,6 +184,26 @@ const nextConfig = {
       process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001",
   },
 
+  // Issue #1404: the Pages Router (src/pages) has been fully migrated to the
+  // App Router (app/).  Preserve any legacy URLs that changed during the
+  // migration so existing bookmarks and external links keep working.
+  async redirects() {
+    return [
+      // Legacy Pages Router entry points → App Router equivalents.
+      { source: "/dashboard", destination: "/app/dashboard", permanent: true },
+      { source: "/projects", destination: "/app/projects", permanent: true },
+      { source: "/projects/:id", destination: "/app/projects/:id", permanent: true },
+      { source: "/credits", destination: "/app/credits", permanent: true },
+      { source: "/credits/:id", destination: "/app/credits/:id", permanent: true },
+      { source: "/marketplace", destination: "/app/marketplace", permanent: true },
+      { source: "/marketplace/:id", destination: "/app/marketplace/:id", permanent: true },
+      { source: "/oracle", destination: "/app/oracle", permanent: true },
+      { source: "/retire", destination: "/app/retire", permanent: true },
+      { source: "/portfolio", destination: "/app/portfolio", permanent: true },
+      { source: "/settings", destination: "/app/settings", permanent: true },
+    ];
+  },
+
   // Attach security headers to every response.
   async headers() {
     // The strict CSP relies on Next.js nonce-gated script tags. Turbopack's

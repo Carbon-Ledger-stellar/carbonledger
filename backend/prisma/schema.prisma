@@ -207,6 +207,15 @@ model MarketListing {
   methodology     String
   country         String
   status          String   @default("Active")
+  /// Whether this listing is currently paused and unavailable for purchase.
+  /// Defaults to false so existing rows remain active without a data migration.
+  is_paused       Boolean  @default(false)
+  /// Timestamp when this listing was paused; null when not paused.
+  paused_at       DateTime?
+  /// Stellar public key of the admin who triggered the pause.
+  paused_by       String?
+  /// Human-readable reason for the pause (e.g. "Security investigation").
+  pause_reason    String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   deletedAt       DateTime?
@@ -220,8 +229,8 @@ model MarketListing {
   @@index([deletedAt])
   // Supports ORDER BY status, createdAt DESC on the listings browse page
   @@index([status, createdAt])
-  // Performance optimization indexes
-  @@index([status, createdAt])  // Optimize listing browsing with pagination
+  // Issue #1231: fast lookup of all currently-paused listings
+  @@index([is_paused, paused_at])
 }
 
 model MonitoringData {
@@ -777,6 +786,40 @@ model TwoFactorAuth {
   @@index([userId])
 }
 
+/// Dedicated sensitive-operations audit table (#1022).
+/// Tracks every high-sensitivity action (delete, role change, admin operation, etc.)
+/// independently of the general-purpose AuditLog so compliance queries are fast
+/// and the two concerns remain cleanly separated.
+///
+/// Column notes:
+///   actor_id      — Stellar public key (G…) of the user who performed the action.
+///   action        — Verb describing the operation, e.g. "user.role_change",
+///                   "project.delete", "credit.mint".
+///   resource_type — Entity kind, e.g. "User", "CarbonProject", "CreditBatch".
+///   resource_id   — Primary-key value of the affected entity.
+///   details       — Arbitrary JSON payload: before/after state, reason, metadata.
+///   timestamp     — Set by the database at insert time; never editable.
+model AuditLogEntry {
+  id           String   @id @default(cuid())
+  /// Stellar public key of the acting user; null for system-generated events.
+  actor_id     String?
+  action       String
+  resource_type String
+  resource_id  String
+  /// JSON payload carrying context (before/after state, reason, IP, etc.)
+  details      Json     @default("{}")
+  timestamp    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("audit_logs")
+
+  @@index([actor_id])
+  @@index([action])
+  @@index([resource_type, resource_id])
+  @@index([timestamp])
+  @@index([actor_id, timestamp])
+  @@index([resource_type, resource_id, timestamp])
+}
+
 /// One-time recovery codes for 2FA account lockout (#1079).
 /// Each user gets 10 codes on 2FA setup; each code is single-use.
 model RecoveryCode {
@@ -788,4 +831,103 @@ model RecoveryCode {
 
   @@index([userId])
   @@index([userId, usedAt])
+}
+
+/// Emergency pause / unpause of the credit or marketplace contract (#1324).
+///
+/// Rows are written from two directions and joined on (txHash, action):
+///   - the event indexer records the on-chain `(c_ledger, paused|unpaused)`
+///     event (admin, pausedUntil, occurredAt, eventId)
+///   - an admin records *why* the contract was paused via
+///     POST /admin/pause-analytics/events (reason)
+/// Whichever arrives first creates the row; the other fills in its fields.
+model PauseEvent {
+  id          String    @id @default(cuid())
+  /// "credit" | "marketplace"
+  contract    String
+  /// "pause" | "unpause"
+  action      String
+  /// Stellar public key of the admin that signed the transaction
+  admin       String
+  reason      String?
+  /// Requested auto-expiry for a pause; null for unpause
+  pausedUntil DateTime?
+  txHash      String
+  /// Soroban RPC event id; null until the indexer has seen the event
+  eventId     String?   @unique
+  /// Ledger close time of the event (or API receipt time until indexed)
+  occurredAt  DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([txHash, action])
+  @@index([contract, occurredAt])
+  @@index([occurredAt])
+  @@map("pause_events")
+}
+
+/// Tracks the cached pause status for each Soroban contract polled by
+/// ContractStateSyncService (#1230). One row per contract.
+/// Updated on every sync cycle; triggers a change event when isPaused flips.
+model ContractSyncState {
+  id               String    @id @default(cuid())
+  /// On-chain contract ID (Soroban address)
+  contractId       String    @unique
+  /// Human-readable contract name, e.g. "carbon_credit"
+  contractName     String
+  /// Cached pause status — reflects the last successful poll
+  isPaused         Boolean   @default(false)
+  /// Human-readable pause reason returned by the contract
+  pauseReason      String?
+  /// Auto-expiry timestamp for the current pause window; null if unpaused
+  pausedUntil      DateTime?
+  /// When this row was last successfully synced from the chain
+  lastSyncedAt     DateTime  @default(now())
+  /// Last error message (null if last sync was successful)
+  lastError        String?
+  /// When the last error occurred
+  lastErrorAt      DateTime?
+  /// 'idle' | 'syncing' | 'completed' | 'failed'
+  syncStatus       String    @default("idle")
+  /// Number of consecutive sync errors; reset to 0 on success
+  consecutiveErrors Int      @default(0)
+  updatedAt        DateTime  @updatedAt
+
+  @@index([contractName])
+  @@index([isPaused])
+  @@index([lastSyncedAt])
+  @@map("contract_sync_state")
+}
+
+/// Audit trail of every alert sent (email / Slack / webhook) when a
+/// contract pause status changes (#1229). Used to enforce per-contract
+/// cooldown windows and provide an ops notification history.
+model PauseAlertLog {
+  id            String    @id @default(cuid())
+  /// On-chain contract ID
+  contractId    String
+  /// Human-readable contract name
+  contractName  String
+  /// 'pause' | 'unpause'
+  action        String
+  /// 'email' | 'slack' | 'webhook'
+  channel       String
+  /// Recipient address / URL / identifier (may be redacted in logs)
+  recipient     String?
+  /// Pause reason passed to the alert
+  reason        String?
+  /// Auto-expiry for the pause window (if applicable)
+  pausedUntil   DateTime?
+  /// 'sent' | 'failed' | 'skipped_cooldown'
+  status        String    @default("sent")
+  /// Error detail when status = 'failed'
+  error         String?
+  sentAt        DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+
+  @@index([contractId, sentAt(sort: Desc)])
+  @@index([channel, sentAt(sort: Desc)])
+  @@index([action])
+  @@index([sentAt(sort: Desc)])
+  @@map("pause_alert_log")
 }

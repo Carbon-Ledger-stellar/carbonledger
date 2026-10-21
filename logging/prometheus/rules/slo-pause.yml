@@ -1,0 +1,346 @@
+---
+# =============================================================================
+# Prometheus SLO Alert & Recording Rules — CarbonLedger Pause Feature
+# =============================================================================
+# Implements multi-window, multi-burn-rate alerting for the four SLOs defined
+# in deploy/monitoring/slo-pause.yml.
+#
+# Add to prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/rules/slo-pause.yml
+# =============================================================================
+
+groups:
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SLO 1 — Pause/Unpause Success Rate (99.9% over 30 days)
+  # ────────────────────────────────────────────────────────────────────────────
+  - name: slo_pause_success_rate
+    interval: 30s
+    rules:
+
+      # ── Recording rules: pre-compute error rates ───────────────────────────
+
+      # Fraction of bad requests (non-2xx, excluding 401/403) over 5m window
+      - record: slo:pause_api_error_rate:5m
+        expr: |
+          1 - (
+            sum(rate(http_requests_total{
+              handler=~"/api/v1/admin/(un)?pause",
+              status_code=~"2[0-9]{2}"
+            }[5m]))
+            /
+            (
+              sum(rate(http_requests_total{
+                handler=~"/api/v1/admin/(un)?pause",
+                status_code!~"401|403"
+              }[5m]))
+              + 0.0001
+            )
+          )
+
+      # Same metric over 30m window (for burn rate calculation)
+      - record: slo:pause_api_error_rate:30m
+        expr: |
+          1 - (
+            sum(rate(http_requests_total{
+              handler=~"/api/v1/admin/(un)?pause",
+              status_code=~"2[0-9]{2}"
+            }[30m]))
+            /
+            (
+              sum(rate(http_requests_total{
+                handler=~"/api/v1/admin/(un)?pause",
+                status_code!~"401|403"
+              }[30m]))
+              + 0.0001
+            )
+          )
+
+      # Same metric over 1h window
+      - record: slo:pause_api_error_rate:1h
+        expr: |
+          1 - (
+            sum(rate(http_requests_total{
+              handler=~"/api/v1/admin/(un)?pause",
+              status_code=~"2[0-9]{2}"
+            }[1h]))
+            /
+            (
+              sum(rate(http_requests_total{
+                handler=~"/api/v1/admin/(un)?pause",
+                status_code!~"401|403"
+              }[1h]))
+              + 0.0001
+            )
+          )
+
+      # Same metric over 6h window
+      - record: slo:pause_api_error_rate:6h
+        expr: |
+          1 - (
+            sum(rate(http_requests_total{
+              handler=~"/api/v1/admin/(un)?pause",
+              status_code=~"2[0-9]{2}"
+            }[6h]))
+            /
+            (
+              sum(rate(http_requests_total{
+                handler=~"/api/v1/admin/(un)?pause",
+                status_code!~"401|403"
+              }[6h]))
+              + 0.0001
+            )
+          )
+
+      # ── Error budget remaining ─────────────────────────────────────────────
+      # Remaining budget as fraction of total (1.0 = full budget, 0 = exhausted)
+      - record: slo:pause_api_error_budget_remaining:30d
+        expr: |
+          1 - (
+            (1 - sum(rate(http_requests_total{
+              handler=~"/api/v1/admin/(un)?pause",
+              status_code=~"2[0-9]{2}"
+            }[30d])) / sum(rate(http_requests_total{
+              handler=~"/api/v1/admin/(un)?pause",
+              status_code!~"401|403"
+            }[30d])))
+            / (1 - 0.999)
+          )
+
+      # ── Alert: critical burn — 1h window, burn rate 14.4× ─────────────────
+      # Fires when we are consuming the monthly error budget at 14.4× the
+      # allowed rate, which would exhaust the budget in ~2 hours.
+      - alert: PauseApiErrorRateCritical
+        expr: |
+          (slo:pause_api_error_rate:5m  > (14.4 * 0.001))
+          and
+          (slo:pause_api_error_rate:1h  > (14.4 * 0.001))
+        for: 2m
+        labels:
+          severity:  critical
+          slo:       pause-success-rate
+          team:      platform
+          component: pause_api
+        annotations:
+          summary: "Pause API error rate is burning SLO budget at critical rate"
+          description: >
+            The 5m and 1h pause API error rates ({{ $value | humanizePercentage }})
+            exceed the 14.4× burn threshold. At this rate the monthly error budget
+            will be exhausted in ~2 hours. Immediate investigation required.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause"
+          dashboard_url: "https://grafana.carbonledger.com/d/pause-statistics"
+
+      # ── Alert: warning burn — 6h window, burn rate 6.0× ──────────────────
+      - alert: PauseApiErrorRateWarning
+        expr: |
+          (slo:pause_api_error_rate:30m > (6.0 * 0.001))
+          and
+          (slo:pause_api_error_rate:6h  > (6.0 * 0.001))
+        for: 15m
+        labels:
+          severity:  warning
+          slo:       pause-success-rate
+          team:      platform
+          component: pause_api
+        annotations:
+          summary: "Pause API error rate is elevated"
+          description: >
+            The 30m and 6h pause API error rates ({{ $value | humanizePercentage }})
+            exceed the 6× burn threshold. At this rate the monthly error budget
+            will be exhausted in ~5 days.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause"
+
+      # ── Alert: error budget nearly exhausted ──────────────────────────────
+      - alert: PauseApiErrorBudgetLow
+        expr: slo:pause_api_error_budget_remaining:30d < 0.10
+        for: 30m
+        labels:
+          severity:  warning
+          slo:       pause-success-rate
+          team:      platform
+        annotations:
+          summary: "Pause API SLO error budget is below 10%"
+          description: >
+            Only {{ $value | humanizePercentage }} of the monthly pause API error
+            budget remains. Review recent incidents and consider a feature freeze.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SLO 2 — Pause Response Latency P95 < 1s (95% over 30 days)
+  # ────────────────────────────────────────────────────────────────────────────
+  - name: slo_pause_response_latency
+    interval: 30s
+    rules:
+
+      # Fraction of requests completing within 1s
+      - record: slo:pause_latency_under_1s:5m
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{
+            handler=~"/api/v1/admin/(un)?pause",
+            le="1.0"
+          }[5m]))
+          /
+          sum(rate(http_request_duration_seconds_count{
+            handler=~"/api/v1/admin/(un)?pause"
+          }[5m]) + 0.0001)
+
+      - record: slo:pause_latency_under_1s:1h
+        expr: |
+          sum(rate(http_request_duration_seconds_bucket{
+            handler=~"/api/v1/admin/(un)?pause",
+            le="1.0"
+          }[1h]))
+          /
+          sum(rate(http_request_duration_seconds_count{
+            handler=~"/api/v1/admin/(un)?pause"
+          }[1h]) + 0.0001)
+
+      # Error rate for latency SLI (fraction of requests exceeding 1s)
+      - record: slo:pause_latency_error_rate:5m
+        expr: 1 - slo:pause_latency_under_1s:5m
+
+      - record: slo:pause_latency_error_rate:1h
+        expr: 1 - slo:pause_latency_under_1s:1h
+
+      # ── Alerts ─────────────────────────────────────────────────────────────
+      - alert: PauseApiHighLatencyCritical
+        expr: |
+          (slo:pause_latency_error_rate:5m > (10.0 * 0.05))
+          and
+          (slo:pause_latency_error_rate:1h > (10.0 * 0.05))
+        for: 5m
+        labels:
+          severity:  critical
+          slo:       pause-response-latency
+          team:      platform
+          component: pause_api
+        annotations:
+          summary: "Pause API P95 latency SLO is being violated at critical burn rate"
+          description: >
+            More than {{ $value | humanizePercentage }} of pause API requests are
+            taking longer than 1s. The latency error budget is burning at 10×.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause#latency"
+
+      - alert: PauseApiHighLatencyWarning
+        expr: |
+          (slo:pause_latency_error_rate:5m > (5.0 * 0.05))
+          and
+          (slo:pause_latency_error_rate:1h > (5.0 * 0.05))
+        for: 15m
+        labels:
+          severity:  warning
+          slo:       pause-response-latency
+          team:      platform
+          component: pause_api
+        annotations:
+          summary: "Pause API P95 latency elevated"
+          description: >
+            More than {{ $value | humanizePercentage }} of pause API requests are
+            taking longer than 1s. SLI target is <5% exceeding 1s.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause#latency"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SLO 3 — Pause Event Log Write Latency (99% within 100ms)
+  # ────────────────────────────────────────────────────────────────────────────
+  - name: slo_pause_event_log_latency
+    interval: 30s
+    rules:
+
+      - record: slo:pause_log_latency_under_100ms:5m
+        expr: |
+          sum(rate(pause_event_log_latency_ms_bucket{
+            action=~"pause|unpause",
+            le="100"
+          }[5m]))
+          /
+          sum(rate(pause_event_log_latency_ms_count{
+            action=~"pause|unpause"
+          }[5m]) + 0.0001)
+
+      - record: slo:pause_log_latency_error_rate:5m
+        expr: 1 - slo:pause_log_latency_under_100ms:5m
+
+      - alert: PauseEventLogHighLatency
+        expr: slo:pause_log_latency_error_rate:5m > (5.0 * 0.01)
+        for: 10m
+        labels:
+          severity:  warning
+          slo:       pause-event-log-latency
+          team:      platform
+          component: pause_logging
+        annotations:
+          summary: "Pause event audit log writes are taking >100ms"
+          description: >
+            {{ $value | humanizePercentage }} of pause event log writes exceed 100ms.
+            SLI target is <1% exceeding 100ms. Check Loki / Logstash health.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause#logging"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # SLO 4 — Pause Status Consistency (99.9% over 30 days)
+  # ────────────────────────────────────────────────────────────────────────────
+  - name: slo_pause_status_consistency
+    interval: 30s
+    rules:
+
+      - record: slo:pause_status_consistency_rate:5m
+        expr: |
+          sum(rate(pause_status_consistency_total{result="consistent"}[5m]))
+          /
+          sum(rate(pause_status_consistency_total[5m]) + 0.0001)
+
+      - record: slo:pause_status_inconsistency_rate:5m
+        expr: 1 - slo:pause_status_consistency_rate:5m
+
+      - record: slo:pause_status_inconsistency_rate:1h
+        expr: |
+          1 - (
+            sum(rate(pause_status_consistency_total{result="consistent"}[1h]))
+            /
+            sum(rate(pause_status_consistency_total[1h]) + 0.0001)
+          )
+
+      # Error budget remaining for consistency SLO
+      - record: slo:pause_status_error_budget_remaining:30d
+        expr: |
+          1 - (
+            (1 - sum(rate(pause_status_consistency_total{result="consistent"}[30d])) /
+                 sum(rate(pause_status_consistency_total[30d])))
+            / (1 - 0.999)
+          )
+
+      # ── Alerts ─────────────────────────────────────────────────────────────
+      - alert: PauseStatusInconsistencyCritical
+        expr: |
+          (slo:pause_status_inconsistency_rate:5m > (14.4 * 0.001))
+          and
+          (slo:pause_status_inconsistency_rate:1h > (14.4 * 0.001))
+        for: 2m
+        labels:
+          severity:  critical
+          slo:       pause-status-consistency
+          team:      platform
+          component: pause_reconciliation
+        annotations:
+          summary: "Pause status is critically inconsistent with on-chain state"
+          description: >
+            The off-chain pause status cache is inconsistent with the on-chain
+            contract state {{ $value | humanizePercentage }} of the time.
+            This may cause pause operations to be reported incorrectly.
+            Immediate investigation of the reconciliation service required.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause#consistency"
+
+      - alert: PauseStatusInconsistencyWarning
+        expr: slo:pause_status_inconsistency_rate:5m > (3.0 * 0.001)
+        for: 15m
+        labels:
+          severity:  warning
+          slo:       pause-status-consistency
+          team:      platform
+          component: pause_reconciliation
+        annotations:
+          summary: "Pause status consistency is degraded"
+          description: >
+            {{ $value | humanizePercentage }} of pause consistency checks are
+            failing. SLI target is >99.9% consistent.
+          runbook_url: "https://docs.carbonledger.com/runbooks/emergency-pause#consistency"

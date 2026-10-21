@@ -1,4 +1,5 @@
 import { IsString, IsOptional, Length, IsIn, IsInt, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
 import { IsStellarAddress } from '../common/validators';
 
 /**
@@ -88,4 +89,94 @@ export class UpdateCanaryDto {
   @Min(0)
   @Max(100)
   trafficPct?: number;
+}
+
+/**
+ * DTO for pausing a contract (#1307).
+ *
+ * Validation:
+ *  - untilTimestamp: unix seconds; the contract rejects windows longer than 72h
+ */
+export class PauseContractDto {
+  @IsInt()
+  @Min(1)
+  untilTimestamp: number;
+}
+
+/**
+ * DTO for POST /admin/pause (#1221).
+ *
+ * Validation:
+ *  - contract: optional pausable contract name (defaults to 'carbon_credit' if omitted)
+ *  - reason: optional free-text rationale, recorded in audit log and pause events
+ *  - untilTimestamp: optional unix seconds (up to 72h window)
+ */
+export class AdminPauseDto {
+  @IsOptional()
+  @IsIn(['carbon_credit', 'carbon_marketplace', 'credit', 'marketplace'])
+  contract?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  reason?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  untilTimestamp?: number;
+}
+
+/**
+ * DTO for POST /admin/unpause (#1222).
+ *
+ * Validation:
+ *  - contract: optional pausable contract name (defaults to 'carbon_credit' if omitted)
+ *  - reason: optional free-text rationale, recorded in audit log
+ */
+export class AdminUnpauseDto {
+  @IsOptional()
+  @IsIn(['carbon_credit', 'carbon_marketplace', 'credit', 'marketplace'])
+  contract?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  reason?: string;
+}
+
+/**
+ * DTO for querying pause history (#1228).
+ *
+ * All fields are optional — omitting them returns the full history.
+ */
+export class PauseHistoryQueryDto {
+  @IsOptional()
+  @IsIn(['credit', 'marketplace'])
+  contract?: string;
+
+  @IsOptional()
+  @IsIn(['pause', 'unpause'])
+  action?: string;
+
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @Type(() => Number)
+  limit?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  offset?: number;
 }

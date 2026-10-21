@@ -135,8 +135,9 @@ fn reg_add_project(env: &Env, client: &CarbonRegistryContractClient, admin: &Add
         &s(env, "VCS"),
         &s(env, "Brazil"),
         &s(env, "forestry"),
-        &75_u32,
         &2023_u32,
+        &75_u32,
+        &BytesN::from_array(env, &[0u8; 32]),
     ).unwrap();
 }
 

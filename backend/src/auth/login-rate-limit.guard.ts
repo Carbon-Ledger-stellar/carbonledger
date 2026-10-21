@@ -63,7 +63,6 @@ export class LoginRateLimitGuard implements CanActivate {
       entry = { count: 0, resetAt: now + windowMs, violations };
       this.entries.set(ip, entry);
     }
-  }
 
     entry.count++;
 

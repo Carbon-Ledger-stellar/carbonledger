@@ -10,6 +10,10 @@
  * spec against the production build to confirm all six required headers are
  * present on every response.
  *
+ * Issue #1402: The `credit-lifecycle` project runs the mocked-wallet
+ * buy → retire → certificate E2E suite (`tests/e2e/credit-lifecycle.spec.ts`)
+ * with no real wallet or network signing required.
+ *
  * Standard projects (chromium / firefox / webkit) run against localhost for
  * unit-level UI tests and the existing E2E suite.
  */
@@ -62,6 +66,7 @@ export default defineConfig({
           testIgnore: [
             '**/e2e/full-lifecycle.spec.ts',
             '**/e2e/security-headers.spec.ts',
+            '**/e2e/credit-lifecycle.spec.ts',
           ],
         },
 
@@ -90,6 +95,17 @@ export default defineConfig({
               process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
           },
           testMatch: ['**/e2e/security-headers.spec.ts'],
+        },
+
+        // ── Issue #1402: Buy → retire → certificate (mocked wallet) ──────────
+        {
+          name: 'credit-lifecycle',
+          use: {
+            ...devices['Desktop Chrome'],
+            baseURL:
+              process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+          },
+          testMatch: ['**/e2e/credit-lifecycle.spec.ts'],
         },
       ]
     : [

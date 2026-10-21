@@ -1,0 +1,252 @@
+openapi: 3.0.3
+info:
+  title: Pause API
+  description: |
+    API for pausing and resuming resources.
+  version: 1.0.0
+servers:
+  - url: https://api.example.com/v1
+    description: Production server
+security:
+  - bearerAuth: []
+paths:
+  /pause:
+    post:
+      summary: Pause a resource
+      description: Pauses the specified resource. Requires authentication.
+      operationId: pauseResource
+      tags:
+        - Pause
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PauseRequest'
+      responses:
+        '200':
+          description: Resource paused successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseResponse'
+        '400':
+          description: Invalid request payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication required or invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated but not authorized to pause this resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Resource not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Resource is already paused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /pause/{id}:
+    get:
+      summary: Get pause status
+      description: Returns the current pause status for the specified resource. Requires authentication.
+      operationId: getPauseStatus
+      tags:
+        - Pause
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique identifier of the resource.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Pause status retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseStatus'
+        '401':
+          description: Authentication required or invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated but not authorized to view this resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Resource not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Resume a paused resource
+      description: Resumes a previously paused resource. Requires authentication.
+      operationId: resumeResource
+      tags:
+        - Pause
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique identifier of the resource.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Resource resumed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseResponse'
+        '401':
+          description: Authentication required or invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Authenticated but not authorized to resume this resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Resource not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Resource is not currently paused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Bearer token authentication. Provide a valid JWT in the
+        `Authorization: Bearer <token>` header. All pause endpoints require
+        authentication.
+  schemas:
+    PauseRequest:
+      type: object
+      required:
+        - resourceId
+      properties:
+        resourceId:
+          type: string
+          description: Unique identifier of the resource to pause.
+        reason:
+          type: string
+          description: Optional reason for pausing the resource.
+          nullable: true
+    PauseResponse:
+      type: object
+      required:
+        - resourceId
+        - status
+      properties:
+        resourceId:
+          type: string
+          description: Unique identifier of the affected resource.
+        status:
+          type: string
+          description: Current pause status of the resource.
+          enum:
+            - paused
+            - active
+        pausedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the resource was paused.
+          nullable: true
+    PauseStatus:
+      type: object
+      required:
+        - resourceId
+        - status
+      properties:
+        resourceId:
+          type: string
+          description: Unique identifier of the resource.
+        status:
+          type: string
+          description: Current pause status of the resource.
+          enum:
+            - paused
+            - active
+        pausedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the resource was paused.
+          nullable: true
+        pausedBy:
+          type: string
+          description: Identifier of the user who paused the resource.
+          nullable: true
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code.
+        message:
+          type: string
+          description: Human-readable error message.
+        details:
+          type: object
+          description: Additional error details.
+          nullable: true

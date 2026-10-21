@@ -628,6 +628,71 @@ export async function exportEsgPdf(filters: EsgExportFilters): Promise<Blob> {
   return res.blob();
 }
 
+// ── Marketplace pause state (Issue #1255 / #1256) ────────────────────────────
+
+export interface MarketplacePauseState {
+  /** Whether the marketplace contract is currently paused. */
+  paused: boolean;
+  /** Unix timestamp (seconds) when the pause auto-expires; null = indefinite. */
+  pausedUntil: number | null;
+  /** Human-readable reason stored in AdminConfig or latest PauseEvent. */
+  reason?: string;
+  /** Stellar public key of the admin who initiated the pause. */
+  pausedBy?: string;
+}
+
+/**
+ * Fetch the current marketplace pause state from the public health endpoint.
+ *
+ * Uses `/health/pause` so no admin JWT is required — the health endpoint
+ * is publicly accessible and cached for 30 s on the server.
+ */
+async function fetchMarketplacePauseState(): Promise<MarketplacePauseState> {
+  const res = await fetch(`${API_URL.replace(/\/api\/v\d+\/?$/, "")}/health/pause`);
+  if (!res.ok) {
+    // Treat a service-unavailable response conservatively: assume not paused
+    // to avoid blocking legitimate operations during a backend health issue.
+    return { paused: false, pausedUntil: null };
+  }
+  const data = await res.json();
+  // The health endpoint returns operational=true and an `AdminConfig` array.
+  // Derive pause state from the config entries.
+  const configs: Array<{ key: string; value: string }> = data.configs ?? [];
+  const byKey = new Map(configs.map((c) => [c.key, c.value]));
+  const pausedUntil = Number(byKey.get("carbon_marketplace_paused_until") ?? 0);
+  const paused =
+    byKey.get("carbon_marketplace_paused") === "true" && pausedUntil > Date.now() / 1000;
+  return {
+    paused,
+    pausedUntil: paused ? pausedUntil : null,
+  };
+}
+
+/**
+ * React hook — polls the marketplace pause state every 30 s.
+ * Returns a stable `MarketplacePauseState` object plus SWR metadata.
+ */
+export function useMarketplacePauseState() {
+  const { data, error, isLoading, mutate } = useSWR<MarketplacePauseState>(
+    "marketplace-pause-state",
+    fetchMarketplacePauseState,
+    {
+      // Poll every 30 s so the UI stays in sync even without WebSocket
+      refreshInterval: 30_000,
+      // Keep stale data visible while revalidating
+      revalidateOnFocus: true,
+      // Do not throw errors — fall back to non-paused state on failure
+      shouldRetryOnError: true,
+    }
+  );
+  return {
+    pauseState: data ?? { paused: false, pausedUntil: null },
+    isLoading,
+    error,
+    refresh: mutate,
+  };
+}
+
 // ── Notification preferences ───────────────────────────────────────────────────
 
 export interface NotificationPreferences {

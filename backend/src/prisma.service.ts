@@ -4,15 +4,46 @@ import { poolMetricsRegistry } from "./common/metrics.registry";
 import { RedisService } from "./redis.service";
 import { createPrismaCacheMiddleware, PrismaCacheMiddlewareOptions } from "./cache/prisma-cache.middleware";
 
-// Pool sizing: allow override via env, default to 10 for production safety.
-// Formula: (num_cores * 2) + effective_spindle_count — start conservative.
-// Capped at 20 per Issue #1072 acceptance criteria.
+// ── Connection pool constants (#1024) ─────────────────────────────────────────
+//
+// connection_limit = 20  (issue #1024 acceptance criterion)
+// idle_timeout     = 900 seconds = 15 minutes (issue #1024 acceptance criterion)
+//
+// Both values are exposed as env vars so they can be tuned per deployment without
+// a code change.  The hard cap (POOL_SIZE_LIMIT) prevents runaway misconfiguration
+// from exhausting pg max_connections on multi-replica deployments.
+//
+// Sizing rule of thumb: (num_cores × 2) + 1, capped at:
+//   pg max_connections / num_replicas − 5  (leave headroom for migrations/admin)
+
+/** Hard upper bound — no single Prisma instance may open more than this. */
 const POOL_SIZE_LIMIT = 20;
-const POOL_MAX = Math.min(parseInt(process.env.DB_POOL_MAX ?? "10"), POOL_SIZE_LIMIT);
+
+/**
+ * Active connection limit passed to Prisma as the `connection_limit` URL param.
+ * Default: 20 (issue #1024). Override with DB_POOL_MAX env var.
+ * Clamped to POOL_SIZE_LIMIT so a mis-set env var cannot exceed the hard cap.
+ */
+const POOL_MAX = Math.min(parseInt(process.env.DB_POOL_MAX ?? "20"), POOL_SIZE_LIMIT);
+
+/** Milliseconds to wait for a free connection before Prisma throws P2024. */
 const POOL_TIMEOUT_MS = parseInt(process.env.DB_POOL_TIMEOUT_MS ?? "10000");
+
+/** Seconds to wait when opening a new TCP connection to PostgreSQL. */
 const CONNECT_TIMEOUT_S = parseInt(process.env.DB_CONNECT_TIMEOUT_S ?? "10");
-// Idle timeout: connections idle longer than this are eligible for release (15 min default).
-const POOL_IDLE_TIMEOUT_MS = parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? "900000");
+
+/**
+ * Seconds before an idle connection is released back to the OS.
+ * Passed to Prisma as the `idle_timeout` URL param.
+ * Default: 900 s = 15 min (issue #1024 acceptance criterion).
+ * Stored in env as DB_POOL_IDLE_TIMEOUT_MS (milliseconds) for consistency
+ * with other timeout env vars; converted to seconds for the Prisma URL.
+ */
+const POOL_IDLE_TIMEOUT_S = Math.round(
+  parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? "900000") / 1000,
+);
+// Keep the millisecond value for internal metrics reporting.
+const POOL_IDLE_TIMEOUT_MS = POOL_IDLE_TIMEOUT_S * 1000;
 
 // Adaptive pool sizing: check every 60 seconds.
 const ADAPTIVE_CHECK_INTERVAL_MS = 60_000;
@@ -44,6 +75,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     url.searchParams.set("connection_limit", String(POOL_MAX));
     url.searchParams.set("pool_timeout", String(POOL_TIMEOUT_MS / 1000));
     url.searchParams.set("connect_timeout", String(CONNECT_TIMEOUT_S));
+    // idle_timeout (seconds): Prisma releases idle connections after this period.
+    // Satisfies issue #1024 acceptance criterion: idle_timeout=900 (15 min).
+    url.searchParams.set("idle_timeout", String(POOL_IDLE_TIMEOUT_S));
 
     super({
       datasources: { db: { url: url.toString() } },
@@ -227,6 +261,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       idle_connections:    idleConnections,
       avg_wait_ms:         avgWaitMs,
       idle_timeout_ms:     POOL_IDLE_TIMEOUT_MS,
+      idle_timeout_s:      POOL_IDLE_TIMEOUT_S,
       pool_size_limit:     POOL_SIZE_LIMIT,
     };
   }

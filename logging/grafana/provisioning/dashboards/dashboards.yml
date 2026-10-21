@@ -1,0 +1,46 @@
+apiVersion: 1
+
+providers:
+  # ── All CarbonLedger dashboards ──────────────────────────────────────────────
+  # Single provider that covers every dashboard JSON in the dashboards/ folder.
+  # Grafana polls the directory every 30 seconds; new or updated files are
+  # automatically loaded without a restart.
+  - name: "CarbonLedger Dashboards"
+    orgId: 1
+    folder: "CarbonLedger"
+    folderUid: "carbonledger"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false
+
+  # ── Pause Feature dashboards ─────────────────────────────────────────────────
+  # Dedicated sub-folder for pause-related dashboards so they appear grouped
+  # under "CarbonLedger / Pause" in the Grafana UI.
+  - name: "CarbonLedger — Pause Feature"
+    orgId: 1
+    folder: "CarbonLedger/Pause"
+    folderUid: "carbonledger-pause"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards/pause
+      foldersFromFilesStructure: false
+
+  # ── Staging dashboards ───────────────────────────────────────────────────────
+  - name: "CarbonLedger Staging Dashboards"
+    orgId: 1
+    folder: "CarbonLedger/Staging"
+    folderUid: "carbonledger-staging"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/staging-dashboards
+      foldersFromFilesStructure: false

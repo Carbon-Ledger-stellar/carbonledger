@@ -1,4 +1,5 @@
 import { AdminModule } from "./admin/admin.module";
+import { PauseAnalyticsModule } from "./pause-analytics/pause-analytics.module";
 import { PublicApiModule } from "./public-api/public-api.module";
 import { StellarModule } from "./stellar/stellar.module";
 import { BlockchainModule } from './blockchain/blockchain.module';
@@ -23,6 +24,7 @@ import { UploadsModule } from "./uploads/uploads.module";
 import { AuditModule } from "./audit/audit.module";
 import { AuditInterceptor } from "./audit/audit.interceptor";
 import { PrismaService } from "./prisma.service";
+import { PrismaModule } from "./prisma.module";
 import { VerifiersModule } from "./verifiers/verifiers.module";
 import { ThrottlerExceptionFilter, ResponseAlreadySentFilter } from "./common/throttler-exception.filter";
 import { CustomThrottlerGuard } from "./common/custom-throttler.guard";
@@ -35,6 +37,7 @@ import { LoggingInterceptor } from "./logger/logging.interceptor";
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
 import { RedisSlidingWindowRateLimitGuard } from "./common/redis-sliding-window-rate-limit.guard";
+import { PauseGuard } from "./common/pause.guard";
 import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
@@ -45,6 +48,7 @@ import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
 import { PortfolioModule } from "./portfolio/portfolio.module";
 import { TwoFactorModule } from "./two-factor/two-factor.module";
+import { ContractSyncModule } from "./contract-sync/contract-sync.module";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";
@@ -54,6 +58,36 @@ import { Redis } from "ioredis";
 @Controller("health")
 class HealthController {
   constructor(private readonly prisma: PrismaService) {}
+
+  @Get("pause")
+  async checkPause(@Res() res: Response) {
+    try {
+      const configs = await this.prisma.adminConfig.findMany({
+        where: { key: { startsWith: "pause:" } },
+      });
+      return res.status(HttpStatus.OK).json({
+        status: "ok",
+        feature: "pause",
+        operational: true,
+        database: "up",
+        contracts: {
+          carbon_credit: "operational",
+          carbon_marketplace: "operational",
+        },
+        configs,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      return res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+        status: "degraded",
+        feature: "pause",
+        operational: false,
+        error: error?.message || "Error querying pause state",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
 
   @Get()
   async check(@Res() res: Response) {
@@ -148,6 +182,7 @@ class HealthController {
           },
     }),
     LoggerModule,
+    PrismaModule,
     AuthModule,
     ProjectsModule,
     CreditsModule,
@@ -161,6 +196,7 @@ class HealthController {
     AuditModule,
     VerifiersModule,
     AdminModule,
+    PauseAnalyticsModule,
     PublicApiModule,
     GraphqlModule,
     WebhookModule,
@@ -170,10 +206,10 @@ class HealthController {
     ReconciliationModule,
     PortfolioModule,
     TwoFactorModule,
+    ContractSyncModule,
   ],
   controllers: [HealthController],
   providers: [
-    PrismaService,
     StellarNetworkService,
     {
       provide: APP_FILTER,
@@ -200,6 +236,11 @@ class HealthController {
     {
       provide: APP_GUARD,
       useClass: RoleLimitGuard,
+    },
+    // Emergency pause guard: rejects mutating requests when contract is paused (#1224)
+    {
+      provide: APP_GUARD,
+      useClass: PauseGuard,
     },
     {
       provide: APP_INTERCEPTOR,

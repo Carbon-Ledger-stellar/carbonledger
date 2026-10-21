@@ -910,3 +910,17 @@ To run all integration tests:
 
 # Run only integration tests
 cargo test --test lifecycle_integration_test -- --nocapture
+
+## Handsoff notes
+
+<!-- handsoff-issue-1240 -->
+- #1240: Backend - Create database health check for pause state
+
+<!-- handsoff-issue-1302 -->
+- #1302: DevOps - Create pause metrics dashboard
+
+<!-- handsoff-issue-1406 -->
+- #1406: Frontend - Add unit tests for ComparisonTray
+
+<!-- handsoff-issue-1545 -->
+- #1545: DevOps - Backend container doesn't load .env in docker-compose

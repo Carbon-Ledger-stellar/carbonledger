@@ -24,6 +24,8 @@ documented, or a documented event no longer exists in the source.
 | `mint_credits` | `(c_ledger, minted)` | `CreditMintedEvent { batch_id, project_id, admin, amount, vintage_year, serial_start, serial_end, timestamp }` |
 | `retire_credits` | `(c_ledger, retired)` | `CreditRetiredEvent { retirement_id, batch_id, project_id, amount, retired_by, beneficiary, timestamp }` |
 | `transfer_credits` | `(c_ledger, transfer)` | `(batch_id: String, from: Address, to: Address, amount: i128)` |
+| `pause_operations` | `(c_ledger, paused)` | `(admin: Address, until_timestamp: u64, paused_at: u64)` |
+| `unpause_operations` | `(c_ledger, unpaused)` | `(admin: Address, unpaused_at: u64)` |
 | `upgrade` | `(c_ledger, upgraded)` | `(from_version: u32, to_version: u32, admin: Address)` |
 
 ## `carbon_marketplace`
@@ -35,6 +37,8 @@ documented, or a documented event no longer exists in the source.
 | `purchase_credits` | `(c_ledger, purchase)` | `PurchaseCompletedEvent { listing_id, buyer, seller, amount, total_cost, timestamp }` |
 | `bulk_purchase` | `(c_ledger, bulk_buy)` | `PurchaseCompletedEvent { listing_id, buyer, seller, amount, total_cost, timestamp }` — published once per listing in the batch, in listing order |
 | `suspend_project` | `(c_ledger, mkt_susp)` | `project_id: String` |
+| `pause_operations` | `(c_ledger, paused)` | `(admin: Address, until_timestamp: u64, paused_at: u64)` |
+| `unpause_operations` | `(c_ledger, unpaused)` | `(admin: Address, unpaused_at: u64)` |
 | `upgrade` | `(c_ledger, upgraded)` | `(from_version: u32, to_version: u32, admin: Address)` |
 
 Note: `purchase_credits` and `bulk_purchase` cross-call
@@ -97,6 +101,7 @@ cursor survives restarts and Redis flushes (#893).
 | `(c_ledger, verified)` | `CarbonProject.status` → `Verified` |
 | `(c_ledger, rejected)` | `CarbonProject.status` → `Rejected` |
 | `(c_ledger, st_update)` / `(c_ledger, suspended)` / `(c_ledger, mkt_susp)` | `CarbonProject.status` → `Suspended` |
+| `(c_ledger, paused)` / `(c_ledger, unpaused)` | `PauseEvent` row keyed on `(txHash, action)` for pause analytics — see [pause-analytics.md](pause-analytics.md). Replays refresh the row and are not re-tracked. |
 
 Every handler is idempotent, so replaying a ledger range (restart overlap,
 error retry) converges to the same state.

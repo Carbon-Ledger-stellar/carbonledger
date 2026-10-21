@@ -1,0 +1,195 @@
+{
+  "id": "pause-feature-feedback-v1",
+  "title": "Emergency Pause Feature: Admin Feedback Survey",
+  "version": 1,
+  "likert_labels": ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"],
+  "sections": [
+    {
+      "title": "About you",
+      "questions": [
+        {
+          "id": "q1",
+          "type": "single",
+          "text": "What is your role with CarbonLedger?",
+          "options": {
+            "admin": "Contract admin (holds or co-holds an admin key)",
+            "oncall": "On-call engineer",
+            "support": "Support / operations",
+            "other": "Other"
+          },
+          "segment": true
+        },
+        {
+          "id": "q2",
+          "type": "single",
+          "text": "How many times have you paused or unpaused a contract (any network) in the last 6 months?",
+          "options": { "0": "Never", "1-2": "1–2 times", "3-5": "3–5 times", "6+": "6 or more" }
+        },
+        {
+          "id": "q3",
+          "type": "single",
+          "text": "Have you completed the testnet practice exercise in the admin training guide?",
+          "options": { "yes": "Yes", "no": "No", "unaware": "I didn't know it existed" }
+        }
+      ]
+    },
+    {
+      "title": "Understanding and usability",
+      "questions": [
+        { "id": "q4", "type": "likert", "text": "I understand which operations are blocked when each contract is paused." },
+        { "id": "q5", "type": "likert", "text": "Choosing the pause end time (until_timestamp) is straightforward." },
+        { "id": "q6", "type": "likert", "text": "The 72-hour maximum pause window is appropriate." },
+        { "id": "q7", "type": "likert", "text": "I can quickly and confidently tell whether a contract is currently paused." },
+        { "id": "q8", "type": "likert", "text": "When a pause-related call failed, the error made it clear what went wrong." },
+        { "id": "q9", "type": "likert", "text": "Having separate pause switches for the credit and marketplace contracts is the right design." },
+        {
+          "id": "q10",
+          "type": "single",
+          "text": "In your most recent pause (real or practice), how long did it take from deciding to pause to the pause being confirmed on-chain?",
+          "options": {
+            "lt2": "Under 2 minutes",
+            "2-5": "2–5 minutes",
+            "5-15": "5–15 minutes",
+            "gt15": "More than 15 minutes",
+            "na": "I haven't paused yet"
+          }
+        }
+      ]
+    },
+    {
+      "title": "Fit for incidents",
+      "questions": [
+        { "id": "q11", "type": "likert", "text": "The pause gave (or would give) me enough control to contain an incident." },
+        {
+          "id": "q12",
+          "type": "multi",
+          "text": "Which limitations have affected you or worry you? (select all that apply)",
+          "options": {
+            "upgrade_blocked": "Contract upgrades are blocked while paused",
+            "admin_setters_blocked": "Fees, treasury and project suspension can't be changed while the marketplace is paused",
+            "no_status_query": "No simple way to check whether a contract is paused",
+            "no_reason": "The reason for a pause isn't recorded anywhere",
+            "cross_contract_errors": "Pausing only the credit contract makes purchases fail with confusing errors",
+            "single_marketplace_admin": "The marketplace has a single admin key (no multi-sig)",
+            "window_too_short": "72 hours is too short for some investigations",
+            "user_messaging": "Users only see raw error codes (#27 / #29)",
+            "other": "Other"
+          }
+        },
+        {
+          "id": "q13",
+          "type": "single",
+          "text": "Has a pause ever ended (expired) before you expected it to?",
+          "options": { "yes": "Yes", "no": "No", "unsure": "Not sure" }
+        }
+      ]
+    },
+    {
+      "title": "Tooling and training",
+      "questions": [
+        {
+          "id": "q14",
+          "type": "single",
+          "text": "How would you prefer to pause and unpause?",
+          "options": {
+            "cli": "Stellar CLI (current)",
+            "dashboard": "A button in the admin dashboard",
+            "script": "A scripted runbook command",
+            "multisig": "Multi-signature / governance approval"
+          }
+        },
+        { "id": "q15", "type": "likert", "text": "The documentation and training prepared me to use the pause correctly." },
+        {
+          "id": "q16",
+          "type": "nps",
+          "text": "How likely are you to recommend the current pause process to another admin? (0 = not at all, 10 = extremely likely)"
+        }
+      ]
+    },
+    {
+      "title": "Open feedback",
+      "questions": [
+        { "id": "q17", "type": "text", "text": "What was the most confusing or stressful part of using (or learning) the pause?", "optional": true },
+        { "id": "q18", "type": "text", "text": "If you could change one thing about the pause feature, what would it be?", "optional": true }
+      ]
+    }
+  ],
+  "recommendation_rules": [
+    {
+      "question": "q7", "metric": "mean", "below": 3.5, "priority": "high",
+      "recommendation": "Add read-only `is_paused()` / `paused_until()` views to both contracts and show pause status in the admin dashboard, so admins don't have to rely on simulated calls."
+    },
+    {
+      "question": "q12", "option": "no_status_query", "share_at_least": 0.3, "priority": "high",
+      "recommendation": "Add read-only `is_paused()` / `paused_until()` views to both contracts and show pause status in the admin dashboard, so admins don't have to rely on simulated calls."
+    },
+    {
+      "question": "q8", "metric": "mean", "below": 3.5, "priority": "high",
+      "recommendation": "Map EmergencyPaused (#27 / #29) and InvalidPauseWindow (#26 / #28) to plain-language messages in frontend/lib/carbon-error-codes.ts, and show a site-wide banner while a contract is paused."
+    },
+    {
+      "question": "q12", "option": "user_messaging", "share_at_least": 0.3, "priority": "high",
+      "recommendation": "Map EmergencyPaused (#27 / #29) and InvalidPauseWindow (#26 / #28) to plain-language messages in frontend/lib/carbon-error-codes.ts, and show a site-wide banner while a contract is paused."
+    },
+    {
+      "question": "q12", "option": "cross_contract_errors", "share_at_least": 0.25, "priority": "medium",
+      "recommendation": "Make marketplace purchases check the credit contract's pause state first (or offer a single 'pause both' action) so a credit-only pause returns a clear error instead of an aborted cross-contract call."
+    },
+    {
+      "question": "q12", "option": "upgrade_blocked", "share_at_least": 0.25, "priority": "medium",
+      "recommendation": "Allow `upgrade_contract` while paused (admin-only, already auth-gated), so a patched Wasm can be deployed without first reopening the contract."
+    },
+    {
+      "question": "q12", "option": "admin_setters_blocked", "share_at_least": 0.25, "priority": "medium",
+      "recommendation": "Exempt admin configuration calls (fees, treasury, project suspension) from the pause check; the pause is meant to stop user value movement, not incident response."
+    },
+    {
+      "question": "q12", "option": "no_reason", "share_at_least": 0.25, "priority": "medium",
+      "recommendation": "Record a reason for each pause, either as a contract argument/event or through the backend pause analytics (#1324)."
+    },
+    {
+      "question": "q12", "option": "single_marketplace_admin", "share_at_least": 0.25, "priority": "medium",
+      "recommendation": "Move pause/unpause authority to a multi-signature or role-based model on the marketplace (see the 2-of-3 multi-sig proposal in docs/ISSUES.md)."
+    },
+    {
+      "question": "q6", "metric": "mean", "below": 3.0, "priority": "medium",
+      "recommendation": "Revisit the 72-hour maximum: check which way respondents disagree (q12 'window_too_short' and the open answers) before changing it."
+    },
+    {
+      "question": "q12", "option": "window_too_short", "share_at_least": 0.3, "priority": "low",
+      "recommendation": "Consider a longer maximum window that requires multi-admin approval, keeping 72 h for single-admin pauses."
+    },
+    {
+      "question": "q13", "option": "yes", "share_at_least": 0.2, "priority": "medium",
+      "recommendation": "Alert admins before a pause expires (e.g. 1 h and 15 min before `until_timestamp`), and show the expiry time wherever pause status is shown."
+    },
+    {
+      "question": "q5", "metric": "mean", "below": 3.5, "priority": "medium",
+      "recommendation": "Replace raw `until_timestamp` entry with duration presets (1 h / 4 h / 24 h / 71 h) in admin tooling, with the resulting UTC time shown for confirmation."
+    },
+    {
+      "question": "q4", "metric": "mean", "below": 3.5, "priority": "medium",
+      "recommendation": "Surface the blocked-operations table in the admin UI next to the pause controls, and emphasise it in training."
+    },
+    {
+      "question": "q15", "metric": "mean", "below": 3.5, "priority": "medium",
+      "recommendation": "Make the testnet practice exercise mandatory before on-call rotation, and record the admin video tutorial."
+    },
+    {
+      "question": "q3", "option": "unaware", "share_at_least": 0.2, "priority": "low",
+      "recommendation": "Link the pause training from the on-call onboarding checklist and the runbook index."
+    },
+    {
+      "question": "q14", "option": "dashboard", "share_at_least": 0.4, "priority": "low",
+      "recommendation": "Add pause/unpause controls (with confirmation and duration presets) to the admin dashboard."
+    },
+    {
+      "question": "q14", "option": "multisig", "share_at_least": 0.4, "priority": "low",
+      "recommendation": "Prioritise multi-signature approval for pause/unpause."
+    },
+    {
+      "question": "q16", "metric": "nps", "below": 0, "priority": "high",
+      "recommendation": "Net promoter score is negative: review the open answers (q17, q18) with admins in a follow-up session before planning changes."
+    }
+  ]
+}

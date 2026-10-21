@@ -1,0 +1,243 @@
+/*
+ * Mobile pause controls & status displays for the admin dashboard.
+ * Issue #1178 - UI/UX: Design mobile pause controls.
+ *
+ * Scope: phones/tablets only. Desktop styles are untouched; every rule here
+ * lives inside a max-width media query so it cannot leak into the desktop UI.
+ *
+ * Design tokens (kept local so this file is self-contained):
+ *   --pause-tap-target: 44px  minimum touch target (Apple HIG / Material)
+ *   --pause-sheet-radius: 16px top corners of the bottom sheet
+ */
+
+@media (max-width: 768px) {
+  :root {
+    --pause-tap-target: 44px;
+    --pause-sheet-radius: 16px;
+    --pause-safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* ----------------------------------------------------------------
+   * 1. Mobile layout for pause controls
+   * ---------------------------------------------------------------- */
+  .pause-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 16px;
+    box-sizing: border-box;
+  }
+
+  .pause-controls__row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+  }
+
+  /* Status pill sits above the actions on narrow screens. */
+  .pause-controls__status {
+    order: -1;
+    width: 100%;
+  }
+
+  /* ----------------------------------------------------------------
+   * 2. Touch-friendly button sizes (>= 44px tap targets)
+   * ---------------------------------------------------------------- */
+  .pause-controls .btn,
+  .pause-controls button {
+    min-height: var(--pause-tap-target);
+    min-width: var(--pause-tap-target);
+    padding: 12px 20px;
+    font-size: 16px; /* >=16px prevents iOS input zoom */
+    line-height: 1.2;
+    border-radius: 12px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Primary action spans the full width for easy thumb reach. */
+  .pause-controls__primary {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+
+  /* Secondary actions stay side by side but never shrink below tap size. */
+  .pause-controls__secondary {
+    flex: 0 0 auto;
+    min-width: var(--pause-tap-target);
+  }
+
+  /* ----------------------------------------------------------------
+   * 3. Bottom sheet for the pause reason
+   * ---------------------------------------------------------------- */
+  .pause-reason-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    max-height: 85vh;
+    padding: 8px 16px calc(16px + var(--pause-safe-bottom));
+    background: var(--surface, #fff);
+    border-top-left-radius: var(--pause-sheet-radius);
+    border-top-right-radius: var(--pause-sheet-radius);
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+    transform: translateY(100%);
+    transition: transform 240ms ease-out;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .pause-reason-sheet.is-open {
+    transform: translateY(0);
+  }
+
+  /* Drag handle affordance. */
+  .pause-reason-sheet__handle {
+    align-self: center;
+    width: 40px;
+    height: 4px;
+    margin: 8px 0 12px;
+    border-radius: 2px;
+    background: var(--border, #d0d5dd);
+  }
+
+  .pause-reason-sheet__title {
+    margin: 0 0 12px;
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .pause-reason-sheet__field {
+    width: 100%;
+    min-height: var(--pause-tap-target);
+    padding: 12px;
+    font-size: 16px;
+    border: 1px solid var(--border, #d0d5dd);
+    border-radius: 12px;
+    box-sizing: border-box;
+  }
+
+  .pause-reason-sheet__actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .pause-reason-sheet__actions .btn,
+  .pause-reason-sheet__actions button {
+    flex: 1 1 0;
+    min-height: var(--pause-tap-target);
+    font-size: 16px;
+  }
+
+  /* Dimmed backdrop behind the sheet. */
+  .pause-reason-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    background: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 240ms ease-out;
+  }
+
+  .pause-reason-backdrop.is-open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ----------------------------------------------------------------
+   * 4. Mobile notification / status displays for pause state
+   * ---------------------------------------------------------------- */
+  .pause-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 6px 12px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 999px;
+  }
+
+  .pause-status--paused {
+    color: #92400e;
+    background: #fef3c7;
+  }
+
+  .pause-status--active {
+    color: #065f46;
+    background: #d1fae5;
+  }
+
+  .pause-status__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  /* Toast / banner notification shown after a pause action. */
+  .pause-notification {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: calc(16px + var(--pause-safe-bottom));
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: var(--pause-tap-target);
+    padding: 12px 16px;
+    font-size: 15px;
+    border-radius: 12px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+  }
+
+  .pause-notification--success {
+    color: #065f46;
+    background: #d1fae5;
+  }
+
+  .pause-notification--error {
+    color: #991b1b;
+    background: #fee2e2;
+  }
+
+  .pause-notification__dismiss {
+    flex: 0 0 auto;
+    min-width: var(--pause-tap-target);
+    min-height: var(--pause-tap-target);
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+  }
+}
+
+/* ----------------------------------------------------------------
+ * Tablet sizing (769px - 1024px): keep the sheet but center it.
+ * ---------------------------------------------------------------- */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .pause-reason-sheet {
+    left: 50%;
+    right: auto;
+    width: 480px;
+    transform: translate(-50%, 100%);
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+  }
+
+  .pause-reason-sheet.is-open {
+    transform: translate(-50%, 0);
+  }
+}

@@ -2,7 +2,7 @@ import { EventIndexerService, SOROBAN_RPC_CLIENT } from './event-indexer.service
 import { PrismaService } from '../prisma.service';
 
 // Prevent @prisma/client from being loaded (generated types not available in CI)
-jest.mock('../prisma.service');
+jest.mock('../prisma.service', () => ({ PrismaService: class PrismaService {} }));
 
 // The service decodes topics/data via scValToNative; feeding it pre-native JS
 // values through an identity mock keeps the unit test honest without XDR.
@@ -312,6 +312,81 @@ describe('EventIndexerService (#893)', () => {
       expect(prismaMock.carbonProject.updateMany).not.toHaveBeenCalled();
       expect(prismaMock.carbonProject.update).not.toHaveBeenCalled();
       expect(prismaMock.creditEvent.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pause analytics (#1324)', () => {
+    const CREDIT_ID = 'CCREDIT';
+    const MARKET_ID = 'CMARKET';
+    let pauseAnalytics: { recordOnChain: jest.Mock };
+
+    beforeEach(() => {
+      process.env.CARBON_CREDIT_CONTRACT_ID = CREDIT_ID;
+      process.env.CARBON_MARKETPLACE_CONTRACT_ID = MARKET_ID;
+      pauseAnalytics = { recordOnChain: jest.fn().mockResolvedValue(undefined) };
+      service = new EventIndexerService(
+        rpcMock as never,
+        prismaMock as unknown as PrismaService,
+        pauseAnalytics as never,
+      );
+    });
+
+    afterEach(() => {
+      delete process.env.CARBON_CREDIT_CONTRACT_ID;
+      delete process.env.CARBON_MARKETPLACE_CONTRACT_ID;
+    });
+
+    it('records a paused event with its requested window', async () => {
+      await service.handleEvent({
+        id: 'evt-1',
+        contractId: CREDIT_ID,
+        txHash: 'abc',
+        topic: ['c_ledger', 'paused'],
+        data: ['GADMIN', 1_735_693_200, 1_735_689_600],
+      });
+
+      expect(pauseAnalytics.recordOnChain).toHaveBeenCalledWith(
+        {
+          contract: 'credit',
+          action: 'pause',
+          admin: 'GADMIN',
+          txHash: 'abc',
+          eventId: 'evt-1',
+          pausedUntil: new Date(1_735_693_200 * 1000),
+          occurredAt: new Date(1_735_689_600 * 1000),
+        },
+        expect.anything(),
+      );
+    });
+
+    it('records an unpaused event from the marketplace contract', async () => {
+      await service.handleEvent({
+        id: 'evt-2',
+        contractId: MARKET_ID,
+        txHash: 'def',
+        topic: ['c_ledger', 'unpaused'],
+        data: [['GADMIN', 1_735_690_200]],
+      });
+
+      expect(pauseAnalytics.recordOnChain).toHaveBeenCalledWith(
+        expect.objectContaining({
+          contract: 'marketplace',
+          action: 'unpause',
+          pausedUntil: null,
+          occurredAt: new Date(1_735_690_200 * 1000),
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('skips pause events from unknown contracts or without a txHash', async () => {
+      await service.handleEvent({
+        contractId: 'COTHER', txHash: 'x', topic: ['c_ledger', 'paused'], data: ['GADMIN', 1, 0],
+      });
+      await service.handleEvent({
+        contractId: CREDIT_ID, topic: ['c_ledger', 'paused'], data: ['GADMIN', 1, 0],
+      });
+      expect(pauseAnalytics.recordOnChain).not.toHaveBeenCalled();
     });
   });
 

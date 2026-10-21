@@ -1,0 +1,34 @@
+﻿[
+  {
+    "name": "[CRITICAL] Soroban Smart Contract Unexpected Pause State Change",
+    "type": "metric alert",
+    "query": "max(last_1m):max:contract.is_paused{service:carbonledger} by {contract,environment} >= 1",
+    "message": "{{#is_alert}}\n## 🚨 CRITICAL INCIDENT: Smart Contract Paused\n\n**Contract**: {{contract.name}}\n**Environment**: {{environment.name}}\n**Current Value**: {{value}}\n\nThe Soroban smart contract has entered an emergency paused state. All write operations (minting, transfers, listings, purchases) are currently blocked.\n\n### Required Action:\n1. Verify if this was an authorized administrative action via the audit log.\n2. Review the incident runbook: [Emergency Pause Runbook](https://github.com/Carbon-Ledger-stellar/carbonledger/blob/main/docs/runbooks/emergency-pause.md)\n3. Check reason logs in Loki/Datadog using query `event:contract_pause`.\n4. Escalate to the On-Call Security Lead immediately.\n\n@pagerduty-security @slack-incident-alerts\n{{/is_alert}}\n\n{{#is_recovery}}\n## ✅ RESOLVED: Smart Contract Resumed\n\nSmart contract {{contract.name}} has been unpaused. Operations have returned to normal.\n\n@slack-incident-alerts\n{{/is_recovery}}",
+    "tags": ["service:carbonledger", "team:blockchain", "severity:critical", "issue:1300"],
+    "options": {
+      "notify_no_data": false,
+      "no_data_timeframe": null,
+      "notify_audit": true,
+      "require_full_window": false,
+      "thresholds": {
+        "critical": 1.0,
+        "warning": 0.5
+      },
+      "renotify_interval": 30,
+      "timeout_h": 72
+    }
+  },
+  {
+    "name": "[WARNING] Smart Contract Pause Window Expiring in Less Than 1 Hour",
+    "type": "metric alert",
+    "query": "min(last_5m):min:contract.pause_seconds_remaining{service:carbonledger,contract.is_paused:1} by {contract} < 3600",
+    "message": "{{#is_alert}}\n## ⚠️ WARNING: Smart Contract Pause Window Expiring Soon\n\nContract {{contract.name}} emergency pause window has less than **1 hour remaining** ({{value}} seconds left).\n\nIf the incident investigation is still ongoing, an administrator must extend the pause deadline or prepare the contract for operational resumption.\n\n@slack-devops-alerts\n{{/is_alert}}",
+    "tags": ["service:carbonledger", "team:devops", "severity:warning"],
+    "options": {
+      "thresholds": {
+        "critical": 1800,
+        "warning": 3600
+      }
+    }
+  }
+]

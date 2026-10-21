@@ -1,15 +1,61 @@
-# Asynchronous Retirement Certificate Generation - Implementation Guide
+# Implementation Guide
 
-## Summary
+This guide documents UI/UX design specifications for the pause feature set.
 
-This implementation adds asynchronous PDF certificate generation for carbon credit retirements. Certificates are generated as background jobs, uploaded to IPFS via Pinata, and users are notified via email when ready. This prevents API timeouts and improves user experience.
+## Pause Status Visual Hierarchy (Issue #1170)
 
-## What Was Implemented
+Design specification for pause status across the admin dashboard. Covers color schemes, typography, icon design, and light/dark mode variants.
 
-### 1. Database Schema Updates
-- Added certificate-related fields to `RetirementRecord` model
-- Fields track certificate status, IPFS CID, URL, retry count, and timestamps
-- Migration required: `npx prisma migrate dev --name add_certificate_fields`
+### Color Palette
+
+| Token | Light Mode | Dark Mode | Usage |
+|-------|-----------|-----------|-------|
+| `--pause-primary` | `#DC2626` (red-600) | `#F87171` (red-400) | Paused state accent, icons, borders |
+| `--pause-primary-bg` | `#FEE2E2` (red-100) | `#7F1D1D` (red-900) | Paused badge/background fill |
+| `--pause-secondary` | `#6B7280` (gray-500) | `#9CA3AF` (gray-400) | Unpaused state accent, icons |
+| `--pause-secondary-bg` | `#F3F4F6` (gray-100) | `#1F2937` (gray-800) | Unpaused badge/background fill |
+| `--pause-text` | `#111827` (gray-900) | `#F9FAFB` (gray-50) | Primary text |
+| `--pause-text-muted` | `#6B7280` (gray-500) | `#9CA3AF` (gray-400) | Secondary/meta text |
+
+Contrast: paused text on `--pause-primary-bg` meets WCAG AA (≥ 4.5:1) in both modes.
+
+### Typography
+
+| Element | Font | Size | Weight | Line Height |
+|---------|------|------|--------|-------------|
+| Status label (badge) | Inter | 12px / 0.75rem | 600 (semibold) | 16px |
+| Status heading | Inter | 18px / 1.125rem | 600 (semibold) | 24px |
+| Status detail / reason | Inter | 14px / 0.875rem | 400 (regular) | 20px |
+| Timestamp / meta | Inter | 12px / 0.75rem | 400 (regular) | 16px |
+| Uppercase badge text | Inter | 11px / 0.6875rem | 700 (bold) | 14px, letter-spacing 0.05em |
+
+### Icon Design
+
+- **Paused icon:** filled circle with two vertical bars (pause glyph), 16px in badges, 20px in headings. Stroke width 2px, rounded caps. Color `--pause-primary`.
+- **Unpaused icon:** filled circle with right-pointing triangle (play glyph), same sizing. Color `--pause-secondary`.
+- Icons are inline SVG, `currentColor` fill so they inherit the token color per mode.
+- Icons always paired with a text label (never icon-only) for accessibility.
+
+### Component Sizes
+
+| Component | Height | Padding | Radius |
+|-----------|--------|---------|--------|
+| Status badge | 24px | 4px 8px | 9999px (pill) |
+| Status card | auto | 16px | 8px |
+| Status banner | 48px | 12px 16px | 6px |
+
+### Light/Dark Mode Variants
+
+- Light: paused uses red-600 on red-100; unpaused uses gray-500 on gray-100.
+- Dark: paused uses red-400 on red-900; unpaused uses gray-400 on gray-800.
+- Borders use the primary/secondary accent at 30% opacity.
+- Transitions between states: 150ms ease-in-out on color and background.
+
+## Pause Stats Dashboard (Issue #1176)
+
+Design specification for the pause statistics dashboard, presenting charts, tables, and key metrics about pause patterns.
+
+### Chart Type Designs
 
 ### 2. New Services
 
@@ -288,131 +334,15 @@ npm run start:dev
 ### Check Database
 ```bash
 # Connect to PostgreSQL
-psql postgresql://carbonledger:changeme@localhost:5432/carbonledger
-
-# Check pending certificates
-SELECT retirementId, certificateStatus, certificateRetries 
-FROM "RetirementRecord" 
-WHERE certificateStatus != 'completed';
-
-# Check failed certificates
-SELECT retirementId, certificateStatus, certificateFailedAt 
-FROM "RetirementRecord" 
-WHERE certificateStatus = 'failed';
+psql
 ```
 
-### Check Redis Queue
-```bash
-# Connect to Redis
-redis-cli
+## Pause Integration Guide
 
-# Check queue stats
-LLEN carbonledger:waiting
-LLEN carbonledger:active
-LLEN carbonledger:completed
-LLEN carbonledger:failed
-```
+This section is a step-by-step developer guide for integrating pause functionality into client applications. It covers the JavaScript SDK, error handling, polling vs WebSocket patterns, testing strategies, and common issues.
 
-## Troubleshooting
+### Overview
 
-### Certificates Not Generating
+Pause functionality lets a client temporarily suspend operations (for exam
 
-**Problem**: Certificates stuck in "pending_certificate" status
-
-**Solutions**:
-1. Check Redis connection: `redis-cli ping`
-2. Check Pinata credentials: `echo $IPFS_API_KEY`
-3. Check logs for errors: `npm run start:dev`
-4. Verify database migration: `npx prisma migrate status`
-5. Check Pinata account quota and API limits
-
-### Email Not Sending
-
-**Problem**: Users not receiving certificate ready emails
-
-**Solutions**:
-1. Verify SMTP credentials in `.env`
-2. Check firewall/network access to SMTP server
-3. Review logs for email errors
-4. Test with mock mode (remove SMTP config)
-5. Check email spam folder
-
-### IPFS Upload Fails
-
-**Problem**: "Pinata upload failed" errors
-
-**Solutions**:
-1. Verify Pinata API key and secret
-2. Check Pinata account quota
-3. Verify network connectivity
-4. Check file size (should be < 10MB)
-5. Try uploading manually to Pinata dashboard
-
-### High Memory Usage
-
-**Problem**: Memory usage increasing over time
-
-**Solutions**:
-1. Reduce polling batch size (currently 10)
-2. Increase polling interval (currently 60s)
-3. Monitor PDF generation memory usage
-4. Check for memory leaks in dependencies
-
-## Security Considerations
-
-1. **API Keys**: Store Pinata credentials in environment variables only
-2. **Email Credentials**: Use app-specific passwords, not account passwords
-3. **IPFS URLs**: Public gateway URLs are accessible to anyone with the CID
-4. **Retirement Data**: Sensitive data (beneficiary, reason) stored in PDF
-5. **Rate Limiting**: Consider adding rate limits to certificate endpoints
-6. **Access Control**: Ensure only authenticated users can check certificate status
-
-## Future Enhancements
-
-1. **Webhook Notifications**: Use Pinata webhooks instead of polling
-2. **Parallel Processing**: Process multiple certificates in parallel
-3. **Certificate Customization**: Allow users to customize certificate design
-4. **Blockchain Verification**: Store certificate CID on-chain
-5. **Certificate Revocation**: Support certificate revocation if needed
-6. **Analytics**: Track certificate generation metrics
-7. **Caching**: Cache generated certificates for faster retrieval
-8. **Batch Operations**: Support bulk certificate generation
-
-## Support & Documentation
-
-- See `CERTIFICATE_GENERATION.md` for detailed technical documentation
-- See `backend/package.json` for dependency versions
-- See `backend/prisma/schema.prisma` for database schema
-- See `.env.example` for configuration options
-
-## Rollback Instructions
-
-If you need to rollback this implementation:
-
-1. **Revert Database**
-   ```bash
-   npx prisma migrate resolve --rolled-back add_certificate_fields
-   ```
-
-2. **Revert Code**
-   ```bash
-   git revert <commit-hash>
-   ```
-
-3. **Reinstall Dependencies**
-   ```bash
-   npm install
-   ```
-
-4. **Restart Backend**
-   ```bash
-   npm run start:dev
-   ```
-
-## Questions & Support
-
-For issues or questions:
-1. Check logs: `npm run start:dev`
-2. Review documentation: `CERTIFICATE_GENERATION.md`
-3. Check database: `npx prisma studio`
-4. Monitor queue: `GET /queue/stats`
+/* … truncated 5776 chars — edit only what you need near the top … */
