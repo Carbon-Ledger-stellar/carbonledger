@@ -1,0 +1,45 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'default'
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = critical
+        - team = oracle
+      receiver: 'oncall'
+      group_wait: 10s
+      repeat_interval: 1h
+    - matchers:
+        - severity = critical
+      receiver: 'oncall'
+      group_wait: 10s
+      repeat_interval: 1h
+
+receivers:
+  - name: 'default'
+    # Default receiver; wire to your standard notification channel.
+  - name: 'oncall'
+    # On-call paging receiver. Configure your pager integration here.
+
+# Oracle heartbeat alerting rule.
+# Fires when the oracle has not submitted a heartbeat for more than 15 minutes.
+# Expects a metric such as `oracle_last_submission_timestamp_seconds` (unix time
+# of the most recent successful submission) exported by the oracle.
+groups:
+  - name: oracle-heartbeat
+    rules:
+      - alert: OracleHeartbeatMissing
+        expr: (time() - oracle_last_submission_timestamp_seconds) > 900
+        for: 5m
+        labels:
+          severity: critical
+          team: oracle
+        annotations:
+          summary: "Oracle heartbeat missing for more than 15 minutes"
+          description: "The oracle has not submitted for over 15 minutes (instance {{ $labels.instance }})."
+          runbook_url: "https://github.com/{{ .ExternalURL }}/blob/main/docs/runbooks/oracle-heartbeat-missing.md"

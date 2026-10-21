@@ -1,0 +1,35 @@
+groups:
+  - name: oracle-heartbeat
+    rules:
+      - alert: OracleHeartbeatMissing
+        expr: |
+          (time() - max by (oracle, network) (oracle_last_submission_timestamp_seconds)) > 900
+        for: 5m
+        labels:
+          severity: critical
+          team: oncall
+          service: oracle
+          page: "true"
+        annotations:
+          summary: "Oracle {{ $labels.oracle }} has not submitted for over 15 minutes on {{ $labels.network }}"
+          description: |
+            No oracle submission has been observed for {{ $labels.oracle }} on network {{ $labels.network }}
+            for more than 15 minutes (last submission {{ $value | humanizeDuration }} ago).
+            This indicates the oracle heartbeat is missing and price feeds may be stale.
+          runbook_url: "https://github.com/vegaprotocol/vega/blob/develop/monitoring/runbooks/oracle-heartbeat-missing.md"
+
+      - alert: OracleHeartbeatMetricAbsent
+        expr: |
+          absent(oracle_last_submission_timestamp_seconds)
+        for: 10m
+        labels:
+          severity: critical
+          team: oncall
+          service: oracle
+          page: "true"
+        annotations:
+          summary: "Oracle heartbeat metric is absent"
+          description: |
+            The oracle_last_submission_timestamp_seconds metric has not been scraped for over 10 minutes.
+            The oracle may be down or the exporter/metric is no longer being reported.
+          runbook_url: "https://github.com/vegaprotocol/vega/blob/develop/monitoring/runbooks/oracle-heartbeat-missing.md"

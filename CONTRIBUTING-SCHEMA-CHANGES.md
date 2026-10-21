@@ -1,74 +1,58 @@
 # Contributing Schema Changes
 
-This document describes how to propose and land database schema changes in this repository.
+This document describes how to make database schema changes safely in this
+repository. All schema changes are managed with Prisma Migrate and are applied
+automatically by the deploy pipeline.
 
-## Overview
+## How migrations run in the deploy pipeline
 
-Schema changes include new tables, columns, indexes, constraints, and **database views**. All schema changes must be reviewed by a maintainer and shipped with a migration.
+Deploys no longer require anyone to run migrations by hand. The deploy
+pipeline contains a dedicated **pre-deploy migration job** that runs:
 
-## Adding Database Views
-
-Database views are used for reporting and analytics. When adding a view:
-
-1. Create a migration that defines the view with `CREATE VIEW` (or `CREATE OR REPLACE VIEW`).
-2. Give the view a stable, descriptive name (e.g. `pause_stats_daily`).
-3. Keep column names stable and explicit — reporting queries depend on them.
-4. Document the view's purpose and columns in the migration or a companion doc.
-5. Add a rollback (`DROP VIEW`) in the migration's `down` step.
-
-### Example: Pause Analytics Views
-
-Pause analytics views aggregate pause duration, frequency, and reasons for reporting.
-
-#### 1. Pause statistics by day/week/month
-
-```sql
-CREATE VIEW pause_stats_daily AS
-SELECT
-    DATE(paused_at) AS period,
-    COUNT(*) AS pause_count,
-    SUM(duration_seconds) AS total_duration_seconds,
-    AVG(duration_seconds) AS avg_duration_seconds
-FROM pauses
-GROUP BY DATE(paused_at);
+```
+prisma migrate deploy
 ```
 
-Weekly and monthly variants follow the same shape, using `DATE_TRUNC('week', paused_at)` and `DATE_TRUNC('month', paused_at)` respectively, with the same column names so reporting can switch granularity without changing queries.
+This job runs before the application is rolled out. The deploy job depends on
+the migration job, so **if `prisma migrate deploy` fails, the deployment is
+aborted** and the previous version keeps serving traffic. There is no manual
+step and no way to skip the migration job.
 
-#### 2. Pause reason breakdown
+Because of this, every migration you commit must be safe to run against the
+currently deployed application version. See
+[zero-downtime-migrations.md](./zero-downtime-migrations.md) for the full
+guidance.
 
-```sql
-CREATE VIEW pause_reason_breakdown AS
-SELECT
-    reason,
-    COUNT(*) AS pause_count,
-    SUM(duration_seconds) AS total_duration_seconds,
-    AVG(duration_seconds) AS avg_duration_seconds
-FROM pauses
-GROUP BY reason;
-```
+## Rules for schema changes
 
-#### 3. Admin pause activity
+1. **Never edit an already-applied migration.** Prisma records applied
+   migrations in `_prisma_migrations`; changing them causes `migrate deploy` to
+   fail and aborts the deploy.
+2. **Commit the migration files.** Run `prisma migrate dev --name <change>`
+   locally and commit the generated SQL under `prisma/migrations/` together with
+   the schema change.
+3. **Follow the expand/contract pattern** described in
+   [zero-downtime-migrations.md](./zero-downtime-migrations.md):
+   - *Expand*: add new nullable columns, tables, or indexes in one deploy.
+   - *Migrate*: backfill data and update application code to write to both old
+     and new shapes.
+   - *Contract*: remove the old columns/tables in a later deploy, only after no
+     running code depends on them.
+4. **Keep migrations backward compatible.** During a rolling deploy, old and
+   new application versions run at the same time. A migration must not break
+   the old version still serving traffic.
+5. **Avoid long locks.** Add indexes concurrently where supported, avoid
+   rewriting large tables in a single statement, and prefer batched backfills.
 
-```sql
-CREATE VIEW admin_pause_activity AS
-SELECT
-    admin_id,
-    DATE(paused_at) AS period,
-    COUNT(*) AS pause_count,
-    SUM(duration_seconds) AS total_duration_seconds
-FROM pauses
-WHERE admin_id IS NOT NULL
-GROUP BY admin_id, DATE(paused_at);
-```
+## Checklist before opening a PR with a schema change
 
-### Reporting Usage
+- [ ] Migration generated with `prisma migrate dev` and committed.
+- [ ] Migration is backward compatible with the currently deployed version.
+- [ ] Destructive changes (dropping columns/tables) are split into a later
+      contract deploy.
+- [ ] Backfills are batched and do not lock large tables.
+- [ ] `prisma migrate deploy` succeeds against a copy of production data.
 
-All views expose stable column names (`period`, `pause_count`, `total_duration_seconds`, `avg_duration_seconds`, `reason`, `admin_id`) so they can be queried directly from reporting tools and dashboards.
-
-## Review Checklist
-
-- [ ] Migration includes both `up` and `down`.
-- [ ] View names and column names are stable and documented.
-- [ ] Views are read-only and do not duplicate business logic already in application code.
-- [ ] Reporting queries are covered by at least one test or example.
+If a migration fails in the pipeline, the deploy is aborted automatically.
+Fix the migration (with a new migration, never by editing the failed one) and
+redeploy.

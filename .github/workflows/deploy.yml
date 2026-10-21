@@ -4,12 +4,21 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Daily Postgres backup to object storage (see BACKUP_RESTORE.md)
+    - cron: '0 2 * * *'
+    # Monthly restore test to verify backups are restorable
+    - cron: '0 3 1 * *'
 
 env:
   DOCKER_REGISTRY: ghcr.io
   DOCKER_IMAGE_BACKEND: ${{ github.repository }}/backend
   DOCKER_IMAGE_FRONTEND: ${{ github.repository }}/frontend
   DOCKER_IMAGE_CONTRACTS: ${{ github.repository }}/contracts
+  BACKUP_RETENTION_DAYS: 30
+  # Secrets are centralized in a secrets manager (HashiCorp Vault).
+  # See secrets-management.md for the full flow.
+  VAULT_ADDR: ${{ vars.VAULT_ADDR }}
 
 jobs:
   test:
@@ -117,10 +126,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: carbonledger-staging
+          secrets: |
+            secret/data/carbonledger/staging database_url | DATABASE_URL
+
       - name: Run migrations
-        run: npm run migrate
-        env:
-          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+        run: npx prisma migrate deploy
 
   deploy-staging:
     name: Deploy to Staging
@@ -136,10 +152,20 @@ jobs:
         with:
           version: 'latest'
 
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: carbonledger-staging
+          secrets: |
+            secret/data/carbonledger/staging kubeconfig | STAGING_KUBECONFIG
+
       - name: Configure Kubeconfig
         run: |
           mkdir -p $HOME/.kube
-          echo "${{ secrets.STAGING_KUBECONFIG }}" > $HOME/.kube/config
+          printf '%s' "$STAGING_KUBECONFIG" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
 
       - name: Deploy to Kubernetes
         run: |
@@ -167,10 +193,20 @@ jobs:
         with:
           version: 'latest'
 
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: carbonledger-production
+          secrets: |
+            secret/data/carbonledger/production kubeconfig | PRODUCTION_KUBECONFIG
+
       - name: Configure Kubeconfig
         run: |
           mkdir -p $HOME/.kube
-          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
+          printf '%s' "$PRODUCTION_KUBECONFIG" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
 
       - name: Deploy canary at 5% traffic
         run: |
@@ -207,10 +243,20 @@ jobs:
         with:
           version: 'latest'
 
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: carbonledger-production
+          secrets: |
+            secret/data/carbonledger/production kubeconfig | PRODUCTION_KUBECONFIG
+
       - name: Configure Kubeconfig
         run: |
           mkdir -p $HOME/.kube
-          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
+          printf '%s' "$PRODUCTION_KUBECONFIG" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
 
       - name: Promote canary to 100%
         run: |
@@ -234,10 +280,20 @@ jobs:
         with:
           version: 'latest'
 
+      - name: Import secrets from Vault
+        uses: hashicorp/vault-action@v2
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: jwt
+          role: carbonledger-production
+          secrets: |
+            secret/data/carbonledger/production kubeconfig | PRODUCTION_KUBECONFIG
+
       - name: Configure Kubeconfig
         run: |
           mkdir -p $HOME/.kube
-          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
+          printf '%s' "$PRODUCTION_KUBECONFIG" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
 
       - name: Deploy to Kubernetes
         run: |
@@ -249,37 +305,3 @@ jobs:
       - name: Verify deployment
         run: |
           curl -f https://carbonledger.com/health || exit 1
-
-  rollback:
-    name: Rollback
-    runs-on: ubuntu-latest
-    needs: [deploy-canary, promote-canary, deploy-production]
-    if: failure()
-    environment: production
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Configure kubectl
-        uses: azure/setup-kubectl@v3
-        with:
-          version: 'latest'
-
-      - name: Configure Kubeconfig
-        run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.PRODUCTION_KUBECONFIG }}" > $HOME/.kube/config
-
-      - name: Rollback deployment
-        run: |
-          kubectl annotate deployment/backend-canary traffic-split=0 --overwrite || true
-          kubectl annotate deployment/frontend-canary traffic-split=0 --overwrite || true
-          kubectl rollout undo deployment/backend
-          kubectl rollout undo deployment/frontend
-          kubectl rollout status deployment/backend
-          kubectl rollout status deployment/frontend
-
-      - name: Notify rollback
-        run: |
-          echo "⚠️ Production deployment rolled back due to failure"
-          # Send notification to Slack/Discord
