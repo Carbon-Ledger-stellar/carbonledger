@@ -18,6 +18,7 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
+# Standalone output is enabled via `output: 'standalone'` in next.config
 RUN npm run build
 
 # ── Stage 3: Runtime ───────────────────────────────────────────────────────────

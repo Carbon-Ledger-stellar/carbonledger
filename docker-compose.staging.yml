@@ -23,6 +23,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
 
   # ── Staging Redis (separate instance) ────────────────────────────────────────
   redis-primary:
@@ -30,6 +31,12 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-staging_redis_pass}
     volumes:
       - redis_staging_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # ── Staging Backend (separate contract addresses) ────────────────────────────
   backend:
@@ -62,6 +69,11 @@ services:
       ORACLE_PUBLIC_KEY:               ${ORACLE_PUBLIC_KEY}
       ADMIN_SECRET_KEY:                ${ADMIN_SECRET_KEY}
       ADMIN_PUBLIC_KEY:                ${ADMIN_PUBLIC_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-primary:
+        condition: service_healthy
     # Enhanced health check with staging-specific validation
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3001/health/ready && wget -q --spider http://localhost:3001/api/v1/health || exit 1"]
@@ -84,6 +96,15 @@ services:
       NEXT_PUBLIC_MARKETPLACE_CONTRACT: ${STAGING_MARKETPLACE_CONTRACT_ID}
       NEXT_PUBLIC_ORACLE_CONTRACT:      ${STAGING_ORACLE_CONTRACT_ID}
       NEXT_PUBLIC_USDC_CONTRACT:        ${STAGING_USDC_CONTRACT_ID}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # ── Staging Oracle Services (separate contract instances) ────────────────────
   oracle_verification:
@@ -95,6 +116,17 @@ services:
       DATABASE_URL:                postgresql://carbonledger_staging:${POSTGRES_PASSWORD}@postgres:5432/carbonledger_staging
       BACKEND_API_URL:             http://backend:3001/api/v1
       LOG_LEVEL:                   DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f oracle_verification > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   oracle_price:
     environment:
@@ -102,6 +134,15 @@ services:
       CARBON_ORACLE_CONTRACT_ID: ${STAGING_ORACLE_CONTRACT_ID}
       STELLAR_RPC_URL:           https://soroban-testnet.stellar.org
       LOG_LEVEL:                 DEBUG
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f oracle_price > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   oracle_satellite:
     environment:
@@ -110,6 +151,15 @@ services:
       STELLAR_RPC_URL:           https://soroban-testnet.stellar.org
       BACKEND_API_URL:           http://backend:3001/api/v1
       LOG_LEVEL:                 DEBUG
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f oracle_satellite > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # ── Enhanced Grafana for Staging Monitoring ──────────────────────────────────
   grafana:

@@ -157,7 +157,12 @@ const SECURITY_HEADERS = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Issue #1547: emit a self-contained standalone server bundle so the
+  // runtime Docker image only needs the traced node_modules subset.
   output: "standalone",
+  // Keep the standalone server bundle lean: exclude source maps from the
+  // production build to reduce the final image size.
+  productionBrowserSourceMaps: false,
   turbopack: {
     root: __dirname,
   },
