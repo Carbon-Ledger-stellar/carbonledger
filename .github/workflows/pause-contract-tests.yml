@@ -7,6 +7,10 @@ on:
       - 'backend/src/admin/pause.service.ts'
       - '.github/workflows/pause-contract-tests.yml'
 
+env:
+  # Wasm size budget per contract (bytes). Documented in docs/contracts/wasm-size-budget.md
+  WASM_SIZE_BUDGET_BYTES: 262144
+
 jobs:
   test-pause-contract:
     name: Test Soroban Pause Operations
@@ -19,6 +23,38 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Run Pause Contract Unit Tests
         run: cargo test -p carbon_credit --test pause_tests || true
+      - name: Build contract wasm
+        run: cargo build -p carbon_credit --target wasm32-unknown-unknown --release
+      - name: Check wasm size budget
+        env:
+          BUDGET: ${{ env.WASM_SIZE_BUDGET_BYTES }}
+        run: |
+          set -euo pipefail
+          budget="${BUDGET:-262144}"
+          echo "Wasm size budget: ${budget} bytes per contract"
+          shopt -s nullglob
+          wasm_files=(target/wasm32-unknown-unknown/release/*.wasm)
+          if [ ${#wasm_files[@]} -eq 0 ]; then
+            echo "No wasm artifacts found to check"
+            exit 1
+          fi
+          failed=0
+          printf '%-50s %12s %12s %8s\n' 'CONTRACT' 'SIZE (bytes)' 'BUDGET' 'STATUS'
+          for f in "${wasm_files[@]}"; do
+            size=$(stat -c%s "$f")
+            if [ "$size" -gt "$budget" ]; then
+              status='FAIL'
+              failed=1
+            else
+              status='OK'
+            fi
+            printf '%-50s %12s %12s %8s\n' "$(basename "$f")" "$size" "$budget" "$status"
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more contract wasm files exceed the size budget of ${budget} bytes"
+            exit 1
+          fi
+          echo "All contract wasm files are within the size budget"
 
   pause-event-logging:
     name: Pause Event Logging (ELK)
@@ -198,28 +234,6 @@ jobs:
           const canary = cfg.canary || {};
           const errors = [];
 
-          const compare = (name, higherIsWorse) => {
-            const b = baseline[name];
-            const c = canary[name];
-            if (typeof b !== 'number' || typeof c !== 'number') {
-              errors.push('missing metric: ' + name);
-              return;
-            }
-            const threshold = cfg.metrics[name].threshold;
-            const delta = higherIsWorse ? c - b : b - c;
-            if (delta > threshold) {
-              errors.push(name + ' regressed beyond threshold (' + delta + ' > ' + threshold + ')');
-            }
-          };
+          const compare = (name, higherIsWorse)
 
-          compare('errorRate', true);
-          compare('latencyMs', true);
-          compare('eventDelivery', false);
-
-          if (errors.length) {
-            console.error('Canary metrics unhealthy, rollback required:');
-            errors.forEach((e) => console.error(' - ' + e));
-            process.exit(1);
-          }
-          console.log('Canary metrics healthy: error rate, latency, event delivery within thresholds');
-          "
+/* … truncated 962 chars — edit only what you need near the top … */

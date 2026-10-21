@@ -7,8 +7,8 @@ on:
     branches: [main, develop]
 
 concurrency:
-  group: e2e-tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: e2e-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   e2e-tests:
