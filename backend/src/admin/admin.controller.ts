@@ -2,7 +2,7 @@ import {
   Controller, Get, Post, Delete, Body, Param, Query, Req,
   UseGuards, HttpCode, HttpStatus, BadRequestException, UnauthorizedException,
 } from '@nestjs/common';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse } from '@nestjs/swagger';
 import { Roles } from '../auth/decorators';
 import { AdminService } from './admin.service';
 import { PauseService, PAUSABLE_CONTRACTS, type PausableContract } from './pause.service';
@@ -11,6 +11,7 @@ import {
   ReviewQuarantineDto, SoftDeleteDto, PauseContractDto, PauseHistoryQueryDto,
   AdminPauseDto, AdminUnpauseDto,
 } from './admin.dto';
+import { ContractStateDto } from '../contract-sync/contract-state.dto';
 import {
   CheckPolicies, PoliciesGuard, UserSubject, AuditLogSubject, OracleDataSubject,
   ProjectSubject, CreditBatchSubject, RetirementSubject,
@@ -132,8 +133,14 @@ export class AdminController {
   @Get('contracts/:contract/pause')
   @UseGuards(PoliciesGuard)
   @CheckPolicies((ability) => ability.can('read', 'all'))
-  getPauseState(@Param('contract') contract: string) {
-    return this.pauseService.getPauseState(parsePausableContract(contract));
+  @ApiOkResponse({ type: ContractStateDto })
+  async getPauseState(@Param('contract') contract: string): Promise<ContractStateDto> {
+    const state = await this.pauseService.getPauseState(parsePausableContract(contract));
+    const dto = new ContractStateDto();
+    dto.contract = state.contract;
+    dto.is_paused = state.paused ?? false;
+    dto.pausedUntil = state.pausedUntil ?? null;
+    return dto;
   }
 
   @Post('contracts/:contract/pause')
