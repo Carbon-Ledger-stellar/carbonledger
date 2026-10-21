@@ -2,6 +2,55 @@
 
 This guide documents UI/UX design specifications for the pause feature set.
 
+## Pause Status Visual Hierarchy (Issue #1170)
+
+Design specification for pause status across the admin dashboard. Covers color schemes, typography, icon design, and light/dark mode variants.
+
+### Color Palette
+
+| Token | Light Mode | Dark Mode | Usage |
+|-------|-----------|-----------|-------|
+| `--pause-primary` | `#DC2626` (red-600) | `#F87171` (red-400) | Paused state accent, icons, borders |
+| `--pause-primary-bg` | `#FEE2E2` (red-100) | `#7F1D1D` (red-900) | Paused badge/background fill |
+| `--pause-secondary` | `#6B7280` (gray-500) | `#9CA3AF` (gray-400) | Unpaused state accent, icons |
+| `--pause-secondary-bg` | `#F3F4F6` (gray-100) | `#1F2937` (gray-800) | Unpaused badge/background fill |
+| `--pause-text` | `#111827` (gray-900) | `#F9FAFB` (gray-50) | Primary text |
+| `--pause-text-muted` | `#6B7280` (gray-500) | `#9CA3AF` (gray-400) | Secondary/meta text |
+
+Contrast: paused text on `--pause-primary-bg` meets WCAG AA (≥ 4.5:1) in both modes.
+
+### Typography
+
+| Element | Font | Size | Weight | Line Height |
+|---------|------|------|--------|-------------|
+| Status label (badge) | Inter | 12px / 0.75rem | 600 (semibold) | 16px |
+| Status heading | Inter | 18px / 1.125rem | 600 (semibold) | 24px |
+| Status detail / reason | Inter | 14px / 0.875rem | 400 (regular) | 20px |
+| Timestamp / meta | Inter | 12px / 0.75rem | 400 (regular) | 16px |
+| Uppercase badge text | Inter | 11px / 0.6875rem | 700 (bold) | 14px, letter-spacing 0.05em |
+
+### Icon Design
+
+- **Paused icon:** filled circle with two vertical bars (pause glyph), 16px in badges, 20px in headings. Stroke width 2px, rounded caps. Color `--pause-primary`.
+- **Unpaused icon:** filled circle with right-pointing triangle (play glyph), same sizing. Color `--pause-secondary`.
+- Icons are inline SVG, `currentColor` fill so they inherit the token color per mode.
+- Icons always paired with a text label (never icon-only) for accessibility.
+
+### Component Sizes
+
+| Component | Height | Padding | Radius |
+|-----------|--------|---------|--------|
+| Status badge | 24px | 4px 8px | 9999px (pill) |
+| Status card | auto | 16px | 8px |
+| Status banner | 48px | 12px 16px | 6px |
+
+### Light/Dark Mode Variants
+
+- Light: paused uses red-600 on red-100; unpaused uses gray-500 on gray-100.
+- Dark: paused uses red-400 on red-900; unpaused uses gray-400 on gray-800.
+- Borders use the primary/secondary accent at 30% opacity.
+- Transitions between states: 150ms ease-in-out on color and background.
+
 ## Pause Stats Dashboard (Issue #1176)
 
 Design specification for the pause statistics dashboard, presenting charts, tables, and key metrics about pause patterns.
@@ -294,178 +343,6 @@ This section is a step-by-step developer guide for integrating pause functionali
 
 ### Overview
 
-Pause functionality lets a client temporarily suspend operations (for example, pausing a retirement batch, a queue consumer, or an automated job) and later resume them. The backend exposes pause state through the API and pushes state changes over WebSocket. Clients should treat pause state as authoritative from the server and reconcile local state on reconnect.
+Pause functionality lets a client temporarily suspend operations (for exam
 
-### Step-by-Step Integration
-
-1. **Authenticate** — obtain a JWT and initialize the SDK client.
-2. **Read initial pause state** — call the pause status endpoint before starting work.
-3. **Subscribe to pause events** — open a WebSocket connection to receive live updates.
-4. **Gate your work loop** — check pause state before each unit of work.
-5. **Handle pause/resume commands** — call the pause and resume endpoints and await confirmation.
-6. **Reconcile on reconnect** — re-fetch pause state after any disconnect.
-7. **Clean up** — close the WebSocket and clear timers on shutdown.
-
-### JavaScript SDK Examples
-
-#### Initialize the client
-
-```javascript
-import { CarbonLedgerClient } from '@carbonledger/sdk';
-
-const client = new CarbonLedgerClient({
-  baseUrl: 'https://api.carbonledger.io/api/v1',
-  token: process.env.CARBONLEDGER_JWT,
-});
-```
-
-#### Read the current pause state
-
-```javascript
-async function getPauseState(resourceId) {
-  const state = await client.pause.getStatus(resourceId);
-  // { resourceId, paused: boolean, pausedAt, pausedBy, reason }
-  return state;
-}
-```
-
-#### Pause and resume
-
-```javascript
-async function pause(resourceId, reason) {
-  return client.pause.pause(resourceId, { reason });
-}
-
-async function resume(resourceId) {
-  return client.pause.resume(resourceId);
-}
-```
-
-#### Gate a work loop on pause state
-
-```javascript
-async function runWorkLoop(resourceId, items) {
-  for (const item of items) {
-    const { paused } = await getPauseState(resourceId);
-    if (paused) {
-      console.log('Paused, stopping work loop');
-      return;
-    }
-    await processItem(item);
-  }
-}
-```
-
-### Error Handling Examples
-
-Wrap pause calls and handle the common failure modes explicitly.
-
-```javascript
-async function safePause(resourceId, reason) {
-  try {
-    return await client.pause.pause(resourceId, { reason });
-  } catch (err) {
-    if (err.status === 401) {
-      throw new Error('Authentication failed: refresh your JWT and retry.');
-    }
-    if (err.status === 403) {
-      throw new Error('Not authorized to pause this resource.');
-    }
-    if (err.status === 404) {
-      throw new Error('Resource not found: verify the resourceId.');
-    }
-    if (err.status === 409) {
-      // Already paused or a conflicting state transition is in progress.
-      return getPauseState(resourceId);
-    }
-    if (err.status >= 500) {
-      // Transient server error: retry with backoff.
-      return retryWithBackoff(() => client.pause.pause(resourceId, { reason }));
-    }
-    throw err;
-  }
-}
-
-async function retryWithBackoff(fn, attempts = 3, baseDelayMs = 500) {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (i === attempts - 1) throw err;
-      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** i));
-    }
-  }
-}
-```
-
-### Polling vs WebSocket Patterns
-
-| Aspect | Polling | WebSocket |
-| --- | --- | --- |
-| Latency | Up to one interval | Near real-time |
-| Complexity | Low | Medium (reconnect logic) |
-| Server load | Higher with short intervals | Lower, event-driven |
-| Best for | Simple clients, low frequency | Live dashboards, long-running jobs |
-
-#### Polling pattern
-
-```javascript
-function startPolling(resourceId, intervalMs = 5000) {
-  const timer = setInterval(async () => {
-    const state = await getPauseState(resourceId);
-    onPauseStateChange(state);
-  }, intervalMs);
-  return () => clearInterval(timer);
-}
-```
-
-#### WebSocket pattern
-
-```javascript
-function subscribeToPause(resourceId) {
-  const ws = client.pause.subscribe(resourceId);
-
-  ws.on('pause', (state) => onPauseStateChange(state));
-  ws.on('resume', (state) => onPauseStateChange(state));
-
-  ws.on('close', () => {
-    // Reconcile state after reconnect.
-    setTimeout(async () => {
-      onPauseStateChange(await getPauseState(resourceId));
-      subscribeToPause(resourceId);
-    }, 2000);
-  });
-
-  ws.on('error', (err) => console.error('Pause socket error', err));
-
-  return () => ws.close();
-}
-```
-
-Use polling as a fallback when WebSocket connections are unavailable, and always re-fetch state on reconnect to avoid acting on stale data.
-
-### Testing Strategies
-
-- **Unit tests** — mock the SDK client and assert your work loop stops when `paused` is true.
-- **Integration tests** — pause a resource, trigger work, and assert no work is processed until resume.
-- **Reconnect tests** — simulate a WebSocket drop and verify state is reconciled on reconnect.
-- **Error-path tests** — simulate 401/403/409/5xx responses and assert the documented handling.
-- **Idempotency tests** — calling pause twice should not error or double-apply.
-
-```javascript
-test('work loop stops when paused', async () => {
-  jest.spyOn(client.pause, 'getStatus').mockResolvedValue({ paused: true });
-  const processItem = jest.fn();
-  await runWorkLoop('res-1', ['a', 'b']);
-  expect(processItem).not.toHaveBeenCalled();
-});
-```
-
-### Common Issues and Solutions
-
-- **Stale pause state after reconnect** — always re-fetch pause status on WebSocket reconnect.
-- **Duplicate pause calls** — treat 409 as success and re-read state instead of failing.
-- **Work continues after pause** — check pause state before each unit of work, not just once at startup.
-- **Missed resume events** — combine WebSocket events with a periodic reconciliation poll.
-- **Auth expiry mid-session** — refresh the JWT on 401 and retry the pause call once.
-- **Clock skew on `pausedAt`** — compare durations using server timestamps, not local time.
+/* … truncated 5776 chars — edit only what you need near the top … */

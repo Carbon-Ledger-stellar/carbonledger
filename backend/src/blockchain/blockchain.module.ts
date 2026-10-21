@@ -9,6 +9,7 @@ import { Module, Global } from '@nestjs/common';
 import { IBlockchainProvider } from './interface';
 import { SorobanBlockchainProvider } from './soroban.provider';
 import { MockBlockchainProvider } from './mock.provider';
+import { SorobanRpcTimeoutInterceptor } from './soroban-rpc-timeout.interceptor';
 
 @Global()
 @Module({
@@ -21,7 +22,8 @@ import { MockBlockchainProvider } from './mock.provider';
     },
     MockBlockchainProvider,
     SorobanBlockchainProvider,
+    SorobanRpcTimeoutInterceptor,
   ],
-  exports: ['IBlockchainProvider'],
+  exports: ['IBlockchainProvider', SorobanRpcTimeoutInterceptor],
 })
 export class BlockchainModule {}

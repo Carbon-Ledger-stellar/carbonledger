@@ -37,6 +37,7 @@ import { LoggingInterceptor } from "./logger/logging.interceptor";
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
 import { RedisSlidingWindowRateLimitGuard } from "./common/redis-sliding-window-rate-limit.guard";
+import { PauseGuard } from "./common/pause.guard";
 import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
@@ -235,6 +236,11 @@ class HealthController {
     {
       provide: APP_GUARD,
       useClass: RoleLimitGuard,
+    },
+    // Emergency pause guard: rejects mutating requests when contract is paused (#1224)
+    {
+      provide: APP_GUARD,
+      useClass: PauseGuard,
     },
     {
       provide: APP_INTERCEPTOR,

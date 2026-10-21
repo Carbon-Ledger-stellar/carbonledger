@@ -1,15 +1,17 @@
-import { Controller, Get, Post, Param, Query, Body, Request, UseGuards, BadRequestException, Res } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, Body, Request, UseGuards, BadRequestException, Res, UseInterceptors } from '@nestjs/common';
 import { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { CreditsService } from './credits.service';
 import { MintCreditsDto, RetireCreditsDto, BatchMintCreditsDto, BatchRetireCreditsDto, BulkMintCreditsDto } from './credits.dto';
 import { Public, Roles } from '../auth/decorators';
 import { CheckPolicies, PoliciesGuard, CreditBatchSubject, RetirementSubject } from '../policies';
+import { ContractPauseResponseInterceptor } from '../common/contract-pause-response.interceptor';
 
 const MAX_PAGE_LIMIT = 100;
 const DEFAULT_PAGE_LIMIT = 20;
 
 @Controller('credits')
+@UseInterceptors(ContractPauseResponseInterceptor)
 export class CreditsController {
   constructor(private readonly creditsService: CreditsService) {}
 
