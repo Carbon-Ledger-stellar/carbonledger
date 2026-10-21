@@ -364,4 +364,99 @@ export class AdminService {
       },
     };
   }
+
+  /**
+   * Admin dashboard overview (#1226).
+   * Includes pause status, pause history (last 10 events), current admin who paused,
+   * pause reason, and platform overview metrics.
+   */
+  async getDashboard() {
+    let pauseHistory: Array<{
+      id: string;
+      contract: string;
+      action: string;
+      admin: string;
+      reason: string | null;
+      pausedUntil: Date | null;
+      txHash: string;
+      occurredAt: Date;
+    }> = [];
+
+    if ((this.prisma as any).pauseEvent?.findMany) {
+      pauseHistory = await this.prisma.pauseEvent.findMany({
+        orderBy: { occurredAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          contract: true,
+          action: true,
+          admin: true,
+          reason: true,
+          pausedUntil: true,
+          txHash: true,
+          occurredAt: true,
+        },
+      });
+    }
+
+    const configs = await this.prisma.adminConfig.findMany({
+      where: {
+        key: {
+          in: [
+            'carbon_credit_paused',
+            'carbon_credit_paused_until',
+            'carbon_credit_reason',
+            'carbon_marketplace_paused',
+            'carbon_marketplace_paused_until',
+            'carbon_marketplace_reason',
+            'pause:is_paused',
+          ],
+        },
+      },
+    });
+    const configMap = new Map(configs.map((c) => [c.key, c.value]));
+    const nowSec = Date.now() / 1000;
+
+    const creditPaused =
+      configMap.get('carbon_credit_paused') === 'true' &&
+      Number(configMap.get('carbon_credit_paused_until') ?? 0) > nowSec;
+    const marketPaused =
+      configMap.get('carbon_marketplace_paused') === 'true' &&
+      Number(configMap.get('carbon_marketplace_paused_until') ?? 0) > nowSec;
+    const generalPaused = configMap.get('pause:is_paused') === 'true';
+
+    const is_paused = creditPaused || marketPaused || generalPaused;
+
+    const latestPause = pauseHistory.find((e) => e.action === 'pause');
+    const current_admin = is_paused ? (latestPause?.admin ?? null) : null;
+    const pause_reason = is_paused
+      ? (latestPause?.reason ?? configMap.get('carbon_credit_reason') ?? configMap.get('carbon_marketplace_reason') ?? null)
+      : null;
+    const paused_at = is_paused ? (latestPause?.occurredAt ?? null) : null;
+
+    const [totalProjects, totalBatches, totalRetirements, verifiersCount] = await Promise.all([
+      this.prisma.carbonProject.count({ where: { deletedAt: null } }).catch(() => 0),
+      this.prisma.creditBatch.count({ where: { deletedAt: null } }).catch(() => 0),
+      this.prisma.retirementRecord.count({ where: { deletedAt: null } }).catch(() => 0),
+      this.prisma.user.count({ where: { role: 'verifier', deletedAt: null } }).catch(() => 0),
+    ]);
+
+    return {
+      is_paused,
+      isPaused: is_paused,
+      pause_history: pauseHistory,
+      pauseHistory,
+      current_admin,
+      paused_by: current_admin,
+      pause_reason,
+      paused_at,
+      stats: {
+        totalProjects,
+        totalBatches,
+        totalRetirements,
+        verifiersCount,
+      },
+    };
+  }
 }
+

@@ -31,6 +31,35 @@ export class AdminController {
     private readonly pauseService: PauseService,
   ) {}
 
+  // ── Admin Dashboard (#1226) ─────────────────────────────────────────────────
+
+  /**
+   * GET /admin/dashboard
+   *
+   * Provides pause status information for the admin dashboard:
+   * - is_paused: whether contract operations are currently blocked
+   * - pause_history: last 10 pause/unpause events
+   * - current_admin: admin who paused the contract
+   * - pause_reason: human-readable pause reason
+   */
+  @Get('dashboard')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', 'all'))
+  getDashboard() {
+    return this.admin.getDashboard();
+  }
+
+  /**
+   * GET /admin/stats
+   * Alias / compatible endpoint for dashboard stats with pause status.
+   */
+  @Get('stats')
+  @UseGuards(PoliciesGuard)
+  @CheckPolicies((ability) => ability.can('read', 'all'))
+  getAdminStats() {
+    return this.admin.getDashboard();
+  }
+
   // ── Role assignment ─────────────────────────────────────────────────────────
 
   @Post('users/:publicKey/role')
