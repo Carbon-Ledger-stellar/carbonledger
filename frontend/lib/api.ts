@@ -814,3 +814,27 @@ export function useCreditBatches(projectId: string) {
     swrConfig,
   );
 }
+
+
+// ── API keys ───────────────────────────────────────────────────────────────────
+
+export interface CreatedApiKey {
+  id: string;
+  key: string;
+  organizationName: string;
+  contactEmail: string;
+  createdAt: string;
+}
+
+export async function createApiKey(body: {
+  organizationName: string;
+  contactEmail: string;
+}): Promise<CreatedApiKey> {
+  const res = await fetch(`${API_URL}/v1/api-keys`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Could not create API key");
+  return res.json();
+}
