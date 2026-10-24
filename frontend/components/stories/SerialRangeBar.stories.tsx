@@ -76,3 +76,38 @@ export const CurrentlyListed: Story = {
     ),
   },
 };
+
+/**
+ * AllFourStatuses — exercises every status at once:
+ *   • CL-2024-0001 – 0020  → retired (20 credits, Green Holdings Ltd)
+ *   • CL-2024-0021 – 0040  → active  (20 credits, implicit gap)
+ *   • CL-2024-0041 – 0060  → listed  (20 credits)
+ *   • CL-2024-0061 – 0080  → escrow  (20 credits)
+ *   • CL-2024-0081 – 0100  → active  (20 credits, implicit gap)
+ */
+export const AllFourStatuses: Story = {
+  name: "All Four Statuses (Escrow)",
+  args: {
+    batchSerialStart: BATCH_START,
+    batchSerialEnd: BATCH_END,
+    segments: buildBatchSerialSegments(
+      BATCH_START,
+      BATCH_END,
+      // retirements
+      [
+        {
+          serialStart: "CL-2024-0001",
+          serialEnd: "CL-2024-0020",
+          amount: 20,
+          retirementId: "ret-escrow-story-001",
+          retirementDate: "2024-09-01T00:00:00Z",
+          beneficiary: "Green Holdings Ltd",
+        },
+      ],
+      // listings
+      [{ serialStart: "CL-2024-0041", serialEnd: "CL-2024-0060", amount: 20 }],
+      // escrow
+      [{ serialStart: "CL-2024-0061", serialEnd: "CL-2024-0080", amount: 20 }],
+    ),
+  },
+};
