@@ -161,8 +161,92 @@ export default function TransactionPreview({
             </div>
           ))}
 
-          {/* Separator before fee (already included in effects, but show accent) */}
-          {preview.feeEstimate && (
+          {/* Fee breakdown — full itemised section when subtotal/platformFee/totalAmount are present */}
+          {(preview.subtotal || preview.platformFee || preview.totalAmount) ? (
+            <div
+              style={{
+                borderTop: `1px solid ${colors.primary[200]}`,
+                paddingTop: "0.6rem",
+                marginTop: "0.25rem",
+                display: "grid",
+                gap: "0.4rem",
+              }}
+              aria-label="Fee breakdown"
+            >
+              <p style={{ margin: "0 0 0.25rem", fontSize: "0.75rem", fontWeight: 700, color: colors.neutral[500], textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Fee Breakdown
+              </p>
+
+              {/* Subtotal row */}
+              {preview.subtotal && (
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "0.82rem", color: colors.neutral[600] }}>Subtotal</span>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: colors.neutral[800], textAlign: "right", whiteSpace: "nowrap" }}>
+                    {preview.subtotal}
+                  </span>
+                </div>
+              )}
+
+              {/* Platform fee row */}
+              {preview.platformFee && (
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "0.82rem", color: colors.neutral[600], display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    Platform fee
+                    <span
+                      aria-label="1% protocol fee charged by CarbonLedger"
+                      title="1% protocol fee charged by CarbonLedger"
+                      style={{ cursor: "help", fontSize: "0.75rem", color: colors.primary[500], lineHeight: 1 }}
+                    >
+                      ⓘ
+                    </span>
+                  </span>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: colors.neutral[800], textAlign: "right", whiteSpace: "nowrap" }}>
+                    {preview.platformFee}
+                  </span>
+                </div>
+              )}
+
+              {/* Network fee row */}
+              {preview.feeEstimate && (
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "0.82rem", color: colors.neutral[600], display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    Network fee
+                    <span
+                      aria-label="Stellar network fee, estimated by Soroban simulation"
+                      title="Stellar network fee, estimated by Soroban simulation"
+                      style={{ cursor: "help", fontSize: "0.75rem", color: colors.primary[500], lineHeight: 1 }}
+                    >
+                      ⓘ
+                    </span>
+                  </span>
+                  <span style={{ fontSize: "0.82rem", fontWeight: 600, color: colors.neutral[800], textAlign: "right", whiteSpace: "nowrap" }}>
+                    {preview.feeEstimate}
+                  </span>
+                </div>
+              )}
+
+              {/* Total row */}
+              {preview.totalAmount && (
+                <div
+                  style={{
+                    borderTop: `1px solid ${colors.primary[200]}`,
+                    paddingTop: "0.4rem",
+                    marginTop: "0.1rem",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "0.75rem",
+                    alignItems: "baseline",
+                  }}
+                >
+                  <span style={{ fontSize: "0.9rem", fontWeight: 700, color: colors.neutral[900] }}>Total</span>
+                  <span style={{ fontSize: "0.95rem", fontWeight: 700, color: colors.neutral[900], textAlign: "right", whiteSpace: "nowrap" }}>
+                    {preview.totalAmount}
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : preview.feeEstimate ? (
+            /* Fallback: simple single-line fee row when breakdown fields are absent */
             <div
               style={{
                 borderTop: `1px dashed ${colors.primary[200]}`,
@@ -187,7 +271,7 @@ export default function TransactionPreview({
                 {preview.feeEstimate}
               </span>
             </div>
-          )}
+          ) : null}
         </div>
       )}
 

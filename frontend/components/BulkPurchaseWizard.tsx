@@ -144,6 +144,104 @@ function calculatePortfolioMetrics(items: WizardCartItem[]): PortfolioMetrics {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// StepIndicator sub-component
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STEPS: { key: WizardStep; label: string }[] = [
+  { key: "selection", label: "Selection" },
+  { key: "preview",   label: "Review"    },
+  { key: "confirm",   label: "Confirm"   },
+];
+
+function StepIndicator({ current }: { current: WizardStep }) {
+  const currentIndex = STEPS.findIndex((s) => s.key === current);
+  const stepNumber   = currentIndex + 1;
+  const totalSteps   = STEPS.length;
+  const label        = STEPS[currentIndex].label;
+
+  return (
+    <>
+      <style>{`
+        .wizard-step-indicator-full {
+          display: flex;
+          align-items: center;
+          gap: 0;
+          margin-bottom: 1.25rem;
+        }
+        .wizard-step-indicator-compact {
+          display: none;
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: var(--color-neutral-600);
+          margin-bottom: 1rem;
+        }
+        @media (max-width: 639px) {
+          .wizard-step-indicator-full    { display: none; }
+          .wizard-step-indicator-compact { display: block; }
+        }
+        .wsi-step {
+          display: flex;
+          align-items: center;
+        }
+        .wsi-circle {
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.75rem;
+          font-weight: 700;
+          flex-shrink: 0;
+        }
+        .wsi-circle-active   { background: var(--color-primary-600); color: #fff; }
+        .wsi-circle-done     { background: var(--color-primary-200); color: var(--color-primary-800); }
+        .wsi-circle-upcoming { background: var(--color-neutral-200); color: var(--color-neutral-500); }
+        .wsi-label {
+          font-size: 0.8rem;
+          font-weight: 600;
+          margin-left: 0.4rem;
+        }
+        .wsi-label-active   { color: var(--color-primary-700); }
+        .wsi-label-done     { color: var(--color-primary-600); }
+        .wsi-label-upcoming { color: var(--color-neutral-400); }
+        .wsi-connector {
+          flex: 1;
+          height: 2px;
+          margin: 0 0.5rem;
+          min-width: 24px;
+        }
+        .wsi-connector-done     { background: var(--color-primary-300); }
+        .wsi-connector-upcoming { background: var(--color-neutral-200); }
+      `}</style>
+
+      {/* Full breadcrumb — ≥640px */}
+      <div className="wizard-step-indicator-full" aria-label="Progress">
+        {STEPS.map((s, idx) => {
+          const state = idx < currentIndex ? "done" : idx === currentIndex ? "active" : "upcoming";
+          return (
+            <div key={s.key} className="wsi-step">
+              {idx > 0 && (
+                <div
+                  className={`wsi-connector ${idx <= currentIndex ? "wsi-connector-done" : "wsi-connector-upcoming"}`}
+                />
+              )}
+              <div className={`wsi-circle wsi-circle-${state}`}>{idx + 1}</div>
+              <span className={`wsi-label wsi-label-${state}`}>{s.label}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Compact single-line — <640px */}
+      <div className="wizard-step-indicator-compact" aria-label="Progress">
+        Step {stepNumber} / {totalSteps} — {label}
+      </div>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -416,7 +514,8 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
 
   if (step === "selection") {
     return (
-      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "clamp(1rem, 4vw, 2rem)" }}>
+        <StepIndicator current="selection" />
         <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 1rem" }}>
           {t("step1Title")}
         </h2>
@@ -528,7 +627,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                       {listing.methodology} · {listing.vintageYear}
                     </p>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
                     <input
                       type="number"
                       min={0.01}
@@ -539,6 +638,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                       onBlur={() => handleAmountBlur(listing, amount)}
                       style={{
                         width: "80px",
+                        minWidth: "70px",
                         border: `1px solid ${amountErrors[listing.listingId] ? colors.suspended.border : colors.neutral[300]}`,
                         borderRadius: "0.375rem",
                         padding: "0.4rem 0.5rem",
@@ -600,7 +700,8 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
 
   if (step === "preview") {
     return (
-      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "clamp(1rem, 4vw, 2rem)" }}>
+        <StepIndicator current="preview" />
         <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 1rem" }}>
           {t("step2Title")}
         </h2>
@@ -622,7 +723,19 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
             {t("portfolioMetrics")}
           </h3>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+          <style>{`
+            .wizard-metrics-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr 1fr;
+              gap: 1rem;
+            }
+            @media (max-width: 639px) {
+              .wizard-metrics-grid {
+                grid-template-columns: 1fr 1fr;
+              }
+            }
+          `}</style>
+          <div className="wizard-metrics-grid" style={{ marginBottom: "1rem" }}>
             <div>
               <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: 0 }}>{t("totalTonnes")}</p>
               <p style={{ fontSize: "1.5rem", fontWeight: 800, color: colors.primary[700], margin: "0.25rem 0 0" }}>
@@ -754,7 +867,8 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+    <div style={{ maxWidth: "900px", margin: "0 auto", padding: "clamp(1rem, 4vw, 2rem)" }}>
+      <StepIndicator current="confirm" />
       <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 1rem" }}>
         {t("step3Title")}
       </h2>
