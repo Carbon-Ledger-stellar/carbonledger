@@ -55,9 +55,12 @@ export default function RetirementSuccessState({ retirement, onDownload }: Props
         >
           {formatTonnes(retirement.amount)} Permanently Retired
         </h1>
-        <p style={{ color: colors.neutral[500], margin: 0, fontSize: "0.95rem" }}>
+        <p style={{ color: colors.neutral[500], margin: "0 0 0.5rem", fontSize: "0.95rem" }}>
           On behalf of <strong style={{ color: colors.neutral[800] }}>{retirement.beneficiary}</strong>.
           Your certificate has been permanently recorded on Stellar.
+        </p>
+        <p style={{ color: colors.primary[700], margin: 0, fontSize: "0.9rem", fontWeight: 500 }}>
+          ≈ equivalent to {Math.round(retirement.amount * 0.217)} trees planted 🌳
         </p>
       </div>
 
@@ -124,12 +127,12 @@ export default function RetirementSuccessState({ retirement, onDownload }: Props
           background: colors.primary[600],
           color: "#fff",
           fontWeight: 700,
-          fontSize: "1rem",
+          fontSize: "1.1rem",
           cursor: "pointer",
           boxShadow: "0 4px 12px rgb(22 163 74 / 0.3)",
         }}
       >
-        ⬇ Download Certificate (PDF)
+        ⬇️ Download Certificate (PDF)
       </button>
 
       {/* Secondary actions */}
@@ -170,6 +173,56 @@ export default function RetirementSuccessState({ retirement, onDownload }: Props
         >
           View on Stellar →
         </a>
+      </div>
+
+      {/* Share buttons */}
+      <div style={{ display: "flex", gap: "0.75rem", width: "100%" }}>
+        <button
+          onClick={() => {
+            window.open(
+              `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(certUrl)}`,
+              "_blank",
+              "noopener,noreferrer"
+            );
+          }}
+          style={{
+            flex: 1,
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "none",
+            background: colors.primary[600],
+            color: "#fff",
+            fontWeight: 600,
+            fontSize: "0.875rem",
+            cursor: "pointer",
+          }}
+        >
+          🔗 Share on LinkedIn
+        </button>
+
+        <button
+          onClick={() => {
+            const shareText = `I just retired ${formatTonnes(retirement.amount)} of carbon credits on @CarbonLedger 🌿 #${retirement.beneficiary}`;
+            window.open(
+              `https://x.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(certUrl)}`,
+              "_blank",
+              "noopener,noreferrer"
+            );
+          }}
+          style={{
+            flex: 1,
+            padding: "0.75rem",
+            borderRadius: "0.5rem",
+            border: "none",
+            background: "#000000",
+            color: "#fff",
+            fontWeight: 600,
+            fontSize: "0.875rem",
+            cursor: "pointer",
+          }}
+        >
+          ✕ Share on X
+        </button>
       </div>
 
       <a
