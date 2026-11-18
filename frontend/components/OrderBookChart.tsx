@@ -282,6 +282,22 @@ function OrderBookChartImpl({ title = "Live SDEX order book" }: OrderBookChartPr
         </div>
       )}
 
+      {/* Legend */}
+      <div style={{ display: "flex", gap: spacing[4], alignItems: "center", fontSize: typography.fontSize.xs, color: colors.neutral[700] }}>
+        <span style={{ display: "flex", alignItems: "center", gap: spacing[1] }}>
+          <svg width="16" height="4" aria-hidden="true">
+            <rect width="16" height="4" rx="2" fill={colors.semantic?.success ?? colors.neutral[700]} />
+          </svg>
+          Bids
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: spacing[1] }}>
+          <svg width="16" height="4" aria-hidden="true">
+            <rect width="16" height="4" rx="2" fill={colors.semantic?.error ?? colors.neutral[700]} />
+          </svg>
+          Asks
+        </span>
+      </div>
+
       {!chart ? (
         <LoadingSkeleton width="100%" height="360px" />
       ) : (
@@ -296,6 +312,57 @@ function OrderBookChartImpl({ title = "Live SDEX order book" }: OrderBookChartPr
           <line x1={MARGIN.left} y1={VIEWBOX_HEIGHT - MARGIN.bottom} x2={VIEWBOX_WIDTH - MARGIN.right} y2={VIEWBOX_HEIGHT - MARGIN.bottom} stroke={colors.neutral[200]} />
           <line x1={MARGIN.left} y1={MARGIN.top} x2={MARGIN.left} y2={VIEWBOX_HEIGHT - MARGIN.bottom} stroke={colors.neutral[200]} />
 
+          {/* X axis label */}
+          <text
+            x={VIEWBOX_WIDTH / 2}
+            y={VIEWBOX_HEIGHT - 4}
+            textAnchor="middle"
+            fontSize={typography.fontSize.xs}
+            fill={colors.neutral[500]}
+          >
+            Price (USDC)
+          </text>
+
+          {/* Y axis label */}
+          <text
+            x={12}
+            y={VIEWBOX_HEIGHT / 2}
+            textAnchor="middle"
+            fontSize={typography.fontSize.xs}
+            fill={colors.neutral[500]}
+            transform={`rotate(-90, 12, ${VIEWBOX_HEIGHT / 2})`}
+          >
+            Volume (tCO₂e)
+          </text>
+
+          {/* X axis ticks */}
+          {chart && Array.from({ length: 5 }, (_, i) => {
+            const price = chart.minPrice + (i / 4) * (chart.maxPrice - chart.minPrice);
+            const x = chart.xScale(price);
+            return (
+              <g key={`x-tick-${i}`}>
+                <line x1={x} y1={VIEWBOX_HEIGHT - MARGIN.bottom} x2={x} y2={VIEWBOX_HEIGHT - MARGIN.bottom + 4} stroke={colors.neutral[300]} />
+                <text x={x} y={VIEWBOX_HEIGHT - MARGIN.bottom + 14} textAnchor="middle" fontSize={typography.fontSize.xs} fill={colors.neutral[500]}>
+                  {formatOrderBookPrice(price)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Y axis ticks */}
+          {chart && Array.from({ length: 4 }, (_, i) => {
+            const volume = ((i + 1) / 4) * chart.maxVolume;
+            const y = chart.yScale(volume);
+            return (
+              <g key={`y-tick-${i}`}>
+                <line x1={MARGIN.left - 4} y1={y} x2={MARGIN.left} y2={y} stroke={colors.neutral[300]} />
+                <text x={MARGIN.left - 6} y={y + 4} textAnchor="end" fontSize={typography.fontSize.xs} fill={colors.neutral[500]}>
+                  {formatOrderBookVolume(volume)}
+                </text>
+              </g>
+            );
+          })}
+
           {chart.fillRect && (
             <rect x={chart.fillRect.x} y={MARGIN.top} width={chart.fillRect.width} height={VIEWBOX_HEIGHT - MARGIN.top - MARGIN.bottom} fill={colors.primary?.[100] ?? colors.neutral[100]} opacity={0.6} />
           )}
@@ -306,6 +373,7 @@ function OrderBookChartImpl({ title = "Live SDEX order book" }: OrderBookChartPr
           {hovered && (
             <g>
               <circle cx={hovered.x} cy={hovered.y} r={4} fill={hovered.side === "ask" ? (colors.semantic?.error ?? colors.neutral[700]) : (colors.semantic?.success ?? colors.neutral[700])} />
+              <rect x={hovered.x + 6} y={hovered.y - 20} width={160} height={18} rx={3} fill="white" opacity={0.85} />
               <text x={hovered.x + 8} y={hovered.y - 8} fontSize={typography.fontSize.xs} fill={colors.neutral[900]}>
                 {formatOrderBookPrice(hovered.level.price)} · {formatOrderBookVolume(hovered.level.cumulative)}
               </text>

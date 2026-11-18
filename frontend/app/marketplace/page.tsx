@@ -47,7 +47,11 @@ const ProjectMap = dynamic(() => import("../../components/ProjectMap"), { ssr: f
 const LISTING_ROW_HEIGHT = 96;
 const LISTING_VIEWPORT_HEIGHT = 640;
 
-const VALID_SORT_FIELDS: ListingSortField[] = ["price", "vintageYear", "methodology", "verificationDate"];
+const VALID_SORT_FIELDS: ListingSortField[] = ["price", "vintageYear", "methodology", "verificationDate", "createdAt"];
+
+function isNewListing(createdAt: string): boolean {
+  return Date.now() - new Date(createdAt).getTime() < 48 * 60 * 60 * 1000;
+}
 
 function MarketplaceContent() {
   const t = useTranslations("marketplace");
@@ -374,7 +378,28 @@ function MarketplaceContent() {
 
                           {/* Project info */}
                           <div style={{ overflow: "hidden" }}>
-                            <p style={{ fontWeight: 700, fontSize: "0.95rem", color: colors.neutral[900], margin: "0 0 0.2rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            <p style={{ fontWeight: 700, fontSize: "0.95rem", color: colors.neutral[900], margin: "0 0 0.2rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                              {isNewListing(listing.createdAt) && (
+                                <span
+                                  aria-label="New listing"
+                                  style={{
+                                    display: "inline-block",
+                                    flexShrink: 0,
+                                    padding: "0.1rem 0.4rem",
+                                    fontSize: "0.65rem",
+                                    fontWeight: 700,
+                                    lineHeight: 1.4,
+                                    borderRadius: "0.25rem",
+                                    background: "#dcfce7",
+                                    color: "#166534",
+                                    border: "1px solid #86efac",
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.04em",
+                                  }}
+                                >
+                                  New
+                                </span>
+                              )}
                               <Highlight text={listing.projectName || listing.projectId} query={filters.search} />
                             </p>
                             <p style={{ fontSize: "0.75rem", color: colors.neutral[500], margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

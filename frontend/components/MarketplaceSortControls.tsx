@@ -12,6 +12,7 @@ interface Props {
 
 const SORT_FIELDS: { value: ListingSortField | ""; labelKey: string }[] = [
   { value: "", labelKey: "sortDefault" },
+  { value: "createdAt", labelKey: "sortNewest" },
   { value: "price", labelKey: "sortPrice" },
   { value: "vintageYear", labelKey: "sortVintage" },
   { value: "methodology", labelKey: "sortMethodology" },

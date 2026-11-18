@@ -187,6 +187,7 @@
   "marketplaceSort": {
     "sortBy": "排序方式",
     "sortDefault": "最新",
+    "sortNewest": "Newest",
     "sortPrice": "价格",
     "sortVintage": "年份",
     "sortMethodology": "方法学",
