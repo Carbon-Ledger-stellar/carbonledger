@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { MarketListing, bulkPurchase } from "../lib/api";
 import { connectFreighter } from "../lib/freighter";
@@ -141,6 +141,93 @@ function calculatePortfolioMetrics(items: WizardCartItem[]): PortfolioMetrics {
     methodologyBreakdown,
     costBreakdown: { subtotal, protocolFee, total },
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stepper — collapses to compact label-only form below 640 px (#1509)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WIZARD_STEPS: { id: WizardStep; label: string; shortLabel: string }[] = [
+  { id: "selection", label: "1. Select credits",  shortLabel: "1" },
+  { id: "preview",   label: "2. Review",           shortLabel: "2" },
+  { id: "confirm",   label: "3. Confirm & sign",   shortLabel: "3" },
+];
+
+function WizardStepper({ current }: { current: WizardStep }) {
+  const currentIdx = WIZARD_STEPS.findIndex((s) => s.id === current);
+  return (
+    <>
+      <style>{`
+        .bpw-stepper {
+          display: flex;
+          align-items: center;
+          gap: 0;
+          margin-bottom: 1.5rem;
+          overflow: hidden;
+        }
+        .bpw-step {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          font-size: 0.8rem;
+          font-weight: 600;
+          color: var(--color-neutral-400, #9ca3af);
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+        .bpw-step.active  { color: var(--color-primary-700, #15803d); }
+        .bpw-step.done    { color: var(--color-primary-600, #16a34a); }
+        .bpw-step-circle {
+          width: 1.5rem;
+          height: 1.5rem;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.7rem;
+          font-weight: 700;
+          border: 2px solid currentColor;
+          flex-shrink: 0;
+        }
+        .bpw-step.active  .bpw-step-circle { background: var(--color-primary-700, #15803d); color: #fff; border-color: var(--color-primary-700, #15803d); }
+        .bpw-step.done    .bpw-step-circle { background: var(--color-primary-100, #dcfce7); border-color: var(--color-primary-600, #16a34a); }
+        .bpw-step-label   { }
+        .bpw-step-divider {
+          flex: 1;
+          min-width: 0.5rem;
+          height: 2px;
+          background: var(--color-neutral-200, #e5e7eb);
+          margin: 0 0.4rem;
+        }
+        .bpw-step-divider.done { background: var(--color-primary-300, #6ee7b7); }
+        /* Compact mode: hide text labels, show only circles */
+        @media (max-width: 639px) {
+          .bpw-step-label { display: none; }
+          .bpw-step { gap: 0; }
+        }
+      `}</style>
+      <nav aria-label="Purchase wizard steps" className="bpw-stepper">
+        {WIZARD_STEPS.map((step, idx) => {
+          const isDone   = idx < currentIdx;
+          const isActive = idx === currentIdx;
+          const cls = `bpw-step${isActive ? " active" : isDone ? " done" : ""}`;
+          return (
+            <React.Fragment key={step.id}>
+              {idx > 0 && (
+                <div className={`bpw-step-divider${isDone ? " done" : ""}`} />
+              )}
+              <div className={cls} aria-current={isActive ? "step" : undefined}>
+                <span className="bpw-step-circle" aria-hidden="true">
+                  {isDone ? "✓" : step.shortLabel}
+                </span>
+                <span className="bpw-step-label">{step.label}</span>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </nav>
+    </>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -417,6 +504,17 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   if (step === "selection") {
     return (
       <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+        <style>{`
+          @media (max-width: 639px) {
+            .bpw-container { padding: 1rem !important; }
+            .bpw-metrics-grid { grid-template-columns: 1fr 1fr !important; }
+            .bpw-item-row { flex-direction: column !important; align-items: flex-start !important; gap: 0.5rem !important; }
+            .bpw-item-controls { width: 100% !important; justify-content: space-between !important; }
+            .bpw-nav { justify-content: stretch !important; }
+            .bpw-nav button { flex: 1 !important; }
+          }
+        `}</style>
+        <WizardStepper current={step} />
         <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 1rem" }}>
           {t("step1Title")}
         </h2>
@@ -519,7 +617,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                   marginBottom: "0.5rem",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="bpw-item-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <p style={{ fontWeight: 600, fontSize: "0.875rem", margin: 0 }}>
                       {listing.projectName || listing.projectId}
@@ -528,7 +626,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                       {listing.methodology} · {listing.vintageYear}
                     </p>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <div className="bpw-item-controls" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                     <input
                       type="number"
                       min={0.01}
@@ -545,19 +643,20 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                         fontSize: "0.875rem",
                       }}
                     />
-                  <button
-                    onClick={() => removeItem(listing.listingId)}
-                    aria-label={t("remove")}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: colors.neutral[400],
-                      cursor: "pointer",
-                      fontSize: "1rem",
-                    }}
-                  >
-                    ✕
-                  </button>
+                    <button
+                      onClick={() => removeItem(listing.listingId)}
+                      aria-label={t("remove")}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: colors.neutral[400],
+                        cursor: "pointer",
+                        fontSize: "1rem",
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
                 {amountErrors[listing.listingId] && (
                   <p style={{ fontSize: "0.75rem", color: colors.suspended.text, margin: "0.4rem 0 0" }}>
@@ -570,7 +669,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
         )}
 
         {/* Navigation */}
-        <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
+        <div className="bpw-nav" style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
           <button
             onClick={() => setStep("preview")}
             disabled={!canProceed}
@@ -601,6 +700,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
   if (step === "preview") {
     return (
       <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+        <WizardStepper current={step} />
         <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 1rem" }}>
           {t("step2Title")}
         </h2>
@@ -622,7 +722,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
             {t("portfolioMetrics")}
           </h3>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+          <div className="bpw-metrics-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
             <div>
               <p style={{ fontSize: "0.7rem", color: colors.neutral[500], margin: 0 }}>{t("totalTonnes")}</p>
               <p style={{ fontSize: "1.5rem", fontWeight: 800, color: colors.primary[700], margin: "0.25rem 0 0" }}>
@@ -755,6 +855,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
 
   return (
     <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+      <WizardStepper current={step} />
       <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 1rem" }}>
         {t("step3Title")}
       </h2>
@@ -797,7 +898,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
       </div>
 
       {/* CTA */}
-      <div style={{ display: "flex", gap: "1rem", justifyContent: "space-between" }}>
+      <div className="bpw-nav" style={{ display: "flex", gap: "1rem", justifyContent: "space-between" }}>
         <button
           onClick={() => setStep("preview")}
           disabled={!!busy}

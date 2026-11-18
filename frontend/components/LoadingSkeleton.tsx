@@ -2,7 +2,7 @@
 
 import { colors } from "../styles/design-system";
 
-type Variant = "CreditCard" | "MarketplaceItem" | "PoolStats" | "LoanCard" | "ProjectCard" | "ProvenanceTrail" | "Certificate" | "AuditItem" | "PricingTable" | "Table";
+type Variant = "CreditCard" | "MarketplaceItem" | "PoolStats" | "LoanCard" | "ProjectCard" | "ProvenanceTrail" | "Certificate" | "AuditItem" | "PricingTable" | "Table" | "Dashboard";
 
 interface Props {
   variant?: Variant;
@@ -324,6 +324,129 @@ function TableRowSkeleton({ columns = 4 }: { columns?: number }) {
   );
 }
 
+// Mirrors the full dashboard layout: 4 KPI cards, an ImpactCharts placeholder,
+// and an activity table — same grid columns, card heights and spacing as the
+// real page so there is zero layout shift when data arrives. (#1510)
+function DashboardSkeleton() {
+  return (
+    <div>
+      {/* KPI cards row — matches .dashboard-grid 4-column layout */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: "1rem",
+          marginBottom: "2rem",
+        }}
+        className="dashboard-skeleton-kpi"
+      >
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.neutral[200]}`,
+              borderRadius: "0.75rem",
+              padding: "1.5rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.75rem",
+              height: "96px",
+              boxSizing: "border-box",
+            }}
+          >
+            <Shimmer width="120px" height="14px" />
+            <Shimmer width="80px" height="28px" />
+          </div>
+        ))}
+      </div>
+
+      {/* ImpactCharts placeholder — two side-by-side chart blocks */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "1rem",
+          marginBottom: "2rem",
+        }}
+        className="dashboard-skeleton-charts"
+      >
+        {[0, 1].map((i) => (
+          <div
+            key={i}
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.neutral[200]}`,
+              borderRadius: "0.75rem",
+              padding: "1.25rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.75rem",
+            }}
+          >
+            <Shimmer width="140px" height="16px" />
+            <Shimmer width="100%" height="180px" borderRadius="0.5rem" />
+          </div>
+        ))}
+      </div>
+
+      {/* Recent activity table header + rows */}
+      <div
+        style={{
+          background: colors.surface,
+          border: `1px solid ${colors.neutral[200]}`,
+          borderRadius: "0.75rem",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 2fr 1fr",
+            gap: "1rem",
+            padding: "0.75rem 1rem",
+            borderBottom: `1px solid ${colors.neutral[100]}`,
+            background: colors.neutral[50],
+          }}
+        >
+          {["80px", "120px", "60px"].map((w, i) => (
+            <Shimmer key={i} width={w} height="12px" />
+          ))}
+        </div>
+        {/* Rows */}
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div
+            key={i}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 2fr 1fr",
+              gap: "1rem",
+              padding: "0.85rem 1rem",
+              borderBottom: i < 2 ? `1px solid ${colors.neutral[100]}` : undefined,
+              alignItems: "center",
+            }}
+          >
+            <Shimmer width="80px" height="14px" />
+            <Shimmer width="70%" height="14px" />
+            <Shimmer width="60px" height="14px" />
+          </div>
+        ))}
+      </div>
+
+      <style>{`
+        @media (max-width: 767px) {
+          .dashboard-skeleton-kpi   { grid-template-columns: 1fr 1fr !important; }
+          .dashboard-skeleton-charts { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 479px) {
+          .dashboard-skeleton-kpi { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 export default function LoadingSkeleton({ variant = "CreditCard", count = 1, className, columns }: Props) {
   const skeletons = Array.from({ length: count });
 
@@ -345,6 +468,7 @@ export default function LoadingSkeleton({ variant = "CreditCard", count = 1, cla
         if (variant === "AuditItem")       return <AuditItemSkeleton key={i} />;
         if (variant === "PricingTable")    return <PricingTableSkeleton key={i} />;
         if (variant === "Table")           return <TableRowSkeleton key={i} columns={columns} />;
+        if (variant === "Dashboard")       return <DashboardSkeleton key={i} />;
         return <CreditCardSkeleton key={i} />;
       })}
     </div>
