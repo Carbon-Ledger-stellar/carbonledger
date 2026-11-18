@@ -284,94 +284,131 @@ export default function VerifierProjectReviewPage() {
         {project.projectId} · {project.methodology} · {project.country} · Vintage {project.vintageYear}
       </p>
 
-      <section style={sectionStyle}>
-        <h2 style={h2Style}>Project metadata</h2>
-        <dl style={dlStyle}>
-          <Meta label="Status" value={project.status} />
-          <Meta label="Type" value={project.projectType} />
-          <Meta label="Methodology score" value={`${project.methodologyScore}/100`} />
-          <Meta label="Submitted" value={new Date(project.createdAt).toLocaleString()} />
-          <Meta label="Metadata CID" value={project.metadataCid} mono />
-        </dl>
-      </section>
-
-      {breakdown && (
-        <section style={sectionStyle}>
-          <h2 style={h2Style}>Methodology score breakdown</h2>
-          <p style={{ fontSize: "0.8rem", color: colors.neutral[500], marginTop: 0 }}>
-            Per METHODOLOGY_SCORING_RUBRIC.md — dimension weights sum to 100.
-          </p>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
-                <th style={{ textAlign: "left", padding: "0.5rem 0" }}>Dimension</th>
-                <th style={{ textAlign: "right", padding: "0.5rem 0" }}>Score</th>
-                <th style={{ textAlign: "right", padding: "0.5rem 0" }}>Max</th>
-              </tr>
-            </thead>
-            <tbody>
-              {RUBRIC_DIMENSIONS.map(dim => (
-                <tr key={dim.key} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                  <td style={{ padding: "0.45rem 0" }}>{dim.label}</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{breakdown[dim.key]}</td>
-                  <td style={{ textAlign: "right", color: colors.neutral[500] }}>{dim.max}</td>
-                </tr>
-              ))}
-              <tr>
-                <td style={{ padding: "0.5rem 0", fontWeight: 700 }}>Total</td>
-                <td style={{ textAlign: "right", fontWeight: 700 }}>{breakdown.total}</td>
-                <td style={{ textAlign: "right", color: colors.neutral[500] }}>100</td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      {docCid && (
-        <section style={sectionStyle}>
-          <h2 style={h2Style}>Project documentation (IPFS)</h2>
-          <iframe
-            src={`https://ipfs.io/ipfs/${docCid}`}
-            title={`Documentation for ${project.name}`}
+      {/* Split view: document left, data right */}
+      <style>{`
+        @media (max-width: 900px) {
+          .vr-split { flex-direction: column !important; }
+          .vr-doc-col { position: static !important; }
+        }
+      `}</style>
+      <div
+        className="vr-split"
+        style={{
+          display: "flex",
+          gap: "1.25rem",
+          alignItems: "flex-start",
+          marginTop: "1.5rem",
+        }}
+      >
+        {/* Left: document viewer */}
+        {docCid && (
+          <div
+            className="vr-doc-col"
             style={{
-              width: "100%",
-              height: "55vh",
-              border: "1px solid #e5e7eb",
-              borderRadius: 6,
+              flex: "0 0 48%",
+              position: "sticky",
+              top: "1rem",
+              maxHeight: "calc(100vh - 2rem)",
+              overflowY: "auto",
             }}
-          />
-          <p style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-            <a href={`https://ipfs.io/ipfs/${docCid}`} target="_blank" rel="noopener noreferrer">
-              Open PDF in new tab ↗
-            </a>
-          </p>
-        </section>
-      )}
-
-      <section style={sectionStyle}>
-        <h2 style={h2Style}>Attestation checklist — {project.methodology}</h2>
-        <p style={{ fontSize: "0.8rem", color: colors.neutral[500], marginTop: 0 }}>
-          Every item must be confirmed before an on-chain attestation can be submitted.
-        </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-          {checklist.map(item => (
-            <label key={item.key} style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", fontSize: "0.875rem", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={checkedItems.has(item.key)}
-                onChange={() => toggleChecklistItem(item.key)}
-                style={{ marginTop: "0.2rem" }}
+          >
+            <section style={sectionStyle}>
+              <h2 style={h2Style}>Project documentation (IPFS)</h2>
+              <iframe
+                src={`https://ipfs.io/ipfs/${docCid}`}
+                title={`Documentation for ${project.name}`}
+                style={{
+                  width: "100%",
+                  height: "calc(100vh - 14rem)",
+                  minHeight: "400px",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 6,
+                }}
               />
-              <span>{item.label}</span>
-            </label>
-          ))}
-        </div>
-        {!checklistComplete && (
-          <p style={{ fontSize: "0.75rem", color: colors.neutral[500], marginTop: "0.75rem" }}>
-            {checkedItems.size}/{checklist.length} confirmed
-          </p>
+              <p style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
+                <a
+                  href={`https://ipfs.io/ipfs/${docCid}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open PDF in new tab ↗
+                </a>
+              </p>
+            </section>
+          </div>
         )}
-      </section>
+
+        {/* Right: metadata + score + checklist */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <section style={sectionStyle}>
+            <h2 style={h2Style}>Project metadata</h2>
+            <dl style={dlStyle}>
+              <Meta label="Status" value={project.status} />
+              <Meta label="Type" value={project.projectType} />
+              <Meta label="Methodology score" value={`${project.methodologyScore}/100`} />
+              <Meta label="Submitted" value={new Date(project.createdAt).toLocaleString()} />
+              <Meta label="Metadata CID" value={project.metadataCid} mono />
+            </dl>
+          </section>
+
+          {breakdown && (
+            <section style={{ ...sectionStyle, marginTop: "1rem" }}>
+              <h2 style={h2Style}>Methodology score breakdown</h2>
+              <p style={{ fontSize: "0.8rem", color: colors.neutral[500], marginTop: 0 }}>
+                Per METHODOLOGY_SCORING_RUBRIC.md — dimension weights sum to 100.
+              </p>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
+                    <th style={{ textAlign: "left", padding: "0.5rem 0" }}>Dimension</th>
+                    <th style={{ textAlign: "right", padding: "0.5rem 0" }}>Score</th>
+                    <th style={{ textAlign: "right", padding: "0.5rem 0" }}>Max</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {RUBRIC_DIMENSIONS.map(dim => (
+                    <tr key={dim.key} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                      <td style={{ padding: "0.45rem 0" }}>{dim.label}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{breakdown[dim.key]}</td>
+                      <td style={{ textAlign: "right", color: colors.neutral[500] }}>{dim.max}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ padding: "0.5rem 0", fontWeight: 700 }}>Total</td>
+                    <td style={{ textAlign: "right", fontWeight: 700 }}>{breakdown.total}</td>
+                    <td style={{ textAlign: "right", color: colors.neutral[500] }}>100</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          <section style={{ ...sectionStyle, marginTop: "1rem" }}>
+            <h2 style={h2Style}>Attestation checklist — {project.methodology}</h2>
+            <p style={{ fontSize: "0.8rem", color: colors.neutral[500], marginTop: 0 }}>
+              Every item must be confirmed before an on-chain attestation can be submitted.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+              {checklist.map(item => (
+                <label key={item.key} style={{ display: "flex", alignItems: "flex-start", gap: "0.6rem", fontSize: "0.875rem", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={checkedItems.has(item.key)}
+                    onChange={() => toggleChecklistItem(item.key)}
+                    style={{ marginTop: "0.2rem" }}
+                  />
+                  <span>{item.label}</span>
+                </label>
+              ))}
+            </div>
+            {!checklistComplete && (
+              <p style={{ fontSize: "0.75rem", color: colors.neutral[500], marginTop: "0.75rem" }}>
+                {checkedItems.size}/{checklist.length} confirmed
+              </p>
+            )}
+          </section>
+        </div>
+      </div>
 
       {txStatus && (
         <div style={{ marginBottom: "1rem" }}>
@@ -385,16 +422,29 @@ export default function VerifierProjectReviewPage() {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-        <button
-          type="button"
-          disabled={submitting || !checklistComplete}
-          title={!checklistComplete ? "Complete the attestation checklist first" : undefined}
-          onClick={() => setPending({ decision: "verify" })}
-          style={{ ...actionBtn, background: "#16a34a", opacity: submitting || !checklistComplete ? 0.5 : 1 }}
-        >
-          Approve
-        </button>
+      {/* Sticky approve/reject footer */}
+      <div
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          background: "#fff",
+          borderTop: "1px solid #e5e7eb",
+          padding: "0.75rem 1.5rem",
+          display: "flex",
+          gap: "0.75rem",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          zIndex: 50,
+          boxShadow: "0 -2px 8px rgba(0,0,0,0.06)",
+        }}
+      >
+        {!checklistComplete && (
+          <span style={{ fontSize: "0.78rem", color: colors.neutral[500], marginRight: "auto" }}>
+            Complete all checklist items to approve
+          </span>
+        )}
         <button
           type="button"
           disabled={submitting}
@@ -405,6 +455,15 @@ export default function VerifierProjectReviewPage() {
           style={{ ...actionBtn, background: "#dc2626" }}
         >
           Reject
+        </button>
+        <button
+          type="button"
+          disabled={submitting || !checklistComplete}
+          title={!checklistComplete ? "Complete the attestation checklist first" : undefined}
+          onClick={() => setPending({ decision: "verify" })}
+          style={{ ...actionBtn, background: "#16a34a", opacity: submitting || !checklistComplete ? 0.5 : 1 }}
+        >
+          Approve
         </button>
       </div>
 
@@ -441,7 +500,7 @@ function Meta({ label, value, mono }: { label: string; value: string; mono?: boo
   );
 }
 
-const mainStyle: React.CSSProperties = { maxWidth: 960, margin: "2.5rem auto", padding: "0 1rem" };
+const mainStyle: React.CSSProperties = { maxWidth: 1400, margin: "2.5rem auto", padding: "0 1rem 5rem" };
 const sectionStyle: React.CSSProperties = {
   marginTop: "1.75rem",
   padding: "1.25rem",
