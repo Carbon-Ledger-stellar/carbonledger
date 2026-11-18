@@ -81,6 +81,7 @@ export default function ProjectRegistrationForm() {
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [message, setMessage] = useState("");
+  const [showSummary, setShowSummary] = useState(false);
 
   const {
     errors,
@@ -147,7 +148,11 @@ export default function ProjectRegistrationForm() {
   }
 
   function advance() {
-    if (step === 0 && !validateStep0()) return;
+    if (step === 0 && !validateStep0()) {
+      setShowSummary(true);
+      return;
+    }
+    setShowSummary(false);
     if (step === 1) {
       // Require either a file upload or a manually entered CID
       if (!form.documentsCid && !docFile) {
@@ -226,22 +231,66 @@ export default function ProjectRegistrationForm() {
       {step === 0 && (
         <div style={fieldsetStyle}>
           <h2 style={headingStyle}>Project Metadata</h2>
-          <Field label="Project Name" error={errors.name}>
-            <input style={inputStyle(!!errors.name)} value={form.name} onChange={set("name")}
+          {showSummary && Object.values(errors).some(Boolean) && (
+            <div
+              role="alert"
+              aria-live="assertive"
+              style={{
+                background: colors.suspended.bg,
+                border: `1px solid ${colors.suspended.border}`,
+                borderRadius: borderRadius.md,
+                padding: "0.75rem 1rem",
+                fontSize: "0.8rem",
+                color: colors.suspended.text,
+              }}
+            >
+              <p style={{ fontWeight: 700, margin: "0 0 0.4rem" }}>
+                Please fix the following errors:
+              </p>
+              <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
+                {(Object.entries(errors) as [keyof FormState, string | undefined][])
+                  .filter(([, msg]) => Boolean(msg))
+                  .map(([field, msg]) => (
+                    <li key={field}>
+                      <a
+                        href={`#field-${field}`}
+                        style={{ color: colors.suspended.text, textDecoration: "underline" }}
+                      >
+                        {msg}
+                      </a>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+          <Field label="Project Name" error={errors.name} fieldId="field-name">
+            <input
+              id="field-name"
+              aria-invalid={!!errors.name || undefined}
+              aria-describedby={errors.name ? "field-name-error" : undefined}
+              style={inputStyle(!!errors.name)} value={form.name} onChange={set("name")}
               onBlur={() => handleBlur('name')}
               autoComplete="organization"
               placeholder="Amazon Reforestation Initiative" />
           </Field>
           <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-            <Field label="Methodology" error={errors.methodology}>
-              <select style={inputStyle(!!errors.methodology)} value={form.methodology} onChange={set("methodology")}
+            <Field label="Methodology" error={errors.methodology} fieldId="field-methodology">
+              <select
+                id="field-methodology"
+                aria-invalid={!!errors.methodology || undefined}
+                aria-describedby={errors.methodology ? "field-methodology-error" : undefined}
+                style={inputStyle(!!errors.methodology)} value={form.methodology} onChange={set("methodology")}
                 onBlur={() => handleBlur('methodology')}>
                 <option value="">Select...</option>
                 {METHODOLOGIES.map(m => <option key={m}>{m}</option>)}
               </select>
             </Field>
-            <Field label="Project Type" error={errors.projectType}>
-              <select style={inputStyle(!!errors.projectType)} value={form.projectType} onChange={set("projectType")}
+            <Field label="Project Type" error={errors.projectType} fieldId="field-projectType">
+              <select
+                id="field-projectType"
+                aria-invalid={!!errors.projectType || undefined}
+                aria-describedby={errors.projectType ? "field-projectType-error" : undefined}
+                style={inputStyle(!!errors.projectType)} value={form.projectType} onChange={set("projectType")}
                 onBlur={() => handleBlur('projectType')}>
                 <option value="">Select...</option>
                 {PROJECT_TYPES.map(t => <option key={t}>{t}</option>)}
@@ -249,15 +298,23 @@ export default function ProjectRegistrationForm() {
             </Field>
           </div>
           <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-            <Field label="Country" error={errors.country}>
-              <select style={inputStyle(!!errors.country)} value={form.country} onChange={set("country")}
+            <Field label="Country" error={errors.country} fieldId="field-country">
+              <select
+                id="field-country"
+                aria-invalid={!!errors.country || undefined}
+                aria-describedby={errors.country ? "field-country-error" : undefined}
+                style={inputStyle(!!errors.country)} value={form.country} onChange={set("country")}
                 onBlur={() => handleBlur('country')}>
                 <option value="">Select...</option>
                 {COUNTRIES.map(c => <option key={c}>{c}</option>)}
               </select>
             </Field>
-            <Field label="Vintage Year" error={errors.vintageYear}>
-              <select style={inputStyle(!!errors.vintageYear)} value={form.vintageYear} onChange={set("vintageYear")}
+            <Field label="Vintage Year" error={errors.vintageYear} fieldId="field-vintageYear">
+              <select
+                id="field-vintageYear"
+                aria-invalid={!!errors.vintageYear || undefined}
+                aria-describedby={errors.vintageYear ? "field-vintageYear-error" : undefined}
+                style={inputStyle(!!errors.vintageYear)} value={form.vintageYear} onChange={set("vintageYear")}
                 onBlur={() => handleBlur('vintageYear')}>
                 <option value="">Select...</option>
                 {["2020","2021","2022","2023","2024","2025"].map(y => <option key={y}>{y}</option>)}
@@ -265,33 +322,53 @@ export default function ProjectRegistrationForm() {
             </Field>
           </div>
           <div className="prf-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-            <Field label="Latitude" error={errors.latitude}>
-              <input style={inputStyle(!!errors.latitude)} value={form.latitude} onChange={set("latitude")}
+            <Field label="Latitude" error={errors.latitude} fieldId="field-latitude">
+              <input
+                id="field-latitude"
+                aria-invalid={!!errors.latitude || undefined}
+                aria-describedby={errors.latitude ? "field-latitude-error" : undefined}
+                style={inputStyle(!!errors.latitude)} value={form.latitude} onChange={set("latitude")}
                 onBlur={() => handleBlur('latitude')}
                 placeholder="-3.4653" type="number" inputMode="decimal" step="any" />
             </Field>
-            <Field label="Longitude" error={errors.longitude}>
-              <input style={inputStyle(!!errors.longitude)} value={form.longitude} onChange={set("longitude")}
+            <Field label="Longitude" error={errors.longitude} fieldId="field-longitude">
+              <input
+                id="field-longitude"
+                aria-invalid={!!errors.longitude || undefined}
+                aria-describedby={errors.longitude ? "field-longitude-error" : undefined}
+                style={inputStyle(!!errors.longitude)} value={form.longitude} onChange={set("longitude")}
                 onBlur={() => handleBlur('longitude')}
                 placeholder="-62.2159" type="number" inputMode="decimal" step="any" />
             </Field>
           </div>
-          <Field label="Description" error={errors.description}>
-            <textarea style={{ ...inputStyle(!!errors.description), minHeight: 80, resize: "vertical" }}
+          <Field label="Description" error={errors.description} fieldId="field-description">
+            <textarea
+              id="field-description"
+              aria-invalid={!!errors.description || undefined}
+              aria-describedby={errors.description ? "field-description-error" : undefined}
+              style={{ ...inputStyle(!!errors.description), minHeight: 80, resize: "vertical" }}
               value={form.description} onChange={set("description")}
               onBlur={() => handleBlur('description')}
               placeholder="Brief description of the project and its impact..." />
           </Field>
-          <Field label="Contact Email" error={errors.contactEmail}>
-            <input style={inputStyle(!!errors.contactEmail)} type="email"
+          <Field label="Contact Email" error={errors.contactEmail} fieldId="field-contactEmail">
+            <input
+              id="field-contactEmail"
+              aria-invalid={!!errors.contactEmail || undefined}
+              aria-describedby={errors.contactEmail ? "field-contactEmail-error" : undefined}
+              style={inputStyle(!!errors.contactEmail)} type="email"
               inputMode="email"
               autoComplete="email"
               value={form.contactEmail} onChange={set("contactEmail")}
               onBlur={() => handleBlur('contactEmail')}
               placeholder="you@example.com" />
           </Field>
-          <Field label="Developer Stellar Public Key" error={errors.developerPublicKey}>
-            <input style={inputStyle(!!errors.developerPublicKey)}
+          <Field label="Developer Stellar Public Key" error={errors.developerPublicKey} fieldId="field-developerPublicKey">
+            <input
+              id="field-developerPublicKey"
+              aria-invalid={!!errors.developerPublicKey || undefined}
+              aria-describedby={errors.developerPublicKey ? "field-developerPublicKey-error" : undefined}
+              style={inputStyle(!!errors.developerPublicKey)}
               autoComplete="off"
               inputMode="text"
               value={form.developerPublicKey} onChange={set("developerPublicKey")}
@@ -429,14 +506,36 @@ export default function ProjectRegistrationForm() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function Field({ label, error, children }: {
-  label: string; error?: string; children: React.ReactNode;
+function Field({
+  label,
+  error,
+  fieldId,
+  children,
+}: {
+  label: string;
+  error?: string;
+  fieldId?: string;
+  children: React.ReactNode;
 }) {
+  const errorId = fieldId ? `${fieldId}-error` : undefined;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-      <label style={{ fontSize: "0.8rem", fontWeight: 600, color: colors.neutral[600] }}>{label}</label>
+      <label
+        htmlFor={fieldId}
+        style={{ fontSize: "0.8rem", fontWeight: 600, color: colors.neutral[600] }}
+      >
+        {label}
+      </label>
       {children}
-      {error && <span style={{ fontSize: "0.75rem", color: colors.suspended.text }}>{error}</span>}
+      {error && (
+        <span
+          id={errorId}
+          role="alert"
+          style={{ fontSize: "0.75rem", color: colors.suspended.text }}
+        >
+          {error}
+        </span>
+      )}
     </div>
   );
 }

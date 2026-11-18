@@ -11,6 +11,7 @@ import { useLocaleFormatters } from "../../lib/i18n/format";
 import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionSigningSteps from "../../components/TransactionSigningSteps";
 import TransactionPreview from "../../components/TransactionPreview";
 import { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
@@ -134,8 +135,8 @@ function BuyPageContent() {
     setConfirming(true);
     let succeeded = false;
     await runBuy(async () => {
-      setTxStatus("pending");
-      setTxStatus("submitted");
+      setTxStatus("building");
+      setTxStatus("signing");
       const result = await purchaseCredits(
         listing.listingId,
         amount,
@@ -407,16 +408,22 @@ function BuyPageContent() {
 
             {/* Transaction status */}
             {txStatus && (
-              <TransactionStatus
-                status={txStatus}
-                txHash={txHash ?? undefined}
-                message={
-                  txStatus === "failed"
-                    ? getContractErrorMessage(buyError)
-                    : undefined
-                }
-                onRetry={txStatus === "failed" ? handlePurchase : undefined}
-              />
+              <div style={{ position: "relative" }}>
+                <TransactionSigningSteps
+                  status={txStatus}
+                  timedOut={txStatus === "timed_out"}
+                />
+                <TransactionStatus
+                  status={txStatus}
+                  txHash={txHash ?? undefined}
+                  message={
+                    txStatus === "failed"
+                      ? getContractErrorMessage(buyError)
+                      : undefined
+                  }
+                  onRetry={txStatus === "failed" ? handlePurchase : undefined}
+                />
+              </div>
             )}
 
             {/* Wallet prompt or "Preview purchase" CTA */}
