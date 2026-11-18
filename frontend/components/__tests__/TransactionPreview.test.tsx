@@ -329,3 +329,76 @@ describe('TransactionPreview — accessibility', () => {
     expect(screen.getByRole('region', { name: /transaction preview/i })).toBeInTheDocument();
   });
 });
+
+// ── Fee breakdown (#1511) ─────────────────────────────────────────────────────
+
+describe('TransactionPreview — fee breakdown (#1511)', () => {
+  const previewWithBreakdown: PreviewState = {
+    loading: false,
+    ready: true,
+    effects: [{ label: 'Credits received', value: '10 credits' }],
+    feeBreakdown: {
+      subtotal: '100.00 USDC',
+      platformFee: '1.00 USDC',
+      networkFee: '0.0001 XLM',
+      total: '101.00 USDC + 0.0001 XLM',
+    },
+  };
+
+  it('renders the subtotal row', () => {
+    render(<TransactionPreview preview={previewWithBreakdown} />);
+    expect(screen.getByText('Subtotal')).toBeInTheDocument();
+    expect(screen.getByText('100.00 USDC')).toBeInTheDocument();
+  });
+
+  it('renders the platform fee row', () => {
+    render(<TransactionPreview preview={previewWithBreakdown} />);
+    expect(screen.getByText('Platform fee')).toBeInTheDocument();
+    expect(screen.getByText('1.00 USDC')).toBeInTheDocument();
+  });
+
+  it('renders the network fee row', () => {
+    render(<TransactionPreview preview={previewWithBreakdown} />);
+    expect(screen.getByText('Network fee')).toBeInTheDocument();
+    expect(screen.getByText('0.0001 XLM')).toBeInTheDocument();
+  });
+
+  it('renders the total row', () => {
+    render(<TransactionPreview preview={previewWithBreakdown} />);
+    expect(screen.getByText('Total')).toBeInTheDocument();
+    expect(screen.getByText('101.00 USDC + 0.0001 XLM')).toBeInTheDocument();
+  });
+
+  it('renders tooltip buttons for subtotal, platform fee and network fee', () => {
+    render(<TransactionPreview preview={previewWithBreakdown} />);
+    // Each FeeTooltip renders a button with aria-label "Fee explanation: …"
+    const tooltipBtns = screen
+      .getAllByRole('button')
+      .filter((b) => b.getAttribute('aria-label')?.startsWith('Fee explanation:'));
+    expect(tooltipBtns.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('shows tooltip text on hover for the platform fee', async () => {
+    render(<TransactionPreview preview={previewWithBreakdown} />);
+    const platformTooltipBtn = screen
+      .getAllByRole('button')
+      .find((b) => b.getAttribute('aria-label')?.includes('platform fee') ||
+        b.getAttribute('aria-label')?.includes('1%'));
+    if (platformTooltipBtn) {
+      fireEvent.mouseEnter(platformTooltipBtn);
+      expect(screen.getByRole('tooltip')).toBeInTheDocument();
+      fireEvent.mouseLeave(platformTooltipBtn);
+    }
+  });
+
+  it('falls back to feeEstimate when feeBreakdown is absent', () => {
+    render(<TransactionPreview preview={readyPreview} />);
+    expect(screen.getByText('Estimated total fee')).toBeInTheDocument();
+  });
+
+  it('omits fee section when neither feeBreakdown nor feeEstimate is set', () => {
+    render(<TransactionPreview preview={readyNoFeePreview} />);
+    expect(screen.queryByText('Subtotal')).not.toBeInTheDocument();
+    expect(screen.queryByText('Estimated total fee')).not.toBeInTheDocument();
+  });
+});

@@ -39,20 +39,7 @@ export default function DashboardPage() {
       </h1>
 
       {isLoading ? (
-        <>
-          <div className="dashboard-grid" style={{ marginBottom: '32px' }}>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="card" style={{ height: '96px' }}>
-                <LoadingSkeleton variant="PoolStats" />
-              </div>
-            ))}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} style={{ height: '48px', borderRadius: '8px', background: '#f3f4f6', animation: 'cl-pulse 1.5s ease-in-out infinite' }} />
-            ))}
-          </div>
-        </>
+        <LoadingSkeleton variant="Dashboard" />
       ) : hasData ? (
         <>
           {/* Stats Grid */}
