@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 
+export type UserRole = "buyer" | "developer" | "verifier";
+
 export interface OnboardingProject {
   id: string;
   name: string;
@@ -15,6 +17,7 @@ export interface OnboardingProfile {
 }
 
 export interface OnboardingCompletion {
+  role: UserRole;
   profile: OnboardingProfile;
   projectId: string;
   creditAmount: number;
@@ -26,6 +29,7 @@ export interface OnboardingFlowProps {
   projects?: OnboardingProject[];
   initialProfile?: Partial<OnboardingProfile>;
   initialProjectId?: string;
+  initialRole?: UserRole;
   onConnectWallet?: () => void;
   onBrowseProjects?: () => void;
   onBuyCredit?: (projectId: string, amount: number) => void;
@@ -34,13 +38,30 @@ export interface OnboardingFlowProps {
   onSkip?: () => void;
 }
 
-const STEP_NAMES = [
-  "Connect Wallet",
-  "Create Profile",
-  "Browse Projects",
-  "Buy Credit",
-  "Retire & Get Certificate",
-] as const;
+const ROLE_CONFIG: Record<UserRole, { label: string; icon: string; description: string }> = {
+  buyer: {
+    label: "Buyer",
+    icon: "💼",
+    description: "Purchase and retire verified carbon credits on behalf of your organisation.",
+  },
+  developer: {
+    label: "Project Developer",
+    icon: "🌱",
+    description: "Register, monitor and mint carbon credits from your sustainability project.",
+  },
+  verifier: {
+    label: "Verifier",
+    icon: "✅",
+    description: "Audit and certify projects to ensure they meet registry standards.",
+  },
+};
+
+/** Step names vary by role; we show the full buyer flow by default. */
+const STEP_NAMES_BY_ROLE: Record<UserRole, readonly string[]> = {
+  buyer:     ["Your role", "Connect Wallet", "Create Profile", "Browse Projects", "Buy Credit", "Retire & Get Certificate"] as const,
+  developer: ["Your role", "Connect Wallet", "Create Profile", "Browse Projects", "Buy Credit", "Retire & Get Certificate"] as const,
+  verifier:  ["Your role", "Connect Wallet", "Create Profile", "Browse Projects", "Buy Credit", "Retire & Get Certificate"] as const,
+};
 
 const DEFAULT_PROJECTS: OnboardingProject[] = [
   { id: "amazon-forest", name: "Amazon Forest Protection", location: "Brazil", availableCredits: 1200 },
@@ -103,7 +124,13 @@ const styles = `
   .onboarding-flow__project input { accent-color: var(--onboarding-accent); }
   .onboarding-flow__project-copy { display: grid; gap: 0.2rem; }
   .onboarding-flow__project-copy small { color: var(--onboarding-muted); }
-  .onboarding-flow__error { color: #b91c1c; font-size: 0.875rem; margin: 0.65rem 0 0; }
+  .onboarding-flow__roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.75rem; }
+  .onboarding-flow__role { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 0.5rem; border: 2px solid var(--onboarding-border); border-radius: 0.75rem; padding: 1.1rem 0.75rem; cursor: pointer; transition: border-color 200ms, background 200ms; }
+  .onboarding-flow__role:has(input:checked) { border-color: var(--onboarding-accent); background: color-mix(in srgb, var(--onboarding-accent) 8%, var(--onboarding-surface)); }
+  .onboarding-flow__role input { position: absolute; opacity: 0; pointer-events: none; }
+  .onboarding-flow__role-icon { font-size: 2rem; line-height: 1; }
+  .onboarding-flow__role-label { font-weight: 700; font-size: 0.9rem; }
+  .onboarding-flow__role-desc { color: var(--onboarding-muted); font-size: 0.78rem; line-height: 1.45; }  .onboarding-flow__error { color: #b91c1c; font-size: 0.875rem; margin: 0.65rem 0 0; }
   .onboarding-flow__actions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; border-top: 1px solid var(--onboarding-border); padding: 1rem 1.5rem; }
   .onboarding-flow__actions-right { display: flex; gap: 0.65rem; margin-left: auto; }
   .onboarding-flow button { border: 0; border-radius: 0.5rem; cursor: pointer; font: inherit; font-weight: 700; padding: 0.7rem 1rem; }
@@ -138,6 +165,7 @@ export default function OnboardingFlow({
   projects = DEFAULT_PROJECTS,
   initialProfile,
   initialProjectId,
+  initialRole,
   onConnectWallet,
   onBrowseProjects,
   onBuyCredit,
@@ -147,6 +175,7 @@ export default function OnboardingFlow({
 }: OnboardingFlowProps) {
   const [currentStep, setCurrentStep] = useState(0);
   const [direction, setDirection] = useState<"forward" | "back">("forward");
+  const [role, setRole] = useState<UserRole>(initialRole ?? "buyer");
   const [profile, setProfile] = useState<OnboardingProfile>({ name: initialProfile?.name ?? "", email: initialProfile?.email ?? "" });
   const [projectId, setProjectId] = useState(initialProjectId ?? projects[0]?.id ?? "");
   const [creditAmount, setCreditAmount] = useState(1);
@@ -154,12 +183,16 @@ export default function OnboardingFlow({
   const [error, setError] = useState("");
   const [complete, setComplete] = useState(false);
 
+  const STEP_NAMES = STEP_NAMES_BY_ROLE[role];
+  const TOTAL_STEPS = STEP_NAMES.length; // 6 steps: role + 5 original
+
   const validateStep = () => {
-    if (currentStep === 0 && !walletAddress) return "Connect a wallet to continue.";
-    if (currentStep === 1 && !profile.name.trim()) return "Enter your name to create a profile.";
-    if (currentStep === 2 && !projectId) return "Choose a project to continue.";
-    if (currentStep === 3 && (!Number.isInteger(creditAmount) || creditAmount < 1)) return "Enter at least one credit.";
-    if (currentStep === 4 && !retirementReason.trim()) return "Add a reason for this retirement.";
+    if (currentStep === 0) return ""; // role always has a selection
+    if (currentStep === 1 && !walletAddress) return "Connect a wallet to continue.";
+    if (currentStep === 2 && !profile.name.trim()) return "Enter your name to create a profile.";
+    if (currentStep === 3 && !projectId) return "Choose a project to continue.";
+    if (currentStep === 4 && (!Number.isInteger(creditAmount) || creditAmount < 1)) return "Enter at least one credit.";
+    if (currentStep === 5 && !retirementReason.trim()) return "Add a reason for this retirement.";
     return "";
   };
 
@@ -170,12 +203,12 @@ export default function OnboardingFlow({
       return;
     }
     setError("");
-    if (currentStep === 2) onBrowseProjects?.();
-    if (currentStep === 3) onBuyCredit?.(projectId, creditAmount);
-    if (currentStep === 4) {
+    if (currentStep === 3) onBrowseProjects?.();
+    if (currentStep === 4) onBuyCredit?.(projectId, creditAmount);
+    if (currentStep === 5) {
       onRetireCredit?.(projectId, creditAmount, retirementReason.trim());
       setComplete(true);
-      onComplete?.({ profile, projectId, creditAmount, retirementReason: retirementReason.trim() });
+      onComplete?.({ role, profile, projectId, creditAmount, retirementReason: retirementReason.trim() });
       return;
     }
     setDirection("forward");
@@ -202,9 +235,9 @@ export default function OnboardingFlow({
           <h1 className="onboarding-flow__title">Your climate impact, made clear.</h1>
           <p className="onboarding-flow__subtitle">A few quick steps to move from wallet connection to your first verified retirement.</p>
         </header>
-        <div className="onboarding-flow__progress" aria-label={`Step ${complete ? 5 : currentStep + 1} of 5`}>
-          <div className="onboarding-flow__progress-track" role="progressbar" aria-valuemin={1} aria-valuemax={5} aria-valuenow={complete ? 5 : currentStep + 1}>
-            <div className="onboarding-flow__progress-value" style={{ width: `${((complete ? 5 : currentStep + 1) / 5) * 100}%` }} />
+        <div className="onboarding-flow__progress" aria-label={`Step ${complete ? TOTAL_STEPS : currentStep + 1} of ${TOTAL_STEPS}`}>
+          <div className="onboarding-flow__progress-track" role="progressbar" aria-valuemin={1} aria-valuemax={TOTAL_STEPS} aria-valuenow={complete ? TOTAL_STEPS : currentStep + 1}>
+            <div className="onboarding-flow__progress-value" style={{ width: `${((complete ? TOTAL_STEPS : currentStep + 1) / TOTAL_STEPS) * 100}%` }} />
           </div>
           <div className="onboarding-flow__steps" aria-hidden="true">
             {STEP_NAMES.map((name, index) => <span className="onboarding-flow__step-label" data-current={!complete && currentStep === index} key={name}>{name}</span>)}
@@ -224,16 +257,57 @@ export default function OnboardingFlow({
               </div>
             ) : (
               <div className="onboarding-flow__panel" data-direction={direction} key={currentStep}>
-                {currentStep === 0 && <><h2>Connect your wallet</h2><p>Use your Stellar wallet to securely own and retire verified credits.</p>{walletAddress ? <div className="onboarding-flow__wallet" aria-label="Connected wallet">Connected: {walletAddress}</div> : <button className="onboarding-flow__next" type="button" onClick={onConnectWallet}>Connect Wallet</button>}</>}
-                {currentStep === 1 && <><h2>Create your profile</h2><p>Tell us who should appear on your retirement certificate.</p><div className="onboarding-flow__field"><label htmlFor="onboarding-name">Name</label><input id="onboarding-name" value={profile.name} onChange={(event) => setProfile({ ...profile, name: event.target.value })} autoComplete="name" /></div><div className="onboarding-flow__field"><label htmlFor="onboarding-email">Email (optional)</label><input id="onboarding-email" type="email" value={profile.email} onChange={(event) => setProfile({ ...profile, email: event.target.value })} autoComplete="email" /></div></>}
-                {currentStep === 2 && <><h2>Browse verified projects</h2><p>Choose a project with a story you want to support.</p><div className="onboarding-flow__projects">{projects.map((project) => <label className="onboarding-flow__project" key={project.id}><input type="radio" name="onboarding-project" value={project.id} checked={projectId === project.id} onChange={() => setProjectId(project.id)} /><span className="onboarding-flow__project-copy"><strong>{project.name}</strong><small>{project.location ?? "Verified project"}{project.availableCredits ? ` · ${project.availableCredits.toLocaleString()} credits available` : ""}</small></span></label>)}</div></>}
-                {currentStep === 3 && <><h2>Buy your first credit</h2><p>Credits represent one tonne of verified carbon dioxide equivalent.</p><div className="onboarding-flow__field"><label htmlFor="onboarding-amount">Credit amount</label><input id="onboarding-amount" type="number" min="1" step="1" value={creditAmount} onChange={(event) => setCreditAmount(Number(event.target.value))} /></div></>}
-                {currentStep === 4 && <><h2>Retire and get your certificate</h2><p>Retirement permanently removes credits from circulation and creates a verifiable certificate.</p><div className="onboarding-flow__field"><label htmlFor="onboarding-reason">Retirement reason</label><input id="onboarding-reason" value={retirementReason} onChange={(event) => setRetirementReason(event.target.value)} placeholder="e.g. 2026 sustainability commitment" /></div></>}
+                {/* Step 0 — Role selection */}
+                {currentStep === 0 && (
+                  <>
+                    <h2>What brings you here?</h2>
+                    <p>Choose your role so we can tailor the next steps to your needs.</p>
+                    <div className="onboarding-flow__roles" role="radiogroup" aria-label="Select your role">
+                      {(Object.keys(ROLE_CONFIG) as UserRole[]).map((r) => {
+                        const cfg = ROLE_CONFIG[r];
+                        return (
+                          <label className="onboarding-flow__role" key={r}>
+                            <input
+                              type="radio"
+                              name="onboarding-role"
+                              value={r}
+                              checked={role === r}
+                              onChange={() => setRole(r)}
+                            />
+                            <span className="onboarding-flow__role-icon" aria-hidden="true">{cfg.icon}</span>
+                            <span className="onboarding-flow__role-label">{cfg.label}</span>
+                            <span className="onboarding-flow__role-desc">{cfg.description}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+                {/* Step 1 — Connect Wallet */}
+                {currentStep === 1 && <><h2>Connect your wallet</h2><p>Use your Stellar wallet to securely own and retire verified credits.</p>{walletAddress ? <div className="onboarding-flow__wallet" aria-label="Connected wallet">Connected: {walletAddress}</div> : <button className="onboarding-flow__next" type="button" onClick={onConnectWallet}>Connect Wallet</button>}</>}
+                {/* Step 2 — Create Profile */}
+                {currentStep === 2 && <><h2>Create your profile</h2><p>Tell us who should appear on your retirement certificate.</p><div className="onboarding-flow__field"><label htmlFor="onboarding-name">Name</label><input id="onboarding-name" value={profile.name} onChange={(event) => setProfile({ ...profile, name: event.target.value })} autoComplete="name" /></div><div className="onboarding-flow__field"><label htmlFor="onboarding-email">Email (optional)</label><input id="onboarding-email" type="email" value={profile.email} onChange={(event) => setProfile({ ...profile, email: event.target.value })} autoComplete="email" /></div></>}
+                {/* Step 3 — Browse Projects */}
+                {currentStep === 3 && <><h2>Browse verified projects</h2><p>Choose a project with a story you want to support.</p><div className="onboarding-flow__projects">{projects.map((project) => <label className="onboarding-flow__project" key={project.id}><input type="radio" name="onboarding-project" value={project.id} checked={projectId === project.id} onChange={() => setProjectId(project.id)} /><span className="onboarding-flow__project-copy"><strong>{project.name}</strong><small>{project.location ?? "Verified project"}{project.availableCredits ? ` · ${project.availableCredits.toLocaleString()} credits available` : ""}</small></span></label>)}</div></>}
+                {/* Step 4 — Buy Credit */}
+                {currentStep === 4 && <><h2>Buy your first credit</h2><p>Credits represent one tonne of verified carbon dioxide equivalent.</p><div className="onboarding-flow__field"><label htmlFor="onboarding-amount">Credit amount</label><input id="onboarding-amount" type="number" min="1" step="1" value={creditAmount} onChange={(event) => setCreditAmount(Number(event.target.value))} /></div></>}
+                {/* Step 5 — Retire */}
+                {currentStep === 5 && <><h2>Retire and get your certificate</h2><p>Retirement permanently removes credits from circulation and creates a verifiable certificate.</p><div className="onboarding-flow__field"><label htmlFor="onboarding-reason">Retirement reason</label><input id="onboarding-reason" value={retirementReason} onChange={(event) => setRetirementReason(event.target.value)} placeholder="e.g. 2026 sustainability commitment" /></div></>}
                 {error && <p className="onboarding-flow__error" role="alert">{error}</p>}
               </div>
             )}
           </main>
-          {!complete && <footer className="onboarding-flow__actions"><button type="button" className="onboarding-flow__skip" onClick={onSkip}>Skip setup</button><div className="onboarding-flow__actions-right">{currentStep > 0 && <button type="button" className="onboarding-flow__back" onClick={goBack}>Back</button>}<button type="submit" className="onboarding-flow__next">{currentStep === 4 ? "Retire credits" : "Next"}</button></div></footer>}
+          {!complete && (
+            <footer className="onboarding-flow__actions">
+              <button type="button" className="onboarding-flow__skip" onClick={onSkip}>Skip setup</button>
+              <div className="onboarding-flow__actions-right">
+                {currentStep > 0 && <button type="button" className="onboarding-flow__back" onClick={goBack}>Back</button>}
+                <button type="submit" className="onboarding-flow__next">
+                  {currentStep === 5 ? "Retire credits" : "Next"}
+                </button>
+              </div>
+            </footer>
+          )}
         </form>
       </div>
     </div>
