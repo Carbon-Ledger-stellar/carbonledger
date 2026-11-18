@@ -329,3 +329,48 @@ describe('TransactionPreview — accessibility', () => {
     expect(screen.getByRole('region', { name: /transaction preview/i })).toBeInTheDocument();
   });
 });
+
+// ── Live total summary (buy-flow usability test #1544, finding F1) ──────────
+
+describe('TransactionPreview — totalSummary', () => {
+  it('renders the live total summary above the effects when provided', () => {
+    render(
+      <TransactionPreview
+        preview={readyPreview}
+        totalSummary="You pay $10.00 USDC for 5 tCO₂e"
+      />,
+    );
+    expect(
+      screen.getByText('You pay $10.00 USDC for 5 tCO₂e'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not render the total summary while loading', () => {
+    render(
+      <TransactionPreview
+        preview={loadingPreview}
+        totalSummary="You pay $10.00 USDC for 5 tCO₂e"
+      />,
+    );
+    expect(
+      screen.queryByText('You pay $10.00 USDC for 5 tCO₂e'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not render the total summary in the error state', () => {
+    render(
+      <TransactionPreview
+        preview={errorPreview}
+        totalSummary="You pay $10.00 USDC for 5 tCO₂e"
+      />,
+    );
+    expect(
+      screen.queryByText('You pay $10.00 USDC for 5 tCO₂e'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders normally when no total summary is provided', () => {
+    render(<TransactionPreview preview={readyPreview} />);
+    expect(screen.getByText('USDC debit')).toBeInTheDocument();
+  });
+});

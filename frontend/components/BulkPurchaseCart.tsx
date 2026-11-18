@@ -6,6 +6,7 @@ import { bulkPurchase } from "../lib/api";
 import { useCartStore } from "../lib/use-cart-store";
 import { connectFreighter } from "../lib/freighter";
 import { getWalletErrorMessage } from "../lib/wallet-errors";
+import { formatPurchaseFailure, getPurchaseFailure } from "../lib/purchase-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import TransactionStatus, { TxStatus } from "./TransactionStatus";
@@ -23,6 +24,8 @@ export default function BulkPurchaseCart() {
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [pollHash, setPollHash] = useState<string | null>(null);
+  // Last purchase failure, mapped to an actionable message (buy-flow #1544, F4).
+  const [failureError, setFailureError] = useState<unknown>(null);
   const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
     txHash: pollHash,
   });
@@ -45,6 +48,7 @@ export default function BulkPurchaseCart() {
 
   async function handlePurchase() {
     if (!walletKey || items.length === 0) return;
+    setFailureError(null);
     setTxStatus("building");
     try {
       await new Promise(r => setTimeout(r, 600));
@@ -59,10 +63,14 @@ export default function BulkPurchaseCart() {
       setTxHash(result.txHash);
       setPollHash(result.txHash);
     } catch (e: unknown) {
+      setFailureError(e);
       setTxStatus("failed");
       setPollHash(null);
-      const message = e instanceof Error ? e.message : String(e);
-      addToast({ type: "error", title: t("purchaseFailedTitle"), message });
+      addToast({
+        type: "error",
+        title: t("purchaseFailedTitle"),
+        message: getPurchaseFailure(e).cause,
+      });
     }
   }
 
@@ -80,11 +88,12 @@ export default function BulkPurchaseCart() {
       });
       setPollHash(null);
     } else if (pollState === "FAILED") {
+      setFailureError(pollError);
       setTxStatus("failed");
       addToast({
         type: "error",
         title: t("purchaseFailedTitle"),
-        message: pollError ?? t("purchaseFailedOnChain"),
+        message: getPurchaseFailure(pollError).cause,
       });
       setPollHash(null);
     } else if (pollState === "TIMED_OUT") {
@@ -347,7 +356,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                message={txStatus === "failed" ? formatPurchaseFailure(failureError) : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
             </div>
@@ -486,7 +495,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                message={txStatus === "failed" ? formatPurchaseFailure(failureError) : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
                 </div>
