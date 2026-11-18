@@ -83,6 +83,7 @@ export default function Navbar() {
           borderRadius: '4px',
           padding: '0.35rem 0.5rem',
           cursor: 'pointer',
+          minHeight: '44px',
         }}
       >
         {locales.map((loc) => (
@@ -186,7 +187,7 @@ export default function Navbar() {
           <button
             onClick={() => setDrawerOpen(false)}
             aria-label={t('closeMenu')}
-            style={{ background: 'none', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer', padding: '0.25rem' }}
+            style={{ background: 'none', border: 'none', color: '#fff', fontSize: '1.5rem', cursor: 'pointer', padding: '0.5rem', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           >
             ✕
           </button>
@@ -251,6 +252,12 @@ export default function Navbar() {
   );
 }
 
+// Touch target audit (issue #1536): all interactive controls must be ≥ 44×44 px on mobile.
+// hamburger: minWidth/minHeight 44px ✓
+// nav links (mobile drawer): padding 0.75rem 1rem on a full-width item ≈ 44px+ ✓
+// connectBtn / disconnectBtn: padding 0.5rem 1rem, min-width via content ≈ 44px+ ✓
+// language selector: minHeight 44px ✓
+// drawer close button: minWidth/minHeight 44px ✓
 const styles = {
   nav: {
     display: 'flex',
@@ -293,6 +300,12 @@ const styles = {
     cursor: 'pointer',
     padding: '0.5rem',
     gap: '5px',
+    minWidth: '44px',
+    minHeight: '44px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   hamburgerBar: {
     display: 'block',
