@@ -215,7 +215,20 @@
     "buyCredits": "购买碳信用",
     "walletConnectedTitle": "钱包已连接",
     "purchaseConfirmedTitle": "购买已确认！",
-    "purchaseConfirmedMessage": "已获得 {tonnes}"
+    "purchaseConfirmedMessage": "{projectName} · {tonnes} tCO₂e · ${total} USDC",
+    "youPay": "You pay",
+    "forTonnes": "for {tonnes} tCO₂e",
+    "totalUpdatesLive": "Total updates as you type.",
+    "walletRequiredTitle": "A Freighter wallet is required",
+    "walletRequiredExplanation": "CarbonLedger purchases are recorded on the Stellar blockchain. You need the Freighter browser extension to authorize and sign this transaction. Once connected, your wallet will never be charged without your explicit approval.",
+    "walletExplanationLabel": "Wallet requirement explanation",
+    "confirmationSummaryTitle": "Purchase confirmed",
+    "confirmationSummaryLabel": "Purchase confirmation summary",
+    "confirmProject": "Project",
+    "confirmTonnes": "Credits purchased",
+    "confirmTotal": "Total paid",
+    "confirmTxHash": "Transaction",
+    "viewPurchaseHistory": "View purchase history"
   },
   "retirePage": {
     "title": "注销碳信用",
