@@ -94,7 +94,8 @@ export function getContractErrorMessage(error: unknown, contract?: ContractName)
     return getCarbonErrorPlainMessage(code, contract);
   }
 
-  return getWalletErrorMessage(error);
+  const walletMsg = getWalletErrorMessage(error);
+  return walletMsg.length > 0 ? walletMsg : messages.UNKNOWN;
 }
 
 export function getWalletErrorMessage(error: unknown): string {

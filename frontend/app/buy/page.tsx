@@ -12,7 +12,7 @@ import { getContractErrorMessage } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import TransactionPreview from "../../components/TransactionPreview";
-import { PreviewState } from "../../lib/transaction-preview-types";
+import type { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
@@ -30,7 +30,8 @@ function BuyPageContent() {
 
   const { data: listing } = useListing(listingId);
   const [amount, setAmount] = useState(1);
-  const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [txStatus, setTxStatus] = useState(null as TxStatus | null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
 
@@ -148,7 +149,9 @@ function BuyPageContent() {
         type: "success",
         title: t("purchaseConfirmedTitle"),
         message: t("purchaseConfirmedMessage", {
+          projectName: listing.projectName || listing.projectId,
           tonnes: formatTonnes(amount),
+          total: formatCurrency(totalCost),
         }),
         txHash: result.txHash,
       });
@@ -334,32 +337,9 @@ function BuyPageContent() {
                       minHeight: "48px",
                     }}
                   />
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginTop: "0.75rem",
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: "0.875rem",
-                        color: colors.neutral[500],
-                      }}
-                    >
-                      {t("totalCost")}
-                    </span>
-                    <span
-                      id="buy-total-cost"
-                      style={{
-                        fontSize: "1.25rem",
-                        fontWeight: 800,
-                        color: colors.primary[700],
-                      }}
-                    >
-                      ${formatCurrency(totalCost)} USDC
-                    </span>
-                  </div>
+                  <p style={{ margin: "0.5rem 0 0", fontSize: "0.75rem", color: colors.neutral[400] }}>
+                    {t("totalUpdatesLive")}
+                  </p>
                 </div>
 
                 {/* Retire at checkout option */}
@@ -392,17 +372,99 @@ function BuyPageContent() {
               </>
             )}
 
+            {/* ── Live total row (always visible while selecting amount) ─── */}
+            {!showPreview && listing && (
+              <div
+                style={{
+                  background: colors.primary[50],
+                  border: `1px solid ${colors.primary[200]}`,
+                  borderRadius: "0.5rem",
+                  padding: "0.875rem 1.25rem",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <span style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700] }}>
+                  {t("youPay")}
+                </span>
+                <span
+                  id="buy-live-total"
+                  style={{ fontSize: "1.25rem", fontWeight: 800, color: colors.primary[700] }}
+                >
+                  ${formatCurrency(totalCost)} USDC{" "}
+                  <span style={{ fontSize: "0.875rem", fontWeight: 500, color: colors.neutral[500] }}>
+                    {t("forTonnes", { tonnes: formatTonnes(amount) })}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* ── Wallet explanation banner (shown before connect, hidden when ready) ── */}
+            {walletStatus !== "ready" && walletStatus !== "loading" && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "1px solid #fcd34d",
+                  borderRadius: "0.75rem",
+                  padding: "1rem 1.25rem",
+                  display: "flex",
+                  gap: "0.75rem",
+                  alignItems: "flex-start",
+                }}
+                role="note"
+                aria-label={t("walletExplanationLabel")}
+              >
+                <span style={{ fontSize: "1.25rem", flexShrink: 0 }}>🔑</span>
+                <div>
+                  <p style={{ fontWeight: 700, fontSize: "0.875rem", color: "#92400e", margin: "0 0 0.25rem" }}>
+                    {t("walletRequiredTitle")}
+                  </p>
+                  <p style={{ fontSize: "0.8rem", color: "#b45309", margin: 0, lineHeight: 1.5 }}>
+                    {t("walletRequiredExplanation")}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* ── Preview step ────────────────────────────────────────────── */}
             {showPreview && (
-              <TransactionPreview
-                title="Transaction preview"
-                description="Review the effects below. The network simulation has been run — no fees charged until you sign."
-                preview={preview}
-                onConfirm={walletStatus === "ready" ? handlePurchase : undefined}
-                onCancel={handlePreviewCancel}
-                confirmLabel={t("buyCredits")}
-                confirming={confirming}
-              />
+              <>
+                {/* Explicit "you pay" summary line in the preview/confirm step */}
+                <div
+                  style={{
+                    background: colors.primary[50],
+                    border: `1px solid ${colors.primary[200]}`,
+                    borderRadius: "0.5rem",
+                    padding: "0.875rem 1.25rem",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700] }}>
+                    {t("youPay")}
+                  </span>
+                  <span style={{ fontSize: "1.25rem", fontWeight: 800, color: colors.primary[700] }}>
+                    ${formatCurrency(totalCost)} USDC{" "}
+                    <span style={{ fontSize: "0.875rem", fontWeight: 500, color: colors.neutral[500] }}>
+                      {t("forTonnes", { tonnes: formatTonnes(amount) })}
+                    </span>
+                  </span>
+                </div>
+
+                <TransactionPreview
+                  title="Transaction preview"
+                  description="Review the effects below. The network simulation has been run — no fees charged until you sign."
+                  preview={preview}
+                  onConfirm={walletStatus === "ready" ? handlePurchase : undefined}
+                  onCancel={handlePreviewCancel}
+                  confirmLabel={t("buyCredits")}
+                  confirming={confirming}
+                />
+              </>
             )}
 
             {/* Transaction status */}
@@ -417,6 +479,36 @@ function BuyPageContent() {
                 }
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
+            )}
+
+            {/* ── Purchase confirmation summary (shown after success) ─────── */}
+            {txStatus === "confirmed" && txHash && listing && (
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.75rem",
+                  padding: "1.25rem",
+                }}
+                role="region"
+                aria-label={t("confirmationSummaryLabel")}
+              >
+                <p style={{ fontWeight: 700, fontSize: "1rem", color: "#15803d", margin: "0 0 0.75rem" }}>
+                  ✅ {t("confirmationSummaryTitle")}
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem 1rem", marginBottom: "0.75rem" }}>
+                  <ConfirmDetail label={t("confirmProject")} value={listing.projectName || listing.projectId} />
+                  <ConfirmDetail label={t("confirmTonnes")} value={`${formatTonnes(amount)} tCO₂e`} />
+                  <ConfirmDetail label={t("confirmTotal")} value={`$${formatCurrency(totalCost)} USDC`} />
+                  <ConfirmDetail label={t("confirmTxHash")} value={`${txHash.slice(0, 8)}…${txHash.slice(-8)}`} mono />
+                </div>
+                <a
+                  href={`/history`}
+                  style={{ fontSize: "0.875rem", fontWeight: 600, color: "#15803d", textDecoration: "underline" }}
+                >
+                  {t("viewPurchaseHistory")} →
+                </a>
+              </div>
             )}
 
             {/* Wallet prompt or "Preview purchase" CTA */}
@@ -464,6 +556,15 @@ function BuyPageContent() {
 }
 
 // ── Page export (wrapped in Suspense for useSearchParams) ─────────────────────
+
+function ConfirmDetail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p style={{ fontSize: "0.7rem", color: "#15803d", margin: "0 0 0.1rem", opacity: 0.8 }}>{label}</p>
+      <p style={{ fontWeight: 700, color: "#14532d", margin: 0, fontFamily: mono ? "monospace" : undefined, fontSize: mono ? "0.8rem" : undefined }}>{value}</p>
+    </div>
+  );
+}
 
 export default function BuyPage() {
   return (
