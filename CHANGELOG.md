@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Pause feature** — emergency pause/unpause capability for `carbon_credit` and `carbon_marketplace` contracts, including admin-gated pause entrypoints and pause-state storage. [#1378](https://github.com/Carbon-Ledger-stellar/carbonledger/pull/1378)
+- **Pause enforcement** — state-changing operations on `carbon_credit` and `carbon_marketplace` now revert with a dedicated `ContractPaused` error while paused. [#1379](https://github.com/Carbon-Ledger-stellar/carbonledger/pull/1379)
+- **Pause events** — `PausedEvent` and `UnpausedEvent` emitted on every pause state transition for off-chain indexing and monitoring. [#1380](https://github.com/Carbon-Ledger-stellar/carbonledger/pull/1380)
+- **Pause admin tooling** — scripts and runbook steps for pausing and unpausing contracts during an incident. [#1381](https://github.com/Carbon-Ledger-stellar/carbonledger/pull/1381)
+- **Pause test coverage** — unit and integration tests covering pause authorization, enforcement, event emission, and unpause recovery. [#1382](https://github.com/Carbon-Ledger-stellar/carbonledger/pull/1382)
 - **Pause webhook events reference** — documented `PausedEvent` and `UnpausedEvent` webhooks with payload examples, retry policy, and subscription examples. [#1194](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1194)
 - **Pause feature documentation** — specification, testing checklist, deployment checklist and release notes for the emergency pause on `carbon_credit` and `carbon_marketplace` in `docs/pause-feature/`. [#1320](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1320) [#1321](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1321) [#1322](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1322) [#1323](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1323)
 - Document changelog structure and release notes for project contributors. [#377](https://github.com/dev-fatima-24/carbonledger/issues/377)
@@ -24,10 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `scripts/dr-test-quarterly.sh` — Executable quarterly DR test script validating: primary backup freshness, DR replication lag, RDS point-in-time restore with RTO measurement, secrets accessibility and rotation schedule, CloudWatch alarm states, re-index from on-chain events, and overall RTO validation. Supports `--env` and `--dry-run` flags; generates a timestamped report.
 
 ### Changed
+- **Pause documentation** — added pause feature specification, testing checklist, deployment checklist and release notes under `docs/pause-feature/`. [#1383](https://github.com/Carbon-Ledger-stellar/carbonledger/pull/1383)
 - Prepare release notes for the first public version and update project documentation.
 - **Secret rotation schedule** updated from 30 days to 90 days (quarterly) for JWT, Postgres, and Redis secrets to match `docs/secret-management-complete.md` quarterly rotation schedule. [#1066](https://github.com/Carbon-Ledger-stellar/carbonledger/issues/1066)
 
 ### Fixed
+- **Pause edge cases** — corrected pause-state checks so read-only views remain available while paused and unpause restores normal operation. [#1384](https://github.com/Carbon-Ledger-stellar/carbonledger/pull/1384)
 - Improve changelog discoverability for contributors and users.
 
 ### Security
