@@ -131,7 +131,9 @@
     "sessionExpiredMessage": "Su sesión de billetera terminó, posiblemente porque la extensión se bloqueó o se revocó el acceso. Vuelva a conectar para continuar.",
     "sessionExpiredButton": "Reconectar billetera",
     "alreadyInstalled": "¿Ya está instalada?",
-    "refreshLink": "Haga clic aquí para actualizar"
+    "refreshLink": "Haga clic aquí para actualizar",
+    "walletRequiredExplanation": "CarbonLedger purchases are on-chain transactions on the Stellar network. You will need a Freighter wallet to authorize and sign this purchase securely — no action is taken without your approval.",
+    "walletRequiredExplanationTitle": "A Stellar wallet is required to complete this purchase"
   },
   "bulkPurchaseCart": {
     "title": "Carrito de compra ({count, plural, one {# proyecto} other {# proyectos}})",
@@ -151,7 +153,8 @@
     "purchaseConfirmedTitle": "¡Compra confirmada!",
     "purchaseConfirmedMessage": "{tonnes} adquiridas",
     "purchaseFailedTitle": "Compra fallida",
-    "purchaseFailedOnChain": "La transacción falló en la cadena"
+    "purchaseFailedOnChain": "La transacción falló en la cadena",
+    "purchaseFailedNextStep": "Next step"
   },
   "carbonTerms": {
     "vintage": "vintage",
@@ -215,7 +218,12 @@
     "buyCredits": "Comprar créditos",
     "walletConnectedTitle": "Billetera conectada",
     "purchaseConfirmedTitle": "¡Compra confirmada!",
-    "purchaseConfirmedMessage": "{tonnes} adquiridas"
+    "purchaseConfirmedMessage": "{tonnes} adquiridas",
+    "purchaseConfirmedDetail": "You purchased {tonnes} tCO₂e from {projectName} for {total} USDC.",
+    "viewHistory": "View purchase history",
+    "purchaseConfirmedTxLabel": "Transaction",
+    "totalCostUnits": "Total: {cost} USDC for {tonnes} tCO₂e",
+    "previewYouPay": "You pay {cost} USDC for {tonnes} tCO₂e"
   },
   "retirePage": {
     "title": "Retirar créditos de carbono",

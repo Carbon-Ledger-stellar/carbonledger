@@ -22,6 +22,22 @@ jest.mock('../../lib/stellar', () => ({
   },
 }));
 
+// useLocaleFormatters uses useMemo<LocaleFormatters> which references the
+// LocaleFormatters interface at runtime under Babel's TypeScript transform.
+// Mock the whole module so tests do not depend on the i18n context.
+jest.mock('../../lib/i18n/format', () => ({
+  useLocaleFormatters: () => ({
+    formatCurrency: (stroops: bigint | number | string) => {
+      const n = BigInt(stroops);
+      const whole = n / 10_000_000n;
+      const frac = Number(n % 10_000_000n) / 10_000_000;
+      return (Number(whole) + frac).toFixed(2);
+    },
+    formatNumber: (n: number) => String(n),
+    formatDate: (date: Date | number | string) => new Date(date).toDateString(),
+  }),
+}));
+
 function listing(overrides: Partial<MarketListing>): MarketListing {
   return {
     id: overrides.listingId ?? 'row-1',
