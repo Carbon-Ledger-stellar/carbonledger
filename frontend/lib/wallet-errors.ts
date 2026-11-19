@@ -117,3 +117,126 @@ export function isWalletError(error: unknown, code: WalletErrorCode): boolean {
   if (error instanceof Error) return error.message === code;
   return false;
 }
+
+// ── Actionable purchase error messages (Issue #1597) ─────────────────────────
+
+export type PurchaseErrorCause =
+  | "wallet_rejected"
+  | "insufficient_balance"
+  | "marketplace_paused"
+  | "network_error"
+  | "contract_error"
+  | "unknown";
+
+export interface ActionablePurchaseError {
+  cause: PurchaseErrorCause;
+  /** Short, plain-language description of what went wrong. */
+  message: string;
+  /** What the user should do next. */
+  nextStep: string;
+}
+
+/** Patterns that indicate the user rejected or cancelled the wallet signing prompt. */
+const WALLET_REJECTED_PATTERNS = [
+  /SIGNING_CANCELLED/,
+  /user declined/i,
+  /user rejected/i,
+  /request declined/i,
+  /popup closed/i,
+  /window closed/i,
+  /TRANSACTION_REJECTED/,
+];
+
+/** Patterns that indicate the marketplace contract is paused. */
+const MARKETPLACE_PAUSED_PATTERNS = [
+  /paused/i,
+  /contract is paused/i,
+  /marketplace.*paused/i,
+];
+
+/** Patterns that indicate a network or RPC error (not a contract error). */
+const NETWORK_ERROR_PATTERNS = [
+  /network/i,
+  /timeout/i,
+  /fetch/i,
+  /ECONNREFUSED/,
+  /503/,
+  /502/,
+  /failed to fetch/i,
+];
+
+/** Patterns for Soroban contract error codes. */
+const CONTRACT_ERROR_PATTERN = /Error\(Contract,\s*#(\d+)\)|contract error[:\s]+(\d+)|CarbonError\((\d+)\)/i;
+
+function matchesAny(str: string, patterns: RegExp[]): boolean {
+  return patterns.some((p) => p.test(str));
+}
+
+/**
+ * Maps a raw purchase error to a structured, actionable message.
+ *
+ * Both `frontend/app/buy/page.tsx` (handlePurchase) and
+ * `frontend/components/BulkPurchaseCart.tsx` (handlePurchase) should use this
+ * instead of surfacing raw exception strings.
+ */
+export function getActionablePurchaseError(error: unknown): ActionablePurchaseError {
+  const shortfall = getShortfall(error);
+  if (shortfall) {
+    return {
+      cause: "insufficient_balance",
+      message: formatShortfallMessage(shortfall),
+      nextStep: `Add at least ${(shortfall.required - shortfall.available).toFixed(7).replace(/0+$/, "").replace(/\.$/, "")} more ${shortfall.asset} to your wallet, then try again.`,
+    };
+  }
+
+  const str = error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
+
+  if (matchesAny(str, WALLET_REJECTED_PATTERNS)) {
+    return {
+      cause: "wallet_rejected",
+      message: "You declined the signing request in your wallet.",
+      nextStep: "Click 'Buy Credits' again and approve the transaction in Freighter when prompted.",
+    };
+  }
+
+  if (str.includes("INSUFFICIENT_XLM") || str.includes("ACCOUNT_NOT_ACTIVATED")) {
+    return {
+      cause: "insufficient_balance",
+      message: messages[str as WalletErrorCode] ?? "Insufficient balance to cover transaction fees.",
+      nextStep: "Add XLM to your Stellar account to cover the network fee, then try again.",
+    };
+  }
+
+  if (matchesAny(str, MARKETPLACE_PAUSED_PATTERNS)) {
+    return {
+      cause: "marketplace_paused",
+      message: "The marketplace is currently paused by the contract administrator.",
+      nextStep: "Check back shortly — purchases will resume once the marketplace is unpaused.",
+    };
+  }
+
+  const contractMatch = str.match(CONTRACT_ERROR_PATTERN);
+  if (contractMatch) {
+    const code = parseInt(contractMatch[1] ?? contractMatch[2] ?? contractMatch[3], 10);
+    const { getCarbonErrorPlainMessage } = require("./carbon-error-codes");
+    return {
+      cause: "contract_error",
+      message: getCarbonErrorPlainMessage(code, "carbon_marketplace"),
+      nextStep: "Review the details above. If the problem persists, contact support.",
+    };
+  }
+
+  if (matchesAny(str, NETWORK_ERROR_PATTERNS)) {
+    return {
+      cause: "network_error",
+      message: "A network error prevented the transaction from reaching the Stellar network.",
+      nextStep: "Check your internet connection and try again. If the problem continues, the network may be temporarily unavailable.",
+    };
+  }
+
+  return {
+    cause: "unknown",
+    message: str || "Something went wrong while processing your purchase.",
+    nextStep: "Please try again. If the problem persists, contact support.",
+  };
+}

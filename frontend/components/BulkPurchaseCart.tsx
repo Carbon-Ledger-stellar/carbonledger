@@ -5,12 +5,13 @@ import { useTranslations } from "next-intl";
 import { bulkPurchase } from "../lib/api";
 import { useCartStore } from "../lib/use-cart-store";
 import { connectFreighter } from "../lib/freighter";
-import { getWalletErrorMessage } from "../lib/wallet-errors";
+import { getWalletErrorMessage, getActionablePurchaseError } from "../lib/wallet-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
-import TransactionStatus, { TxStatus } from "./TransactionStatus";
+import TransactionStatus, { type TxStatus } from "./TransactionStatus";
 import Toast, { useToast } from "./Toast";
-import { clearSdexEstimate, loadSdexEstimate, StoredOrderBookQuote, formatOrderBookPrice } from "../lib/sdex";
+import { clearSdexEstimate, loadSdexEstimate, formatOrderBookPrice } from "../lib/sdex";
+import type { StoredOrderBookQuote } from "../lib/sdex";
 import {
   useTransactionPoller,
   TRANSACTION_MAX_POLLS,
@@ -61,8 +62,9 @@ export default function BulkPurchaseCart() {
     } catch (e: unknown) {
       setTxStatus("failed");
       setPollHash(null);
-      const message = e instanceof Error ? e.message : String(e);
-      addToast({ type: "error", title: t("purchaseFailedTitle"), message });
+      // Issue #1597: use actionable error helper instead of raw exception string
+      const ae = getActionablePurchaseError(e);
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message: `${ae.message} ${ae.nextStep}` });
     }
   }
 
@@ -81,10 +83,12 @@ export default function BulkPurchaseCart() {
       setPollHash(null);
     } else if (pollState === "FAILED") {
       setTxStatus("failed");
+      // Issue #1597: use actionable error helper for on-chain failures too
+      const ae = getActionablePurchaseError(pollError ?? t("purchaseFailedOnChain"));
       addToast({
         type: "error",
         title: t("purchaseFailedTitle"),
-        message: pollError ?? t("purchaseFailedOnChain"),
+        message: `${ae.message} ${ae.nextStep}`,
       });
       setPollHash(null);
     } else if (pollState === "TIMED_OUT") {
@@ -347,7 +351,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                message={txStatus === "failed" ? (() => { const ae = getActionablePurchaseError(pollError); return `${ae.message} ${ae.nextStep}`; })() : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
             </div>
@@ -373,8 +377,6 @@ export default function BulkPurchaseCart() {
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
       </div>
-
-      {/* Mobile FAB (<768px) */}
       {items.length > 0 && (
         <button
           ref={fabRef}
@@ -486,7 +488,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                message={txStatus === "failed" ? (() => { const ae = getActionablePurchaseError(pollError); return `${ae.message} ${ae.nextStep}`; })() : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
                 </div>

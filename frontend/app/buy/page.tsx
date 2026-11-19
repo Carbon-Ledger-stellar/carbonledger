@@ -8,11 +8,11 @@ import { useBuyButton } from "../../lib/useBuyButton";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
-import { getContractErrorMessage } from "../../lib/wallet-errors";
+import { getActionablePurchaseError } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
-import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
+import TransactionStatus, { type TxStatus } from "../../components/TransactionStatus";
 import TransactionPreview from "../../components/TransactionPreview";
-import { PreviewState } from "../../lib/transaction-preview-types";
+import type { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
@@ -144,11 +144,15 @@ function BuyPageContent() {
       setTxHash(result.txHash);
       setTxStatus("confirmed");
       succeeded = true;
+      // Issue #1599: success confirmation includes project name, tonnes, USDC
+      // total, and tx hash with a link to transaction history.
       addToast({
         type: "success",
         title: t("purchaseConfirmedTitle"),
-        message: t("purchaseConfirmedMessage", {
+        message: t("purchaseConfirmedDetail", {
           tonnes: formatTonnes(amount),
+          projectName: listing.projectName || listing.projectId,
+          total: `$${formatCurrency(totalCost)}`,
         }),
         txHash: result.txHash,
       });
@@ -349,6 +353,7 @@ function BuyPageContent() {
                     >
                       {t("totalCost")}
                     </span>
+                    {/* Issue #1596: show both USDC and tCO₂e units next to the live total */}
                     <span
                       id="buy-total-cost"
                       style={{
@@ -357,7 +362,7 @@ function BuyPageContent() {
                         color: colors.primary[700],
                       }}
                     >
-                      ${formatCurrency(totalCost)} USDC
+                      ${formatCurrency(totalCost)} USDC &middot; {formatTonnes(amount)} tCO₂e
                     </span>
                   </div>
                 </div>
@@ -394,15 +399,39 @@ function BuyPageContent() {
 
             {/* ── Preview step ────────────────────────────────────────────── */}
             {showPreview && (
-              <TransactionPreview
-                title="Transaction preview"
-                description="Review the effects below. The network simulation has been run — no fees charged until you sign."
-                preview={preview}
-                onConfirm={walletStatus === "ready" ? handlePurchase : undefined}
-                onCancel={handlePreviewCancel}
-                confirmLabel={t("buyCredits")}
-                confirming={confirming}
-              />
+              <>
+                {/* Issue #1596: explicit "you pay" summary at the top of the confirm step */}
+                <div
+                  style={{
+                    background: colors.primary[50],
+                    border: `1px solid ${colors.primary[200]}`,
+                    borderRadius: "0.75rem",
+                    padding: "0.875rem 1.25rem",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span style={{ fontSize: "0.875rem", color: colors.neutral[600], fontWeight: 600 }}>
+                    You pay
+                  </span>
+                  <span
+                    id="buy-preview-you-pay"
+                    style={{ fontSize: "1.1rem", fontWeight: 800, color: colors.primary[700] }}
+                  >
+                    ${formatCurrency(totalCost)} USDC &middot; {formatTonnes(amount)} tCO₂e
+                  </span>
+                </div>
+                <TransactionPreview
+                  title="Transaction preview"
+                  description="Review the effects below. The network simulation has been run — no fees charged until you sign."
+                  preview={preview}
+                  onConfirm={walletStatus === "ready" ? handlePurchase : undefined}
+                  onCancel={handlePreviewCancel}
+                  confirmLabel={t("buyCredits")}
+                  confirming={confirming}
+                />
+              </>
             )}
 
             {/* Transaction status */}
@@ -412,19 +441,40 @@ function BuyPageContent() {
                 txHash={txHash ?? undefined}
                 message={
                   txStatus === "failed"
-                    ? getContractErrorMessage(buyError)
+                    ? (() => {
+                        // Issue #1597: actionable error with cause + next step
+                        const ae = getActionablePurchaseError(buyError);
+                        return `${ae.message} — ${ae.nextStep}`;
+                      })()
                     : undefined
                 }
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
             )}
 
+            {/* Issue #1599: link to transaction history after successful purchase */}
+            {txStatus === "confirmed" && (
+              <a
+                href="/history"
+                style={{
+                  display: "inline-block",
+                  fontSize: "0.875rem",
+                  color: colors.primary[600],
+                  textDecoration: "underline",
+                }}
+              >
+                {t("viewHistory")} →
+              </a>
+            )}
+
             {/* Wallet prompt or "Preview purchase" CTA */}
             {walletStatus !== "ready" ? (
+              /* Issue #1598: show contextual explanation before the wallet-connect step */
               <WalletPrompt
                 status={walletStatus}
                 onConnect={handleConnect}
                 refresh={refreshWallet}
+                showContextualExplanation
               />
             ) : !showPreview ? (
               /* Before preview: show "Preview purchase" button */

@@ -228,6 +228,18 @@ services:
         condition: service_healthy
       redis-sentinel:
         condition: service_healthy
+    # Load the project-root .env file into the container so variables that are
+    # referenced by the app at runtime (e.g. contract IDs, oracle keys) are
+    # available even when they are not explicitly listed under `environment:`
+    # below.  Values listed in `environment:` take precedence over the file, so
+    # explicit overrides still work as expected.  The file is optional so the
+    # service starts without it in CI or when only a subset of env vars is
+    # needed (docker-compose ignores a missing env_file when the path ends in
+    # '?' but that syntax requires Compose v2.24+; use a checked-in .env.example
+    # and copy to .env locally).
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL:      postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@postgres:5432/carbonledger
       JWT_SECRET:        ${JWT_SECRET}
