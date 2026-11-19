@@ -1,5 +1,118 @@
 import { getCarbonErrorPlainMessage, type ContractName } from "./carbon-error-codes";
 
+/** Causes of a failed purchase that map to actionable plain-language messages. */
+export type PurchaseFailureCause =
+  | "WALLET_REJECTED"
+  | "INSUFFICIENT_BALANCE"
+  | "MARKETPLACE_PAUSED"
+  | "NETWORK_ERROR"
+  | "CONTRACT_ERROR"
+  | "UNKNOWN";
+
+export interface ActionablePurchaseError {
+  cause: PurchaseFailureCause;
+  message: string;
+  /** What the user should do next. */
+  nextStep: string;
+}
+
+const PURCHASE_ERROR_MAP: Record<PurchaseFailureCause, Omit<ActionablePurchaseError, "cause">> = {
+  WALLET_REJECTED: {
+    message: "Your wallet rejected the transaction signing request.",
+    nextStep: "Open Freighter and try again. If Freighter is locked, unlock it first.",
+  },
+  INSUFFICIENT_BALANCE: {
+    message: "Your wallet does not have enough USDC to complete this purchase.",
+    nextStep: "Top up your USDC balance and try again.",
+  },
+  MARKETPLACE_PAUSED: {
+    message: "The marketplace is temporarily paused and not accepting purchases.",
+    nextStep: "Wait for the marketplace to resume, then refresh and try again.",
+  },
+  NETWORK_ERROR: {
+    message: "The transaction could not be submitted to the Stellar network.",
+    nextStep: "Check your internet connection and retry. If the issue persists, contact support.",
+  },
+  CONTRACT_ERROR: {
+    message: "The on-chain contract rejected this transaction.",
+    nextStep: "Review the error details above. If the problem continues, contact support.",
+  },
+  UNKNOWN: {
+    message: "An unexpected error occurred during the purchase.",
+    nextStep: "Please try again. If the problem persists, contact support.",
+  },
+};
+
+/**
+ * Classify any thrown error from a purchase attempt and return a plain-language
+ * cause, message, and recommended next step.
+ */
+export function getActionablePurchaseError(
+  error: unknown,
+  contract?: ContractName,
+): ActionablePurchaseError {
+  const str =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+      ? error
+      : "";
+
+  // Signing was declined or the popup was dismissed
+  if (isSigningCancellation(error) || /SIGNING_CANCELLED|TRANSACTION_REJECTED/i.test(str)) {
+    return { cause: "WALLET_REJECTED", ...PURCHASE_ERROR_MAP.WALLET_REJECTED };
+  }
+
+  // Freighter locked / permission denied / not installed
+  if (/WALLET_LOCKED|WALLET_PERMISSION_DENIED|WALLET_NOT_INSTALLED/i.test(str)) {
+    return { cause: "WALLET_REJECTED", ...PURCHASE_ERROR_MAP.WALLET_REJECTED };
+  }
+
+  // Insufficient balance (XLM or USDC)
+  if (
+    getShortfall(error) ||
+    /INSUFFICIENT_XLM|insufficient balance|insufficient.*usdc/i.test(str)
+  ) {
+    const shortfall = getShortfall(error);
+    return {
+      cause: "INSUFFICIENT_BALANCE",
+      message: shortfall
+        ? formatShortfallMessage(shortfall)
+        : PURCHASE_ERROR_MAP.INSUFFICIENT_BALANCE.message,
+      nextStep: PURCHASE_ERROR_MAP.INSUFFICIENT_BALANCE.nextStep,
+    };
+  }
+
+  // Marketplace paused (contract error code or message hint)
+  if (/paused|marketplace.*paused/i.test(str)) {
+    return { cause: "MARKETPLACE_PAUSED", ...PURCHASE_ERROR_MAP.MARKETPLACE_PAUSED };
+  }
+
+  // Known Soroban contract error codes → surface the specific message
+  const contractCodeMatch = str.match(
+    /Error\(Contract,\s*#(\d+)\)|contract error[:\s]+(\d+)|CarbonError\((\d+)\)/i,
+  );
+  if (contractCodeMatch) {
+    const code = parseInt(
+      contractCodeMatch[1] ?? contractCodeMatch[2] ?? contractCodeMatch[3],
+      10,
+    );
+    const contractMsg = getCarbonErrorPlainMessage(code, contract);
+    return {
+      cause: "CONTRACT_ERROR",
+      message: contractMsg,
+      nextStep: PURCHASE_ERROR_MAP.CONTRACT_ERROR.nextStep,
+    };
+  }
+
+  // Network / HTTP errors
+  if (/network|fetch|ECONNREFUSED|timeout|503|502/i.test(str)) {
+    return { cause: "NETWORK_ERROR", ...PURCHASE_ERROR_MAP.NETWORK_ERROR };
+  }
+
+  return { cause: "UNKNOWN", ...PURCHASE_ERROR_MAP.UNKNOWN };
+}
+
 export type WalletErrorCode =
   | "WALLET_NOT_INSTALLED"
   | "WALLET_LOCKED"

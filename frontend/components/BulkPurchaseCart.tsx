@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { bulkPurchase } from "../lib/api";
 import { useCartStore } from "../lib/use-cart-store";
 import { connectFreighter } from "../lib/freighter";
-import { getWalletErrorMessage } from "../lib/wallet-errors";
+import { getWalletErrorMessage, getActionablePurchaseError } from "../lib/wallet-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import TransactionStatus, { TxStatus } from "./TransactionStatus";
@@ -61,8 +61,8 @@ export default function BulkPurchaseCart() {
     } catch (e: unknown) {
       setTxStatus("failed");
       setPollHash(null);
-      const message = e instanceof Error ? e.message : String(e);
-      addToast({ type: "error", title: t("purchaseFailedTitle"), message });
+      const { message, nextStep } = getActionablePurchaseError(e, "carbon_marketplace");
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message: `${message} ${nextStep}` });
     }
   }
 
@@ -81,10 +81,14 @@ export default function BulkPurchaseCart() {
       setPollHash(null);
     } else if (pollState === "FAILED") {
       setTxStatus("failed");
+      const { message, nextStep } = getActionablePurchaseError(
+        pollError ? new Error(pollError) : new Error("UNKNOWN"),
+        "carbon_marketplace",
+      );
       addToast({
         type: "error",
         title: t("purchaseFailedTitle"),
-        message: pollError ?? t("purchaseFailedOnChain"),
+        message: `${message} ${nextStep}`,
       });
       setPollHash(null);
     } else if (pollState === "TIMED_OUT") {
