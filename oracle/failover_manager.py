@@ -15,6 +15,11 @@ Architecture
 - Promotion: standby acquires the lock, updates its role in PostgreSQL, and
   begins submitting on-chain.
 
+Operator guide
+--------------
+See docs/oracle/operator-guide.md for setup, systemd configuration, failover
+operation, DLQ handling, and monitoring.
+
 Configuration (env vars)
 ------------------------
   FAILOVER_LOCK_KEY        — Redis lock key (default: carbonledger:oracle:failover)
