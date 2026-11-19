@@ -52,6 +52,14 @@ User experience and interaction design:
 |----------|-------------|----------|
 | **[Carbon Methodology Reference](CARBON_METHODOLOGY_REFERENCE.md)** | Supported methodologies, scoring rubric, and contract parameter mapping | All contributors |
 
+### 📘 Tutorials
+
+Step-by-step guides for end users:
+
+| Document | Description | Audience |
+|----------|-------------|----------|
+| **[How a Credit is Retired](tutorials/retiring-a-credit.md)** | Step-by-step walkthrough of retiring a carbon credit, including the retirement certificate and how to verify it | Corporate users, non-technical users |
+
 ### 🔌 API Documentation
 
 Technical references:
