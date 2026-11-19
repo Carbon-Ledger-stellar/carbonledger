@@ -8,6 +8,7 @@ Welcome! This guide will get you from zero to running tests locally in under 30 
 - [Quick Start](#quick-start)
 - [Detailed Setup](#detailed-setup)
 - [Running Tests](#running-tests)
+- [Writing Soroban Tests](#writing-soroban-tests)
 - [Pause API Reference](#pause-api-reference)
 - [Security](#security)
 - [Common Issues](#common-issues)
@@ -343,6 +344,136 @@ npm test -- --coverage
 ```bash
 cd backend
 npm test projects.performance.spec.ts
+```
+
+---
+
+## Writing Soroban Tests
+
+Soroban contracts in this repository are tested at two levels: **unit tests** that live next to the contract code and **adversarial (red-team) tests** that live in a dedicated crate. Both are written in Rust using `soroban_sdk`'s `testutils` feature and are run with `cargo test`.
+
+### Unit Tests
+
+Unit tests live in each contract crate's `src/test.rs` module, for example:
+
+- `contracts/carbon_credit/src/test.rs`
+- `contracts/carbon_zk_verifier/src/test.rs`
+- `contracts/carbon_registry/src/test.rs`
+- `contracts/carbon_marketplace/src/test.rs`
+- `contracts/carbon_oracle/src/test.rs`
+
+They exercise the happy path and the expected failure modes of a single contract. The typical pattern is:
+
+1. Create a test environment with `Env::default()`.
+2. Mock authorization with `env.mock_all_auths()` so admin/owner calls succeed without real signatures.
+3. Register the contract with `env.register_contract(None, MyContract)` and wrap it in the generated `*Client`.
+4. Call the contract through the client and assert on the result — using `try_*` methods when you expect a typed error.
+
+```rust
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    #[test]
+    fn test_register_project() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, CarbonRegistry);
+        let client = CarbonRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+
+        client.initialize(&admin);
+        let project_id = client.register_project(&owner, &/* ... */);
+
+        assert_eq!(client.get_project(&project_id).owner, owner);
+    }
+
+    #[test]
+    fn test_rejects_low_methodology_score() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, CarbonCredit);
+        let client = CarbonCreditClient::new(&env, &contract_id);
+
+        // `try_*` returns a Result so we can assert on the typed error.
+        let result = client.try_issue_credit(&/* ... */);
+        assert_eq!(result, Err(Ok(CarbonError::MethodologyScoreLow)));
+    }
+}
+```
+
+### Adversarial Tests
+
+Adversarial tests live in `contracts/adversarial_tests/tests/adversarial.rs`. They are organised as sub-modules, each targeting one contract's fraud vectors:
+
+| Module | Target |
+|--------|--------|
+| `helpers` | Shared setup: environments, funded accounts, deployed contracts, common fixtures |
+| `registry_attacks` | `carbon_registry` — forged projects, ownership takeover, duplicate registration |
+| `credit_attacks` | `carbon_credit` — double issuance, score manipulation, unauthorized minting |
+| `marketplace_attacks` | `carbon_marketplace` — re-entrancy, price manipulation, replay of listings |
+| `oracle_attacks` | `carbon_oracle` — stale/forged price feeds, signer spoofing |
+| `role_authorization` | Cross-contract role escalation and missing-auth checks |
+
+Each module follows the same shape: build a valid state with the `helpers`, then attempt the attack and assert that the contract rejects it with the expected typed error.
+
+```rust
+mod helpers;
+mod registry_attacks;
+mod credit_attacks;
+mod marketplace_attacks;
+mod oracle_attacks;
+mod role_authorization;
+
+mod credit_attacks {
+    use super::helpers::*;
+    use soroban_sdk::testutils::Address as _;
+
+    #[test]
+    fn attacker_cannot_issue_credit_without_role() {
+        let env = Env::default();
+        // Do NOT mock auth here: we want the real authorization check to run.
+        let ctx = setup_credit_contract(&env);
+        let attacker = Address::generate(&env);
+
+        let result = ctx.client.try_issue_credit(&attacker, &ctx.project_id, &100);
+        assert_eq!(result, Err(Ok(CarbonError::Unauthorized)));
+    }
+}
+```
+
+### Conventions
+
+- **Setup** — always start from `Env::default()` and build state through the contract's public API (or the shared `helpers` module for adversarial tests) rather than poking storage directly.
+- **Mocking auth** — call `env.mock_all_auths()` in unit tests to focus on business logic. In adversarial tests, mock auth only when the attack is *not* about authorization; leave it unmocked when testing missing/incorrect auth so the real check runs.
+- **Typed errors** — assert on the contract's error enum rather than on strings, e.g. `assert_eq!(result, Err(Ok(CarbonError::MethodologyScoreLow)))`. Use the generated `try_*` client methods (e.g. `try_issue_credit`) to obtain a `Result` you can compare.
+- **One behaviour per test** — name tests after the behaviour under test (`attacker_cannot_...`, `rejects_...`) so failures are self-describing.
+- **No network access** — tests run entirely against the in-memory `Env`; never depend on testnet RPC or real keys.
+
+### Running Soroban Tests
+
+```bash
+cd contracts
+
+# Run every test in the workspace (unit + adversarial)
+cargo test
+
+# Run only the adversarial/red-team suite
+cargo test -p adversarial_tests
+
+# Run only one contract's unit tests
+cargo test -p carbon_credit
+
+# Run the whole workspace explicitly
+cargo test --workspace
+
+# Show stdout from tests (useful when debugging)
+cargo test -- --nocapture
 ```
 
 ---
