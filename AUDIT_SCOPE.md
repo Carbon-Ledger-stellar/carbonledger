@@ -93,7 +93,56 @@ verify:
 
 ---
 
-## 4. Additional Areas of Interest
+## 4. Security Model Overview
+
+This section states the trust assumptions the protocol relies on. Auditors should treat
+every assumption below as a potential finding if it cannot be justified by code.
+
+### 4.1 Trust Assumptions per Actor
+
+| Actor | Trusted to | If compromised / malicious |
+|---|---|---|
+| **Admin** | Initialize contracts correctly, suspend fraudulent projects, set the oracle key, and authorize upgrades. | Full protocol control: can suspend any project, repoint the oracle, and (via upgrade path) replace contract logic. Blast radius is protocol-wide; there is no timelock or multisig enforced on-chain. |
+| **Verifier** | Approve or reject projects honestly and never self-approve a project they submitted. | Fraudulent projects can be verified and credits minted against non-existent sequestration. The verifier set is frozen at init, so a compromised verifier cannot be removed on-chain. |
+| **Oracle** | Push truthful monitoring data, benchmark prices, and project status flags. | False monitoring data, manipulated benchmark prices, and arbitrary `update_project_status` / `increment_issued` calls. Single key — no quorum or deviation guard. |
+| **Corporation / holder** | Retire only credits they legitimately hold and list only credits they own. | Note: `retire_credits` currently has no ownership check and `transfer_credits` is a no-op, so a holder's "ownership" is not enforced on-chain. A malicious holder can retire arbitrary batches (see §4.3). |
+| **Anonymous public caller** | Nothing. All state-changing entry points must be gated by `require_auth()` plus a role check. | Any ungated entry point is a critical finding. Auditors must confirm no public path can mint, verify, suspend, or move funds. |
+| **Off-chain backend / oracle bridge** | Compute monitoring inputs and sign oracle submissions with the oracle key. | Same blast radius as the oracle key itself. The bridge is out of audit scope, so its compromise is modelled as oracle compromise. |
+
+### 4.2 Admin Powers and Upgrade Paths
+
+Privileged operations and how they are authorized:
+
+| Operation | Authorization | Notes |
+|---|---|---|
+| `initialize` | First caller only (no on-chain guard against re-init) | Second call overwrites admin — see §5. |
+| `suspend_project` | Admin `require_auth()` | Admin-only; verifier and oracle cannot call it. |
+| Verifier set | Set at `initialize`; **no** `add_verifier` / `remove_verifier` | Frozen for contract lifetime. |
+| Oracle key | Set at `initialize`; changed only via admin path | Single key, no rotation ceremony enforced on-chain. |
+| Contract upgrade / versioning | Admin-authorized deployment of `carbon_registry_v1` → `carbon_registry_v2` (and equivalents for other contracts) | Upgrades are executed by deploying a new contract version and migrating state; there is no in-place `upgrade()` entry point. Auditors must review the migration path and confirm callers are repointed atomically. |
+
+Upgrade authorization is therefore an **off-chain governance decision** executed by the
+admin key. There is no on-chain timelock, multisig threshold, or upgrade delay; this is an
+accepted risk documented below.
+
+### 4.3 Known Limitations (Accepted Risks)
+
+The following are known and accepted for the v1.0 audit; auditors should still assess
+impact and confirm the mitigations described in `SECURITY.md`:
+
+- **Single oracle key** — no quorum; compromise = full oracle power.
+- **Frozen verifier set** — no on-chain add/remove; a compromised verifier persists.
+- **Unbounded `SerialRegistry` growth** — registry Vec grows with every mint; DoS risk as it scales.
+- **No on-chain price-deviation guard** — a single oracle update can move price arbitrarily.
+- **`transfer_credits` no-op** — emits an event but updates no ownership mapping.
+- **`bulk_purchase` atomicity** — partial failure mid-loop can leave listings updated and USDC transferred.
+
+Disclosure policy, secrets handling, and incident response are documented in
+[`SECURITY.md`](./SECURITY.md); auditors should read it alongside this scope.
+
+---
+
+## 5. Additional Areas of Interest
 
 These are not primary vectors but should be covered in the report:
 
@@ -111,7 +160,7 @@ These are not primary vectors but should be covered in the report:
 
 ---
 
-## 5. Acceptance Criteria
+## 6. Acceptance Criteria
 
 | Severity | Requirement before mainnet |
 |---|---|
@@ -126,7 +175,7 @@ that call them.
 
 ---
 
-## 6. Deliverables Expected from Auditor
+## 7. Deliverables Expected from Auditor
 
 1. Full written audit report (PDF + Markdown)
 2. Findings classified by severity: Critical / High / Medium / Low / Informational
@@ -137,7 +186,7 @@ that call them.
 
 ---
 
-## 7. Methodology
+## 8. Methodology
 
 Auditors should apply:
 
@@ -149,7 +198,7 @@ Auditors should apply:
 
 ---
 
-## 8. Repository Access
+## 9. Repository Access
 
 ```
 https://github.com/YOUR_USERNAME/carbonledger
@@ -162,7 +211,7 @@ engagement. A frozen audit commit will be tagged `audit/v1.0` before work begins
 
 ---
 
-## 9. Timeline
+## 10. Timeline
 
 | Milestone | Target date |
 |---|---|
@@ -177,7 +226,7 @@ engagement. A frozen audit commit will be tagged `audit/v1.0` before work begins
 
 ---
 
-## 10. Contact
+## 11. Contact
 
 | Role | Contact |
 |---|---|
