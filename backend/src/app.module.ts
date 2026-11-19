@@ -50,6 +50,7 @@ import { PortfolioModule } from "./portfolio/portfolio.module";
 import { TwoFactorModule } from "./two-factor/two-factor.module";
 import { ContractSyncModule } from "./contract-sync/contract-sync.module";
 import { ContractStatusModule } from "./contract-status/contract-status.module";
+import { CsrfMiddleware } from "./common/csrf.middleware";
 
 import { Res, HttpStatus } from "@nestjs/common";
 import { Response } from "express";

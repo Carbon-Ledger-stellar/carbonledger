@@ -36,6 +36,12 @@ We've created comprehensive guides to help you get started:
 - Test failures
 - Platform-specific fixes
 
+### 📖 Carbon Market Glossary
+**[Glossary](glossary.md)** - Definitions of carbon market terms
+- Vintage, retirement, additionality
+- Credit issuance and verification concepts
+- 30+ terms explained for newcomers
+
 ### 🌐 Testnet Setup
 **[Testnet Guide](TESTNET_GUIDE.md)** - Complete testnet instructions
 - Multiple faucet methods
@@ -189,6 +195,7 @@ carbonledger/
 │   ├── QUICK_START.md
 │   ├── TROUBLESHOOTING.md
 │   ├── TESTNET_GUIDE.md
+│   ├── glossary.md
 │   └── adr/          # Architecture decisions
 └── scripts/           # Helper scripts
     ├── verify-setup.sh
@@ -302,6 +309,7 @@ Create Pull Request on GitHub
 - [Architecture Decision Records](adr/) - Why we made key decisions
 - [API Documentation](../backend/docs/API_REFERENCE.md) - Backend API reference
 - [Smart Contracts](../README.md#-smart-contracts) - Contract functions
+- [Carbon Market Glossary](glossary.md) - Carbon market terminology
 
 ### Stellar/Soroban
 
@@ -325,6 +333,7 @@ Create Pull Request on GitHub
 1. Check [Troubleshooting Guide](TROUBLESHOOTING.md)
 2. Review [Contributing Guide](../CONTRIBUTING.md)
 3. Read [Architecture Decisions](adr/)
+4. Look up terms in the [Glossary](glossary.md)
 
 ### Community
 
