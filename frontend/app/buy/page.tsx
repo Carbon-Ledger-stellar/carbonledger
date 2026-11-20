@@ -8,7 +8,7 @@ import { useBuyButton } from "../../lib/useBuyButton";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
-import { getContractErrorMessage } from "../../lib/wallet-errors";
+import { getPurchaseActionableError } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import TransactionPreview from "../../components/TransactionPreview";
@@ -33,6 +33,8 @@ function BuyPageContent() {
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
+  // #1597: structured actionable error for the failed state
+  const [purchaseError, setPurchaseError] = useState<{ message: string; nextStep: string; canRetry: boolean } | null>(null);
 
   // Pause state — Issue #1254
   const { pauseState: pollingPauseState } = useMarketplacePauseState();
@@ -132,6 +134,7 @@ function BuyPageContent() {
   async function handlePurchase() {
     if (!walletKey || !listing) return;
     setConfirming(true);
+    setPurchaseError(null);
     let succeeded = false;
     await runBuy(async () => {
       setTxStatus("pending");
@@ -144,12 +147,12 @@ function BuyPageContent() {
       setTxHash(result.txHash);
       setTxStatus("confirmed");
       succeeded = true;
+      // #1599: show project name, tonnes, USDC total, and tx hash in the success toast
+      const projectLabel = listing.projectName || listing.projectId;
       addToast({
         type: "success",
         title: t("purchaseConfirmedTitle"),
-        message: t("purchaseConfirmedMessage", {
-          tonnes: formatTonnes(amount),
-        }),
+        message: `${formatTonnes(amount)} of "${projectLabel}" acquired for $${formatCurrency(totalCost)} USDC — tx ${result.txHash.slice(0, 8)}…`,
         txHash: result.txHash,
       });
       if (retireAfter) {
@@ -159,6 +162,7 @@ function BuyPageContent() {
     setConfirming(false);
     if (!succeeded) {
       setTxStatus("failed");
+      setPurchaseError(getPurchaseActionableError(buyError));
     }
   }
 
@@ -334,6 +338,7 @@ function BuyPageContent() {
                       minHeight: "48px",
                     }}
                   />
+                  {/* #1596 — live total updates on every keystroke, units explicit */}
                   <div
                     style={{
                       display: "flex",
@@ -351,13 +356,21 @@ function BuyPageContent() {
                     </span>
                     <span
                       id="buy-total-cost"
+                      aria-live="polite"
+                      aria-atomic="true"
                       style={{
                         fontSize: "1.25rem",
                         fontWeight: 800,
                         color: colors.primary[700],
                       }}
                     >
-                      ${formatCurrency(totalCost)} USDC
+                      ${formatCurrency(totalCost)}{" "}
+                      <span style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[500] }}>
+                        USDC
+                      </span>{" "}
+                      <span style={{ fontSize: "0.8rem", color: colors.neutral[400], marginLeft: "0.25rem" }}>
+                        for {formatTonnes(amount)}
+                      </span>
                     </span>
                   </div>
                 </div>
@@ -394,29 +407,180 @@ function BuyPageContent() {
 
             {/* ── Preview step ────────────────────────────────────────────── */}
             {showPreview && (
-              <TransactionPreview
-                title="Transaction preview"
-                description="Review the effects below. The network simulation has been run — no fees charged until you sign."
-                preview={preview}
-                onConfirm={walletStatus === "ready" ? handlePurchase : undefined}
-                onCancel={handlePreviewCancel}
-                confirmLabel={t("buyCredits")}
-                confirming={confirming}
-              />
+              <>
+                {/* #1596 — explicit "You pay X USDC for Y tCO₂e" line in preview */}
+                <div
+                  style={{
+                    background: colors.primary[50],
+                    border: `1px solid ${colors.primary[200]}`,
+                    borderRadius: "0.5rem",
+                    padding: "0.75rem 1rem",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <span style={{ fontSize: "0.875rem", color: colors.neutral[600] }}>
+                    You pay
+                  </span>
+                  <span
+                    style={{ fontWeight: 800, fontSize: "1.1rem", color: colors.primary[700] }}
+                    aria-label={`You pay ${formatCurrency(totalCost)} USDC for ${formatTonnes(amount)}`}
+                  >
+                    ${formatCurrency(totalCost)}{" "}
+                    <span style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[500] }}>USDC</span>{" "}
+                    <span style={{ fontSize: "0.9rem", color: colors.neutral[600], fontWeight: 600 }}>
+                      for {formatTonnes(amount)}
+                    </span>
+                  </span>
+                </div>
+                <TransactionPreview
+                  title="Transaction preview"
+                  description="Review the effects below. The network simulation has been run — no fees charged until you sign."
+                  preview={preview}
+                  onConfirm={walletStatus === "ready" ? handlePurchase : undefined}
+                  onCancel={handlePreviewCancel}
+                  confirmLabel={t("buyCredits")}
+                  confirming={confirming}
+                />
+              </>
             )}
 
-            {/* Transaction status */}
-            {txStatus && (
+            {/* #1597 — actionable error with cause + next step + retry */}
+            {txStatus === "failed" && purchaseError ? (
+              <div
+                role="alert"
+                style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  borderRadius: "0.5rem",
+                  padding: "1rem 1.25rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.4rem",
+                }}
+              >
+                <p style={{ fontWeight: 700, fontSize: "0.875rem", color: "#b91c1c", margin: 0 }}>
+                  ❌ Purchase failed
+                </p>
+                <p style={{ fontSize: "0.875rem", color: "#7f1d1d", margin: 0 }}>
+                  {purchaseError.message}
+                </p>
+                <p style={{ fontSize: "0.8rem", color: "#991b1b", margin: 0 }}>
+                  <strong>Next step:</strong> {purchaseError.nextStep}
+                </p>
+                {purchaseError.canRetry && (
+                  <button
+                    type="button"
+                    onClick={handlePurchase}
+                    style={{
+                      alignSelf: "flex-start",
+                      marginTop: "0.4rem",
+                      background: "#fff",
+                      border: "1px solid #fca5a5",
+                      borderRadius: "0.375rem",
+                      padding: "0.3rem 0.9rem",
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      color: "#b91c1c",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Retry purchase
+                  </button>
+                )}
+              </div>
+            ) : txStatus && txStatus !== "failed" ? (
+              /* Non-failed transaction status banner */
               <TransactionStatus
                 status={txStatus}
                 txHash={txHash ?? undefined}
-                message={
-                  txStatus === "failed"
-                    ? getContractErrorMessage(buyError)
-                    : undefined
-                }
-                onRetry={txStatus === "failed" ? handlePurchase : undefined}
+                onRetry={undefined}
               />
+            ) : null}
+
+            {/* #1599 — detailed success confirmation */}
+            {txStatus === "confirmed" && txHash && listing && (
+              <div
+                role="status"
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.75rem",
+                  padding: "1.25rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                }}
+              >
+                <p style={{ fontWeight: 700, fontSize: "1rem", color: "#15803d", margin: 0 }}>
+                  ✅ Purchase confirmed
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0.25rem 0.75rem", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Project</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    {listing.projectName || listing.projectId}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Amount</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    {formatTonnes(amount)}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Total paid</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    ${formatCurrency(totalCost)} USDC
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Transaction</span>
+                  <a
+                    href={`https://stellar.expert/explorer/${process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "public" : "testnet"}/tx/${txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: "0.75rem", color: "#15803d", fontFamily: "monospace" }}
+                  >
+                    {txHash.slice(0, 12)}…{txHash.slice(-8)} ↗
+                  </a>
+                </div>
+                <a
+                  href="/dashboard"
+                  style={{
+                    marginTop: "0.4rem",
+                    fontSize: "0.875rem",
+                    color: "#15803d",
+                    fontWeight: 600,
+                    textDecoration: "underline",
+                  }}
+                >
+                  View in transaction history →
+                </a>
+              </div>
+            )}
+
+            {/* #1598 — wallet explanation: shown before connect, hidden once ready */}
+            {walletStatus !== "ready" && walletStatus !== "loading" && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "1px solid #fcd34d",
+                  borderRadius: "0.5rem",
+                  padding: "0.75rem 1rem",
+                  fontSize: "0.875rem",
+                  color: "#92400e",
+                  lineHeight: 1.5,
+                }}
+                aria-label="Wallet required explanation"
+              >
+                <strong>A Freighter Stellar wallet is required</strong> to sign
+                and authorize this on-chain purchase. Freighter is a free browser
+                extension that keeps your keys under your control.{" "}
+                <a
+                  href="https://freighter.app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#b45309", fontWeight: 600 }}
+                >
+                  Learn more ↗
+                </a>
+              </div>
             )}
 
             {/* Wallet prompt or "Preview purchase" CTA */}
