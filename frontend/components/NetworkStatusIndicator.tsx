@@ -120,7 +120,7 @@ export default function NetworkStatusIndicator({
             borderRadius: "50%",
           }}
         />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } } @media (prefers-reduced-motion: reduce) { .net-spinner { animation: none !important; } }`}</style>
         Syncing audit data…
       </div>
     );

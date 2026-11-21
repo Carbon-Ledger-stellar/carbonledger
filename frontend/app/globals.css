@@ -263,6 +263,23 @@ input[type="button"],
   top: 0;
 }
 
+/* ── prefers-reduced-motion — disable non-essential animations globally ───── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Keep the shimmer keyframe declaration but zero its duration so the
+     element stays visible without flashing. */
+  .skip-link {
+    transition: none;
+  }
+}
+
 /* ── Mobile form optimizations (issue #1035) ─────────────────────────────── */
 
 /* Prevent iOS Safari auto-zoom on inputs (16px min font size) */

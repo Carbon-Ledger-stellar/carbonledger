@@ -124,8 +124,19 @@ export default function Navbar() {
             {theme === 'dark' ? t('light') : t('dark')}
           </button>
           {isConnected && publicKey ? (
-            <div style={styles.walletInfo}>
-              <span style={styles.address}>{truncateAddress(publicKey)}</span>
+            <div style={styles.walletInfo} aria-label={`Wallet connected: ${truncateAddress(publicKey)}`}>
+              {/* Green dot + address makes the connected state unambiguous */}
+              <span
+                aria-hidden="true"
+                style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  background: "#22c55e",
+                  flexShrink: 0,
+                }}
+              />
+              <span style={styles.address} title={publicKey}>{truncateAddress(publicKey)}</span>
               <button onClick={disconnect} style={styles.disconnectBtn}>{t('disconnect')}</button>
             </div>
           ) : (
@@ -231,7 +242,15 @@ export default function Navbar() {
           </button>
           {isConnected && publicKey ? (
             <>
-              <span style={{ ...styles.address, textAlign: 'center' }}>{truncateAddress(publicKey)}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "center" }}>
+                <span
+                  aria-hidden="true"
+                  style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#22c55e", flexShrink: 0 }}
+                />
+                <span style={{ ...styles.address, flex: 1, textAlign: "center" }} title={publicKey}>
+                  {truncateAddress(publicKey)}
+                </span>
+              </div>
               <button onClick={disconnect} style={{ ...styles.disconnectBtn, width: '100%' }}>{t('disconnect')}</button>
             </>
           ) : (

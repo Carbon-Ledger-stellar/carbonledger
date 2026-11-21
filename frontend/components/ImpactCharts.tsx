@@ -1,5 +1,6 @@
 'use client';
 
+import { useId, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   LineChart,
@@ -156,6 +157,9 @@ function EmptyState({ message }: { message: string }) {
 // ─── Chart sections ────────────────────────────────────────────────────────────
 
 function CO2OffsetChart({ data }: { data: CO2OffsetDataPoint[] }) {
+  const tableId = useId();
+  const [tableVisible, setTableVisible] = useState(false);
+
   if (data.length === 0) {
     return <EmptyState message="No CO2 offset data available for selected period" />;
   }
@@ -165,38 +169,70 @@ function CO2OffsetChart({ data }: { data: CO2OffsetDataPoint[] }) {
     .join("; ");
 
   return (
-    <div role="img" aria-label={`CO₂ offset over time. ${summaryText}`}>
-      <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary, #1f2937)", margin: "0 0 1rem" }}>
-        CO₂ Offset Over Time
-      </h3>
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--grid-color, #e5e7eb)" />
-          <XAxis
-            dataKey="month"
-            tick={{ fontSize: 12, fill: "var(--text-secondary, #6b7280)" }}
-            aria-label="Month"
-          />
-          <YAxis
-            tick={{ fontSize: 12, fill: "var(--text-secondary, #6b7280)" }}
-            aria-label="Tonnes CO₂e"
-          />
-          <Tooltip
-            contentStyle={tooltipContentStyle}
-            formatter={(value: number) => [`${value.toFixed(0)} tCO₂e`, "Offset"]}
-          />
-          <Legend />
-          <Line
-            type="monotone"
-            dataKey="tonnes"
-            stroke="#22c55e"
-            strokeWidth={2}
-            dot={{ r: 4, fill: "#22c55e" }}
-            activeDot={{ r: 6 }}
-            name="Tonnes Offset"
-          />
-        </LineChart>
-      </ResponsiveContainer>
+    <div>
+      <div role="img" aria-label={`CO₂ offset over time. ${summaryText}`} aria-describedby={tableId}>
+        <h3 style={{ fontSize: "1rem", fontWeight: 700, color: "var(--text-primary, #1f2937)", margin: "0 0 1rem" }}>
+          CO₂ Offset Over Time
+        </h3>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--grid-color, #e5e7eb)" />
+            <XAxis
+              dataKey="month"
+              tick={{ fontSize: 12, fill: "var(--text-secondary, #6b7280)" }}
+              aria-label="Month"
+            />
+            <YAxis
+              tick={{ fontSize: 12, fill: "var(--text-secondary, #6b7280)" }}
+              aria-label="Tonnes CO₂e"
+            />
+            <Tooltip
+              contentStyle={tooltipContentStyle}
+              formatter={(value: number) => [`${value.toFixed(0)} tCO₂e`, "Offset"]}
+            />
+            <Legend />
+            <Line
+              type="monotone"
+              dataKey="tonnes"
+              stroke="#22c55e"
+              strokeWidth={2}
+              dot={{ r: 4, fill: "#22c55e" }}
+              activeDot={{ r: 6 }}
+              name="Tonnes Offset"
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <button
+        type="button"
+        onClick={() => setTableVisible((v) => !v)}
+        aria-expanded={tableVisible}
+        aria-controls={tableId}
+        style={{ marginTop: "0.5rem", background: "none", border: "1px solid #d1d5db", borderRadius: "0.375rem", padding: "0.25rem 0.75rem", fontSize: "0.75rem", color: "#4b5563", cursor: "pointer" }}
+      >
+        {tableVisible ? "Hide data table" : "Show data table"}
+      </button>
+      <table
+        id={tableId}
+        aria-label="CO₂ offset data by month"
+        style={tableVisible ? { borderCollapse: "collapse", fontSize: "0.75rem", marginTop: "0.75rem", width: "100%" } : { position: "absolute", width: "1px", height: "1px", padding: 0, margin: "-1px", overflow: "hidden", clipPath: "inset(50%)", whiteSpace: "nowrap", border: 0 }}
+      >
+        <caption style={tableVisible ? { textAlign: "left", marginBottom: "0.4rem", fontWeight: 600 } : { display: "none" }}>CO₂ offset data by month</caption>
+        <thead>
+          <tr>
+            <th scope="col" style={{ padding: "0.3rem 0.5rem", textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>Month</th>
+            <th scope="col" style={{ padding: "0.3rem 0.5rem", textAlign: "right", borderBottom: "1px solid #e5e7eb" }}>Tonnes Offset</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((d) => (
+            <tr key={d.month}>
+              <td style={{ padding: "0.3rem 0.5rem" }}>{d.month}</td>
+              <td style={{ padding: "0.3rem 0.5rem", textAlign: "right" }}>{d.tonnes.toFixed(0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

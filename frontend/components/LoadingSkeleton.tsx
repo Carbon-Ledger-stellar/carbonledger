@@ -334,6 +334,11 @@ export default function LoadingSkeleton({ variant = "CreditCard", count = 1, cla
           0%   { background-position: -200% 0; }
           100% { background-position:  200% 0; }
         }
+        @media (prefers-reduced-motion: reduce) {
+          [aria-busy="true"] [style*="animation"] {
+            animation: none !important;
+          }
+        }
       `}</style>
       {skeletons.map((_, i) => {
         if (variant === "CreditCard")      return <CreditCardSkeleton key={i} />;
