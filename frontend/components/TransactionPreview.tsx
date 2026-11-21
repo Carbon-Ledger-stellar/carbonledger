@@ -30,6 +30,17 @@ interface Props {
    * cannot be clicked (e.g. the Freighter prompt is already open).
    */
   confirming?: boolean;
+  /**
+   * Optional purchase summary shown as a prominent "You pay … for …" line
+   * above the effects list. Addresses issue #1596: the confirm step must
+   * carry an explicit total so users know exactly what they will pay.
+   */
+  purchaseSummary?: {
+    /** e.g. "12.50 USDC" */
+    totalUsdc: string;
+    /** e.g. "5.00 tCO2e" */
+    totalTonnes: string;
+  };
 }
 
 /**
@@ -55,6 +66,7 @@ export default function TransactionPreview({
   confirmLabel = "Confirm & Sign",
   cancelLabel = "Cancel",
   confirming = false,
+  purchaseSummary,
 }: Props) {
   const hasError = !preview.loading && !!preview.error;
   const canConfirm = !preview.loading && preview.ready && !hasError && !confirming;
@@ -141,6 +153,30 @@ export default function TransactionPreview({
       ) : (
         /* Effects list */
         <div style={{ marginTop: "0.9rem", display: "grid", gap: "0.5rem" }}>
+          {/* Issue #1596 — explicit "You pay … for …" summary at the top of confirm step */}
+          {purchaseSummary && (
+            <div
+              data-testid="purchase-summary-line"
+              style={{
+                background: colors.primary[100],
+                border: `1px solid ${colors.primary[300]}`,
+                borderRadius: "0.5rem",
+                padding: "0.6rem 0.9rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginBottom: "0.25rem",
+              }}
+            >
+              <span style={{ fontSize: "0.85rem", fontWeight: 600, color: colors.primary[800] }}>
+                You pay
+              </span>
+              <span style={{ fontSize: "1rem", fontWeight: 800, color: colors.primary[800], whiteSpace: "nowrap" }}>
+                {purchaseSummary.totalUsdc} for {purchaseSummary.totalTonnes}
+              </span>
+            </div>
+          )}
           {preview.effects.map((effect) => (
             <div
               key={effect.label}

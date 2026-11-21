@@ -215,7 +215,7 @@
     "buyCredits": "购买碳信用",
     "walletConnectedTitle": "钱包已连接",
     "purchaseConfirmedTitle": "购买已确认！",
-    "purchaseConfirmedMessage": "已获得 {tonnes}"
+    "purchaseConfirmedMessage": "{project} · {tonnes} · {usdc}"
   },
   "retirePage": {
     "title": "注销碳信用",

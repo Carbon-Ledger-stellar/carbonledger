@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { bulkPurchase } from "../lib/api";
 import { useCartStore } from "../lib/use-cart-store";
 import { connectFreighter } from "../lib/freighter";
-import { getWalletErrorMessage } from "../lib/wallet-errors";
+import { getWalletErrorMessage, getContractErrorMessage } from "../lib/wallet-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
 import TransactionStatus, { TxStatus } from "./TransactionStatus";
@@ -61,7 +61,7 @@ export default function BulkPurchaseCart() {
     } catch (e: unknown) {
       setTxStatus("failed");
       setPollHash(null);
-      const message = e instanceof Error ? e.message : String(e);
+      const message = getContractErrorMessage(e, "carbon_marketplace");
       addToast({ type: "error", title: t("purchaseFailedTitle"), message });
     }
   }
@@ -347,7 +347,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? pollError ?? undefined : undefined}
+                message={txStatus === "failed" ? getContractErrorMessage(pollError, "carbon_marketplace") : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
             </div>
@@ -479,16 +479,16 @@ export default function BulkPurchaseCart() {
               {txStatus && (
                 <div style={{ marginTop: "1rem" }}>
                   <TransactionStatus
-                status={txStatus}
-                txHash={txHash ?? undefined}
-                pollProgress={
-                  txStatus === "polling"
-                    ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
-                    : undefined
-                }
-                message={txStatus === "failed" ? pollError ?? undefined : undefined}
-                onRetry={txStatus === "failed" ? handlePurchase : undefined}
-              />
+                    status={txStatus}
+                    txHash={txHash ?? undefined}
+                    pollProgress={
+                      txStatus === "polling"
+                        ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
+                        : undefined
+                    }
+                    message={txStatus === "failed" ? getContractErrorMessage(pollError, "carbon_marketplace") : undefined}
+                    onRetry={txStatus === "failed" ? handlePurchase : undefined}
+                  />
                 </div>
               )}
 
