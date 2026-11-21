@@ -8,6 +8,67 @@ import { getWalletErrorMessage } from "../lib/wallet-errors";
 import { getCurrentBrowserInstallUrl } from "../lib/browser-install-links";
 import { useTranslations } from "next-intl";
 
+// ─── What is a wallet? Explainer shown to new users ──────────────────────────
+
+function WalletExplainer({ installUrl }: { installUrl: string }) {
+  return (
+    <details
+      style={{
+        marginBottom: "1.25rem",
+        textAlign: "left",
+        background: colors.primary[50],
+        border: `1px solid ${colors.primary[100]}`,
+        borderRadius: borderRadius.lg,
+        padding: "0.75rem 1rem",
+        fontSize: "0.8rem",
+        color: colors.neutral[600],
+        lineHeight: 1.55,
+      }}
+    >
+      <summary
+        style={{
+          cursor: "pointer",
+          fontWeight: 700,
+          color: colors.primary[700],
+          listStyle: "none",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.4rem",
+        }}
+      >
+        <span aria-hidden="true">ℹ️</span> What is a wallet?
+      </summary>
+      <p style={{ margin: "0.6rem 0 0.4rem" }}>
+        A <strong>crypto wallet</strong> is a browser extension that lets you sign
+        transactions securely without sharing your private keys with any website.
+        CarbonLedger uses <strong>Freighter</strong>, a free wallet for the{" "}
+        <strong>Stellar</strong> network.
+      </p>
+      <p style={{ margin: "0 0 0.4rem" }}>
+        Once installed, Freighter will appear as an icon in your browser toolbar.
+        You create (or import) an account there — CarbonLedger never sees your
+        seed phrase or private key.
+      </p>
+      <a
+        href={installUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.3rem",
+          fontWeight: 600,
+          color: colors.primary[600],
+          textDecoration: "underline",
+        }}
+        aria-label="Install Freighter wallet (opens in new tab)"
+      >
+        Install Freighter ↗
+      </a>
+    </details>
+  );
+}
+
 interface WalletPromptProps {
   status: WalletStatus;
   onConnect: (address: string) => void;
@@ -89,6 +150,8 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
     },
   }[status as Exclude<WalletStatus, "loading" | "ready">];
 
+  const installUrl = getCurrentBrowserInstallUrl();
+
   return (
     <div
       style={{
@@ -98,7 +161,7 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
         padding: "2rem",
         textAlign: "center",
         boxShadow: shadows.lg,
-        maxWidth: "400px",
+        maxWidth: "420px",
         margin: "2rem auto",
       }}
     >
@@ -109,6 +172,13 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
       <p style={{ color: colors.neutral[500], fontSize: typography.fontSize.sm, lineHeight: 1.5, marginBottom: "1.5rem" }}>
         {content.message}
       </p>
+
+      {/* Wallet explainer — shown when Freighter isn't installed or when the
+          user hasn't connected yet, so new users understand what a wallet is. */}
+      {(status === "not_installed" || status === "not_connected") && (
+        <WalletExplainer installUrl={installUrl} />
+      )}
+
       {connectError && (
         <p role="alert" style={{ color: "#dc2626", fontSize: typography.fontSize.sm, marginBottom: "1rem" }}>
           {connectError}

@@ -107,6 +107,13 @@ function Spinner() {
           display: inline-block;
           flex-shrink: 0;
         }
+        @media (prefers-reduced-motion: reduce) {
+          .tx-banner-spinner {
+            animation: none;
+            border-top-color: currentColor;
+            opacity: 0.6;
+          }
+        }
       `}</style>
       <span className="tx-banner-spinner" aria-hidden="true" />
     </>
