@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { WalletStatus } from "../hooks/useWalletStatus";
 import { colors, borderRadius, shadows, typography } from "../styles/design-system";
-import { connectFreighter, checkNetwork, FreighterNetwork } from "../lib/freighter";
+import { connectFreighter, checkNetwork } from "../lib/freighter";
+import type { FreighterNetwork } from "../lib/freighter";
 import { getWalletErrorMessage } from "../lib/wallet-errors";
 import { getCurrentBrowserInstallUrl } from "../lib/browser-install-links";
 import { useTranslations } from "next-intl";
@@ -12,6 +13,12 @@ interface WalletPromptProps {
   status: WalletStatus;
   onConnect: (address: string) => void;
   refresh: () => void;
+  /**
+   * Optional contextual reason explaining why a wallet is required.
+   * Shown as a brief notice above the action prompt, only when the wallet
+   * is not yet connected. Addresses issue #1598.
+   */
+  reason?: string;
 }
 
 const NETWORK_LABELS: Record<FreighterNetwork, string> = {
@@ -20,7 +27,7 @@ const NETWORK_LABELS: Record<FreighterNetwork, string> = {
   FUTURENET: "Futurenet",
 };
 
-export default function WalletPrompt({ status, onConnect, refresh }: WalletPromptProps) {
+export default function WalletPrompt({ status, onConnect, refresh, reason }: WalletPromptProps) {
   const t = useTranslations("walletPrompt");
   const [connectError, setConnectError] = useState<string | null>(null);
   const [detectedNetwork, setDetectedNetwork] = useState<FreighterNetwork | null>(null);
@@ -106,6 +113,25 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
       <h2 style={{ fontSize: typography.fontSize.xl, fontWeight: 700, color: colors.neutral[900], marginBottom: "0.75rem" }}>
         {content.title}
       </h2>
+      {/* Issue #1598 — contextual reason explaining why a wallet is needed */}
+      {reason && (
+        <p
+          data-testid="wallet-reason"
+          style={{
+            color: colors.primary[700],
+            fontSize: typography.fontSize.sm,
+            lineHeight: 1.5,
+            marginBottom: "0.75rem",
+            background: colors.primary[50],
+            border: `1px solid ${colors.primary[200]}`,
+            borderRadius: borderRadius.md,
+            padding: "0.6rem 0.9rem",
+            textAlign: "left",
+          }}
+        >
+          {reason}
+        </p>
+      )}
       <p style={{ color: colors.neutral[500], fontSize: typography.fontSize.sm, lineHeight: 1.5, marginBottom: "1.5rem" }}>
         {content.message}
       </p>

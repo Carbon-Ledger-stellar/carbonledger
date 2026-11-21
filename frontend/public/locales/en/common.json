@@ -215,7 +215,7 @@
     "buyCredits": "Buy Credits",
     "walletConnectedTitle": "Wallet connected",
     "purchaseConfirmedTitle": "Purchase confirmed!",
-    "purchaseConfirmedMessage": "{tonnes} acquired"
+    "purchaseConfirmedMessage": "{project} · {tonnes} · {usdc}"
   },
   "retirePage": {
     "title": "Retire Carbon Credits",
