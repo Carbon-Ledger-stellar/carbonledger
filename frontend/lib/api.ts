@@ -172,7 +172,7 @@ export function useProject(id: string) {
   return useSWR<CarbonProject>(id ? `${API_URL}/projects/${id}` : null, fetcher, swrConfig);
 }
 
-export type ListingSortField = "price" | "vintageYear" | "methodology" | "verificationDate";
+export type ListingSortField = "price" | "vintageYear" | "methodology" | "verificationDate" | "createdAt";
 export type SortOrder = "asc" | "desc";
 
 export interface PaginatedListingsResponse {

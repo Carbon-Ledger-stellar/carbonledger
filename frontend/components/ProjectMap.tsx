@@ -75,12 +75,27 @@ function ClusteredMap({ pins }: { pins: MapPin[] }) {
 
   return (
     <div style={{ height: "420px", width: "100%", borderRadius: "0.75rem", overflow: "hidden" }}>
-      <MapContainer center={defaultCenter} zoom={3} style={{ height: "100%", width: "100%" }} scrollWheelZoom>
+      <MapContainer center={defaultCenter} zoom={3} style={{ height: "100%", width: "100%" }} scrollWheelZoom zoomSnap={0.5}>
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         />
-        <MarkerClusterGroup chunkedLoading>
+        <MarkerClusterGroup
+          chunkedLoading
+          showCoverageOnHover={false}
+          maxClusterRadius={80}
+          zoomToBoundsOnClick={true}
+          iconCreateFunction={(cluster) => {
+            const count = cluster.getChildCount();
+            const size = count < 10 ? 36 : count < 100 ? 44 : 52;
+            return L.divIcon({
+              html: `<div style="display:flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:50%;background:rgba(22,163,74,0.85);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);color:#fff;font-weight:700;font-size:${count < 100 ? 13 : 11}px;">${count}</div>`,
+              className: "project-map-cluster",
+              iconSize: [size, size] as [number, number],
+              iconAnchor: [size / 2, size / 2] as [number, number],
+            });
+          }}
+        >
           {pins.map((pin) => (
             <Marker
               key={pin.listingId}

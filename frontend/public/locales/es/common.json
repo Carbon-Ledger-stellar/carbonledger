@@ -187,6 +187,7 @@
   "marketplaceSort": {
     "sortBy": "Ordenar por",
     "sortDefault": "Más recientes",
+    "sortNewest": "Newest",
     "sortPrice": "Precio",
     "sortVintage": "Año vintage",
     "sortMethodology": "Metodología",
