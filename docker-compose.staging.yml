@@ -60,7 +60,7 @@ services:
       REDIS_PASSWORD:                  ${REDIS_PASSWORD:-staging_redis_pass}
       # Staging URLs and CORS
       FRONTEND_URL:                    ${STAGING_URL:-https://staging.carbonledger.com}
-      ALLOWED_ORIGINS:                 ${ALLOWED_ORIGINS:-https://staging.carbonledger.com,https://staging-api.carbonledger.com}
+      CORS_ORIGINS:                 ${CORS_ORIGINS:-https://staging.carbonledger.com,https://staging-api.carbonledger.com}
       PORT:                            3001
       # Enhanced logging for staging
       LOG_LEVEL:                       debug

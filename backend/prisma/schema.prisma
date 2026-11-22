@@ -302,6 +302,7 @@ model User {
 model NotificationPreference {
   id                  String   @id @default(cuid())
   userId              String   @unique
+  locale              String   @default("en")
   projectApproved     Boolean  @default(true)
   creditsMinted       Boolean  @default(true)
   purchaseConfirmed   Boolean  @default(true)

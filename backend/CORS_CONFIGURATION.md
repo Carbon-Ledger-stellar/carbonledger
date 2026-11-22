@@ -4,27 +4,27 @@
 
 The API is configured with Cross-Origin Resource Sharing (CORS) to allow requests from the frontend application. This document explains the CORS setup and how to configure it for different environments.
 
-**Issue Reference**: #1021
+**Issue Reference**: #1461
 
 ## Configuration
 
-CORS is configured in `src/main.ts` with the following settings:
+CORS is configured in `src/common/cors.config.ts` and applied from `src/main.ts` to the entire Nest application:
 
 ### Allowed Origins
 
 Origins are controlled by environment variables:
 
-- **`ALLOWED_ORIGINS`** (preferred) — Comma-separated list of allowed origins
+- **`CORS_ORIGINS`** (required outside local development) — Comma-separated list of explicit allowed origins
   ```bash
-  ALLOWED_ORIGINS="https://carbon-ledger.com,https://staging.carbon-ledger.com"
+  CORS_ORIGINS="https://carbon-ledger.com,https://staging.carbon-ledger.com"
   ```
 
-- **`FRONTEND_URL`** (fallback) — Single frontend URL
+- **Development fallback** — `FRONTEND_URL`, then `http://localhost:3000`, is used only when `CORS_ORIGINS` is absent outside production.
   ```bash
   FRONTEND_URL="https://carbon-ledger.com"
   ```
 
-- **Default** — `http://localhost:3000` (development)
+Origins must include their scheme and host (and optional port), for example `https://app.example.com` or `http://localhost:3000`. Wildcards are rejected in every environment and production fails startup when `CORS_ORIGINS` is missing, invalid, or contains `*`.
 
 ### Allowed Methods
 
@@ -69,6 +69,7 @@ Preflight (`OPTIONS`) requests are cached for **24 hours** to reduce latency and
 # .env.local or .env
 NODE_ENV=development
 FRONTEND_URL=http://localhost:3000
+CORS_ORIGINS=http://localhost:3000
 ```
 
 ### Staging
@@ -76,7 +77,7 @@ FRONTEND_URL=http://localhost:3000
 ```bash
 # .env.staging
 NODE_ENV=staging
-ALLOWED_ORIGINS="https://staging.carbon-ledger.com,http://localhost:3000"
+CORS_ORIGINS="https://staging.carbon-ledger.com,http://localhost:3000"
 ```
 
 ### Production
@@ -84,7 +85,7 @@ ALLOWED_ORIGINS="https://staging.carbon-ledger.com,http://localhost:3000"
 ```bash
 # .env.production
 NODE_ENV=production
-ALLOWED_ORIGINS="https://carbon-ledger.com"
+CORS_ORIGINS="https://carbon-ledger.com"
 ```
 
 ## Frontend Integration
@@ -132,10 +133,12 @@ fetch('https://api.carbon-ledger.com/api/v1/marketplace/orders', {
 
 **Issue**: Browser blocks request with CORS error
 
-**Solution**: Add your origin to `ALLOWED_ORIGINS`
+**Solution**: Add your origin to `CORS_ORIGINS`
 ```bash
-ALLOWED_ORIGINS="https://your-domain.com,${ALLOWED_ORIGINS}"
+CORS_ORIGINS="https://your-domain.com,https://existing-domain.com"
 ```
+
+Do not use `*`, especially with credentials enabled. A production process with a missing or invalid allowlist intentionally fails during startup rather than running with an unsafe policy.
 
 ### Preflight Timeout
 

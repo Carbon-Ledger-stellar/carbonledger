@@ -294,8 +294,13 @@ export class PauseAlertService {
           payload.action === 'activated'
             ? `[AUDIT] Contract Pause Activated — ${payload.contract}`
             : `[AUDIT] Contract Pause Lifted — ${payload.contract}`,
-        errorMessage: this.buildAuditEmailBody(payload),
+        templateName: 'pause-audit',
+        actionLabel: payload.action === 'activated' ? 'PAUSE ACTIVATED' : 'PAUSE LIFTED',
+        contract: payload.contract,
+        reason: payload.reason,
+        adminAddress: payload.adminAddress,
         timestamp: payload.timestamp,
+        pausedUntil: payload.pausedUntil ?? '',
         service: 'carbonledger-pause-monitor',
       });
       this.logger.log(`Audit-trail email queued for ${payload.action} event on ${payload.contract}`);
@@ -304,28 +309,4 @@ export class PauseAlertService {
     }
   }
 
-  private buildAuditEmailBody(payload: PauseEmailPayload): string {
-    const lines: string[] = [
-      `Contract Pause Audit Trail`,
-      `==========================`,
-      ``,
-      `Action:       ${payload.action === 'activated' ? 'PAUSE ACTIVATED' : 'PAUSE LIFTED'}`,
-      `Contract:     ${payload.contract}`,
-      `Reason:       ${payload.reason}`,
-      `Admin:        ${payload.adminAddress}`,
-      `Timestamp:    ${payload.timestamp}`,
-    ];
-
-    if (payload.pausedUntil) {
-      lines.push(`Paused Until: ${payload.pausedUntil}`);
-    }
-
-    lines.push(
-      ``,
-      `This is an automated audit-trail message from CarbonLedger.`,
-      `Do not reply to this email.`,
-    );
-
-    return lines.join('\n');
-  }
 }

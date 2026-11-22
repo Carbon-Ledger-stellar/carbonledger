@@ -7,6 +7,7 @@ import { LoggerService } from '../logger/logger.service';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { processWithTrace } from '../telemetry/tracing';
+import { resolveMailLocale } from './mail.locale';
 
 @Processor(MAIL_QUEUE)
 export class MailProcessor extends WorkerHost {
@@ -156,15 +157,23 @@ export class MailProcessor extends WorkerHost {
   // ── Template rendering ─────────────────────────────────────────────────────
 
   private async renderTemplate(event: MailEvent, payload: any): Promise<string> {
-    const templatePath = path.join(
-      __dirname,
-      'templates',
-      `${event.toLowerCase().replace(/_/g, '-')}.html`,
-    );
+    const templateName = payload.templateName ?? event.toLowerCase().replace(/_/g, '-');
+    const locale = resolveMailLocale(payload.locale);
+    const templatePaths = [
+      path.join(__dirname, 'templates', locale, `${templateName}.html`),
+      path.join(__dirname, 'templates', 'en', `${templateName}.html`),
+      path.join(__dirname, 'templates', `${templateName}.html`),
+    ];
     let html = '';
-    try {
-      html = await fs.readFile(templatePath, 'utf8');
-    } catch {
+    for (const templatePath of templatePaths) {
+      try {
+        html = await fs.readFile(templatePath, 'utf8');
+        break;
+      } catch {
+        // Try the next locale/fallback template.
+      }
+    }
+    if (!html) {
       html = `<h1>${event}</h1><p>Data: ${JSON.stringify(payload)}</p>`;
     }
 
