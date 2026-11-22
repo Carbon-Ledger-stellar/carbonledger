@@ -50,6 +50,78 @@ Docker Containers → Promtail → Loki → Grafana
   - Staging-specific dashboards
   - Built-in authentication and user management
 
+## Grafana Dashboards
+
+Dashboards are provisioned automatically from
+`logging/grafana/provisioning/dashboards/dashboards.yml`. The provisioning
+config loads every JSON dashboard from the configured path and places each
+one in the folder named in the file. The following dashboards are shipped:
+
+### CarbonLedger (folder: `CarbonLedger`)
+
+The primary operational dashboard for the production log stack. Use it as the
+first stop when investigating an incident.
+
+| Panel | What it shows | How to interpret |
+|-------|---------------|------------------|
+| **Log Volume by Service** | `sum by (service) (rate({service=~".+"}[5m]))` — log lines/sec per service | A sudden spike usually means a crash loop or a retry storm. A drop to zero for a service that should be active means Promtail lost the container or the service is down. |
+| **Error Rate** | `sum(count_over_time({service=~".+"} \| json \| level="error" [1m]))` — ERROR lines per minute | This is the metric behind the *High Error Rate* alert (>10/min). Sustained values above the threshold page on-call. |
+| **Log Level Distribution** | Stacked breakdown of `level` across all services | A shift toward `error`/`warn` indicates degradation even if total volume is flat. |
+| **Recent Errors** | Live log panel filtered to `level="error"` | Read the `message` and `correlation_id` fields to identify the failing request path. |
+| **Correlation ID Search** | Log panel filtered by a `correlation_id` template variable | Paste a correlation ID from an API response or client report to trace a single request across services. |
+| **Ingestion Rate** | Total `sum(rate({service=~".+"}[5m]))` | Compare against Loki's `ingestion_rate_mb` limit; sustained saturation causes dropped logs. |
+
+### CarbonLedger/Pause (folder: `CarbonLedger/Pause`)
+
+Focused dashboard for the Pause service. Use it when Pause-specific behaviour
+is suspected (e.g. paused-project state transitions).
+
+| Panel | What it shows | How to interpret |
+|-------|---------------|------------------|
+| **Pause Service Logs** | `{service="pause"}` log stream | Raw stream for ad-hoc inspection; filter by `level` as needed. |
+| **Pause Error Rate** | ERROR lines/min for `service="pause"` | Rising errors here correlate with failed pause/resume operations. |
+| **Pause Request Latency** | `duration_ms` from parsed JSON logs | High latency on pause endpoints often precedes timeouts in the backend. |
+| **Pause Event Timeline** | Count of pause/resume events over time | Gaps or bursts indicate upstream scheduling issues. |
+
+### CarbonLedger/Staging (folder: `CarbonLedger/Staging`)
+
+Mirror of the production dashboard pointed at the staging environment. Use it
+to validate logging and alerting changes before promoting them.
+
+| Panel | What it shows | How to interpret |
+|-------|---------------|------------------|
+| **Staging Log Volume** | Per-service ingestion rate in staging | Confirms Promtail is shipping logs after a staging deploy. |
+| **Staging Errors** | ERROR lines/min in staging | Should be near zero on a healthy deploy; use to catch regressions pre-production. |
+| **Staging Alert Status** | Firing/pending state of staging alert rules | Verify new alert rules trigger as expected during testing. |
+
+> **Tip:** All dashboards use the provisioned Loki datasource. If a panel is
+> empty, first confirm the datasource is healthy (see *Health Checks* below)
+> and that the selected time range contains data.
+
+## Alert Reference
+
+The following table lists every alert defined in `deploy/monitoring/alerts.yaml`
+and `monitoring/prometheus/alerts.yml`. Runbook links point to the shared
+runbook index (`docs/runbooks/README.md`) or the alert's `runbook_url`
+annotation where one is defined.
+
+| Alert | Severity | Condition | Runbook |
+|-------|----------|-----------|---------|
+| HighErrorRate | critical | >10 ERROR logs/min across all services (Loki) | [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| ServiceSpecificErrors | warning | >5 errors in 5 minutes for `backend` | [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| OracleServiceHealth | warning | >3 error/critical logs in 10 minutes for oracle services | [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| DatabaseConnectionIssues | critical | >2 database connection errors in 5 minutes | [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| ServiceDown | critical | `up == 0` for any scrape target for 2 minutes | `runbook_url` annotation / [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| HighCPUUsage | warning | CPU utilisation > 80% for 10 minutes | `runbook_url` annotation / [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| HighMemoryUsage | warning | Memory utilisation > 85% for 10 minutes | `runbook_url` annotation / [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| DiskSpaceLow | critical | Free disk space < 10% on any node | `runbook_url` annotation / [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| HighRequestLatency | warning | p95 request latency > 2s for 5 minutes | `runbook_url` annotation / [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+| HighErrorRateHTTP | critical | 5xx response rate > 5% for 5 minutes | `runbook_url` annotation / [docs/runbooks/README.md](../../docs/runbooks/README.md) |
+
+> **Note:** When an alert fires, open the linked runbook first. If an alert
+> includes a `runbook_url` annotation, Grafana/Prometheus surfaces it directly
+> in the alert detail view — prefer that link over the generic index.
+
 ## Quick Start
 
 ### 1. Start the Log Aggregation Stack
