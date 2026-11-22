@@ -143,6 +143,32 @@ export function formatDateTime(iso: string): string {
   });
 }
 
+/**
+ * Returns a human-readable relative time string such as "3 days ago" or
+ * "in 2 hours".  Falls back to the absolute date when the difference is
+ * more than 30 days, keeping long-past events readable at a glance.
+ */
+export function formatRelativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const abs = Math.abs(diffMs);
+  const future = diffMs < 0;
+  const prefix = future ? "in " : "";
+  const suffix = future ? "" : " ago";
+
+  const mins  = Math.floor(abs / 60_000);
+  const hours = Math.floor(abs / 3_600_000);
+  const days  = Math.floor(abs / 86_400_000);
+
+  let relative: string;
+  if (abs < 60_000)              relative = "just now";
+  else if (abs < 3_600_000)      relative = `${prefix}${mins} minute${mins !== 1 ? "s" : ""}${suffix}`;
+  else if (abs < 86_400_000)     relative = `${prefix}${hours} hour${hours !== 1 ? "s" : ""}${suffix}`;
+  else if (days <= 30)           relative = `${prefix}${days} day${days !== 1 ? "s" : ""}${suffix}`;
+  else                           return formatDate(iso); // fall back for old events
+
+  return relative;
+}
+
 const EMPTY_FILTERS: ProvenanceFilters = {
   dateFrom: "",
   dateTo: "",
@@ -352,8 +378,11 @@ function EventCard({ event, index, isExpanded, onToggle }: EventCardProps) {
           )}
         </span>
         <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-          <span style={{ fontSize: "0.75rem", color: colors.neutral[400], whiteSpace: "nowrap" }}>
-            {formatDate(event.timestamp)}
+          <span
+            title={formatDateTime(event.timestamp)}
+            style={{ fontSize: "0.75rem", color: colors.neutral[400], whiteSpace: "nowrap" }}
+          >
+            {formatRelativeTime(event.timestamp)}
           </span>
           <span aria-hidden="true" style={{ fontSize: "0.7rem", color: colors.neutral[400] }}>
             {isExpanded ? "▲" : "▼"}
@@ -382,7 +411,12 @@ function EventCard({ event, index, isExpanded, onToggle }: EventCardProps) {
         >
           <dl style={{ margin: "0.75rem 0 0", display: "grid", gridTemplateColumns: "auto 1fr", gap: "0.3rem 1rem", fontSize: "0.8rem" }}>
             <dt style={{ color: colors.neutral[500], fontWeight: 600, whiteSpace: "nowrap" }}>Time</dt>
-            <dd style={{ margin: 0, color: colors.neutral[700] }}>{formatDateTime(event.timestamp)}</dd>
+            <dd style={{ margin: 0, color: colors.neutral[700] }}>
+              {formatDateTime(event.timestamp)}
+              <span style={{ marginLeft: "0.5rem", fontSize: "0.75rem", color: colors.neutral[400] }}>
+                ({formatRelativeTime(event.timestamp)})
+              </span>
+            </dd>
 
             {event.actor && (
               <>
@@ -467,7 +501,7 @@ function TimelineView({ events, expandedSet, onToggle }: TimelineViewProps) {
             {/* Timeline dot */}
             <div
               aria-hidden="true"
-              title={cfg.label}
+              title={`${cfg.label}: ${formatRelativeTime(event.timestamp)}`}
               style={{
                 position: "absolute",
                 left: "-1.7rem",
