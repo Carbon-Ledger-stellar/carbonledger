@@ -5,12 +5,14 @@ import { useTranslations } from "next-intl";
 import { bulkPurchase } from "../lib/api";
 import { useCartStore } from "../lib/use-cart-store";
 import { connectFreighter } from "../lib/freighter";
-import { getWalletErrorMessage, getContractErrorMessage } from "../lib/wallet-errors";
+import { getWalletErrorMessage } from "../lib/wallet-errors";
+import { formatPurchaseFailure, getPurchaseFailure } from "../lib/purchase-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
-import TransactionStatus, { TxStatus } from "./TransactionStatus";
+import TransactionStatus, { type TxStatus } from "./TransactionStatus";
 import Toast, { useToast } from "./Toast";
-import { clearSdexEstimate, loadSdexEstimate, StoredOrderBookQuote, formatOrderBookPrice } from "../lib/sdex";
+import { clearSdexEstimate, loadSdexEstimate, formatOrderBookPrice } from "../lib/sdex";
+import type { StoredOrderBookQuote } from "../lib/sdex";
 import {
   useTransactionPoller,
   TRANSACTION_MAX_POLLS,
@@ -23,6 +25,8 @@ export default function BulkPurchaseCart() {
   const [txStatus, setTxStatus] = useState<TxStatus | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [pollHash, setPollHash] = useState<string | null>(null);
+  // Last purchase failure, mapped to an actionable message (buy-flow #1544, F4).
+  const [failureError, setFailureError] = useState<unknown>(null);
   const { pollCount, state: pollState, errorMessage: pollError } = useTransactionPoller({
     txHash: pollHash,
   });
@@ -45,6 +49,7 @@ export default function BulkPurchaseCart() {
 
   async function handlePurchase() {
     if (!walletKey || items.length === 0) return;
+    setFailureError(null);
     setTxStatus("building");
     try {
       await new Promise(r => setTimeout(r, 600));
@@ -59,9 +64,12 @@ export default function BulkPurchaseCart() {
       setTxHash(result.txHash);
       setPollHash(result.txHash);
     } catch (e: unknown) {
+      setFailureError(e);
       setTxStatus("failed");
       setPollHash(null);
-      addToast({ type: "error", title: t("purchaseFailedTitle"), message: getContractErrorMessage(e, "carbon_marketplace") });
+      // Issue #1597: use actionable error helper instead of raw exception string
+      const ae = getActionablePurchaseError(e);
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message: `${ae.message} ${ae.nextStep}` });
     }
   }
 
@@ -79,7 +87,12 @@ export default function BulkPurchaseCart() {
       });
       setPollHash(null);
     } else if (pollState === "FAILED") {
+      setFailureError(pollError);
       setTxStatus("failed");
+      const { message, nextStep } = getActionablePurchaseError(
+        pollError ? new Error(pollError) : new Error("UNKNOWN"),
+        "carbon_marketplace",
+      );
       addToast({
         type: "error",
         title: t("purchaseFailedTitle"),
@@ -346,7 +359,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? (pollError ? getContractErrorMessage(pollError, "carbon_marketplace") : undefined) : undefined}
+                message={txStatus === "failed" ? (() => { const ae = getActionablePurchaseError(pollError); return `${ae.message} ${ae.nextStep}`; })() : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
             </div>
@@ -372,8 +385,6 @@ export default function BulkPurchaseCart() {
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
       </div>
-
-      {/* Mobile FAB (<768px) */}
       {items.length > 0 && (
         <button
           ref={fabRef}
@@ -485,7 +496,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? (pollError ? getContractErrorMessage(pollError, "carbon_marketplace") : undefined) : undefined}
+                message={txStatus === "failed" ? (() => { const ae = getActionablePurchaseError(pollError); return `${ae.message} ${ae.nextStep}`; })() : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
                 </div>

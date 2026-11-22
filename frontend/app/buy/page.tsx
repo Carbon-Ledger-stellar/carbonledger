@@ -6,9 +6,9 @@ import { useTranslations } from "next-intl";
 import { useListing, purchaseCredits, useMarketplacePauseState } from "../../lib/api";
 import { useBuyButton } from "../../lib/useBuyButton";
 import ErrorBoundary from "../../components/ErrorBoundary";
-import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
+import { formatTonnes, calculateCreditCost, formatUSDC } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
-import { getContractErrorMessage } from "../../lib/wallet-errors";
+import { getContractErrorMessage, getActionablePurchaseError } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import TransactionSigningSteps from "../../components/TransactionSigningSteps";
@@ -17,6 +17,8 @@ import type { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
+import WalletRequiredNotice from "../../components/WalletRequiredNotice";
+import PurchaseConfirmation from "../../components/PurchaseConfirmation";
 import { simulatePurchasePreview } from "../../lib/soroban";
 import { usePauseWebSocket } from "../../lib/realtime/usePauseWebSocket";
 import PausedOperationButton from "../../components/PausedOperationButton";
@@ -35,6 +37,13 @@ function BuyPageContent() {
   const [txStatus, setTxStatus] = useState(null as TxStatus | null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
+  const [purchaseError, setPurchaseError] = useState<{ message: string; nextStep: string } | null>(null);
+  const [purchaseSuccess, setPurchaseSuccess] = useState<{
+    projectName: string;
+    tonnes: number;
+    usdcTotal: bigint;
+    txHash: string;
+  } | null>(null);
 
   // Pause state — Issue #1254
   const { pauseState: pollingPauseState } = useMarketplacePauseState();
@@ -62,7 +71,7 @@ function BuyPageContent() {
   const [showPreview, setShowPreview] = useState(false);
 
   const { toasts, addToast, dismiss } = useToast();
-  const { state: buyState, errorMsg: buyError, run: runBuy } = useBuyButton();
+  const { state: buyState, errorMsg: buyError, error: buyErrorObj, run: runBuy } = useBuyButton();
   const { status: walletStatus, address: walletKey, refresh: refreshWallet } =
     useWalletStatus();
 
@@ -134,6 +143,8 @@ function BuyPageContent() {
   async function handlePurchase() {
     if (!walletKey || !listing) return;
     setConfirming(true);
+    setPurchaseError(null);
+    setPurchaseSuccess(null);
     let succeeded = false;
     await runBuy(async () => {
       setTxStatus("building");
@@ -146,13 +157,19 @@ function BuyPageContent() {
       setTxHash(result.txHash);
       setTxStatus("confirmed");
       succeeded = true;
+      // F3 — detailed success confirmation: project name + amount + total.
+      const projectName = listing.projectName || listing.projectId;
+      const tonnesLabel = `${formatTonnes(amount)} tCO₂e`;
+      const totalLabel = `$${formatCurrency(totalCost)} USDC`;
+      setLastPurchase({ projectName, tonnesLabel, totalLabel, txHash: result.txHash });
       addToast({
         type: "success",
         title: t("purchaseConfirmedTitle"),
         message: t("purchaseConfirmedMessage", {
           projectName: listing.projectName || listing.projectId,
           tonnes: formatTonnes(amount),
-          total: formatCurrency(totalCost),
+          project: projectName,
+          usdc: formatUSDC(totalCost),
         }),
         txHash: result.txHash,
       });
@@ -163,6 +180,8 @@ function BuyPageContent() {
     setConfirming(false);
     if (!succeeded) {
       setTxStatus("failed");
+      const actionable = getActionablePurchaseError(buyError, "carbon_marketplace");
+      setPurchaseError({ message: actionable.message, nextStep: actionable.nextStep });
     }
   }
 
@@ -284,6 +303,9 @@ function BuyPageContent() {
               </div>
             </div>
 
+            {/* F2 — explain wallet connection up front, before the connect step */}
+            <WalletRequiredNotice visible={walletStatus !== "ready"} />
+
             {/* Amount selector — only visible before preview step */}
             {!showPreview && (
               <>
@@ -338,8 +360,52 @@ function BuyPageContent() {
                       minHeight: "48px",
                     }}
                   />
-                  <p style={{ margin: "0.5rem 0 0", fontSize: "0.75rem", color: colors.neutral[400] }}>
-                    {t("totalUpdatesLive")}
+                  {/* #1596 — live total updates on every keystroke, units explicit */}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginTop: "0.75rem",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.875rem",
+                        color: colors.neutral[500],
+                      }}
+                    >
+                      {t("totalCost")}
+                    </span>
+                    {/* Issue #1596: show both USDC and tCO₂e units next to the live total */}
+                    <span
+                      id="buy-total-cost"
+                      aria-live="polite"
+                      aria-atomic="true"
+                      style={{
+                        fontSize: "1.25rem",
+                        fontWeight: 800,
+                        color: colors.primary[700],
+                      }}
+                    >
+                      ${formatCurrency(totalCost)}{" "}
+                      <span style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[500] }}>
+                        USDC
+                      </span>{" "}
+                      <span style={{ fontSize: "0.8rem", color: colors.neutral[400], marginLeft: "0.25rem" }}>
+                        for {formatTonnes(amount)}
+                      </span>
+                    </span>
+                  </div>
+                  <p
+                    style={{
+                      margin: "0.25rem 0 0",
+                      fontSize: "0.75rem",
+                      color: colors.neutral[400],
+                      textAlign: "right",
+                    }}
+                    aria-live="polite"
+                  >
+                    for {formatTonnes(amount)} tCO₂e
                   </p>
                 </div>
 
@@ -433,29 +499,33 @@ function BuyPageContent() {
             {/* ── Preview step ────────────────────────────────────────────── */}
             {showPreview && (
               <>
-                {/* Explicit "you pay" summary line in the preview/confirm step */}
+                {/* Issue #1596: explicit "you pay" summary at the top of the confirm step */}
                 <div
                   style={{
                     background: colors.primary[50],
                     border: `1px solid ${colors.primary[200]}`,
                     borderRadius: "0.5rem",
-                    padding: "0.875rem 1.25rem",
+                    padding: "0.75rem 1rem",
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
+                    gap: "0.5rem",
                   }}
                 >
-                  <span style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700] }}>
-                    {t("youPay")}
+                  <span style={{ fontSize: "0.875rem", color: colors.neutral[600] }}>
+                    You pay
                   </span>
-                  <span style={{ fontSize: "1.25rem", fontWeight: 800, color: colors.primary[700] }}>
-                    ${formatCurrency(totalCost)} USDC{" "}
-                    <span style={{ fontSize: "0.875rem", fontWeight: 500, color: colors.neutral[500] }}>
-                      {t("forTonnes", { tonnes: formatTonnes(amount) })}
+                  <span
+                    style={{ fontWeight: 800, fontSize: "1.1rem", color: colors.primary[700] }}
+                    aria-label={`You pay ${formatCurrency(totalCost)} USDC for ${formatTonnes(amount)}`}
+                  >
+                    ${formatCurrency(totalCost)}{" "}
+                    <span style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[500] }}>USDC</span>{" "}
+                    <span style={{ fontSize: "0.9rem", color: colors.neutral[600], fontWeight: 600 }}>
+                      for {formatTonnes(amount)}
                     </span>
                   </span>
                 </div>
-
                 <TransactionPreview
                   title="Transaction preview"
                   description="Review the effects below. The network simulation has been run — no fees charged until you sign."
@@ -518,13 +588,260 @@ function BuyPageContent() {
               </div>
             )}
 
+            {/* F3 — persistent, detailed success confirmation */}
+            {txStatus === "confirmed" && lastPurchase && (
+              <PurchaseConfirmation
+                projectName={lastPurchase.projectName}
+                tonnesLabel={lastPurchase.tonnesLabel}
+                totalLabel={lastPurchase.totalLabel}
+                txHash={lastPurchase.txHash}
+              />
+            ) : null}
+
+            {/* #1599 — detailed success confirmation */}
+            {txStatus === "confirmed" && txHash && listing && (
+              <div
+                role="status"
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.75rem",
+                  padding: "1.25rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                }}
+              >
+                <p style={{ fontWeight: 700, fontSize: "1rem", color: "#15803d", margin: 0 }}>
+                  ✅ Purchase confirmed
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0.25rem 0.75rem", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Project</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    {listing.projectName || listing.projectId}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Amount</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    {formatTonnes(amount)}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Total paid</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    ${formatCurrency(totalCost)} USDC
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Transaction</span>
+                  <a
+                    href={`https://stellar.expert/explorer/${process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "public" : "testnet"}/tx/${txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: "0.75rem", color: "#15803d", fontFamily: "monospace" }}
+                  >
+                    {txHash.slice(0, 12)}…{txHash.slice(-8)} ↗
+                  </a>
+                </div>
+                <a
+                  href="/dashboard"
+                  style={{
+                    marginTop: "0.4rem",
+                    fontSize: "0.875rem",
+                    color: "#15803d",
+                    fontWeight: 600,
+                    textDecoration: "underline",
+                  }}
+                >
+                  View in transaction history →
+                </a>
+              </div>
+            )}
+
+            {/* #1598 — wallet explanation: shown before connect, hidden once ready */}
+            {walletStatus !== "ready" && walletStatus !== "loading" && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "1px solid #fcd34d",
+                  borderRadius: "0.5rem",
+                  padding: "0.75rem 1rem",
+                  fontSize: "0.875rem",
+                  color: "#92400e",
+                  lineHeight: 1.5,
+                }}
+                aria-label="Wallet required explanation"
+              >
+                <strong>A Freighter Stellar wallet is required</strong> to sign
+                and authorize this on-chain purchase. Freighter is a free browser
+                extension that keeps your keys under your control.{" "}
+                <a
+                  href="https://freighter.app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#b45309", fontWeight: 600 }}
+                >
+                  Learn more ↗
+                </a>
+              </div>
+            )}
+
+            {/* Actionable next-step hint on failure */}
+            {txStatus === "failed" && purchaseError?.nextStep && (
+              <div
+                style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  borderRadius: "0.5rem",
+                  padding: "0.75rem 1rem",
+                  fontSize: "0.875rem",
+                  color: "#b91c1c",
+                }}
+                role="note"
+              >
+                <strong>What to do:</strong> {purchaseError.nextStep}
+              </div>
+            )}
+
+            {/* Detailed success confirmation — #1599 */}
+            {txStatus === "confirmed" && purchaseSuccess && (
+              <div
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.75rem",
+                  padding: "1.25rem",
+                }}
+                role="region"
+                aria-label="Purchase confirmation"
+              >
+                <p style={{ fontWeight: 700, fontSize: "1rem", color: "#15803d", margin: "0 0 0.75rem" }}>
+                  ✅ Purchase confirmed
+                </p>
+                <div style={{ display: "grid", gap: "0.4rem", fontSize: "0.875rem", color: colors.neutral[700] }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Project</span>
+                    <strong>{purchaseSuccess.projectName}</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Credits purchased</span>
+                    <strong>{formatTonnes(purchaseSuccess.tonnes)} tCO₂e</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Total paid</span>
+                    <strong>${formatCurrency(purchaseSuccess.usdcTotal)} USDC</strong>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <span>Transaction</span>
+                    <a
+                      href={`https://stellar.expert/explorer/${process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "public" : "testnet"}/tx/${purchaseSuccess.txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontFamily: "monospace", fontSize: "0.75rem", color: "#15803d", textDecoration: "underline" }}
+                    >
+                      {purchaseSuccess.txHash.slice(0, 10)}…{purchaseSuccess.txHash.slice(-10)}
+                    </a>
+                  </div>
+                </div>
+                <div style={{ marginTop: "1rem" }}>
+                  <a
+                    href="/portfolio/transactions"
+                    style={{
+                      fontSize: "0.875rem",
+                      color: "#15803d",
+                      fontWeight: 600,
+                      textDecoration: "underline",
+                    }}
+                  >
+                    View purchase history →
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {/* Purchase confirmation summary — issue #1599 */}
+            {txStatus === "confirmed" && txHash && listing && (
+              <div
+                data-testid="purchase-confirmation-summary"
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.75rem",
+                  padding: "1.25rem",
+                }}
+              >
+                <p style={{ margin: "0 0 0.75rem", fontWeight: 700, fontSize: "1rem", color: "#15803d" }}>
+                  ✅ {t("purchaseConfirmedTitle")}
+                </p>
+                <div style={{ display: "grid", gap: "0.4rem", fontSize: "0.875rem", color: "#166534" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Project</span>
+                    <span style={{ fontWeight: 700 }}>{listing.projectName || listing.projectId}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Tonnes purchased</span>
+                    <span style={{ fontWeight: 700 }}>{formatTonnes(amount)} tCO2e</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Total paid</span>
+                    <span style={{ fontWeight: 700 }}>{formatUSDC(totalCost)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <span>Transaction</span>
+                    <a
+                      href={`https://stellar.expert/explorer/${process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "public" : "testnet"}/tx/${txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontFamily: "monospace", fontWeight: 700, color: "#15803d", textDecoration: "underline", textAlign: "right" }}
+                    >
+                      {txHash.slice(0, 10)}…{txHash.slice(-10)}
+                    </a>
+                  </div>
+                </div>
+                <a
+                  href="/purchases"
+                  style={{
+                    display: "inline-block",
+                    marginTop: "1rem",
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: "#15803d",
+                    textDecoration: "underline",
+                  }}
+                >
+                  View purchase history →
+                </a>
+              </div>
+            )}
+
             {/* Wallet prompt or "Preview purchase" CTA */}
             {walletStatus !== "ready" ? (
-              <WalletPrompt
-                status={walletStatus}
-                onConnect={handleConnect}
-                refresh={refreshWallet}
-              />
+              <>
+                {/* Contextual explanation shown before the wallet-connect step — #1598 */}
+                <div
+                  style={{
+                    background: colors.primary[50],
+                    border: `1px solid ${colors.primary[200]}`,
+                    borderRadius: "0.75rem",
+                    padding: "1rem 1.25rem",
+                    fontSize: "0.875rem",
+                    color: colors.neutral[700],
+                  }}
+                  role="note"
+                  aria-label="Wallet required explanation"
+                >
+                  <p style={{ margin: "0 0 0.35rem", fontWeight: 700, color: colors.neutral[900] }}>
+                    🔑 A Stellar wallet is required to complete this purchase
+                  </p>
+                  <p style={{ margin: 0, lineHeight: 1.5 }}>
+                    CarbonLedger purchases are on-chain transactions on the Stellar network. You need the{" "}
+                    <a href="https://freighter.app" target="_blank" rel="noopener noreferrer" style={{ color: colors.primary[700] }}>
+                      Freighter
+                    </a>{" "}
+                    browser extension to authorize the transaction with your private key — your key never leaves your device.
+                  </p>
+                </div>
+                <WalletPrompt
+                  status={walletStatus}
+                  onConnect={handleConnect}
+                  refresh={refreshWallet}
+                />
+              </>
             ) : !showPreview ? (
               /* Before preview: show "Preview purchase" button */
               <PausedOperationButton isPaused={isPaused} pauseReason={pauseState.reason}>

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { WalletStatus } from "../hooks/useWalletStatus";
 import { colors, borderRadius, shadows, typography } from "../styles/design-system";
-import { connectFreighter, checkNetwork, FreighterNetwork } from "../lib/freighter";
+import { connectFreighter, checkNetwork } from "../lib/freighter";
+import type { FreighterNetwork } from "../lib/freighter";
 import { getWalletErrorMessage } from "../lib/wallet-errors";
 import { getCurrentBrowserInstallUrl } from "../lib/browser-install-links";
 import { useTranslations } from "next-intl";
@@ -73,6 +74,12 @@ interface WalletPromptProps {
   status: WalletStatus;
   onConnect: (address: string) => void;
   refresh: () => void;
+  /**
+   * When true, renders a contextual explanation that a Freighter Stellar wallet
+   * is required to authorize the on-chain purchase, **before** the connection
+   * prompt. Hidden automatically once the wallet is ready. (Issue #1598)
+   */
+  showContextualExplanation?: boolean;
 }
 
 const NETWORK_LABELS: Record<FreighterNetwork, string> = {
@@ -81,7 +88,7 @@ const NETWORK_LABELS: Record<FreighterNetwork, string> = {
   FUTURENET: "Futurenet",
 };
 
-export default function WalletPrompt({ status, onConnect, refresh }: WalletPromptProps) {
+export default function WalletPrompt({ status, onConnect, refresh, showContextualExplanation = false }: WalletPromptProps) {
   const t = useTranslations("walletPrompt");
   const [connectError, setConnectError] = useState<string | null>(null);
   const [detectedNetwork, setDetectedNetwork] = useState<FreighterNetwork | null>(null);
@@ -111,6 +118,17 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
   };
 
   const networkLabel = detectedNetwork ? NETWORK_LABELS[detectedNetwork] : t("wrongNetworkUnknown");
+
+  // ── Contextual explanation (Issue #1598) ─────────────────────────────────
+  // Show a plain-language "why do I need a wallet?" banner before the action
+  // prompt, so first-time users understand what is about to happen. Hidden
+  // when the user has not_installed status (they need to install first, so
+  // the main prompt is already self-explanatory) and when status is ready.
+  const showExplanation =
+    showContextualExplanation &&
+    status !== "not_installed" &&
+    status !== "loading" &&
+    status !== "ready";
 
   const content = {
     not_installed: {
@@ -153,6 +171,43 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
   const installUrl = getCurrentBrowserInstallUrl();
 
   return (
+    <>
+      {showExplanation && (
+        <div
+          role="note"
+          aria-label={t("walletRequiredExplanationTitle")}
+          style={{
+            background: colors.primary[50],
+            border: `1px solid ${colors.primary[200]}`,
+            borderRadius: borderRadius.lg,
+            padding: "1rem 1.25rem",
+            marginBottom: "0.75rem",
+            maxWidth: "400px",
+            margin: "2rem auto 0",
+          }}
+        >
+          <p
+            style={{
+              fontSize: typography.fontSize.sm,
+              fontWeight: 700,
+              color: colors.primary[700],
+              margin: "0 0 0.35rem",
+            }}
+          >
+            {t("walletRequiredExplanationTitle")}
+          </p>
+          <p
+            style={{
+              fontSize: typography.fontSize.sm,
+              color: colors.neutral[600],
+              margin: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            {t("walletRequiredExplanation")}
+          </p>
+        </div>
+      )}
     <div
       style={{
         background: colors.surface,
@@ -169,6 +224,25 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
       <h2 style={{ fontSize: typography.fontSize.xl, fontWeight: 700, color: colors.neutral[900], marginBottom: "0.75rem" }}>
         {content.title}
       </h2>
+      {/* Issue #1598 — contextual reason explaining why a wallet is needed */}
+      {reason && (
+        <p
+          data-testid="wallet-reason"
+          style={{
+            color: colors.primary[700],
+            fontSize: typography.fontSize.sm,
+            lineHeight: 1.5,
+            marginBottom: "0.75rem",
+            background: colors.primary[50],
+            border: `1px solid ${colors.primary[200]}`,
+            borderRadius: borderRadius.md,
+            padding: "0.6rem 0.9rem",
+            textAlign: "left",
+          }}
+        >
+          {reason}
+        </p>
+      )}
       <p style={{ color: colors.neutral[500], fontSize: typography.fontSize.sm, lineHeight: 1.5, marginBottom: "1.5rem" }}>
         {content.message}
       </p>
@@ -212,5 +286,6 @@ export default function WalletPrompt({ status, onConnect, refresh }: WalletPromp
         </p>
       )}
     </div>
+    </>
   );
 }
