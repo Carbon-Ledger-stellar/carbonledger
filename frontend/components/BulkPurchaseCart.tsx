@@ -66,11 +66,8 @@ export default function BulkPurchaseCart() {
       setFailureError(e);
       setTxStatus("failed");
       setPollHash(null);
-      addToast({
-        type: "error",
-        title: t("purchaseFailedTitle"),
-        message: getPurchaseFailure(e).cause,
-      });
+      const { message, nextStep } = getActionablePurchaseError(e, "carbon_marketplace");
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message: `${message} ${nextStep}` });
     }
   }
 
@@ -90,6 +87,10 @@ export default function BulkPurchaseCart() {
     } else if (pollState === "FAILED") {
       setFailureError(pollError);
       setTxStatus("failed");
+      const { message, nextStep } = getActionablePurchaseError(
+        pollError ? new Error(pollError) : new Error("UNKNOWN"),
+        "carbon_marketplace",
+      );
       addToast({
         type: "error",
         title: t("purchaseFailedTitle"),
