@@ -35,7 +35,27 @@ CONTRACT_NAMES = [
 ]
 
 TOPIC_PAIR_RE = re.compile(
-    r'symbol_short!\("c_ledger"\)\s*,\s*symbol_short!\("([a-zA-Z0-9_]+)"\)'
+    r'sy'
+
+# ---------------------------------------------------------------------------
+# OpenAPI Specification Drift Check
+# ---------------------------------------------------------------------------
+
+def _check_openapi_sync():
+    """Ensure backend and docs OpenAPI files are identical.
+
+    Exits with status 1 if the files differ, printing a helpful message.
+    """
+    spec_backend = (REPO_ROOT / "backend/docs/public-api.openapi.yaml").read_text()
+    spec_docs = (REPO_ROOT / "docs/openapi.yaml").read_text()
+    if spec_backend != spec_docs:
+        print("Error: OpenAPI spec files are out of sync between backend/docs and docs.")
+        sys.exit(1)
+
+# Run the OpenAPI sync check when the script is executed directly.
+if __name__ == "__main__":
+    _check_openapi_sync()
+mbol_short!\("c_ledger"\)\s*,\s*symbol_short!\("([a-zA-Z0-9_]+)"\)'
 )
 
 # Matches "## `contract_name`" section headers in the docs table.
