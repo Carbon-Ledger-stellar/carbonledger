@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { useTranslations } from "next-intl";
 import { MarketListing, bulkPurchase } from "../lib/api";
 import { connectFreighter } from "../lib/freighter";
@@ -514,8 +514,18 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
 
   if (step === "selection") {
     return (
-      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "clamp(1rem, 4vw, 2rem)" }}>
-        <StepIndicator current="selection" />
+      <div style={{ maxWidth: "900px", margin: "0 auto", padding: "2rem" }}>
+        <style>{`
+          @media (max-width: 639px) {
+            .bpw-container { padding: 1rem !important; }
+            .bpw-metrics-grid { grid-template-columns: 1fr 1fr !important; }
+            .bpw-item-row { flex-direction: column !important; align-items: flex-start !important; gap: 0.5rem !important; }
+            .bpw-item-controls { width: 100% !important; justify-content: space-between !important; }
+            .bpw-nav { justify-content: stretch !important; }
+            .bpw-nav button { flex: 1 !important; }
+          }
+        `}</style>
+        <WizardStepper current={step} />
         <h2 style={{ fontSize: "1.75rem", fontWeight: 800, color: colors.neutral[900], margin: "0 0 1rem" }}>
           {t("step1Title")}
         </h2>
@@ -618,7 +628,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                   marginBottom: "0.5rem",
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="bpw-item-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <p style={{ fontWeight: 600, fontSize: "0.875rem", margin: 0 }}>
                       {listing.projectName || listing.projectId}
@@ -627,7 +637,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                       {listing.methodology} · {listing.vintageYear}
                     </p>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <div className="bpw-item-controls" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                     <input
                       type="number"
                       min={0.01}
@@ -645,19 +655,20 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
                         fontSize: "0.875rem",
                       }}
                     />
-                  <button
-                    onClick={() => removeItem(listing.listingId)}
-                    aria-label={t("remove")}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      color: colors.neutral[400],
-                      cursor: "pointer",
-                      fontSize: "1rem",
-                    }}
-                  >
-                    ✕
-                  </button>
+                    <button
+                      onClick={() => removeItem(listing.listingId)}
+                      aria-label={t("remove")}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: colors.neutral[400],
+                        cursor: "pointer",
+                        fontSize: "1rem",
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
                 {amountErrors[listing.listingId] && (
                   <p style={{ fontSize: "0.75rem", color: colors.suspended.text, margin: "0.4rem 0 0" }}>
@@ -670,7 +681,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
         )}
 
         {/* Navigation */}
-        <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
+        <div className="bpw-nav" style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
           <button
             onClick={() => setStep("preview")}
             disabled={!canProceed}
@@ -911,7 +922,7 @@ export default function BulkPurchaseWizard({ availableListings, onComplete }: Pr
       </div>
 
       {/* CTA */}
-      <div style={{ display: "flex", gap: "1rem", justifyContent: "space-between" }}>
+      <div className="bpw-nav" style={{ display: "flex", gap: "1rem", justifyContent: "space-between" }}>
         <button
           onClick={() => setStep("preview")}
           disabled={!!busy}

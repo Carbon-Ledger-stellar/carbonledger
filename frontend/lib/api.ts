@@ -483,6 +483,23 @@ export async function purchaseCredits(listingId: string, amount: number, buyerPu
   return res.json();
 }
 
+/**
+ * Remove a listing from the marketplace (#1512).
+ * The seller must own the listing; the backend validates ownership.
+ */
+export async function delistListing(
+  listingId: string,
+  sellerPublicKey: string,
+): Promise<{ success: boolean; listingId: string }> {
+  const res = await fetch(`${API_URL}/marketplace/listings/${encodeURIComponent(listingId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sellerPublicKey }),
+  });
+  if (!res.ok) throw new Error((await res.json()).message ?? "Failed to delist");
+  return res.json();
+}
+
 export async function retireCredits(payload: {
   batchId: string;
   amount: number;

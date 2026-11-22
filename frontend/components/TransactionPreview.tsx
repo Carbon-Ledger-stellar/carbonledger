@@ -1,7 +1,117 @@
 "use client";
 
+import { useState } from "react";
 import { colors } from "../styles/design-system";
 import { PreviewState } from "../lib/transaction-preview-types";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inline tooltip for fee labels (#1511)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function FeeTooltip({ text }: { text: string }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <button
+        type="button"
+        aria-label={`Fee explanation: ${text}`}
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        onFocus={() => setVisible(true)}
+        onBlur={() => setVisible(false)}
+        style={{
+          background: "none",
+          border: "none",
+          padding: "0 0 0 0.25rem",
+          cursor: "default",
+          color: colors.neutral[400],
+          fontSize: "0.7rem",
+          lineHeight: 1,
+        }}
+      >
+        ⓘ
+      </button>
+      {visible && (
+        <span
+          role="tooltip"
+          style={{
+            position: "absolute",
+            bottom: "calc(100% + 4px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: colors.neutral[900],
+            color: "#fff",
+            borderRadius: "0.375rem",
+            padding: "0.4rem 0.6rem",
+            fontSize: "0.73rem",
+            lineHeight: 1.4,
+            whiteSpace: "nowrap",
+            maxWidth: "220px",
+            whiteSpaceCollapse: "preserve",
+            zIndex: 10,
+            pointerEvents: "none",
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fee breakdown row
+// ─────────────────────────────────────────────────────────────────────────────
+
+function FeeRow({
+  label,
+  value,
+  tooltip,
+  isTotal = false,
+}: {
+  label: string;
+  value: string;
+  tooltip?: string;
+  isTotal?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: "0.75rem",
+        padding: isTotal ? "0.4rem 0 0" : "0.15rem 0",
+        borderTop: isTotal ? `1px solid ${colors.primary[200]}` : undefined,
+        marginTop: isTotal ? "0.25rem" : undefined,
+      }}
+    >
+      <span
+        style={{
+          fontSize: isTotal ? "0.9rem" : "0.8rem",
+          fontWeight: isTotal ? 700 : 400,
+          color: isTotal ? colors.neutral[900] : colors.neutral[600],
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        {label}
+        {tooltip && <FeeTooltip text={tooltip} />}
+      </span>
+      <span
+        style={{
+          fontSize: isTotal ? "0.9rem" : "0.8rem",
+          fontWeight: isTotal ? 800 : 600,
+          color: isTotal ? colors.primary[700] : colors.neutral[800],
+          textAlign: "right",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
 
 interface Props {
   /** Short heading displayed above the effect list, e.g. "Transaction preview". */
@@ -250,26 +360,44 @@ export default function TransactionPreview({
             <div
               style={{
                 borderTop: `1px dashed ${colors.primary[200]}`,
-                paddingTop: "0.4rem",
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "0.75rem",
-                alignItems: "baseline",
+                paddingTop: "0.5rem",
+                marginTop: "0.25rem",
               }}
             >
-              <span style={{ fontSize: "0.8rem", color: colors.neutral[500] }}>
-                Estimated total fee
-              </span>
-              <span
-                style={{
-                  fontSize: "0.8rem",
-                  fontWeight: 700,
-                  color: colors.primary[700],
-                  textAlign: "right",
-                }}
-              >
-                {preview.feeEstimate}
-              </span>
+              {preview.feeBreakdown ? (
+                <>
+                  {preview.feeBreakdown.subtotal && (
+                    <FeeRow
+                      label="Subtotal"
+                      value={preview.feeBreakdown.subtotal}
+                      tooltip="Total value of carbon credits before fees."
+                    />
+                  )}
+                  {preview.feeBreakdown.platformFee && (
+                    <FeeRow
+                      label="Platform fee"
+                      value={preview.feeBreakdown.platformFee}
+                      tooltip="CarbonLedger charges a 1% fee on credit purchases. This funds registry maintenance and verifier operations."
+                    />
+                  )}
+                  {preview.feeBreakdown.networkFee && (
+                    <FeeRow
+                      label="Network fee"
+                      value={preview.feeBreakdown.networkFee}
+                      tooltip="Stellar base fee paid to validators to include this transaction on-chain. Typically 0.0001 XLM."
+                    />
+                  )}
+                  {preview.feeBreakdown.total && (
+                    <FeeRow
+                      label="Total"
+                      value={preview.feeBreakdown.total}
+                      isTotal
+                    />
+                  )}
+                </>
+              ) : preview.feeEstimate ? (
+                <FeeRow label="Estimated total fee" value={preview.feeEstimate} />
+              ) : null}
             </div>
           ) : null}
         </div>
