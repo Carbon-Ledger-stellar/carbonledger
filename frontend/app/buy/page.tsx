@@ -374,6 +374,7 @@ function BuyPageContent() {
                     >
                       {t("totalCost")}
                     </span>
+                    {/* Issue #1596: show both USDC and tCO₂e units next to the live total */}
                     <span
                       id="buy-total-cost"
                       aria-live="polite"
@@ -490,12 +491,12 @@ function BuyPageContent() {
             {/* ── Preview step ────────────────────────────────────────────── */}
             {showPreview && (
               <>
-                {/* Explicit "you pay" summary line in the preview/confirm step */}
+                {/* Issue #1596: explicit "you pay" summary at the top of the confirm step */}
                 <div
                   style={{
                     background: colors.primary[50],
                     border: `1px solid ${colors.primary[200]}`,
-                    borderRadius: "0.5rem",
+                    borderRadius: "0.75rem",
                     padding: "0.875rem 1.25rem",
                     display: "flex",
                     justifyContent: "space-between",

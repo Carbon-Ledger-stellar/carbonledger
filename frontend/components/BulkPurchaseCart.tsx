@@ -9,9 +9,10 @@ import { getWalletErrorMessage } from "../lib/wallet-errors";
 import { formatPurchaseFailure, getPurchaseFailure } from "../lib/purchase-errors";
 import { formatStroops, formatTonnes } from "../lib/carbon-utils";
 import { colors } from "../styles/design-system";
-import TransactionStatus, { TxStatus } from "./TransactionStatus";
+import TransactionStatus, { type TxStatus } from "./TransactionStatus";
 import Toast, { useToast } from "./Toast";
-import { clearSdexEstimate, loadSdexEstimate, StoredOrderBookQuote, formatOrderBookPrice } from "../lib/sdex";
+import { clearSdexEstimate, loadSdexEstimate, formatOrderBookPrice } from "../lib/sdex";
+import type { StoredOrderBookQuote } from "../lib/sdex";
 import {
   useTransactionPoller,
   TRANSACTION_MAX_POLLS,
@@ -66,8 +67,9 @@ export default function BulkPurchaseCart() {
       setFailureError(e);
       setTxStatus("failed");
       setPollHash(null);
-      const { message, nextStep } = getActionablePurchaseError(e, "carbon_marketplace");
-      addToast({ type: "error", title: t("purchaseFailedTitle"), message: `${message} ${nextStep}` });
+      // Issue #1597: use actionable error helper instead of raw exception string
+      const ae = getActionablePurchaseError(e);
+      addToast({ type: "error", title: t("purchaseFailedTitle"), message: `${ae.message} ${ae.nextStep}` });
     }
   }
 
@@ -357,7 +359,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? (pollError ? getContractErrorMessage(pollError, "carbon_marketplace") : undefined) : undefined}
+                message={txStatus === "failed" ? (() => { const ae = getActionablePurchaseError(pollError); return `${ae.message} ${ae.nextStep}`; })() : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
             </div>
@@ -383,8 +385,6 @@ export default function BulkPurchaseCart() {
       <Toast toasts={toasts} onDismiss={dismiss} />
     </div>
       </div>
-
-      {/* Mobile FAB (<768px) */}
       {items.length > 0 && (
         <button
           ref={fabRef}
@@ -496,7 +496,7 @@ export default function BulkPurchaseCart() {
                     ? { current: pollCount, max: TRANSACTION_MAX_POLLS }
                     : undefined
                 }
-                message={txStatus === "failed" ? (pollError ? getContractErrorMessage(pollError, "carbon_marketplace") : undefined) : undefined}
+                message={txStatus === "failed" ? (() => { const ae = getActionablePurchaseError(pollError); return `${ae.message} ${ae.nextStep}`; })() : undefined}
                 onRetry={txStatus === "failed" ? handlePurchase : undefined}
               />
                 </div>

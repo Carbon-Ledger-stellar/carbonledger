@@ -131,7 +131,9 @@
     "sessionExpiredMessage": "Your wallet session ended, possibly because the extension was locked or access was revoked. Reconnect to continue.",
     "sessionExpiredButton": "Reconnect Wallet",
     "alreadyInstalled": "Already installed?",
-    "refreshLink": "Click here to refresh"
+    "refreshLink": "Click here to refresh",
+    "walletRequiredExplanation": "CarbonLedger purchases are on-chain transactions on the Stellar network. You will need a Freighter wallet to authorize and sign this purchase securely — no action is taken without your approval.",
+    "walletRequiredExplanationTitle": "A Stellar wallet is required to complete this purchase"
   },
   "bulkPurchaseCart": {
     "title": "Purchase Cart ({count, plural, one {# project} other {# projects}})",
@@ -151,7 +153,8 @@
     "purchaseConfirmedTitle": "Purchase confirmed!",
     "purchaseConfirmedMessage": "{tonnes} acquired",
     "purchaseFailedTitle": "Purchase failed",
-    "purchaseFailedOnChain": "Transaction failed on-chain"
+    "purchaseFailedOnChain": "Transaction failed on-chain",
+    "purchaseFailedNextStep": "Next step"
   },
   "carbonTerms": {
     "vintage": "vintage",

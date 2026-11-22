@@ -131,7 +131,9 @@
     "sessionExpiredMessage": "您的钱包会话已结束，可能是因为扩展程序被锁定或访问权限被撤销。请重新连接以继续。",
     "sessionExpiredButton": "重新连接钱包",
     "alreadyInstalled": "已经安装了？",
-    "refreshLink": "点击此处刷新"
+    "refreshLink": "点击此处刷新",
+    "walletRequiredExplanation": "CarbonLedger purchases are on-chain transactions on the Stellar network. You will need a Freighter wallet to authorize and sign this purchase securely — no action is taken without your approval.",
+    "walletRequiredExplanationTitle": "A Stellar wallet is required to complete this purchase"
   },
   "bulkPurchaseCart": {
     "title": "购物车（{count, plural, other {# 个项目}}）",
@@ -151,7 +153,8 @@
     "purchaseConfirmedTitle": "购买已确认！",
     "purchaseConfirmedMessage": "已获得 {tonnes}",
     "purchaseFailedTitle": "购买失败",
-    "purchaseFailedOnChain": "链上交易失败"
+    "purchaseFailedOnChain": "链上交易失败",
+    "purchaseFailedNextStep": "Next step"
   },
   "carbonTerms": {
     "vintage": "年份",
