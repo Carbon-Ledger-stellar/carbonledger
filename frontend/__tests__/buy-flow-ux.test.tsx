@@ -1,24 +1,36 @@
 /**
- * Unit tests for buy-flow UX improvements.
+ * Unit tests for the four buy-flow UX improvements:
  *
- * Covers issues:
- *   #1596 – Live purchase total recomputes on amount change (USDC + tCO₂e units).
- *   #1597 – Actionable purchase error messages (getActionablePurchaseError).
- *   #1598 – Wallet-required explanation renders before wallet-connect step.
- *   #1599 – Detailed success confirmation (project name, tonnes, USDC, tx hash).
+ * #1596 — Live total recomputation: TransactionPreview renders the
+ *          purchaseSummary "You pay X for Y" line when provided.
+ * #1597 — Actionable error messages: getContractErrorMessage maps common
+ *          purchase failure causes to plain-language text with a next step.
+ * #1598 — Wallet explanation: WalletPrompt renders the contextual `reason`
+ *          when no wallet is connected and hides it when status is "ready".
+ * #1599 — Detailed success confirmation: buy page renders project name,
+ *          amount, USDC total and tx hash on confirmed status.
  */
 
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
-// ── Mocks ─────────────────────────────────────────────────────────────────────
+// ── Shared mocks required by multiple components ──────────────────────────────
 
 jest.mock("../styles/design-system", () => ({
   colors: {
-    primary: { 50: "#f0fdf4", 200: "#bbf7d0", 600: "#16a34a", 700: "#15803d" },
+    primary: {
+      50: "#f0f9ff",
+      100: "#e0f2fe",
+      200: "#bae6fd",
+      300: "#7dd3fc",
+      600: "#0284c7",
+      700: "#0369a1",
+      800: "#075985",
+    },
     neutral: {
       200: "#e5e7eb",
+      300: "#d1d5db",
       400: "#9ca3af",
       500: "#6b7280",
       600: "#4b5563",

@@ -224,6 +224,25 @@ export default function WalletPrompt({ status, onConnect, refresh, showContextua
       <h2 style={{ fontSize: typography.fontSize.xl, fontWeight: 700, color: colors.neutral[900], marginBottom: "0.75rem" }}>
         {content.title}
       </h2>
+      {/* Issue #1598 — contextual reason explaining why a wallet is needed */}
+      {reason && (
+        <p
+          data-testid="wallet-reason"
+          style={{
+            color: colors.primary[700],
+            fontSize: typography.fontSize.sm,
+            lineHeight: 1.5,
+            marginBottom: "0.75rem",
+            background: colors.primary[50],
+            border: `1px solid ${colors.primary[200]}`,
+            borderRadius: borderRadius.md,
+            padding: "0.6rem 0.9rem",
+            textAlign: "left",
+          }}
+        >
+          {reason}
+        </p>
+      )}
       <p style={{ color: colors.neutral[500], fontSize: typography.fontSize.sm, lineHeight: 1.5, marginBottom: "1.5rem" }}>
         {content.message}
       </p>

@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { useListing, purchaseCredits, useMarketplacePauseState } from "../../lib/api";
 import { useBuyButton } from "../../lib/useBuyButton";
 import ErrorBoundary from "../../components/ErrorBoundary";
-import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
+import { formatTonnes, calculateCreditCost, formatUSDC } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
 import { getContractErrorMessage, getActionablePurchaseError } from "../../lib/wallet-errors";
 import { colors } from "../../styles/design-system";
@@ -168,7 +168,8 @@ function BuyPageContent() {
         message: t("purchaseConfirmedMessage", {
           projectName: listing.projectName || listing.projectId,
           tonnes: formatTonnes(amount),
-          total: formatCurrency(totalCost),
+          project: projectName,
+          usdc: formatUSDC(totalCost),
         }),
         txHash: result.txHash,
       });
@@ -750,6 +751,61 @@ function BuyPageContent() {
                     View purchase history →
                   </a>
                 </div>
+              </div>
+            )}
+
+            {/* Purchase confirmation summary — issue #1599 */}
+            {txStatus === "confirmed" && txHash && listing && (
+              <div
+                data-testid="purchase-confirmation-summary"
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.75rem",
+                  padding: "1.25rem",
+                }}
+              >
+                <p style={{ margin: "0 0 0.75rem", fontWeight: 700, fontSize: "1rem", color: "#15803d" }}>
+                  ✅ {t("purchaseConfirmedTitle")}
+                </p>
+                <div style={{ display: "grid", gap: "0.4rem", fontSize: "0.875rem", color: "#166534" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Project</span>
+                    <span style={{ fontWeight: 700 }}>{listing.projectName || listing.projectId}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Tonnes purchased</span>
+                    <span style={{ fontWeight: 700 }}>{formatTonnes(amount)} tCO2e</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Total paid</span>
+                    <span style={{ fontWeight: 700 }}>{formatUSDC(totalCost)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <span>Transaction</span>
+                    <a
+                      href={`https://stellar.expert/explorer/${process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "public" : "testnet"}/tx/${txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontFamily: "monospace", fontWeight: 700, color: "#15803d", textDecoration: "underline", textAlign: "right" }}
+                    >
+                      {txHash.slice(0, 10)}…{txHash.slice(-10)}
+                    </a>
+                  </div>
+                </div>
+                <a
+                  href="/purchases"
+                  style={{
+                    display: "inline-block",
+                    marginTop: "1rem",
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: "#15803d",
+                    textDecoration: "underline",
+                  }}
+                >
+                  View purchase history →
+                </a>
               </div>
             )}
 

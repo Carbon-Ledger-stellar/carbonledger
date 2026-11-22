@@ -141,12 +141,16 @@ interface Props {
    */
   confirming?: boolean;
   /**
-   * Prominent one-line summary of the live purchase total (e.g.
-   * "You pay $100.00 USDC for 10 tCO2e"). Buy-flow usability test #1544 (F1):
-   * the computed total must be carried into the confirm step, not only shown
-   * next to the quantity input. Rendered above the effects list when provided.
+   * Optional purchase summary shown as a prominent "You pay … for …" line
+   * above the effects list. Addresses issue #1596: the confirm step must
+   * carry an explicit total so users know exactly what they will pay.
    */
-  totalSummary?: string;
+  purchaseSummary?: {
+    /** e.g. "12.50 USDC" */
+    totalUsdc: string;
+    /** e.g. "5.00 tCO2e" */
+    totalTonnes: string;
+  };
 }
 
 /**
@@ -172,7 +176,7 @@ export default function TransactionPreview({
   confirmLabel = "Confirm & Sign",
   cancelLabel = "Cancel",
   confirming = false,
-  totalSummary,
+  purchaseSummary,
 }: Props) {
   const hasError = !preview.loading && !!preview.error;
   const canConfirm = !preview.loading && preview.ready && !hasError && !confirming;
@@ -259,19 +263,27 @@ export default function TransactionPreview({
       ) : (
         /* Effects list */
         <div style={{ marginTop: "0.9rem", display: "grid", gap: "0.5rem" }}>
-          {totalSummary && (
+          {/* Issue #1596 — explicit "You pay … for …" summary at the top of confirm step */}
+          {purchaseSummary && (
             <div
-              role="status"
+              data-testid="purchase-summary-line"
               style={{
                 background: colors.primary[100],
-                border: `1px solid ${colors.primary[200]}`,
+                border: `1px solid ${colors.primary[300]}`,
                 borderRadius: "0.5rem",
-                padding: "0.6rem 0.75rem",
+                padding: "0.6rem 0.9rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "0.5rem",
                 marginBottom: "0.25rem",
               }}
             >
-              <span style={{ fontSize: "0.9rem", fontWeight: 700, color: colors.primary[700] }}>
-                {totalSummary}
+              <span style={{ fontSize: "0.85rem", fontWeight: 600, color: colors.primary[800] }}>
+                You pay
+              </span>
+              <span style={{ fontSize: "1rem", fontWeight: 800, color: colors.primary[800], whiteSpace: "nowrap" }}>
+                {purchaseSummary.totalUsdc} for {purchaseSummary.totalTonnes}
               </span>
             </div>
           )}
