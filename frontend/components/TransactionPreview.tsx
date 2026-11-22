@@ -140,6 +140,13 @@ interface Props {
    * cannot be clicked (e.g. the Freighter prompt is already open).
    */
   confirming?: boolean;
+  /**
+   * Prominent one-line summary of the live purchase total (e.g.
+   * "You pay $100.00 USDC for 10 tCO2e"). Buy-flow usability test #1544 (F1):
+   * the computed total must be carried into the confirm step, not only shown
+   * next to the quantity input. Rendered above the effects list when provided.
+   */
+  totalSummary?: string;
 }
 
 /**
@@ -165,6 +172,7 @@ export default function TransactionPreview({
   confirmLabel = "Confirm & Sign",
   cancelLabel = "Cancel",
   confirming = false,
+  totalSummary,
 }: Props) {
   const hasError = !preview.loading && !!preview.error;
   const canConfirm = !preview.loading && preview.ready && !hasError && !confirming;
@@ -251,6 +259,22 @@ export default function TransactionPreview({
       ) : (
         /* Effects list */
         <div style={{ marginTop: "0.9rem", display: "grid", gap: "0.5rem" }}>
+          {totalSummary && (
+            <div
+              role="status"
+              style={{
+                background: colors.primary[100],
+                border: `1px solid ${colors.primary[200]}`,
+                borderRadius: "0.5rem",
+                padding: "0.6rem 0.75rem",
+                marginBottom: "0.25rem",
+              }}
+            >
+              <span style={{ fontSize: "0.9rem", fontWeight: 700, color: colors.primary[700] }}>
+                {totalSummary}
+              </span>
+            </div>
+          )}
           {preview.effects.map((effect) => (
             <div
               key={effect.label}

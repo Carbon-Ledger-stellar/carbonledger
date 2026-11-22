@@ -46,6 +46,13 @@ Representative quotes:
 
 ### Follow-up Issues
 
+The major (S2) findings from the buy-flow usability test (#1544) have been filed as follow-up issues and are addressed in this PR:
+
+- #1596 — UI/UX - Show live purchase total in the buy flow (F1)
+- #1598 — UI/UX - Explain wallet connection before the wallet-connect step (F2)
+- #1599 — UI/UX - Detailed purchase success confirmation (F3)
+- #1597 — UI/UX - Actionable purchase error messages (F4)
+
 ## 🎯 New Contributors Start Here!
 
 **Want to contribute?** We've created comprehensive guides to get you started in under 30 minutes:

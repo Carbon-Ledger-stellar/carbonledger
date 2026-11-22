@@ -8,7 +8,7 @@ import { useBuyButton } from "../../lib/useBuyButton";
 import ErrorBoundary from "../../components/ErrorBoundary";
 import { formatTonnes, calculateCreditCost } from "../../lib/carbon-utils";
 import { useLocaleFormatters } from "../../lib/i18n/format";
-import { getContractErrorMessage } from "../../lib/wallet-errors";
+import { formatPurchaseFailure } from "../../lib/purchase-errors";
 import { colors } from "../../styles/design-system";
 import TransactionStatus, { TxStatus } from "../../components/TransactionStatus";
 import TransactionSigningSteps from "../../components/TransactionSigningSteps";
@@ -17,6 +17,8 @@ import type { PreviewState } from "../../lib/transaction-preview-types";
 import Toast, { useToast } from "../../components/Toast";
 import { useWalletStatus } from "../../hooks/useWalletStatus";
 import WalletPrompt from "../../components/WalletPrompt";
+import WalletRequiredNotice from "../../components/WalletRequiredNotice";
+import PurchaseConfirmation from "../../components/PurchaseConfirmation";
 import { simulatePurchasePreview } from "../../lib/soroban";
 import { usePauseWebSocket } from "../../lib/realtime/usePauseWebSocket";
 import PausedOperationButton from "../../components/PausedOperationButton";
@@ -35,6 +37,13 @@ function BuyPageContent() {
   const [txStatus, setTxStatus] = useState(null as TxStatus | null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [retireAfter, setRetireAfter] = useState(false);
+  // Persistent success confirmation (buy-flow usability test #1544, finding F3).
+  const [lastPurchase, setLastPurchase] = useState<{
+    projectName: string;
+    tonnesLabel: string;
+    totalLabel: string;
+    txHash: string;
+  } | null>(null);
 
   // Pause state — Issue #1254
   const { pauseState: pollingPauseState } = useMarketplacePauseState();
@@ -62,7 +71,7 @@ function BuyPageContent() {
   const [showPreview, setShowPreview] = useState(false);
 
   const { toasts, addToast, dismiss } = useToast();
-  const { state: buyState, errorMsg: buyError, run: runBuy } = useBuyButton();
+  const { state: buyState, errorMsg: buyError, error: buyErrorObj, run: runBuy } = useBuyButton();
   const { status: walletStatus, address: walletKey, refresh: refreshWallet } =
     useWalletStatus();
 
@@ -146,6 +155,11 @@ function BuyPageContent() {
       setTxHash(result.txHash);
       setTxStatus("confirmed");
       succeeded = true;
+      // F3 — detailed success confirmation: project name + amount + total.
+      const projectName = listing.projectName || listing.projectId;
+      const tonnesLabel = `${formatTonnes(amount)} tCO₂e`;
+      const totalLabel = `$${formatCurrency(totalCost)} USDC`;
+      setLastPurchase({ projectName, tonnesLabel, totalLabel, txHash: result.txHash });
       addToast({
         type: "success",
         title: t("purchaseConfirmedTitle"),
@@ -284,6 +298,9 @@ function BuyPageContent() {
               </div>
             </div>
 
+            {/* F2 — explain wallet connection up front, before the connect step */}
+            <WalletRequiredNotice visible={walletStatus !== "ready"} />
+
             {/* Amount selector — only visible before preview step */}
             {!showPreview && (
               <>
@@ -338,8 +355,42 @@ function BuyPageContent() {
                       minHeight: "48px",
                     }}
                   />
-                  <p style={{ margin: "0.5rem 0 0", fontSize: "0.75rem", color: colors.neutral[400] }}>
-                    {t("totalUpdatesLive")}
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginTop: "0.75rem",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.875rem",
+                        color: colors.neutral[500],
+                      }}
+                    >
+                      {t("totalCost")}
+                    </span>
+                    <span
+                      id="buy-total-cost"
+                      style={{
+                        fontSize: "1.25rem",
+                        fontWeight: 800,
+                        color: colors.primary[700],
+                      }}
+                    >
+                      ${formatCurrency(totalCost)} USDC
+                    </span>
+                  </div>
+                  <p
+                    style={{
+                      margin: "0.25rem 0 0",
+                      fontSize: "0.75rem",
+                      color: colors.neutral[400],
+                      textAlign: "right",
+                    }}
+                    aria-live="polite"
+                  >
+                    for {formatTonnes(amount)} tCO₂e
                   </p>
                 </div>
 
@@ -516,6 +567,16 @@ function BuyPageContent() {
                   {t("viewPurchaseHistory")} →
                 </a>
               </div>
+            )}
+
+            {/* F3 — persistent, detailed success confirmation */}
+            {txStatus === "confirmed" && lastPurchase && (
+              <PurchaseConfirmation
+                projectName={lastPurchase.projectName}
+                tonnesLabel={lastPurchase.tonnesLabel}
+                totalLabel={lastPurchase.totalLabel}
+                txHash={lastPurchase.txHash}
+              />
             )}
 
             {/* Wallet prompt or "Preview purchase" CTA */}

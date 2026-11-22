@@ -619,10 +619,10 @@ Findings are recorded per participant and consolidated below. Severity uses: **S
 
 Derived from the findings above; each should be filed and linked back to #1544:
 
-- [ ] **Live purchase total** — show the computed total as the quantity changes (F1, S2).
-- [ ] **Explain wallet connection up front** — add contextual copy before the wallet-connect step (F2, S2).
-- [ ] **Detailed success confirmation** — include project name and credit amount in the confirmation (F3, S2).
-- [ ] **Actionable purchase error messages** — replace the generic failure message with a cause and a retry path (F4, S2).
+- [x] **Live purchase total** — show the computed total as the quantity changes (F1, S2). Tracked: #1596.
+- [x] **Explain wallet connection up front** — add contextual copy before the wallet-connect step (F2, S2). Tracked: #1598.
+- [x] **Detailed success confirmation** — include project name and credit amount in the confirmation (F3, S2). Tracked: #1599.
+- [x] **Actionable purchase error messages** — replace the generic failure message with a cause and a retry path (F4, S2). Tracked: #1597.
 - [ ] **Surface purchase history** — link to purchase history from the confirmation screen (F5, S3).
 - [ ] **Fix mobile confirm button placement** — keep the confirm action visible without scrolling (F6, S3).
 - [ ] **Clarify credit vs. tonne units** — disambiguate the units label throughout the buy flow (F7, S3).
