@@ -301,8 +301,43 @@ export default function RetirementCertificate({ retirement, publicUrl }: Props) 
             padding: 18mm 20mm;
             border-radius: 0;
             box-shadow: none;
-            border: none;
+            border: 2px solid #000;
+            /* Ensure colours print even in grayscale-forced environments */
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            /* Remove gradient — solid white is crisper on laser printers */
+            background: #fff !important;
           }
+          /* Grayscale fallback: replace colour-dependent elements with high-
+             contrast equivalents so the certificate reads clearly when printed
+             without colour ink or when the user picks "Print in grayscale". */
+          .cert-accent-bar {
+            background: #000 !important;
+          }
+          .cert-beneficiary {
+            background: #f5f5f5 !important;
+            border-color: #000 !important;
+          }
+          .cert-beneficiary-name {
+            color: #000 !important;
+          }
+          .cert-amount {
+            color: #000 !important;
+          }
+          .cert-detail-item {
+            border-left-color: #000 !important;
+          }
+          .cert-logo-text,
+          .cert-title,
+          .cert-tx-link {
+            color: #000 !important;
+          }
+          .cert-seal {
+            border-color: #000 !important;
+            background: #fff !important;
+            color: #000 !important;
+          }
+          /* QR code must stay dark on white — already vector SVG, no change needed */
           .cert-actions { display: none; }
           @page {
             size: A4 portrait;

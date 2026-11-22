@@ -69,6 +69,11 @@ export default function TransactionStatus({ status, txHash, message, pollProgres
           animation: spin 1s linear infinite;
           display: inline-block;
         }
+        @media (prefers-reduced-motion: reduce) {
+          .tx-spinner {
+            animation: none;
+          }
+        }
       `}</style>
       
       <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>

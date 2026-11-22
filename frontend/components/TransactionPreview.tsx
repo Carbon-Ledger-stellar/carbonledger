@@ -119,7 +119,7 @@ export default function TransactionPreview({
               }}
             />
           ))}
-          <style>{`@keyframes pulse { 0%,100%{opacity:.5} 50%{opacity:1} }`}</style>
+          <style>{`@keyframes pulse { 0%,100%{opacity:.5} 50%{opacity:1} } @media (prefers-reduced-motion: reduce) { .tx-preview-pulse { animation: none !important; opacity: 0.6 !important; } }`}</style>
           <p style={{ margin: "0.4rem 0 0", fontSize: "0.8rem", color: colors.neutral[500] }}>
             Simulating the transaction with Soroban. This takes a few seconds…
           </p>
