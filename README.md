@@ -57,6 +57,7 @@ Representative quotes:
 - 📋 **[Quick Reference](docs/QUICK_REFERENCE.md)** - One-page command reference
 - 🔑 **[Configuration Guide](docs/configuration.md)** - Every environment variable explained
 - ♻️ **[Credit Lifecycle](docs/carbon-credit-lifecycle.md)** - Actors, contracts, data, and error conditions for each stage
+- 📖 **[Glossary](docs/glossary.md)** - Carbon market terms explained (vintage, retirement, additionality, and more)
 
 **Run this to verify your setup:**
 ```bash

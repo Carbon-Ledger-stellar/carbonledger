@@ -31,6 +31,7 @@ Understanding the system:
 | Document | Description | Audience |
 |----------|-------------|----------|
 | **[Architecture Decision Records](adr/)** | Why we made key technical decisions | Developers |
+| **[Backend Module Boundaries](backend-module-boundaries.md)** | Module map, responsibilities, and allowed dependency directions for `backend/src` | Backend devs, Architects |
 | **[Pause Architecture](pause-architecture.md)** | Updated architecture diagrams and pause flow diagrams | Developers |
 | **[Deployment Guide](deployment.md)** | Production deployment instructions | DevOps |
 | **[Full Stack Deployment Guide](FULL_STACK_DEPLOYMENT.md)** | Phase 4 Testnet & Mainnet VPS/Systemd deployment | DevOps |
@@ -51,6 +52,7 @@ User experience and interaction design:
 | Document | Description | Audience |
 |----------|-------------|----------|
 | **[Carbon Methodology Reference](CARBON_METHODOLOGY_REFERENCE.md)** | Supported methodologies, scoring rubric, and contract parameter mapping | All contributors |
+| **[Glossary](glossary.md)** | Definitions of domain and technical terms used across the project | All contributors |
 
 ### 🔌 API Documentation
 
@@ -94,7 +96,8 @@ Technical references:
 #### Understand Architecture
 1. Read [ADR Index](adr/README.md)
 2. Review specific decisions
-3. Check [Main README](../README.md#-architecture)
+3. Review [Backend Module Boundaries](backend-module-boundaries.md)
+4. Check [Main README](../README.md#-architecture)
 
 #### Deploy to Production
 1. Read [Deployment Guide](deployment.md)
@@ -237,6 +240,8 @@ Link to related documentation:
 - ✅ Troubleshooting reference
 - ✅ Testnet setup
 - ✅ Architecture decisions
+- ✅ Backend module boundaries
+- ✅ Glossary
 - ✅ API documentation
 - ✅ Deployment guide
 
@@ -285,7 +290,10 @@ Documentation contributions are highly valued!
 3. **Test your changes:**
    - Follow your own instructions
    - Verify on clean machine
-   - Check all links work
+   - Check all links work:
+     ```bash
+     lychee docs/  # Fails on broken internal links
+     ```
 
 ---
 
@@ -329,6 +337,7 @@ Before submitting documentation:
 - [ ] Index updated
 - [ ] Follows style guide
 - [ ] Tested on clean machine
+- [ ] Internal links pass the link checker (`lychee docs/`)
 
 ---
 

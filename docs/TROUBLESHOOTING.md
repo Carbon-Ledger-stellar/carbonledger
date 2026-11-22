@@ -9,6 +9,7 @@ Quick solutions to common setup and development issues.
 - [Database Issues](#database-issues)
 - [Test Failures](#test-failures)
 - [Runtime Errors](#runtime-errors)
+- [Freighter Wallet on Testnet](#freighter-wallet-on-testnet)
 - [Platform-Specific Issues](#platform-specific-issues)
 
 ---
@@ -493,6 +494,139 @@ Access to fetch at 'http://localhost:3001' has been blocked by CORS policy
    # frontend/.env.local
    NEXT_PUBLIC_API_URL=http://localhost:3001/api/v1
    ```
+
+---
+
+## Freighter Wallet on Testnet
+
+Most local development and testing happens on the Stellar **Testnet**. The two most common blockers are having Freighter pointed at the wrong network and using an account that has never been funded. Both are quick to fix.
+
+### Wrong Network Selected in Freighter
+
+**Symptoms:**
+```
+Error: Transaction failed: txBAD_AUTH
+```
+```
+Error: Network mismatch: expected TESTNET, got PUBLIC
+```
+```
+Error: Requested network does not match the network configured in Freighter
+```
+
+**Cause:**
+Freighter is set to **Mainnet** (or another network) while the app is configured for Testnet. Transactions signed for one network are rejected by the other, so the signature fails with `txBAD_AUTH` or a network-mismatch error.
+
+**Resolution:**
+
+1. Click the **Freighter** icon in your browser toolbar to open the extension.
+
+   ![Open Freighter from the browser toolbar](images/freighter-open-extension.png)
+
+2. Open the network selector at the top of the Freighter window (it shows the current network, e.g. **Mainnet**).
+
+   ![Freighter network selector showing Mainnet](images/freighter-network-selector.png)
+
+3. Select **Testnet** from the list and confirm.
+
+   ![Selecting Testnet in the Freighter network selector](images/freighter-select-testnet.png)
+
+4. Verify the switch — the header should now read **Testnet**.
+
+   ![Freighter header showing Testnet selected](images/freighter-testnet-active.png)
+
+5. Reload the app and reconnect the wallet. Confirm the network the app sees:
+   ```javascript
+   const network = await window.freighterApi.getNetwork();
+   console.log('Network:', network); // Should be "TESTNET"
+   ```
+
+> **Note:** Screenshots above live in `docs/images/`. If they are missing, capture them from your installed Freighter version and add them there.
+
+---
+
+### Unfunded Account / Insufficient Balance
+
+**Symptoms:**
+```
+Error: Transaction failed: txBAD_AUTH
+```
+```
+Error: Account not found (404) — account does not exist on the network
+```
+```
+Error: Request failed with status code 400: op_underfunded / insufficient balance
+```
+
+**Cause:**
+A Stellar account only exists on the ledger once it has been funded with the minimum reserve (currently 1 XLM on Testnet). A freshly generated keypair has a balance of zero and no ledger entry, so any transaction it submits fails. This is especially common after generating a new key or switching to a new Freighter account.
+
+**Resolution:**
+
+1. Copy your public key from Freighter (click the account name to copy the address, it starts with `G...`).
+
+2. Fund the account with Friendbot (see below).
+
+3. Confirm the balance:
+   ```bash
+   stellar account balance <PUBLIC_KEY> --network testnet
+   ```
+
+---
+
+### Funding an Account with Friendbot
+
+Friendbot is a free Testnet faucet that creates and funds accounts with 10,000 test XLM. It only works on Testnet — never send real funds to a Testnet account.
+
+**Option A: Friendbot via curl (recommended)**
+
+1. Copy your public key from Freighter.
+
+2. Request funds:
+   ```bash
+   curl "https://friendbot.stellar.org/?addr=<PUBLIC_KEY>"
+   ```
+
+   Example:
+   ```bash
+   curl "https://friendbot.stellar.org/?addr=GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUV"
+   ```
+
+3. A successful response is JSON containing the funded account and transaction hash:
+   ```json
+   {
+     "hash": "…",
+     "ledger": 1234567,
+     "successful": true
+   }
+   ```
+
+4. Refresh Freighter — the account should now show a balance of 10,000 XLM.
+
+**Option B: Stellar CLI `--fund`**
+
+If you use the Stellar CLI, generate (or fund an existing) key directly on Testnet:
+
+```bash
+# Generate a new key and fund it automatically
+stellar keys generate test --network testnet --fund
+
+# Or fund an existing key
+stellar keys fund test --network testnet
+```
+
+Then import that secret key into Freighter (Settings → Import account) if you want to use it in the browser.
+
+**Option C: Friendbot in the browser**
+
+Open `https://friendbot.stellar.org/?addr=<PUBLIC_KEY>` in a browser tab, replacing `<PUBLIC_KEY>` with your address. The page reports success or failure.
+
+**Verify funding worked:**
+```bash
+stellar account balance <PUBLIC_KEY> --network testnet
+```
+
+If you still see `Account not found`, double-check the public key is correct and that Friendbot returned `"successful": true`.
 
 ---
 
