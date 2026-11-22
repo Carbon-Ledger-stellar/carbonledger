@@ -359,6 +359,7 @@ function BuyPageContent() {
                       minHeight: "48px",
                     }}
                   />
+                  {/* #1596 — live total updates on every keystroke, units explicit */}
                   <div
                     style={{
                       display: "flex",
@@ -385,7 +386,13 @@ function BuyPageContent() {
                         color: colors.primary[700],
                       }}
                     >
-                      ${formatCurrency(totalCost)}&nbsp;USDC&nbsp;for&nbsp;{formatTonnes(amount)}&nbsp;tCO₂e
+                      ${formatCurrency(totalCost)}{" "}
+                      <span style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[500] }}>
+                        USDC
+                      </span>{" "}
+                      <span style={{ fontSize: "0.8rem", color: colors.neutral[400], marginLeft: "0.25rem" }}>
+                        for {formatTonnes(amount)}
+                      </span>
                     </span>
                   </div>
                   <p
@@ -496,24 +503,28 @@ function BuyPageContent() {
                   style={{
                     background: colors.primary[50],
                     border: `1px solid ${colors.primary[200]}`,
-                    borderRadius: "0.75rem",
-                    padding: "0.875rem 1.25rem",
+                    borderRadius: "0.5rem",
+                    padding: "0.75rem 1rem",
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
+                    gap: "0.5rem",
                   }}
                 >
-                  <span style={{ fontSize: "0.875rem", fontWeight: 600, color: colors.neutral[700] }}>
-                    {t("youPay")}
+                  <span style={{ fontSize: "0.875rem", color: colors.neutral[600] }}>
+                    You pay
                   </span>
-                  <span style={{ fontSize: "1.25rem", fontWeight: 800, color: colors.primary[700] }}>
-                    ${formatCurrency(totalCost)} USDC{" "}
-                    <span style={{ fontSize: "0.875rem", fontWeight: 500, color: colors.neutral[500] }}>
-                      {t("forTonnes", { tonnes: formatTonnes(amount) })}
+                  <span
+                    style={{ fontWeight: 800, fontSize: "1.1rem", color: colors.primary[700] }}
+                    aria-label={`You pay ${formatCurrency(totalCost)} USDC for ${formatTonnes(amount)}`}
+                  >
+                    ${formatCurrency(totalCost)}{" "}
+                    <span style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.neutral[500] }}>USDC</span>{" "}
+                    <span style={{ fontSize: "0.9rem", color: colors.neutral[600], fontWeight: 600 }}>
+                      for {formatTonnes(amount)}
                     </span>
                   </span>
                 </div>
-
                 <TransactionPreview
                   title="Transaction preview"
                   description="Review the effects below. The network simulation has been run — no fees charged until you sign."
@@ -584,6 +595,89 @@ function BuyPageContent() {
                 totalLabel={lastPurchase.totalLabel}
                 txHash={lastPurchase.txHash}
               />
+            ) : null}
+
+            {/* #1599 — detailed success confirmation */}
+            {txStatus === "confirmed" && txHash && listing && (
+              <div
+                role="status"
+                style={{
+                  background: "#f0fdf4",
+                  border: "1px solid #86efac",
+                  borderRadius: "0.75rem",
+                  padding: "1.25rem",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.5rem",
+                }}
+              >
+                <p style={{ fontWeight: 700, fontSize: "1rem", color: "#15803d", margin: 0 }}>
+                  ✅ Purchase confirmed
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0.25rem 0.75rem", alignItems: "baseline" }}>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Project</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    {listing.projectName || listing.projectId}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Amount</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    {formatTonnes(amount)}
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Total paid</span>
+                  <span style={{ fontWeight: 600, color: "#14532d", fontSize: "0.875rem" }}>
+                    ${formatCurrency(totalCost)} USDC
+                  </span>
+                  <span style={{ fontSize: "0.8rem", color: "#166534" }}>Transaction</span>
+                  <a
+                    href={`https://stellar.expert/explorer/${process.env.NEXT_PUBLIC_STELLAR_NETWORK === "mainnet" ? "public" : "testnet"}/tx/${txHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: "0.75rem", color: "#15803d", fontFamily: "monospace" }}
+                  >
+                    {txHash.slice(0, 12)}…{txHash.slice(-8)} ↗
+                  </a>
+                </div>
+                <a
+                  href="/dashboard"
+                  style={{
+                    marginTop: "0.4rem",
+                    fontSize: "0.875rem",
+                    color: "#15803d",
+                    fontWeight: 600,
+                    textDecoration: "underline",
+                  }}
+                >
+                  View in transaction history →
+                </a>
+              </div>
+            )}
+
+            {/* #1598 — wallet explanation: shown before connect, hidden once ready */}
+            {walletStatus !== "ready" && walletStatus !== "loading" && (
+              <div
+                style={{
+                  background: "#fffbeb",
+                  border: "1px solid #fcd34d",
+                  borderRadius: "0.5rem",
+                  padding: "0.75rem 1rem",
+                  fontSize: "0.875rem",
+                  color: "#92400e",
+                  lineHeight: 1.5,
+                }}
+                aria-label="Wallet required explanation"
+              >
+                <strong>A Freighter Stellar wallet is required</strong> to sign
+                and authorize this on-chain purchase. Freighter is a free browser
+                extension that keeps your keys under your control.{" "}
+                <a
+                  href="https://freighter.app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#b45309", fontWeight: 600 }}
+                >
+                  Learn more ↗
+                </a>
+              </div>
             )}
 
             {/* Actionable next-step hint on failure */}
