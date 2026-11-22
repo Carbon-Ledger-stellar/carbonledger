@@ -20,6 +20,61 @@ Only deploy WASM built from a reviewed and tagged commit. Do not accept a WASM
 hash from an untrusted channel, and use the production administrative signing
 procedure for every invocation.
 
+## carbon_registry_v1 vs carbon_registry_v2
+
+Two historical builds of the registry contract are kept in the repository:
+`carbon_registry_v1` and `carbon_registry_v2`. They are **not** interchangeable
+and they are **not** the current contract. This section explains how they
+differ and how to move state from v1 to v2.
+
+### Versions and SDKs
+
+| Artifact | Contract version | Soroban SDK |
+| --- | --- | --- |
+| `carbon_registry_v1` | `1.0.0` | `20.0.0` |
+| `carbon_registry_v2` | `2.0.0` | `20.0.0` |
+| `carbon_registry` (current) | `0.1.0` | `21.7.7` |
+
+Both legacy crates were built against `soroban-sdk 20.0.0`. The current
+`carbon_registry` crate is `0.1.0` on `soroban-sdk 21.7.7`. Treat v1 and v2 as
+frozen reference implementations; new work targets the current crate.
+
+### Behavioural and storage differences
+
+| Area | `carbon_registry_v1` (1.0.0) | `carbon_registry_v2` (2.0.0) |
+| --- | --- | --- |
+| Public interface | Minimal: register/read project records only | Superset of v1: adds update, status transitions, and admin management entry points |
+| `DataKey` layout | Original set of keys; no versioned wrapper | Adds new keys alongside the v1 keys; existing v1 keys keep their discriminant and serialized layout |
+| Stored record shape | Base project record fields only | Base fields plus additional fields, encoded so legacy records still decode (new fields are optional / versioned) |
+| Version tracking | No `ContractVersion` / `UpgradeHistory` entries | Writes `ContractVersion` and appends to `UpgradeHistory` on upgrade |
+| Migration support | None | Provides an idempotent, admin-authorized migration path for v1 entries |
+| Read compatibility | n/a | Reads unmigrated v1 entries until they are migrated |
+
+The key guarantee is that v2 **extends** v1 storage rather than redefining it:
+existing `DataKey` discriminants and serialized layouts are unchanged, and new
+fields are added as optional or versioned records. This is the same rule set
+described in [State migration strategy](#state-migration-strategy).
+
+### Migration path: v1 → v2
+
+1. **Deploy v2.** Build and upload the reviewed `carbon_registry_v2` WASM and
+   invoke `upgrade_contract` with its hash, following the
+   [Release procedure](#release-procedure). Execute on testnet first.
+2. **Migrate state idempotently.** Run the v2 migration entry point (or rely on
+   lazy migration on read/write) to bring v1 entries up to the v2 record shape.
+   The migration must be safe to re-run and must never re-run initialization.
+3. **Switch consumers.** Point clients, indexers, and downstream contracts at
+   the v2 interface. Because v2 is a superset of v1, existing v1 calls continue
+   to work during the transition.
+4. **Verify.** Confirm `get_version()` reports `2.0.0`, inspect
+   `get_upgrade_history()`, and read representative pre-existing project records
+   to confirm they decode and reflect the migrated shape.
+
+For the general rules that govern any storage change, see
+[State migration strategy](#state-migration-strategy); for the operational
+steps around uploading and invoking the upgrade, see
+[Release procedure](#release-procedure).
+
 ## State migration strategy
 
 Soroban replaces only the contract executable. Persistent and temporary ledger
