@@ -192,6 +192,29 @@ function batchTs(b: CreditBatch): number {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
+/**
+ * React hook that exposes the IndexedDB-backed audit cache (retirements,
+ * projects and credit batches) together with helpers to read, write and
+ * clear it. Data is loaded from IndexedDB on mount and React state is
+ * refreshed after every mutation.
+ *
+ * @returns {UseAuditCacheReturn} The current cache state (records, last sync
+ *   timestamp, storage usage, readiness and error) plus async helpers to
+ *   put/get/clear records and force a refresh.
+ *
+ * @example
+ * ```tsx
+ * function AuditPanel() {
+ *   const { retirements, isReady, putRetirements, clearAll } = useAuditCache();
+ *
+ *   useEffect(() => {
+ *     if (isReady) putRetirements(fetchedRetirements);
+ *   }, [isReady, putRetirements]);
+ *
+ *   return <button onClick={clearAll}>Clear cache ({retirements.length})</button>;
+ * }
+ * ```
+ */
 export function useAuditCache(): UseAuditCacheReturn {
   const [state, setState] = useState<AuditCacheState>({
     retirements: [],
