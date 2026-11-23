@@ -74,8 +74,8 @@ jobs:
         id: backend
         uses: docker/build-push-action@v4
         with:
-          context: .
-          file: docker/backend/Dockerfile
+          context: ./backend
+          file: ./backend/Dockerfile
           push: true
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}

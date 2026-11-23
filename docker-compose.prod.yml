@@ -25,8 +25,8 @@ services:
 
   backend:
     build:
-      context: .
-      dockerfile: docker/backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     environment:
       DATABASE_URL: postgresql://carbonledger:${DB_PASSWORD}@postgres:5432/carbonledger
       REDIS_URL: redis://redis:6379
