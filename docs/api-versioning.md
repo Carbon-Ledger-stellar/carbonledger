@@ -20,6 +20,12 @@ If the header is omitted the request is routed to the current stable version (v1
 | **Deprecated** | Minimum 6 months | Still functional; every response includes `Deprecation: true` and `Sunset: <date>` headers |
 | **Sunset** | — | Version removed; requests return `410 Gone` |
 
+The lifecycle configuration is maintained in
+`backend/src/versioning/versioning.config.ts` and registered by
+`VersioningModule`. The deprecation middleware reads this configuration for
+the sunset date, successor version, and migration guide; route handlers do not
+hard-code these values.
+
 ## What constitutes a breaking change
 
 - Removing or renaming an endpoint
@@ -40,10 +46,20 @@ Non-breaking changes (additions of optional fields, new endpoints, new enum valu
 ## Response headers during deprecation
 
 ```
+X-API-Version: 1
 Deprecation: true
 Sunset: Sat, 01 Jan 2028 00:00:00 GMT
-Link: <https://docs.carbonledger.io/api/v2>; rel="successor-version"
+Link: <https://api.carbonledger.io/api/v2/resource>; rel="successor-version", <https://api.carbonledger.io/docs/migration/v1-to-v2>; rel="deprecation"
+X-API-Deprecated: true
+X-API-Sunset: Sat, 01 Jan 2028 00:00:00 GMT
+X-API-Migration-Guide: https://api.carbonledger.io/docs/migration/v1-to-v2
+Warning: 299 - "Deprecated API version; please use the successor version"
 ```
+
+Every `/api/v1/...` response receives these headers, including error
+responses. `/api/v2/...` responses receive `X-API-Version: 2` and do not
+receive `Deprecation` or `Sunset`. Requests outside a versioned API route do
+not receive version lifecycle headers.
 
 ## OpenAPI spec
 

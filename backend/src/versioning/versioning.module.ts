@@ -5,6 +5,10 @@ import { ProjectsV2Controller } from './projects-v2.controller';
 import { CreditsModule } from '../credits/credits.module';
 import { MarketplaceModule } from '../marketplace/marketplace.module';
 import { ProjectsModule } from '../projects/projects.module';
+import {
+  API_VERSIONING_CONFIG,
+  API_VERSIONING_CONFIG_TOKEN,
+} from './versioning.config';
 
 /**
  * VersioningModule
@@ -17,5 +21,12 @@ import { ProjectsModule } from '../projects/projects.module';
 @Module({
   imports: [CreditsModule, MarketplaceModule, ProjectsModule],
   controllers: [CreditsV2Controller, MarketplaceV2Controller, ProjectsV2Controller],
+  providers: [
+    {
+      provide: API_VERSIONING_CONFIG_TOKEN,
+      useValue: API_VERSIONING_CONFIG,
+    },
+  ],
+  exports: [API_VERSIONING_CONFIG_TOKEN],
 })
 export class VersioningModule {}
