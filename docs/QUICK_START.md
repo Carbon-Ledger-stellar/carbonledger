@@ -186,11 +186,14 @@ docker-compose up --build
 
 **Note:** You still need Rust toolchain for contract development.
 
+For a full breakdown of required and optional environment variables needed by each service, see [DOCKER_COMPOSE_GUIDE.md — Environment Configuration](DOCKER_COMPOSE_GUIDE.md#environment-configuration).
+
 ---
 
 ## 📚 Learn More
 
 - **Full Setup Guide:** [CONTRIBUTING.md](../CONTRIBUTING.md)
+- **Docker Compose & Environment Variables:** [docs/DOCKER_COMPOSE_GUIDE.md](DOCKER_COMPOSE_GUIDE.md)
 - **Troubleshooting:** [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - **Architecture:** [docs/adr/](adr/)
 - **API Documentation:** [backend/docs/API_REFERENCE.md](../backend/docs/API_REFERENCE.md)

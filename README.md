@@ -129,31 +129,57 @@ PROJECT DEVELOPER          CARBONLEDGER               CORPORATION
 
 ##  Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    NEXT.JS 14 FRONTEND                       │
-│   Public Audit │ Marketplace │ Buy │ Retire │ Dashboard      │
-└───────────────────────────┬──────────────────────────────────┘
-                            │  @stellar/stellar-sdk
-                            │  @stellar/freighter-api
-┌───────────────────────────▼──────────────────────────────────┐
-│                  SOROBAN CONTRACTS (Rust)                    │
-│  carbon_registry │ carbon_credit │ carbon_marketplace        │
-│  carbon_oracle                                               │
-└───────────────────────────┬──────────────────────────────────┘
-                            │  py-stellar-base
-┌───────────────────────────▼──────────────────────────────────┐
-│            ORACLE / VERIFICATION BRIDGE (Python)             │
-│  verification_listener │ price_oracle │ satellite_monitor    │
-└───────────────────────────┬──────────────────────────────────┘
-                            │
-┌───────────────────────────▼──────────────────────────────────┐
-│          OFF-CHAIN LAYER (PostgreSQL + IPFS)                 │
-│  Project docs │ Credit batches │ Retirements │ Certificates  │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Frontend[Frontend — Next.js 14]
+        direction TB
+        NextJS["Next.js 14\nPublic Audit · Marketplace · Buy · Retire · Dashboard"]
+    end
+
+    subgraph Contracts[Blockchain — Soroban Contracts (Rust)]
+        direction TB
+        Registry[carbon_registry]
+        Credit[carbon_credit]
+        Marketplace[carbon_marketplace]
+        Oracle_C[carbon_oracle]
+    end
+
+    subgraph Oracle[Oracle / Verification Bridge (Python)]
+        direction TB
+        VerifListener[verification_listener]
+        PriceOracle[price_oracle]
+        SatMonitor[satellite_monitor]
+    end
+
+    subgraph OffChain[Off-chain Layer]
+        direction TB
+        PostgreSQL[(PostgreSQL)]
+        IPFS[(IPFS)]
+    end
+
+    ExternalServices[External Services\nSatellite · Price Feeds]
+
+    NextJS -->|"@stellar/stellar-sdk\n@stellar/freighter-api"| Contracts
+    Contracts -->|py-stellar-base| Oracle
+    Oracle -->|Database Driver| PostgreSQL
+    Oracle -->|HTTP / Webhooks| ExternalServices
+    NextJS -->|HTTP/HTTPS| OffChain
+    Registry & Credit & Marketplace & Oracle_C -.->|Ledger entries| OffChain
+
+    classDef frontend fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef contracts fill:#ffebee,stroke:#c62828,stroke-width:2px
+    classDef oracle fill:#e0f2f1,stroke:#00695c,stroke-width:2px
+    classDef offchain fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef external fill:#fafafa,stroke:#9e9e9e,stroke-width:2px
+
+    class NextJS frontend
+    class Registry,Credit,Marketplace,Oracle_C contracts
+    class VerifListener,PriceOracle,SatMonitor oracle
+    class PostgreSQL,IPFS offchain
+    class ExternalServices external
 ```
 
-> Key architectural decisions are documented in [docs/adr/](docs/adr/). See the [ADR index](docs/adr/README.md) for the full list.
+> The source for this diagram is [`architecture.mmd`](architecture.mmd). Key architectural decisions are documented in [docs/adr/](docs/adr/). See the [ADR index](docs/adr/README.md) for the full list.
 
 ---
 
