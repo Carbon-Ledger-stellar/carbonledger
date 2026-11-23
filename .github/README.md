@@ -9,6 +9,9 @@ This directory contains all CI/CD workflow definitions for CarbonLedger.
 | File | Trigger | Purpose |
 |------|---------|---------|
 | `ci.yml` | PR to `main`/`develop`, push to `main`, weekly schedule | Main CI: security audit, Rust contracts, backend, frontend, E2E, oracle |
+| `terraform-plan.yml` | PRs touching `infra/`; manual dispatch from `main` | Plans both Terraform workspaces for review; applies only the selected saved plan after environment approval |
+| `ghcr-retention.yml` | Weekly schedule, manual dispatch | Retains the 10 newest versions for each GHCR image while preserving stable tags |
+| `deploy.yml` | Push to `main` | Tests, builds images with SBOMs, deploys to staging, then runs the canary/production rollout |
 | `cd-testnet.yml` | After CI succeeds on `main` | Build and deploy to testnet |
 | `smoke-tests.yml` | After Testnet CD completes | Post-deploy smoke tests for API, contracts, frontend |
 | `ci-test-annotations.yml` | After CI completes | Parse test results and post PR annotations + summary comment |
@@ -16,7 +19,7 @@ This directory contains all CI/CD workflow definitions for CarbonLedger.
 | `browser-compatibility.yml` | PR touching `frontend/`, push to `main` | Playwright browser/wallet compatibility matrix |
 | `visual-regression.yml` | PR to `main`/`develop` | Playwright visual regression screenshots |
 | `contract-redeploy.yml` | Manual dispatch | Redeploy Soroban contracts to testnet |
-| `staging.yml` | Push to `staging` branch | Staging deployment pipeline |
+| `staging.yml` | Push to `develop` | Staging deployment pipeline |
 | `container-security-scan.yml` | PR, push to `main` | Trivy container image vulnerability scan |
 | `e2e-nightly.yml` | Nightly cron | Extended E2E suite |
 | `backend-tests.yml` | PR touching `backend/` | Focused backend unit test run |
@@ -119,6 +122,8 @@ To have a new test suite's failures appear as PR annotations:
 | Secret | Used by | Description |
 |--------|---------|-------------|
 | `GITHUB_TOKEN` | All workflows | Automatically provided by GitHub Actions |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `terraform-plan.yml` | AWS credentials for Terraform plan and apply |
+| `TERRAFORM_DB_USERNAME` / `TERRAFORM_DB_PASSWORD` | `terraform-plan.yml` | Sensitive Terraform database variables |
 | `TESTNET_SSH_HOST` | `cd-testnet.yml` | SSH host for testnet server |
 | `TESTNET_SSH_USER` | `cd-testnet.yml` | SSH user |
 | `TESTNET_SSH_KEY` | `cd-testnet.yml` | SSH private key |
@@ -130,6 +135,8 @@ To have a new test suite's failures appear as PR annotations:
 | `TESTNET_SOROBAN_RPC_URL` | `smoke-tests.yml` | Soroban RPC URL |
 | `CARBON_*_CONTRACT_ID` | `smoke-tests.yml` | Deployed contract addresses |
 | `SLACK_WEBHOOK_URL` | `cd-testnet.yml` | Slack notification webhook |
+
+Configure required reviewers on the `staging` and `production` GitHub Environments to gate Terraform applies. The workflow retains the reviewed plan for one day; do not make Terraform state changes between plan review and approval.
 
 ---
 

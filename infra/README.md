@@ -99,11 +99,15 @@ terraform apply -var-file=production.tfvars \
 
 ---
 
-## CI — terraform plan Comment on PRs
+## CI — Terraform plan review
 
-Any PR that touches `infra/` triggers the `terraform-plan` GitHub Actions job
-(see `.github/workflows/staging.yml`).  It posts a comment with the plan diff
-for both workspaces so reviewers can verify the parity policy before merging.
+Any same-repository PR that touches `infra/` triggers the `Terraform Plan`
+workflow, which runs a plan for both workspaces and adds the rendered plans to
+the GitHub Actions job summaries. Fork PRs run formatting and validation without
+AWS credentials. For an apply, dispatch the workflow from `main`; the plan is
+created first and the selected environment's required reviewers must approve
+the apply job. The exact saved plan is applied, and artifacts expire after one
+day.
 
 Example PR comment:
 

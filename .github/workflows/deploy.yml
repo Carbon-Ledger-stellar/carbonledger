@@ -22,36 +22,49 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Frontend CI
+    uses: ./.github/workflows/ci.yml
 
+  backend-test:
+    name: Backend tests
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install backend dependencies
+        working-directory: backend
         run: npm ci
 
-      - name: Run linter
-        run: npm run lint
+      - name: Run backend tests
+        working-directory: backend
+        run: npm test
 
-      - name: Run tests
-        run: npm run test
+  contract-test:
+    name: Contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Run contract tests
-        run: |
-          cd contracts
-          cargo test
+        run: cargo test --manifest-path contracts/Cargo.toml
 
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, backend-test, contract-test]
+    permissions:
+      contents: read
+      packages: write
     outputs:
       backend_image: ${{ steps.backend.outputs.image }}
       frontend_image: ${{ steps.frontend.outputs.image }}
@@ -61,7 +74,7 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
         uses: docker/login-action@v2
@@ -74,9 +87,10 @@ jobs:
         id: backend
         uses: docker/build-push-action@v4
         with:
-          context: .
-          file: docker/backend/Dockerfile
+          context: ./backend
+          file: ./backend/Dockerfile
           push: true
+          sbom: true
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:latest
@@ -87,9 +101,10 @@ jobs:
         id: frontend
         uses: docker/build-push-action@v4
         with:
-          context: .
-          file: docker/frontend/Dockerfile
+          context: ./frontend
+          file: ./frontend/Dockerfile
           push: true
+          sbom: true
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:latest
@@ -103,6 +118,7 @@ jobs:
           context: .
           file: docker/contracts/Dockerfile
           push: true
+          sbom: true
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_CONTRACTS }}:${{ github.sha }}
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_CONTRACTS }}:latest
@@ -114,6 +130,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     environment: staging
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v3
@@ -121,9 +140,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '18'
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install backend dependencies
+        working-directory: backend
         run: npm ci
 
       - name: Import secrets from Vault
@@ -136,6 +158,7 @@ jobs:
             secret/data/carbonledger/staging database_url | DATABASE_URL
 
       - name: Run migrations
+        working-directory: backend
         run: npx prisma migrate deploy
 
   deploy-staging:
@@ -143,6 +166,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, migrate]
     environment: staging
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v3
@@ -184,6 +210,9 @@ jobs:
     needs: deploy-staging
     environment: production
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v3
@@ -234,6 +263,9 @@ jobs:
     needs: deploy-canary
     environment: production
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v3
@@ -271,6 +303,9 @@ jobs:
     needs: promote-canary
     environment: production
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v3

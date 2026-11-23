@@ -1,0 +1,124 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform-plan.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to apply after reviewing the plan
+        type: choice
+        options: [staging, production]
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-fork:
+    name: Validate Terraform (fork PR)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra/main
+
+      - name: Initialize without backend
+        run: terraform -chdir=infra/main init -backend=false -input=false
+
+      - name: Validate configuration
+        run: terraform -chdir=infra/main validate
+
+  plan:
+    name: Plan ${{ matrix.environment }}
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [staging, production]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Initialize Terraform
+        working-directory: infra/main
+        run: terraform init -input=false
+
+      - name: Select existing workspace
+        working-directory: infra/main
+        run: terraform workspace select "${{ matrix.environment }}"
+
+      - name: Create reviewed plan
+        working-directory: infra/main
+        env:
+          TF_VAR_db_username: ${{ secrets.TERRAFORM_DB_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.TERRAFORM_DB_PASSWORD }}
+        run: |
+          terraform plan -input=false -var-file="${{ matrix.environment }}.tfvars" -out=tfplan
+          terraform show -no-color tfplan | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Save plan for gated apply
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ matrix.environment }}-${{ github.sha }}
+          path: infra/main/tfplan
+          retention-days: 1
+
+  apply:
+    name: Apply reviewed ${{ inputs.environment }} plan
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Initialize Terraform
+        working-directory: infra/main
+        run: terraform init -input=false
+
+      - name: Select existing workspace
+        working-directory: infra/main
+        run: terraform workspace select "${{ inputs.environment }}"
+
+      - name: Download reviewed plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ inputs.environment }}-${{ github.sha }}
+          path: infra/main
+
+      - name: Apply reviewed plan
+        working-directory: infra/main
+        run: terraform apply -input=false tfplan

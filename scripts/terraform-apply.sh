@@ -20,8 +20,15 @@ terraform validate
 echo "📊 Planning changes..."
 terraform plan -out=tfplan
 
-# Apply changes
-echo "✅ Applying changes..."
+terraform show tfplan
+echo
+read -r -p "Apply this exact Terraform plan? Type 'yes' to continue: " confirmation
+if [[ "$confirmation" != "yes" ]]; then
+  echo "Terraform apply cancelled."
+  exit 1
+fi
+
+echo "✅ Applying reviewed plan..."
 terraform apply tfplan
 
 echo "🎉 Terraform apply completed for ${ENVIRONMENT}!"
