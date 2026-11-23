@@ -41,7 +41,7 @@ COPY --from=builder --chown=nodejs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nodejs:nodejs /app/.next/static     ./.next/static
 COPY --from=builder --chown=nodejs:nodejs /app/public           ./public
 
-USER nodejs
+USER 1001:1001
 EXPOSE 3000
 
 CMD ["node", "server.js"]

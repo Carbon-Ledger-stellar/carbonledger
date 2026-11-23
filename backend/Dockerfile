@@ -42,7 +42,7 @@ COPY --from=builder --chown=nodejs:nodejs /app/node_modules  ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/prisma        ./prisma
 COPY --chown=nodejs:nodejs package*.json ./
 
-USER nodejs
+USER 1001:1001
 EXPOSE 3001
 
 # Use tini-compatible node startup to properly handle signals

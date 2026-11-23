@@ -57,10 +57,19 @@ spec:
         prometheus.io/port:   "3001"
         prometheus.io/path:   "/metrics"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
       containers:
       - name: backend
         # Image tag is replaced by the CI/CD pipeline with the new version SHA.
         image: ghcr.io/carbon-ledger-stellar/carbonledger/backend:canary
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
         ports:
         - containerPort: 3001
           name: http
