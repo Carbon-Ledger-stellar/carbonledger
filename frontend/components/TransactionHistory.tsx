@@ -3,13 +3,40 @@
 import { useState, useEffect } from "react";
 import { colors } from "../styles/design-system";
 
-interface Transaction {
+export interface Transaction {
   id: string;
   date: string;
   type: string;
   amount: string;
   status: string;
   description: string;
+  price?: string;
+  txHash?: string;
+}
+
+export function generateTransactionsCSV(transactions: Transaction[]): string {
+  const headers = ["Date", "Type", "Amount", "Price", "Tx Hash", "Status", "Description"];
+  const escapeCsv = (val: string = "") => {
+    const s = String(val);
+    if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const rows = transactions.map((t) =>
+    [
+      escapeCsv(t.date),
+      escapeCsv(t.type),
+      escapeCsv(t.amount),
+      escapeCsv(t.price || "N/A"),
+      escapeCsv(t.txHash || t.id),
+      escapeCsv(t.status),
+      escapeCsv(t.description),
+    ].join(",")
+  );
+
+  return [headers.join(","), ...rows].join("\n");
 }
 
 interface Props {
@@ -82,6 +109,7 @@ function TransactionSkeleton() {
 
 export default function TransactionHistory({ transactions = mockTransactions, isLoading = false }: Props) {
   const [loading, setLoading] = useState(isLoading);
+  const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
     if (isLoading) {
@@ -91,8 +119,62 @@ export default function TransactionHistory({ transactions = mockTransactions, is
     }
   }, [isLoading]);
 
+  const handleExportCSV = async () => {
+    if (!transactions || transactions.length === 0) return;
+    setIsExporting(true);
+    try {
+      // Yield to the event loop so the UI does not freeze on large histories
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const csvContent = generateTransactionsCSV(transactions);
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `transaction-history-${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div style={{ background: colors.surface, border: `1px solid ${colors.neutral[200]}`, borderRadius: "0.75rem", overflow: "hidden" }}>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        padding: "1rem",
+        borderBottom: `1px solid ${colors.neutral[200]}`,
+        background: colors.neutral[50]
+      }}>
+        <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: 600, color: colors.neutral[900] }}>
+          Transaction History
+        </h3>
+        <button
+          onClick={handleExportCSV}
+          disabled={isExporting || loading || transactions.length === 0}
+          aria-label="Export CSV"
+          style={{
+            padding: "0.5rem 1rem",
+            fontSize: "0.875rem",
+            fontWeight: 500,
+            borderRadius: "0.375rem",
+            border: `1px solid ${colors.neutral[300]}`,
+            background: colors.surface,
+            color: colors.neutral[700],
+            cursor: isExporting || loading || transactions.length === 0 ? "not-allowed" : "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            transition: "all 0.2s ease",
+          }}
+        >
+          {isExporting ? "Exporting..." : "Export CSV"}
+        </button>
+      </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ background: colors.neutral[50] }}>
