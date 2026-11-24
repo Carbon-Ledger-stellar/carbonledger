@@ -141,11 +141,37 @@ SCHEMAS = {
     },
     "RetireCreditsDto": {
         "type": "object",
+        "required": ["batchId", "projectId", "amount", "beneficiary", "retirementReason", "retiredBy", "txHash"],
         "properties": {
-            "batchId": {"type": "string"},
-            "amount": {"type": "integer"},
-            "beneficiary": {"type": "string"},
-            "purpose": {"type": "string"},
+            "batchId": {"type": "string", "example": "batch_kenya_reforest_2024_01"},
+            "projectId": {"type": "string", "example": "proj_amazon_basin_042"},
+            "amount": {"type": "number", "example": 125.5},
+            "beneficiary": {"type": "string", "example": "Acme Global Corporation"},
+            "retirementReason": {"type": "string", "example": "Annual corporate Scope 1 & 2 carbon footprint offset FY2025"},
+            "retiredBy": {"type": "string", "example": "GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF"},
+            "txHash": {"type": "string", "example": "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef"},
+        },
+    },
+    "BulkRetirementItemDto": {
+        "type": "object",
+        "required": ["batchId", "amount"],
+        "properties": {
+            "batchId": {"type": "string", "example": "batch_kenya_reforest_2024_01"},
+            "amount": {"type": "number", "example": 25.0},
+            "beneficiary": {"type": "string", "example": "Acme Regional Office - London"},
+            "reason": {"type": "string", "example": "London flight emissions offset"},
+        },
+    },
+    "BulkRetirementsDto": {
+        "type": "object",
+        "required": ["items", "beneficiary", "retirementReason"],
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {"$ref": "#/components/schemas/BulkRetirementItemDto"},
+            },
+            "beneficiary": {"type": "string", "example": "Acme Global Corporation"},
+            "retirementReason": {"type": "string", "example": "Corporate Sustainability Initiative Q1 2026"},
         },
     },
     "CreateListingDto": {
@@ -239,7 +265,27 @@ EXAMPLE_SCHEMAS = {
         "vintageYear": 2024,
     },
     "MintCreditsDto": {"projectId": "proj_123", "amount": 100, "vintageYear": 2024},
-    "RetireCreditsDto": {"batchId": "batch_abc", "amount": 5, "beneficiary": "Acme Corp", "purpose": "offset"},
+    "RetireCreditsDto": {
+        "batchId": "batch_kenya_reforest_2024_01",
+        "projectId": "proj_amazon_basin_042",
+        "amount": 125.5,
+        "beneficiary": "Acme Global Corporation",
+        "retirementReason": "Annual corporate Scope 1 & 2 carbon footprint offset FY2025",
+        "retiredBy": "GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF",
+        "txHash": "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef",
+    },
+    "BulkRetirementsDto": {
+        "items": [
+            {
+                "batchId": "batch_kenya_reforest_2024_01",
+                "amount": 25.0,
+                "beneficiary": "Acme Regional Office - London",
+                "reason": "London flight emissions offset",
+            }
+        ],
+        "beneficiary": "Acme Global Corporation",
+        "retirementReason": "Corporate Sustainability Initiative Q1 2026",
+    },
     "CreateListingDto": {"batchId": "batch_abc", "pricePerCredit": "12.50", "amount": 10},
     "PurchaseDto": {"listingId": "listing_xyz", "amount": 2},
 }
@@ -567,12 +613,17 @@ def main():
     # YAML
     try:
         import yaml
+        yaml_dump = yaml.safe_dump if hasattr(yaml, "safe_dump") else yaml.dump
+        with open(os.path.join(api_dir, "openapi.yaml"), "w") as f:
+            f.write(yaml_dump(DOC, sort_keys=False))
     except Exception:
-        import ruamel.yaml as yaml
-
-    yaml_dump = yaml.safe_dump if hasattr(yaml, "safe_dump") else yaml.dump
-    with open(os.path.join(api_dir, "openapi.yaml"), "w") as f:
-        f.write(yaml_dump(DOC, sort_keys=False))
+        try:
+            import ruamel.yaml as yaml
+            yaml_dump = yaml.safe_dump if hasattr(yaml, "safe_dump") else yaml.dump
+            with open(os.path.join(api_dir, "openapi.yaml"), "w") as f:
+                f.write(yaml_dump(DOC, sort_keys=False))
+        except Exception:
+            pass
 
     # JSON (kept for backwards compatibility next to the yaml)
     with open(os.path.join(api_dir, "openapi.json"), "w") as f:

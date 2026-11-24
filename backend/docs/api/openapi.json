@@ -2191,10 +2191,13 @@
                 "$ref": "#/components/schemas/RetireCreditsDto"
               },
               "example": {
-                "batchId": "batch_abc",
-                "amount": 5,
-                "beneficiary": "Acme Corp",
-                "purpose": "offset"
+                "batchId": "batch_kenya_reforest_2024_01",
+                "projectId": "proj_amazon_basin_042",
+                "amount": 125.5,
+                "beneficiary": "Acme Global Corporation",
+                "retirementReason": "Annual corporate Scope 1 & 2 carbon footprint offset FY2025",
+                "retiredBy": "GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF",
+                "txHash": "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef"
               }
             }
           }
@@ -2487,10 +2490,13 @@
                 "$ref": "#/components/schemas/RetireCreditsDto"
               },
               "example": {
-                "batchId": "batch_abc",
-                "amount": 5,
-                "beneficiary": "Acme Corp",
-                "purpose": "offset"
+                "batchId": "batch_kenya_reforest_2024_01",
+                "projectId": "proj_amazon_basin_042",
+                "amount": 125.5,
+                "beneficiary": "Acme Global Corporation",
+                "retirementReason": "Annual corporate Scope 1 & 2 carbon footprint offset FY2025",
+                "retiredBy": "GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF",
+                "txHash": "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef"
               }
             }
           }
@@ -9554,18 +9560,92 @@
       },
       "RetireCreditsDto": {
         "type": "object",
+        "required": [
+          "batchId",
+          "projectId",
+          "amount",
+          "beneficiary",
+          "retirementReason",
+          "retiredBy",
+          "txHash"
+        ],
         "properties": {
           "batchId": {
-            "type": "string"
+            "type": "string",
+            "example": "batch_kenya_reforest_2024_01"
+          },
+          "projectId": {
+            "type": "string",
+            "example": "proj_amazon_basin_042"
           },
           "amount": {
-            "type": "integer"
+            "type": "number",
+            "example": 125.5
           },
           "beneficiary": {
-            "type": "string"
+            "type": "string",
+            "example": "Acme Global Corporation"
           },
-          "purpose": {
-            "type": "string"
+          "retirementReason": {
+            "type": "string",
+            "example": "Annual corporate Scope 1 & 2 carbon footprint offset FY2025"
+          },
+          "retiredBy": {
+            "type": "string",
+            "example": "GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF"
+          },
+          "txHash": {
+            "type": "string",
+            "example": "a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef"
+          }
+        }
+      },
+      "BulkRetirementItemDto": {
+        "type": "object",
+        "required": [
+          "batchId",
+          "amount"
+        ],
+        "properties": {
+          "batchId": {
+            "type": "string",
+            "example": "batch_kenya_reforest_2024_01"
+          },
+          "amount": {
+            "type": "number",
+            "example": 25.0
+          },
+          "beneficiary": {
+            "type": "string",
+            "example": "Acme Regional Office - London"
+          },
+          "reason": {
+            "type": "string",
+            "example": "London flight emissions offset"
+          }
+        }
+      },
+      "BulkRetirementsDto": {
+        "type": "object",
+        "required": [
+          "items",
+          "beneficiary",
+          "retirementReason"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BulkRetirementItemDto"
+            }
+          },
+          "beneficiary": {
+            "type": "string",
+            "example": "Acme Global Corporation"
+          },
+          "retirementReason": {
+            "type": "string",
+            "example": "Corporate Sustainability Initiative Q1 2026"
           }
         }
       },
