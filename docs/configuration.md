@@ -313,6 +313,7 @@ Used to deploy and initialize contracts and perform admin operations (verifier l
 | **Type** | PostgreSQL connection URL |
 | **Format** | `postgresql://<user>:<password>@<host>:<port>/<database>` |
 | **Example** | `DATABASE_URL=postgresql://carbonledger:secret@localhost:5432/carbonledger` |
+| **PgBouncer** | When using PgBouncer in transaction pooling mode, append `?pgbouncer=true&connection_limit=20` to `DATABASE_URL` or set `PGBOUNCER=true` in the environment to disable prepared statements and tune connection pooling. |
 | **Required** | Yes |
 | **How to obtain** | Create a local database: `createdb carbonledger`. Then set `<password>` to the value of `POSTGRES_PASSWORD`. For production, use a managed service (AWS RDS, Supabase, Neon). |
 

@@ -77,6 +77,9 @@ function captureConstructedUrl(envOverrides: Record<string, string> = {}): URL {
           parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS ?? '900000') / 1000,
         )),
       );
+      if (process.env.PGBOUNCER === "true" || process.env.DATABASE_URL?.includes("pgbouncer=true")) {
+        url.searchParams.set("pgbouncer", "true");
+      }
       capturedUrl = url;
 
       // super() may throw — that is fine, we already captured what we need.
@@ -187,6 +190,20 @@ describe('idle_timeout (#1024 acceptance criterion)', () => {
     // Must be present as a query parameter — Prisma reads it from the URL
     expect(url.searchParams.has('idle_timeout')).toBe(true);
     expect(parseInt(url.searchParams.get('idle_timeout')!)).toBeGreaterThan(0);
+  });
+
+  it('sets pgbouncer=true when PGBOUNCER=true or in DATABASE_URL (#1453)', () => {
+    const urlWithParam = captureConstructedUrl({
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/db?pgbouncer=true',
+    });
+    expect(urlWithParam.searchParams.get('pgbouncer')).toBe('true');
+    expect(urlWithParam.searchParams.get('connection_limit')).toBe('20');
+
+    const urlWithEnv = captureConstructedUrl({
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      PGBOUNCER: 'true',
+    });
+    expect(urlWithEnv.searchParams.get('pgbouncer')).toBe('true');
   });
 });
 
