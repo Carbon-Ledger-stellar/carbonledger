@@ -1,0 +1,154 @@
+# =============================================================================
+# Root .dockerignore — applies to every build whose context is the repo root
+# (docker-compose.prod.yml, deploy.yml, docker/contracts/Dockerfile, and the
+# root Dockerfile). Sub-directory builds (backend/, frontend/, oracle/) use the
+# .dockerignore file located inside that directory.
+#
+# Goal: keep test, documentation, and dev-only files OUT of production images to
+# shrink build context, reduce image size, and lower attack surface.
+# See: .dockerignore files do not exclude test and documentation files (#1795)
+# =============================================================================
+
+# --- Version control ---
+.git
+.gitignore
+.gitattributes
+
+# --- Dependencies (installed fresh inside Docker) ---
+node_modules
+**/node_modules
+.pnp
+.pnp.js
+
+# --- Build outputs (rebuilt inside Docker) ---
+dist
+**/dist
+build
+**/build
+.next
+**/.next
+out
+**/out
+target
+**/target
+*.tsbuildinfo
+**/*.tsbuildinfo
+zk-out
+**/zk-out
+
+# --- Test files and directories ---
+test/
+**/test/
+tests/
+**/tests/
+__tests__/
+**/__tests__/
+e2e/
+**/e2e/
+**/*.test.ts
+**/*.test.tsx
+**/*.test.js
+**/*.test.jsx
+**/*.test.py
+**/*.spec.ts
+**/*.spec.tsx
+**/*.spec.js
+**/*.spec.jsx
+test_*.py
+**/test_*.py
+*_test.py
+**/*_test.py
+playwright-report
+**/playwright-report
+test-results
+**/test-results
+
+# --- Coverage ---
+coverage/
+**/coverage/
+.nyc_output
+**/.nyc_output
+htmlcov
+**/htmlcov
+.pytest_cache
+**/.pytest_cache
+*.lcov
+**/*.lcov
+.coverage
+**/.coverage
+
+# --- Documentation ---
+docs/
+**/docs/
+*.md
+**/*.md
+architecture.mmd
+
+# --- Environment files (never bake secrets into images) ---
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# --- Editor / IDE ---
+.vscode
+.idea
+**/.vscode
+**/.idea
+*.swp
+*.swo
+*.swn
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs
+**/logs
+
+# --- Docker artefacts (not needed inside the image) ---
+Dockerfile
+**/Dockerfile
+**/Dockerfile.*
+.dockerignore
+**/.dockerignore
+docker-compose*.yml
+**/docker-compose*.yml
+
+# --- CI / repo tooling ---
+.github
+.gitlab-ci.yml
+.trivy.yaml
+.trivyignore
+.pre-commit-config.yaml
+.secrets.baseline
+renovate.json
+
+# --- Dev-only load / benchmark / smoke / fuzz tooling ---
+benchmarks
+**/benchmarks
+load-tests
+**/load-tests
+smoke-tests
+**/smoke-tests
+adversarial_tests
+**/adversarial_tests
+**/test_snapshots
+**/proptest-regressions
+fuzz
+**/fuzz
+
+# --- Terraform ---
+**/.terraform
+*.tfstate
+*.tfstate.backup
+*.tfstate.backup
+
+# --- Python caches / venvs ---
+__pycache__
+**/__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+.venv
+venv
