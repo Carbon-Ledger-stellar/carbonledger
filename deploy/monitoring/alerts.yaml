@@ -86,3 +86,12 @@ alerts:
     notification: slack
     message: "WARNING: Emergency pause on {{contract}} is missing a required reason. An admin must supply a reason via the admin API within 5 minutes or the pause will be escalated to PagerDuty automatically."
 
+  # Indexer Service Liveness and Crash Loop Monitoring (#1811)
+  - name: Indexer Pod Frequent Restarts
+    description: Alert if the blockchain indexer pod restarts more than 3 times in 15 minutes due to liveness failures
+    condition: rate(kube_pod_container_status_restarts_total{container="indexer"}[15m]) * 900 > 3
+    evaluation_period: 15m
+    severity: critical
+    notification: pagerduty, slack
+    message: "CRITICAL: Indexer pod has restarted more than 3 times in the last 15 minutes. Check for loop deadlock or persistent RPC failures."
+
