@@ -32,6 +32,29 @@ variable "db_instance_class" {
   default     = "db.t3.micro"
 }
 
+# ── PostgreSQL connection limit — tuned for PgBouncer (#1798) ─────────────────
+# PgBouncer default_pool_size=25 + reserve_pool_size=5 + 20 admin/monitoring
+# headroom = 50. Setting max_connections to this value reduces shared_buffers
+# overhead per connection and prevents accidental direct connections from
+# starving the pool. Must be >= pgbouncer default_pool_size + reserve_pool_size
+# + a margin for migrations and monitoring.
+variable "postgres_max_connections" {
+  description = <<-EOT
+    PostgreSQL max_connections. Set low enough that PgBouncer's server-side
+    pool (default_pool_size + reserve_pool_size) fits with headroom for
+    migrations, monitoring, and superuser connections.
+    Default: 50 (25 pool + 5 reserve + 20 admin headroom).
+    Increase if you raise PgBouncer's default_pool_size or reserve_pool_size.
+  EOT
+  type    = number
+  default = 50
+
+  validation {
+    condition     = var.postgres_max_connections >= 25
+    error_message = "postgres_max_connections must be at least 25 to accommodate PgBouncer's minimum pool size."
+  }
+}
+
 variable "redis_node_type" {
   description = "ElastiCache node type"
   default     = "cache.t3.micro"

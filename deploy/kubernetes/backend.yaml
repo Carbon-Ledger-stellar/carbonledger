@@ -29,11 +29,34 @@ spec:
         ports:
         - containerPort: 3000
         env:
+        # Route all database connections through PgBouncer (transaction pooling).
+        # Previously pointed directly at Postgres, allowing each pod to open up
+        # to DB_POOL_MAX=20 connections independently, which could saturate
+        # max_connections=100 with 5+ replicas. See issue #1798.
         - name: DATABASE_URL
+          value: "postgresql://$(DB_USER):$(DB_PASSWORD)@pgbouncer:5432/carbonledger?connection_limit=10&pool_timeout=30"
+        - name: DB_USER
           valueFrom:
             secretKeyRef:
               name: db-secret
-              key: url
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        # Prisma connection pool: 10 client-side connections per pod.
+        # With 3 replicas that is 30 max client connections to PgBouncer,
+        # which maps to default_pool_size=25 server connections to Postgres.
+        # Keep this in sync with pgbouncer.yaml default_pool_size.
+        - name: DB_POOL_MAX
+          value: "10"
+        - name: DB_POOL_TIMEOUT_MS
+          value: "30000"
+        - name: DB_CONNECT_TIMEOUT_S
+          value: "10"
+        - name: DB_POOL_IDLE_TIMEOUT_MS
+          value: "600000"
         - name: REDIS_URL
           value: redis://redis:6379
         - name: NODE_ENV

@@ -241,7 +241,7 @@ services:
       - path: .env
         required: false
     environment:
-      DATABASE_URL:      postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@postgres:5432/carbonledger
+      DATABASE_URL:      postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@pgbouncer:5432/carbonledger
       JWT_SECRET:        ${JWT_SECRET}
       JWT_EXPIRY:        7d
       REDIS_URL:         redis://redis:6379
@@ -342,7 +342,7 @@ services:
       CARBON_ORACLE_CONTRACT_ID:   ${CARBON_ORACLE_CONTRACT_ID}
       CARBON_REGISTRY_CONTRACT_ID: ${CARBON_REGISTRY_CONTRACT_ID}
       STELLAR_RPC_URL:             ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
-      DATABASE_URL:                postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@postgres:5432/carbonledger
+      DATABASE_URL:                postgresql://carbonledger:${POSTGRES_PASSWORD:-changeme}@pgbouncer:5432/carbonledger
       ADMIN_ALERT_WEBHOOK:         ${ADMIN_ALERT_WEBHOOK}
       GOLD_STANDARD_API_URL:       ${GOLD_STANDARD_API_URL}
       GOLD_STANDARD_API_KEY:       ${GOLD_STANDARD_API_KEY}
@@ -353,7 +353,7 @@ services:
       FAILOVER_SERVICE_NAME:       verification_listener
     command: python3 verification_listener.py
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "ps aux | grep verification_listener.py | grep -v grep || exit 1"]

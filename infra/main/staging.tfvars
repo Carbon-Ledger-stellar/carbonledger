@@ -11,6 +11,10 @@ app_instance_type = "t3.small"      # prod: t3.medium
 # ── Database ──────────────────────────────────────────────────────────────────
 db_instance_class = "db.t3.micro"   # prod: db.t3.small
 
+# PgBouncer pool: default_pool_size=25 + reserve=5 + admin headroom=20 = 50.
+# Matches the default in variables.tf — explicit here for visibility.
+postgres_max_connections = 50       # prod: 50 (same, pooler-tuned)
+
 # ── Redis ─────────────────────────────────────────────────────────────────────
 redis_node_type           = "cache.t3.micro"   # prod: cache.t3.small
 enable_redis_sentinel     = true               # 3-node HA — same as production
