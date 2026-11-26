@@ -179,15 +179,32 @@ jobs:
 
             # Inject image tags
             export BACKEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:staging-latest"
+            export BACKEND_CANARY_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend:staging-latest"
             export FRONTEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:staging-latest"
 
-            # Pull new images and restart with enhanced logging
+            # Deploy an isolated backend canary first. The stable backend remains
+            # untouched until the canary passes readiness and zero-5xx checks.
             docker compose -f docker-compose.yml -f docker-compose.staging.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --remove-orphans
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml \
+              up -d --no-deps backend-canary
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml \
+              exec -T backend-canary wget -q --spider http://localhost:3001/health/ready
 
-            # Wait for services to be healthy
-            echo "Waiting for services to be healthy..."
+            # Run a short staged verification against the canary, then promote
+            # only after the canary is healthy. Any failure stops this workflow
+            # before the stable backend container is replaced.
             sleep 30
+            for attempt in $(seq 1 20); do
+              docker compose -f docker-compose.yml -f docker-compose.staging.yml \
+                exec -T backend-canary wget -q -O /dev/null http://localhost:3001/health/ready
+              status=$?
+              if [ "$status" -ne 0 ]; then
+                echo "Canary returned a non-2xx/5xx health failure on attempt ${attempt}"
+                exit 1
+              fi
+            done
+            docker compose -f docker-compose.yml -f docker-compose.staging.yml \
+              up -d --remove-orphans backend frontend
 
             # Seed staging DB if first deploy
             if [ -f .seed_needed ]; then
