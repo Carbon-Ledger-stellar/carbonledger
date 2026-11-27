@@ -36,7 +36,18 @@ The CarbonLedger platform implements secure key rotation procedures to ensure:
 
 ### API Usage
 
-```bash
+```
+
+### Rollback (Failure Path)
+
+If verification fails or any step errors:
+
+1. **Abort Rotation** – Do not replace environment variables or deprecate the old key on-chain.
+2. **Revert Secrets** – Restore previous JWT secret, DB password, and any rotated secrets from backup stored in AWS Secrets Manager.
+3. **Rollback Deployment** – Revert service configuration to the previous version and restart the services.
+4. **Audit & Alert** – Log the failure, notify the security team, and create an incident ticket.
+5. **Retry** – After the issue is resolved, re‑initiate the rotation process.
+bash
 POST /api/v1/key-rotation/oracle
 {
   "newOraclePublicKey": "GABC...",
