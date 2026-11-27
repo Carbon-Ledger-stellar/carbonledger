@@ -1,0 +1,288 @@
+# =============================================================================
+# PgBouncer — connection pooler for Kubernetes workloads
+# =============================================================================
+# Deployed as a standalone ClusterIP service in the carbonledger namespace.
+# Every backend pod connects to pgbouncer:5432 instead of Postgres directly.
+# PgBouncer multiplexes those connections down to a bounded server-side pool,
+# preventing max_connections exhaustion on PostgreSQL under load.
+#
+# Architecture
+# ────────────
+#   backend pods (3×)        ──┐
+#   backend-canary pods (N×)  ─┤─→  pgbouncer:5432  →  postgres:5432
+#   oracle pods (N×)          ──┘
+#
+# Pool sizing rationale
+# ─────────────────────
+#   default_pool_size = 25   server-side connections to Postgres per (db, user)
+#   max_client_conn   = 200  ceiling for all inbound application connections
+#   reserve_pool_size = 5    extra server connections available under burst
+#
+#   PostgreSQL max_connections is set to 50 (see infra/main/database.tf).
+#   Headroom breakdown:
+#     25  default pool  (application traffic)
+#    + 5  reserve pool  (burst)
+#    + 5  migrations / admin / monitoring (connect directly to PG, bypass PgBouncer)
+#    + 5  superuser connections (pg internal)
+#   = 40  max expected server-side connections  <  max_connections=50  ✓
+#
+# Pool mode: transaction
+#   Each server connection is returned to the pool after every transaction.
+#   This is optimal for the NestJS/Prisma workload which is stateless and
+#   issues short-lived transactions.  Incompatible with session-level features
+#   (advisory locks, SET LOCAL, temp tables) — use a direct connection for those.
+#
+# See also: pgbouncer/pgbouncer.ini (Docker Compose equivalent)
+#           .env.example (PGBOUNCER_* tunables)
+# =============================================================================
+
+# ── ConfigMap — pgbouncer.ini ─────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-config
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: pgbouncer
+data:
+  pgbouncer.ini: |
+    [databases]
+    ; Route all connections to the carbonledger database on the Postgres host.
+    ; The host is overridden at runtime via PGBOUNCER_DB_HOST env var so this
+    ; ConfigMap can be shared across staging and production.
+    carbonledger = host=$(PGBOUNCER_DB_HOST) port=5432 dbname=carbonledger
+
+    [pgbouncer]
+    ;; ── Network ───────────────────────────────────────────────────────────────
+    listen_addr     = *
+    listen_port     = 5432
+
+    ;; ── Authentication ────────────────────────────────────────────────────────
+    auth_type       = scram-sha-256
+    auth_file       = /etc/pgbouncer/userlist.txt
+
+    ;; ── Pooling ───────────────────────────────────────────────────────────────
+    pool_mode            = transaction
+    max_client_conn      = 200
+    default_pool_size    = 25
+    min_pool_size        = 5
+    reserve_pool_size    = 5
+    reserve_pool_timeout = 5
+    server_idle_timeout  = 600
+    client_idle_timeout  = 0
+    pool_timeout         = 30
+    server_connect_timeout = 15
+    server_read_timeout  = 30
+
+    ;; ── Logging & Monitoring ──────────────────────────────────────────────────
+    log_connections      = 1
+    log_disconnections   = 1
+    log_pooler_errors    = 1
+    stats_period         = 60
+    admin_users          = carbonledger
+    stats_users          = carbonledger
+
+---
+# ── Deployment ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: pgbouncer
+  annotations:
+    # Restart this deployment when the ConfigMap changes (via kubectl rollout).
+    # In GitOps workflows, a change to pgbouncer-config triggers a pod recycle.
+    configmap.reloader.stakater.com/reload: "pgbouncer-config"
+spec:
+  # Two replicas so a pgbouncer pod restart during node maintenance does not
+  # interrupt application connectivity. The PDB (see pdb.yaml) is NOT applied
+  # to pgbouncer — its PDB is defined inline below.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: carbonledger
+      component: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: carbonledger
+        component: pgbouncer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "9127"
+        prometheus.io/path:   "/metrics"
+    spec:
+      # ── Init container: generate userlist.txt from the Secret ────────────────
+      # PgBouncer requires a file-based userlist; we generate it at pod start
+      # from the db-secret Secret so credentials are never stored in a ConfigMap.
+      initContainers:
+      - name: generate-userlist
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          # PgBouncer md5 format: md5<md5(password + username)>
+          # We use scram-sha-256 via auth_type=scram-sha-256 OR fall back to
+          # storing a plain password surrounded by quotes for md5 auth.
+          # For simplicity in this manifest we write a quoted plain password;
+          # rotate by updating db-secret and restarting the pod.
+          printf '"%s" "%s"\n' \
+            "$(cat /secrets/username)" \
+            "$(cat /secrets/password)" \
+            > /etc/pgbouncer/userlist.txt
+          chmod 640 /etc/pgbouncer/userlist.txt
+        volumeMounts:
+        - name: db-credentials
+          mountPath: /secrets
+          readOnly: true
+        - name: userlist
+          mountPath: /etc/pgbouncer
+
+      containers:
+      # ── PgBouncer ─────────────────────────────────────────────────────────────
+      - name: pgbouncer
+        image: edoburu/pgbouncer:latest
+        ports:
+        - name: pgbouncer
+          containerPort: 5432
+        env:
+        # Postgres host: resolved from the db-secret so staging/production can
+        # each have their own Secret with the right RDS endpoint.
+        - name: PGBOUNCER_DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: host
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        - name: DB_NAME
+          value: carbonledger
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu:    "50m"
+          limits:
+            memory: "128Mi"
+            cpu:    "200m"
+        livenessProbe:
+          tcpSocket:
+            port: 5432
+          initialDelaySeconds: 10
+          periodSeconds:       10
+          failureThreshold:    3
+        readinessProbe:
+          tcpSocket:
+            port: 5432
+          initialDelaySeconds: 5
+          periodSeconds:       5
+          failureThreshold:    2
+        volumeMounts:
+        - name: pgbouncer-config
+          mountPath: /etc/pgbouncer/pgbouncer.ini
+          subPath:   pgbouncer.ini
+          readOnly:  true
+        - name: userlist
+          mountPath: /etc/pgbouncer/userlist.txt
+          subPath:   userlist.txt
+
+      # ── pgbouncer_exporter sidecar — Prometheus metrics ──────────────────────
+      # Exposes PgBouncer SHOW STATS / SHOW POOLS as Prometheus metrics on :9127.
+      # Scraped by the prometheus.io/* annotations above.
+      - name: pgbouncer-exporter
+        image: prometheuscommunity/pgbouncer-exporter:v0.7.0
+        args:
+        - "--pgBouncer.connectionString=postgresql://$(DB_USER):$(DB_PASSWORD)@localhost:5432/pgbouncer?sslmode=disable"
+        env:
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        ports:
+        - name: metrics
+          containerPort: 9127
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu:    "10m"
+          limits:
+            memory: "64Mi"
+            cpu:    "50m"
+
+      volumes:
+      - name: pgbouncer-config
+        configMap:
+          name: pgbouncer-config
+      - name: db-credentials
+        secret:
+          secretName: db-secret
+      - name: userlist
+        emptyDir: {}
+
+      # Spread replicas across nodes for availability
+      topologySpreadConstraints:
+      - maxSkew:           1
+        topologyKey:       kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app:       carbonledger
+            component: pgbouncer
+
+---
+# ── Service — application traffic ─────────────────────────────────────────────
+# Backend and oracle pods connect to pgbouncer:5432 via this ClusterIP service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: pgbouncer
+spec:
+  selector:
+    app: carbonledger
+    component: pgbouncer
+  ports:
+  - name: pgbouncer
+    port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+---
+# ── PodDisruptionBudget ───────────────────────────────────────────────────────
+# Keep at least 1 PgBouncer pod available during node drains / upgrades.
+# Combined with 2 replicas, this allows exactly 1 disruption at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pgbouncer-pdb
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: pgbouncer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: carbonledger
+      component: pgbouncer
