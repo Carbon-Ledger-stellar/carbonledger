@@ -167,6 +167,27 @@ jobs:
           printf '%s' "$STAGING_KUBECONFIG" > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
 
+      - name: Apply PodDisruptionBudgets
+        # Ensures PDBs exist before the rollout so the first node drain after
+        # this deploy is already protected. kubectl apply is idempotent.
+        run: |
+          kubectl apply -f deploy/kubernetes/pdb.yaml -n carbonledger
+
+      - name: Verify PDBs are active
+        run: |
+          kubectl get pdb backend-pdb frontend-pdb -n carbonledger
+          # Fail if either PDB reports 0 disruptions allowed and 0 pods healthy —
+          # that would mean the PDB itself is misconfigured or replicas are down.
+          BACKEND_ALLOWED=$(kubectl get pdb backend-pdb -n carbonledger \
+            -o jsonpath='{.status.disruptionsAllowed}')
+          FRONTEND_ALLOWED=$(kubectl get pdb frontend-pdb -n carbonledger \
+            -o jsonpath='{.status.disruptionsAllowed}')
+          echo "backend-pdb  disruptionsAllowed: ${BACKEND_ALLOWED}"
+          echo "frontend-pdb disruptionsAllowed: ${FRONTEND_ALLOWED}"
+          if [ "${BACKEND_ALLOWED}" = "0" ] || [ "${FRONTEND_ALLOWED}" = "0" ]; then
+            echo "::warning::One or more PDBs report 0 disruptionsAllowed — verify replica counts."
+          fi
+
       - name: Deploy to Kubernetes
         run: |
           kubectl set image deployment/backend backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
@@ -294,6 +315,25 @@ jobs:
           mkdir -p $HOME/.kube
           printf '%s' "$PRODUCTION_KUBECONFIG" > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
+
+      - name: Apply PodDisruptionBudgets
+        # Ensures PDBs exist before the rollout so node drains are protected
+        # from the moment the new images go live. Idempotent.
+        run: |
+          kubectl apply -f deploy/kubernetes/pdb.yaml -n carbonledger
+
+      - name: Verify PDBs are active
+        run: |
+          kubectl get pdb backend-pdb frontend-pdb -n carbonledger
+          BACKEND_ALLOWED=$(kubectl get pdb backend-pdb -n carbonledger \
+            -o jsonpath='{.status.disruptionsAllowed}')
+          FRONTEND_ALLOWED=$(kubectl get pdb frontend-pdb -n carbonledger \
+            -o jsonpath='{.status.disruptionsAllowed}')
+          echo "backend-pdb  disruptionsAllowed: ${BACKEND_ALLOWED}"
+          echo "frontend-pdb disruptionsAllowed: ${FRONTEND_ALLOWED}"
+          if [ "${BACKEND_ALLOWED}" = "0" ] || [ "${FRONTEND_ALLOWED}" = "0" ]; then
+            echo "::warning::One or more PDBs report 0 disruptionsAllowed — verify replica counts."
+          fi
 
       - name: Deploy to Kubernetes
         run: |

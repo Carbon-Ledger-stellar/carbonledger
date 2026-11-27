@@ -1,0 +1,85 @@
+# =============================================================================
+# PodDisruptionBudgets — CarbonLedger production services
+# =============================================================================
+# Prevents simultaneous pod eviction during node maintenance (drains, upgrades)
+# from causing a total availability outage. See issue #1801.
+#
+# Design rationale
+# ────────────────
+# backend  — 3 replicas in production. minAvailable: 2 keeps at least 2 pods
+#            serving traffic at all times. The eviction API will refuse to drain
+#            a node that would take availability below that floor.
+#            minAvailable: 1 is the absolute minimum; 2 is used here because the
+#            backend handles authentication, write operations, and oracle data —
+#            a single pod under full production load is insufficient headroom.
+#
+# frontend — 2 replicas. minAvailable: 1 is the correct value: requiring 2/2
+#            would make the PDB equivalent to maxUnavailable: 0, which blocks
+#            ALL voluntary disruptions and makes node drains impossible. With
+#            minAvailable: 1 exactly one pod can be evicted at a time.
+#
+# oracle   — deployed as multiple replicas in the full compose stack. If a
+#            Kubernetes manifest is added for oracle in the future, a PDB with
+#            minAvailable: 1 should be added here too.
+#
+# Validation
+# ──────────
+# PDB is only effective when replicas > minAvailable. CI enforces this:
+#   - backend:  replicas (3) > minAvailable (2) ✓
+#   - frontend: replicas (2) > minAvailable (1) ✓
+#
+# Node drain simulation
+# ─────────────────────
+# See .github/workflows/pdb-validation.yml for the staging node-drain
+# simulation that verifies no availability gap occurs when PDBs are active.
+#
+# Apply with:
+#   kubectl apply -f deploy/kubernetes/pdb.yaml
+# =============================================================================
+
+# ── Backend PodDisruptionBudget ───────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: backend
+  annotations:
+    # Intentional: minAvailable: 2 (not 1) because a single backend pod is
+    # insufficient under production load. Raise this if replicas increase.
+    pdb.carbonledger.com/min-available: "2"
+    pdb.carbonledger.com/replicas-required: "3"
+spec:
+  # Keep at least 2 of the 3 backend pods available at all times.
+  # The eviction API will block any voluntary disruption (node drain, upgrade)
+  # that would reduce available pods below this floor.
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: carbonledger
+      component: backend
+
+---
+# ── Frontend PodDisruptionBudget ──────────────────────────────────────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-pdb
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: frontend
+  annotations:
+    # minAvailable: 1 of 2 replicas. Setting minAvailable: 2 would block
+    # all voluntary disruptions entirely, making node drains impossible.
+    pdb.carbonledger.com/min-available: "1"
+    pdb.carbonledger.com/replicas-required: "2"
+spec:
+  # Keep at least 1 of the 2 frontend pods available at all times.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: carbonledger
+      component: frontend
