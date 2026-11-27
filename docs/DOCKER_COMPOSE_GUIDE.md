@@ -53,50 +53,48 @@ All services will be available at:
 
 ## Environment Configuration
 
-### Required Variables
+Compose reads the repository-root `.env` file for `${VARIABLE}` interpolation. The backend also loads that file into its container; the frontend receives only the values explicitly listed in `docker-compose.yml`.
 
-Copy `.env.example` to `.env` and fill in:
+Start from the checked-in template:
 
 ```bash
-# Stellar Network
-STELLAR_NETWORK=testnet
-STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-
-# Contract IDs (after deployment)
-CARBON_REGISTRY_CONTRACT_ID=C...
-CARBON_CREDIT_CONTRACT_ID=C...
-CARBON_MARKETPLACE_CONTRACT_ID=C...
-CARBON_ORACLE_CONTRACT_ID=C...
-USDC_CONTRACT_ID=C...
-
-# Oracle Keypair
-ORACLE_SECRET_KEY=S...
-ORACLE_PUBLIC_KEY=G...
-
-# Admin Keypair
-ADMIN_SECRET_KEY=S...
-ADMIN_PUBLIC_KEY=G...
-
-# Database
-POSTGRES_PASSWORD=<secure-password>
-
-# Auth
-JWT_SECRET=<random-secret>
-
-# Optional: API Keys
-XPANSIV_API_KEY=
-TOUCAN_API_KEY=
-GOLD_STANDARD_API_KEY=
-VERRA_VCS_API_KEY=
+cp .env.example .env
 ```
 
-### Default Values
+Keep `.env` local and never commit real credentials. The template defaults `SECRETS_PROVIDER` to `vault`; for a local setup without Vault, change it to `env` and provide the local-only secrets listed below. Use a configured secrets manager and managed credentials outside local development.
 
-Services use sensible defaults for local development:
-- PostgreSQL: `carbonledger:changeme@localhost:5432/carbonledger`
-- Redis: No password (set `REDIS_PASSWORD` to enable)
-- Stellar Network: Testnet
-- Log Level: `info`
+### Required for the full local Compose stack
+
+| Variable | Used by | Local setup |
+|----------|---------|-------------|
+| `JWT_SECRET` | Backend authentication | Set a unique random secret; Compose has no fallback for this value. |
+| `ORACLE_SECRET_KEY` | Oracle workers | Set a testnet signing key if you run the Oracle services included in the default stack. Treat it as a secret. |
+| `CARBON_ORACLE_CONTRACT_ID` | Oracle workers and frontend | Set the deployed testnet contract ID for Oracle functionality. |
+| `CARBON_REGISTRY_CONTRACT_ID` | Verification worker and frontend | Set the deployed testnet contract ID for registry verification. |
+
+The stack can be used for backend/frontend development before contracts are deployed by leaving the contract IDs blank and not relying on Oracle/chain operations. In that mode, Docker may print interpolation warnings and those features will not work.
+
+### Optional or feature-specific variables
+
+| Variable(s) | Default / when needed |
+|-------------|-----------------------|
+| `POSTGRES_PASSWORD` | Compose defaults to `changeme` for local development. Set a unique value; Compose passes it to PostgreSQL and the backend connection string. Never use the default outside an isolated local environment. |
+| `STELLAR_NETWORK`, `STELLAR_RPC_URL`, `STELLAR_HORIZON_URL` | Default to Stellar testnet endpoints. Change only when targeting another network. |
+| `CARBON_CREDIT_CONTRACT_ID`, `CARBON_MARKETPLACE_CONTRACT_ID`, `USDC_CONTRACT_ID`, `UPGRADE_GOVERNANCE_CONTRACT_ID` | Needed for the corresponding frontend contract features; not required to start the containers. |
+| `GEE_WEBHOOK_SECRET`, `ADMIN_ALERT_WEBHOOK` | Needed only when enabling satellite webhook verification or alert delivery. |
+| `XPANSIV_API_KEY`, `TOUCAN_API_KEY`, `GOLD_STANDARD_API_KEY`, `VERRA_VCS_API_KEY` | Optional credentials for the matching price-feed or verification provider. Leave blank when the provider is not configured. |
+| `REDIS_PASSWORD` | Empty by default for local development. Set it only when configuring Redis authentication consistently for the services that use it. |
+| `BACKEND_*`, `FRONTEND_*`, `POSTGRES_*`, `REDIS_*`, `ORACLE_*`, `OBSERVABILITY_*` resource limits | Optional CPU and memory overrides; defaults are defined in `docker-compose.yml`. |
+
+Do not put secret values in `NEXT_PUBLIC_*` variables: Next.js exposes those values to the browser. The Compose file sets the frontend API URL and maps the contract IDs to the corresponding public build-time variables.
+
+### Local Compose defaults
+
+- PostgreSQL is published on host port `5433` and listens on container port `5432`; database and user are both `carbonledger`.
+- PostgreSQL password defaults to `changeme` only for local development.
+- Redis is published on port `6379` without a password by default.
+- Stellar network defaults to testnet, and backend log level defaults to `info`.
+- Backend and frontend are published on ports `3001` and `3000`.
 
 ## Startup Sequence
 
