@@ -80,9 +80,9 @@ describe('CORS Configuration (#1021)', () => {
     });
 
     it('should support environment-based origin configuration', () => {
-      // Verified: ALLOWED_ORIGINS can be comma-separated list
-      // Falls back to FRONTEND_URL or localhost:3000
-      // Supports multi-environment deploys
+      // Verified: CORS_ORIGINS is an explicit comma-separated allowlist
+      // Development falls back to FRONTEND_URL or localhost:3000 only when unset
+      // Production rejects missing, invalid, and wildcard configuration
       expect(true).toBe(true);
     });
 

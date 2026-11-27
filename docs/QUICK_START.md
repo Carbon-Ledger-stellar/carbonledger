@@ -170,27 +170,33 @@ docker-compose up postgres redis
 
 If you prefer Docker:
 
+Before starting the full stack, set `SECRETS_PROVIDER=env` and provide a local `JWT_SECRET` in `.env`. Oracle workers also need their testnet signing key and contract IDs. See the [Docker Compose `.env` setup](DOCKER_COMPOSE_GUIDE.md#environment-configuration) for the required and optional variables.
+
 ```bash
 # Copy environment file
 cp .env.example .env
 
-# Start all services
-docker-compose up --build
-
-# Services will be available at:
-# - Frontend: http://localhost:3000
-# - Backend: http://localhost:3001
-# - PostgreSQL: localhost:5432
-# - Redis: localhost:6379
+# Start all services with Docker Compose v2
+docker compose up --build
 ```
 
+Services will be available at:
+
+- Frontend: http://localhost:3000
+- Backend: http://localhost:3001
+- PostgreSQL: localhost:5433
+- Redis: localhost:6379
+
 **Note:** You still need Rust toolchain for contract development.
+
+For a full breakdown of required and optional environment variables needed by each service, see [DOCKER_COMPOSE_GUIDE.md — Environment Configuration](DOCKER_COMPOSE_GUIDE.md#environment-configuration).
 
 ---
 
 ## 📚 Learn More
 
 - **Full Setup Guide:** [CONTRIBUTING.md](../CONTRIBUTING.md)
+- **Docker Compose & Environment Variables:** [docs/DOCKER_COMPOSE_GUIDE.md](DOCKER_COMPOSE_GUIDE.md)
 - **Troubleshooting:** [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 - **Architecture:** [docs/adr/](adr/)
 - **API Documentation:** [backend/docs/API_REFERENCE.md](../backend/docs/API_REFERENCE.md)

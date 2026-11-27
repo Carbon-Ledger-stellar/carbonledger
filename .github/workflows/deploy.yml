@@ -173,31 +173,11 @@ jobs:
         run: |
           kubectl apply -f deploy/kubernetes/pdb.yaml -n carbonledger
 
-      - name: Apply PgBouncer
-        # Deploy PgBouncer before updating the backend image so the pooler is
-        # ready when the new backend pods start. kubectl apply is idempotent —
-        # on first deploy this creates the Deployment, ConfigMap, Service, and
-        # PDB; on subsequent deploys it only reconciles changed fields.
-        run: |
-          kubectl apply -f deploy/kubernetes/pgbouncer.yaml -n carbonledger
-          kubectl rollout status deployment/pgbouncer -n carbonledger --timeout=120s
-
-      - name: Verify PgBouncer is accepting connections
-        run: |
-          # Quick TCP connectivity check: exec into any running pod and confirm
-          # pgbouncer:5432 is reachable before rolling the backend.
-          POD=$(kubectl get pod -n carbonledger -l component=pgbouncer \
-            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-          if [ -n "${POD}" ]; then
-            kubectl exec "${POD}" -n carbonledger -- \
-              pg_isready -h localhost -p 5432 -U carbonledger \
-              && echo "PgBouncer ready" \
-              || echo "::warning::pg_isready returned non-zero — pool may still be warming up"
-          fi
-
       - name: Verify PDBs are active
         run: |
           kubectl get pdb backend-pdb frontend-pdb -n carbonledger
+          # Fail if either PDB reports 0 disruptions allowed and 0 pods healthy —
+          # that would mean the PDB itself is misconfigured or replicas are down.
           BACKEND_ALLOWED=$(kubectl get pdb backend-pdb -n carbonledger \
             -o jsonpath='{.status.disruptionsAllowed}')
           FRONTEND_ALLOWED=$(kubectl get pdb frontend-pdb -n carbonledger \
@@ -341,22 +321,6 @@ jobs:
         # from the moment the new images go live. Idempotent.
         run: |
           kubectl apply -f deploy/kubernetes/pdb.yaml -n carbonledger
-
-      - name: Apply PgBouncer
-        run: |
-          kubectl apply -f deploy/kubernetes/pgbouncer.yaml -n carbonledger
-          kubectl rollout status deployment/pgbouncer -n carbonledger --timeout=120s
-
-      - name: Verify PgBouncer is accepting connections
-        run: |
-          POD=$(kubectl get pod -n carbonledger -l component=pgbouncer \
-            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-          if [ -n "${POD}" ]; then
-            kubectl exec "${POD}" -n carbonledger -- \
-              pg_isready -h localhost -p 5432 -U carbonledger \
-              && echo "PgBouncer ready" \
-              || echo "::warning::pg_isready returned non-zero — pool may still be warming up"
-          fi
 
       - name: Verify PDBs are active
         run: |

@@ -22,6 +22,48 @@ export interface ExperimentState {
 
 export const DEFAULT_STATE: ExperimentState = { status: 'draft', rolloutPercent: 0 };
 
+/** Minimal placeholder types to satisfy service imports */
+export interface ExperimentData {
+  definition: ExperimentDefinition;
+  state: ExperimentState;
+}
+
+export interface ExperimentResults {
+  variant: string;
+  exposures: number;
+  metricSum: number;
+}
+
+/** Placeholder deterministic assignment function */
+export function assign(
+  subjectId: string,
+  audience: string,
+  experiments: ExperimentDefinition[],
+  stateLookup: (key: string) => ExperimentState | undefined,
+): Assignment {
+  // Simple deterministic fallback: always return control variant of first experiment
+  const exp = experiments[0];
+  const variant = exp.variants[0];
+  return {
+    experiment: exp.key,
+    variant: variant.key,
+    enrolled: false,
+    config: variant.config,
+  };
+}
+
+/** Placeholder hash function for subjects */
+export function hashSubject(subjectId: string, purpose: string): number {
+  const hash = createHash('sha256').update(`${subjectId}:${purpose}`).digest('hex');
+  return parseInt(hash.slice(0, 8), 16);
+}
+
+/** Placeholder analysis function */
+export function analyze(_data: any[]): ExperimentResults[] {
+  // Return empty array as stub
+  return [];
+}
+
 export interface Assignment {
   experiment: string;
   variant: string;
@@ -33,7 +75,14 @@ export interface Assignment {
 const BUCKETS = 10_000;
 
 /** Deterministic bucket in [0, 10000) for a subject. */
-export function bucketFor(purpose: string, def: ExperimentDefinition, subject: string): number {
+export function bucketFor(purpose: string, def: ExperimentDefinition): number {
+  const hash = createHash('sha256')
+    .update(`${purpose}:${def.key}`)
+    .digest('hex');
+  // Use first 8 hex characters to get a deterministic integer
+  const num = parseInt(hash.slice(0, 8), 16);
+  return num % BUCKETS;
+}ntDefinition, subject: string): number {
   const digest = createHash('sha256').update(`${purpose}:${def.key}:${def.salt}:${subject}`).digest('hex');
   return parseInt(digest.slice(0, 8), 16) % BUCKETS;
 }

@@ -1,90 +1,67 @@
-import { Injectable, NestMiddleware, Logger } from '@nestjs/common';
+import { Inject, Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
+import {
+  API_VERSIONING_CONFIG,
+  API_VERSIONING_CONFIG_TOKEN,
+  ApiVersionConfig,
+} from './versioning.config';
 
-/**
- * Deprecation dates for each API version.
- * RFC 8594 Sunset header format: HTTP-date (e.g. Sat, 01 Nov 2025 00:00:00 GMT).
- */
-export const API_DEPRECATION_DATES: Record<string, Date> = {
-  v1: new Date('2027-01-01T00:00:00.000Z'),
-};
+/** Backward-compatible view of configured sunset dates for consumers of this module. */
+export const API_DEPRECATION_DATES: Record<string, Date> = Object.fromEntries(
+  Object.entries(API_VERSIONING_CONFIG)
+    .filter(([, config]) => config.deprecated && config.sunset)
+    .map(([version, config]) => [version, config.sunset as Date]),
+);
 
-/**
- * DeprecationMiddleware
- *
- * Adds RFC 8594 deprecation headers to responses for deprecated API versions.
- *
- * Headers added for v1 routes:
- *   Deprecation: true
- *   Sunset: Thu, 01 Jan 2027 00:00:00 GMT
- *   Link: <https://api.carbonledger.io/api/v2>; rel="successor-version"
- *   X-API-Version: 1
- *   X-API-Deprecated: true
- *   X-API-Migration-Guide: https://api.carbonledger.io/docs/migration/v1-to-v2
- *
- * Headers added for v2 routes:
- *   X-API-Version: 2
- *
- * The middleware is path-aware: it inspects the URL prefix to determine which
- * version is being accessed.
- */
+/** Adds version and RFC 8594 deprecation headers to versioned API responses. */
 @Injectable()
 export class DeprecationMiddleware implements NestMiddleware {
-  private readonly logger = new Logger(DeprecationMiddleware.name);
+  constructor(
+    @Inject(API_VERSIONING_CONFIG_TOKEN)
+    private readonly versionConfig: Record<string, ApiVersionConfig> = API_VERSIONING_CONFIG,
+  ) {}
 
   use(req: Request, res: Response, next: NextFunction): void {
     const version = this.extractVersion(req.path);
-
     if (!version) {
-      return next();
+      next();
+      return;
     }
 
-    // Always set the current API version header
     res.setHeader('X-API-Version', version);
-
-    if (version === '1') {
-      const sunsetDate = API_DEPRECATION_DATES.v1;
-      const sunsetDateStr = sunsetDate.toUTCString();
-
-      // RFC 8594 — Deprecation header (https://datatracker.ietf.org/doc/html/rfc8594)
-      res.setHeader('Deprecation', 'true');
-      res.setHeader('Sunset', sunsetDateStr);
-
-      // Link header pointing to the v2 successor
-      res.setHeader(
-        'Link',
-        [
-          `<${this.buildV2Url(req)}>; rel="successor-version"`,
-          `<https://api.carbonledger.io/docs/migration/v1-to-v2>; rel="deprecation"`,
-        ].join(', '),
-      );
-
-      // Convenience headers for API consumers
-      res.setHeader('X-API-Deprecated', 'true');
-      res.setHeader('X-API-Sunset', sunsetDateStr);
-      res.setHeader(
-        'X-API-Migration-Guide',
-        'https://api.carbonledger.io/docs/migration/v1-to-v2',
-      );
+    const config = this.versionConfig[`v${version}`];
+    if (!config?.deprecated || !config.sunset) {
+      next();
+      return;
     }
 
+    const sunset = config.sunset.toUTCString();
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Sunset', sunset);
+
+    const links: string[] = [];
+    if (config.successorVersion) {
+      links.push(
+        `<${this.buildSuccessorUrl(req, config.successorVersion)}>; rel="successor-version"`,
+      );
+    }
+    if (config.migrationGuide) {
+      links.push(`<${config.migrationGuide}>; rel="deprecation"`);
+      res.setHeader('X-API-Migration-Guide', config.migrationGuide);
+    }
+    if (links.length > 0) res.setHeader('Link', links.join(', '));
+    res.setHeader('X-API-Deprecated', 'true');
+    res.setHeader('X-API-Sunset', sunset);
+    res.setHeader('Warning', '299 - "Deprecated API version; please use the successor version"');
     next();
   }
 
-  /**
-   * Extracts the version number from the request path.
-   * Returns '1' for /api/v1/..., '2' for /api/v2/..., undefined otherwise.
-   */
   private extractVersion(path: string): string | undefined {
-    const match = path.match(/^\/api\/v(\d+)(\/|$)/);
-    return match?.[1];
+    return path.match(/^\/api\/v(\d+)(\/|$)/)?.[1];
   }
 
-  /**
-   * Builds the equivalent v2 URL for the current v1 request.
-   */
-  private buildV2Url(req: Request): string {
-    const v2Path = req.path.replace(/^\/api\/v1\//, '/api/v2/');
-    return `${req.protocol}://${req.get('host')}${v2Path}`;
+  private buildSuccessorUrl(req: Request, successorVersion: string): string {
+    const successorPath = req.path.replace(/^\/api\/v\d+(?=\/|$)/, `/api/${successorVersion}`);
+    return `${req.protocol}://${req.get('host')}${successorPath}`;
   }
 }

@@ -33,6 +33,12 @@ export const REQUIRED_ENV_VARS: readonly string[] = [
   'STELLAR_HORIZON_URL',
   'STELLAR_SECRET_KEY',
   'STELLAR_PUBLIC_KEY',
+
+  // Temporal – workflow and activity timeout/retry configuration
+  'TEMPORAL_WORKFLOW_RUN_TIMEOUT',
+  'TEMPORAL_ACTIVITY_SCHEDULE_TO_CLOSE_TIMEOUT',
+  'TEMPORAL_ACTIVITY_START_TO_CLOSE_TIMEOUT',
+  'TEMPORAL_ACTIVITY_RETRY_MAX_ATTEMPTS',
 ];
 
 function isMissing(value: string | undefined): boolean {

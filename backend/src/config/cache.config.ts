@@ -6,6 +6,11 @@
  */
 
 export interface CacheConfig {
+  /**
+   * Maximum allowed age for price data in seconds before it is considered stale.
+   * Configurable via the MAX_PRICE_AGE_SECONDS environment variable.
+   */
+  maxPriceAgeSeconds: number;
   enabled: boolean;
   defaultTtlSeconds: number;
   redisUrl: string;
@@ -34,6 +39,7 @@ export class CacheConfigService {
 
     return {
       enabled: env.CACHE_ENABLED !== 'false',
+      maxPriceAgeSeconds: parseInt(env.MAX_PRICE_AGE_SECONDS || '300', 10),
       defaultTtlSeconds: parseInt(env.CACHE_TTL_SECONDS || '300', 10), // 5 minutes
       redisUrl:
         env.REDIS_URL ||

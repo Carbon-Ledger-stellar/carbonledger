@@ -248,7 +248,7 @@ services:
       STELLAR_NETWORK:   ${STELLAR_NETWORK:-testnet}
       STELLAR_RPC_URL:   ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
       FRONTEND_URL:      http://localhost:3000
-      ALLOWED_ORIGINS:   ${ALLOWED_ORIGINS:-http://localhost:3000}
+      CORS_ORIGINS:   ${CORS_ORIGINS:-http://localhost:3000}
       PORT:              3001
       REDIS_SENTINELS:   redis-sentinel:26379
       REDIS_SENTINEL_NAME: mymaster

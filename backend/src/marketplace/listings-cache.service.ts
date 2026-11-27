@@ -13,6 +13,19 @@ export function getCacheMetrics() {
   };
 }
 
+/** Reset cache hit/miss counters – useful for isolated unit tests. */
+export function resetCacheMetrics() {
+  metrics.hits = 0;
+  metrics.misses = 0;
+}
+  const total = metrics.hits + metrics.misses;
+  return {
+    hits:     metrics.hits,
+    misses:   metrics.misses,
+    hitRate:  total ? +(metrics.hits / total).toFixed(4) : 0,
+  };
+}
+
 @Injectable()
 export class ListingsCacheService implements OnModuleDestroy {
   private readonly logger = new Logger(ListingsCacheService.name);
