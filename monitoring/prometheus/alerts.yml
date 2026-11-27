@@ -1,4 +1,19 @@
 groups:
+  - name: kubernetes-pod-health
+    rules:
+      - alert: KubernetesPodContainerRestarted
+        expr: |
+          sum by (namespace, pod, container) (
+            increase(kube_pod_container_status_restarts_total[5m])
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} restarted"
+          description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} has restarted {{ $value | humanize }} time(s) in the last 5 minutes."
+
   - name: reconciliation
     rules:
       - alert: ReconciliationMismatchDetected

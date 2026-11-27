@@ -5,12 +5,23 @@ WORKDIR /app
 
 # Copy only manifests first so this layer is cached unless deps change
 COPY package*.json ./
+COPY .npmrc ./
 COPY prisma/schema.prisma ./prisma/
 
-# Install ALL deps (dev included) needed to build, then prune to prod below
+# Install the full dependency tree required to generate Prisma and compile the app.
 RUN npm ci --prefer-offline --no-audit --no-fund
 
-# ── Stage 2: Build ─────────────────────────────────────────────────────────────
+# ── Production dependencies ──────────────────────────────────────────────────
+# Keep the runtime dependency tree separate from the build toolchain.
+# renovate: datasource=docker depName=node versioning=docker
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS prod-deps
+WORKDIR /app
+
+COPY package*.json ./
+COPY .npmrc ./
+RUN npm ci --omit=dev --prefer-offline --no-audit --no-fund
+
+# ── Stage 3: Build ─────────────────────────────────────────────────────────────
 # renovate: datasource=docker depName=node versioning=docker
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
 WORKDIR /app
@@ -19,12 +30,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Build NestJS and generate Prisma client
-RUN npm run build && npx prisma generate
+RUN npx prisma generate && npm run build
 
-# Prune dev dependencies so runner image only gets production packages
-RUN npm prune --production
-
-# ── Stage 3: Runtime ───────────────────────────────────────────────────────────
+# ── Stage 4: Runtime ──────────────────────────────────────────────────────────
 # renovate: datasource=docker depName=node versioning=docker
 FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS runner
 WORKDIR /app
@@ -38,7 +46,8 @@ ENV NODE_OPTIONS="--max-old-space-size=384"
 
 # Only copy the artefacts needed at runtime
 COPY --from=builder --chown=nodejs:nodejs /app/dist          ./dist
-COPY --from=builder --chown=nodejs:nodejs /app/node_modules  ./node_modules
+COPY --from=prod-deps --chown=nodejs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder --chown=nodejs:nodejs /app/prisma        ./prisma
 COPY --chown=nodejs:nodejs package*.json ./
 

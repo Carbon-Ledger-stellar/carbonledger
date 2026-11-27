@@ -210,7 +210,8 @@ services:
       GF_ALERTING_EXECUTE_ALERTS:     "true"
     volumes:
       - ./logging/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./logging/grafana/staging-dashboards:/etc/grafana/dashboards:ro
+      - ./logging/grafana/dashboards:/etc/grafana/dashboards:ro
+      - ./logging/grafana/staging-dashboards:/etc/grafana/staging-dashboards:ro
       - grafana_staging_data:/var/lib/grafana
 
   # ── Loki with Staging-Specific Retention ─────────────────────────────────────
