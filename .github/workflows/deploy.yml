@@ -216,10 +216,23 @@ jobs:
 
       - name: Deploy to Kubernetes
         run: |
-          kubectl set image deployment/backend backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
-          kubectl set image deployment/frontend frontend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
-          kubectl rollout status deployment/backend
-          kubectl rollout status deployment/frontend
+          sed -i "s|:canary$|:canary-${{ github.sha }}|" deploy/kubernetes/canary-pause.yaml
+          kubectl apply -f deploy/kubernetes/canary-pause.yaml
+          kubectl rollout status deployment/backend-canary -n carbonledger --timeout=5m
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=5 --overwrite
+          kubectl rollout status deployment/backend-canary -n carbonledger --timeout=5m
+          sleep 30
+          curl --fail --retry 5 --retry-delay 5 https://staging.carbonledger.com/health
+          node scripts/canary-rollout.js 5
+
+      - name: Roll back failed staging canary
+        if: failure()
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
+          kubectl delete pod -n carbonledger -l track=canary --wait=true --timeout=60s
 
       - name: Verify deployment
         run: |
@@ -260,17 +273,24 @@ jobs:
 
       - name: Deploy canary at 5% traffic
         run: |
-          kubectl set image deployment/backend-canary backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
-          kubectl set image deployment/frontend-canary frontend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
-          kubectl annotate deployment/backend-canary traffic-split=5 --overwrite
-          kubectl annotate deployment/frontend-canary traffic-split=5 --overwrite
-          kubectl rollout status deployment/backend-canary
-          kubectl rollout status deployment/frontend-canary
+          sed -i "s|:canary$|:canary-${{ github.sha }}|" deploy/kubernetes/canary-pause.yaml
+          kubectl apply -f deploy/kubernetes/canary-pause.yaml
+          kubectl rollout status deployment/backend-canary -n carbonledger --timeout=5m
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=5 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=1
 
       - name: Test pause functionality on canary
         run: |
           curl -f -X POST https://canary.carbonledger.com/api/pause -H 'Content-Type: application/json' -d '{"action":"pause"}' || exit 1
           curl -f -X POST https://canary.carbonledger.com/api/pause -H 'Content-Type: application/json' -d '{"action":"resume"}' || exit 1
+
+      - name: Roll back failed production canary
+        if: failure()
+        run: |
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
 
       - name: Compare canary metrics
         run: |
@@ -313,10 +333,10 @@ jobs:
 
       - name: Promote canary to 100%
         run: |
-          kubectl annotate deployment/backend-canary traffic-split=100 --overwrite
-          kubectl annotate deployment/frontend-canary traffic-split=100 --overwrite
-          kubectl rollout status deployment/backend-canary
-          kubectl rollout status deployment/frontend-canary
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=100 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=20
+          kubectl rollout status deployment/backend-canary -n carbonledger --timeout=5m
 
   deploy-production:
     name: Deploy to Production
@@ -372,10 +392,15 @@ jobs:
 
       - name: Deploy to Kubernetes
         run: |
-          kubectl set image deployment/backend backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }}
-          kubectl set image deployment/frontend frontend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }}
-          kubectl rollout status deployment/backend
-          kubectl rollout status deployment/frontend
+          # The canary is kept at 100% only until the stable deployment has
+          # been replaced. During promotion no client sees a mixed stable image.
+          kubectl set image deployment/backend backend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_BACKEND }}:${{ github.sha }} -n carbonledger
+          kubectl set image deployment/frontend frontend=${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_FRONTEND }}:${{ github.sha }} -n carbonledger
+          kubectl rollout status deployment/backend -n carbonledger --timeout=5m
+          kubectl rollout status deployment/frontend -n carbonledger --timeout=5m
+          kubectl annotate ingress backend-canary -n carbonledger \
+            nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+          kubectl scale deployment backend-canary -n carbonledger --replicas=0
 
       - name: Verify deployment
         run: |

@@ -1,22 +1,21 @@
-#!/bin/bash
-
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 ENVIRONMENT=${1:-production}
-IMAGE_TAG=${2:-latest}
+NAMESPACE=${NAMESPACE:-carbonledger}
+TIMEOUT=${ROLLBACK_TIMEOUT:-300s}
 
-echo "🔄 Rolling back ${ENVIRONMENT} deployment..."
+echo "Rolling back ${ENVIRONMENT} backend and canary..."
 
-if [ "$ENVIRONMENT" == "production" ]; then
-    kubectl set image deployment/backend backend=ghcr.io/carbon-ledger-stellar/carbonledger/backend:${IMAGE_TAG}
-    kubectl set image deployment/frontend frontend=ghcr.io/carbon-ledger-stellar/carbonledger/frontend:${IMAGE_TAG}
-else
-    kubectl set image deployment/backend backend=ghcr.io/carbon-ledger-stellar/carbonledger/backend:staging-${IMAGE_TAG}
-    kubectl set image deployment/frontend frontend=ghcr.io/carbon-ledger-stellar/carbonledger/frontend:staging-${IMAGE_TAG}
-fi
+# Stop canary traffic first. This is a single routing change, normally under
+# one minute, and leaves the known-good stable deployment untouched.
+kubectl annotate ingress backend-canary -n "$NAMESPACE" \
+  nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+kubectl scale deployment backend-canary -n "$NAMESPACE" --replicas=0
 
-echo "⏳ Waiting for rollback to complete..."
-kubectl rollout status deployment/backend
-kubectl rollout status deployment/frontend
+# Roll the stable deployment back to the immediately previous Kubernetes
+# revision. This intentionally avoids guessing a mutable image tag.
+kubectl rollout undo deployment/backend -n "$NAMESPACE" --timeout="$TIMEOUT"
+kubectl rollout status deployment/backend -n "$NAMESPACE" --timeout="$TIMEOUT"
 
-echo "✅ Rollback completed successfully!"
+echo "Rollback completed successfully."

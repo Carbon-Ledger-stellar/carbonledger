@@ -237,6 +237,61 @@ sum by (service) (count_over_time({service=~".+"} | json | level="error" [5m]))
 
 ### Staging Deployment
 
+### Canary and Blue-Green Release Strategy
+
+Backend releases use a canary deployment on staging and production:
+
+1. Apply the immutable SHA-tagged backend image as `backend-canary`.
+2. Route 5% of traffic to the canary and observe readiness plus 5xx, latency,
+   and application metrics.
+3. Promote through 25%, 50%, and 100% only if every metrics gate passes.
+4. When 100% passes, replace the stable backend without sending traffic to it
+   (the canary remains the traffic-bearing deployment), then set canary traffic
+   to 0% and retain the stable revision.
+
+The Kubernetes stable backend uses `Recreate`; it is never mixed in-place with
+a newer image during a rollout. NGINX ingress controls canary weight, and
+`backend-canary` has its own readiness and liveness probes.
+
+#### Zero-5xx staging gate
+
+The staging canary must pass health checks and the automated metrics gate:
+
+```bash
+kubectl apply -f deploy/kubernetes/canary-pause.yaml
+kubectl rollout status deployment/backend-canary -n carbonledger --timeout=5m
+kubectl annotate ingress backend-canary -n carbonledger \
+  nginx.ingress.kubernetes.io/canary-weight=5 --overwrite
+curl --fail https://staging.carbonledger.com/health
+node scripts/canary-rollout.js 5
+```
+
+A deploy is rejected if any 5xx/health gate fails. The staging Compose overlay
+also defines an isolated `backend-canary` service for direct canary health
+tests.
+
+#### Rollback
+
+Rollback is a traffic first, revision second operation:
+
+```bash
+./scripts/rollback.sh production
+# or: NAMESPACE=carbonledger ROLLBACK_TIMEOUT=300s ./scripts/rollback.sh staging
+```
+
+The script immediately sets canary weight to 0 and scales the canary to zero,
+then executes `kubectl rollout undo backend` and waits at most five minutes.
+
+Manual emergency rollback:
+
+```bash
+kubectl annotate ingress backend-canary -n carbonledger \
+  nginx.ingress.kubernetes.io/canary-weight=0 --overwrite
+kubectl scale deployment backend-canary -n carbonledger --replicas=0
+kubectl rollout undo deployment/backend -n carbonledger
+kubectl rollout status deployment/backend -n carbonledger --timeout=300s
+```
+
 ```mermaid
 graph TD
     A[Push to develop] --> B[GitHub Actions Trigger]

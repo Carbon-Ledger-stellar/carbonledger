@@ -82,6 +82,43 @@ services:
       retries: 5
       start_period: 45s
 
+  # Isolated staging canary. It shares the staging data plane but has a
+  # distinct container lifecycle so it can be health-tested and rolled back
+  # without recreating or replacing the stable backend.
+  backend-canary:
+    image: ${BACKEND_CANARY_IMAGE:-ghcr.io/dev-fatima-24/carbonledger/backend:staging-latest}
+    environment:
+      DATABASE_URL:                    postgresql://carbonledger_staging:${POSTGRES_PASSWORD}@postgres:5432/carbonledger_staging
+      JWT_SECRET:                      ${JWT_SECRET}
+      STELLAR_NETWORK:                 testnet
+      STELLAR_RPC_URL:                 https://soroban-testnet.stellar.org
+      STELLAR_HORIZON_URL:             https://horizon-testnet.stellar.org
+      NETWORK_PASSPHRASE:              "Test SDF Network ; September 2015"
+      CARBON_REGISTRY_CONTRACT_ID:     ${STAGING_REGISTRY_CONTRACT_ID}
+      CARBON_CREDIT_CONTRACT_ID:       ${STAGING_CREDIT_CONTRACT_ID}
+      CARBON_MARKETPLACE_CONTRACT_ID:  ${STAGING_MARKETPLACE_CONTRACT_ID}
+      CARBON_ORACLE_CONTRACT_ID:       ${STAGING_ORACLE_CONTRACT_ID}
+      USDC_CONTRACT_ID:                ${STAGING_USDC_CONTRACT_ID}
+      REDIS_SENTINELS:                 redis-sentinel:26379
+      REDIS_SENTINEL_NAME:             mymaster
+      REDIS_PASSWORD:                  ${REDIS_PASSWORD:-staging_redis_pass}
+      FRONTEND_URL:                    ${STAGING_URL:-https://staging.carbonledger.com}
+      ALLOWED_ORIGINS:                 ${ALLOWED_ORIGINS:-https://staging.carbonledger.com,https://staging-api.carbonledger.com}
+      PORT:                            3001
+      LOG_LEVEL:                       debug
+      CANARY_DEPLOYMENT:               "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001/health/ready && wget -q --spider http://localhost:3001/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+
   # ── Staging Frontend (staging-specific environment) ──────────────────────────
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/dev-fatima-24/carbonledger/frontend:staging-latest}
