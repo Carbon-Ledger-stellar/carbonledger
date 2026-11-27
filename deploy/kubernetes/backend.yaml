@@ -23,9 +23,18 @@ spec:
         app: carbonledger
         component: backend
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
       containers:
       - name: backend
         image: ghcr.io/carbon-ledger-stellar/carbonledger/backend:latest
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
         ports:
         - containerPort: 3000
         env:

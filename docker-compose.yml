@@ -495,6 +495,19 @@ services:
         condition: service_healthy
     logging: *default-logging
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    volumes:
+      - ./logging/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./logging/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    logging: *default-logging
+
   grafana:
     image: grafana/grafana:10.4.2
     restart: unless-stopped
@@ -519,6 +532,8 @@ services:
     depends_on:
       loki:
         condition: service_healthy
+      prometheus:
+        condition: service_started
     logging: *default-logging
 
   jaeger:
@@ -543,4 +558,5 @@ volumes:
   postgres_data:
   redis_data:
   loki_data:
+  prometheus_data:
   grafana_data:
