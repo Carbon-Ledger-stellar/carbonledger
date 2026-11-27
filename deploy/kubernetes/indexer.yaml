@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexer
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: indexer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: carbonledger
+      component: indexer
+  template:
+    metadata:
+      labels:
+        app: carbonledger
+        component: indexer
+    spec:
+      containers:
+      - name: indexer
+        image: ghcr.io/carbon-ledger-stellar/carbonledger/indexer:latest
+        ports:
+        - containerPort: 3001
+          name: health
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: url
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: NODE_ENV
+          value: production
+        - name: HEARTBEAT_FILE
+          value: /tmp/indexer-heartbeat
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        # Liveness probe to restart the pod if the indexer loop deadlocks or stalls (#1811)
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: indexer-service
+  namespace: carbonledger
+  labels:
+    app: carbonledger
+    component: indexer
+spec:
+  selector:
+    app: carbonledger
+    component: indexer
+  ports:
+  - port: 3001
+    targetPort: 3001
+    name: health
