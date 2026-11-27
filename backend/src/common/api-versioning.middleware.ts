@@ -1,8 +1,6 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
-
-const V1_DEPRECATION_DATE = 'Sat, 01 Jan 2028 00:00:00 GMT';
-const SUCCESSOR_VERSION_URL = 'https://docs.carbonledger.io/api/v2';
+import { API_VERSIONING_CONFIG } from '../versioning/versioning.config';
 
 @Injectable()
 export class ApiVersioningMiddleware implements NestMiddleware {
@@ -19,11 +17,16 @@ export class ApiVersioningMiddleware implements NestMiddleware {
       req.originalUrl = rewrittenPath;
     }
 
-    if (versionFromPath === 'v1') {
+    res.setHeader('X-API-Version', versionFromPath === 'v1' ? '1' : '2');
+    const config = API_VERSIONING_CONFIG[versionFromPath];
+    if (config?.deprecated && config.sunset) {
       res.setHeader('Deprecation', 'true');
-      res.setHeader('Sunset', V1_DEPRECATION_DATE);
-      res.setHeader('Link', `<${SUCCESSOR_VERSION_URL}>; rel="successor-version"`);
-      res.setHeader('Warning', '299 - "Deprecated API version; please use /v2/"');
+      res.setHeader('Sunset', config.sunset.toUTCString());
+      res.setHeader(
+        'Link',
+        `<https://docs.carbonledger.io/api/${config.successorVersion ?? 'v2'}>; rel="successor-version"`,
+      );
+      res.setHeader('Warning', '299 - "Deprecated API version; please use the successor version"');
     }
 
     next();

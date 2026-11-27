@@ -34,6 +34,7 @@ import { LoggerModule } from "./logger/logger.module";
 import { CorrelationIdMiddleware } from "./logger/correlation-id.middleware";
 import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
 import { LoggingInterceptor } from "./logger/logging.interceptor";
+import { VersioningModule } from './versioning/versioning.module';
 // Role-based quota throttling (issue #540)
 import { ThrottleModule, RoleLimitGuard } from "./throttle";
 import { RedisSlidingWindowRateLimitGuard } from "./common/redis-sliding-window-rate-limit.guard";
@@ -42,7 +43,6 @@ import { RateLimitMiddleware } from "./common/rate-limit.middleware";
 // Idempotency support for critical POST endpoints (issue #539)
 import { IdempotencyModule } from "./idempotency/idempotency.module";
 import { IdempotencyMiddleware } from "./idempotency/idempotency.middleware";
-import { DeprecationMiddleware } from "./versioning/deprecation.middleware";
 import { RedisModule } from "./redis.module";
 import { RetentionModule } from "./retention/retention.module";
 import { ReconciliationModule } from "./reconciliation/reconciliation.module";
@@ -210,6 +210,7 @@ class HealthController {
     TwoFactorModule,
     ContractSyncModule,
     ContractStatusModule,
+    VersioningModule,
   ],
   controllers: [HealthController],
   providers: [
