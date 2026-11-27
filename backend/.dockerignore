@@ -8,19 +8,31 @@ node_modules
 # Build artifacts (rebuilt in Docker)
 dist
 
-# Test and dev files
-test
+# Test files and dirs (keep out of production images — #1795)
+test/
+**/test/
+tests/
+**/tests/
+__tests__/
+**/__tests__/
+e2e/
+**/e2e/
 **/*.spec.ts
+**/*.spec.tsx
 **/*.spec.js
 **/*.test.ts
+**/*.test.tsx
 **/*.test.js
-coverage
+coverage/
+**/coverage/
 .nyc_output
+**/.nyc_output
 
-# Docs
-docs
+# Docs (all markdown excluded from images)
+docs/
+**/docs/
 *.md
-!README.md
+**/*.md
 
 # Environment files
 .env

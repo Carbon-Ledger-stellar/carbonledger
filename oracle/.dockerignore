@@ -4,6 +4,7 @@
 
 # Python cache
 __pycache__
+**/__pycache__
 *.py[cod]
 *.pyo
 *.pyd
@@ -19,21 +20,41 @@ venv
 env
 ENV
 
-# Test files
+# Test files and dirs (keep out of production images — #1795)
+test/
+**/test/
+tests/
+**/tests/
 test_*.py
+**/test_*.py
 *_test.py
+**/*_test.py
 pytest_cache
 .pytest_cache
+coverage/
+**/coverage/
 .coverage
 htmlcov
+# TypeScript test artefacts (in case any are vendored)
+**/*.test.ts
+**/*.test.tsx
+**/*.test.js
+**/*.spec.ts
 
 # Dev dependencies
 requirements-dev.txt
 
-# Docs
+# Docs (all markdown excluded from images)
+docs/
+**/docs/
 *.md
-!README.md
-docs
+**/*.md
+E2E_SETUP_GUIDE.md
+ORACLE_INTEGRATION.md
+ORACLE_SETUP.md
+ORACLE_SYNC.md
+DEPLOYMENT.md
+TEST_E2E_DOCS.md
 
 # Environment files
 .env
@@ -59,14 +80,5 @@ docker-compose*.yml
 # CI
 .github
 
-# Systemd
+# Systemd unit files (not needed in container image)
 systemd
-
-# Misc docs
-*.md
-E2E_SETUP_GUIDE.md
-ORACLE_INTEGRATION.md
-ORACLE_SETUP.md
-ORACLE_SYNC.md
-DEPLOYMENT.md
-TEST_E2E_DOCS.md

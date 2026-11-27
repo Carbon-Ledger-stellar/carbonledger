@@ -9,20 +9,31 @@ node_modules
 .next
 out
 
-# Test files
-tests
+# Test files and dirs (keep out of production images — #1795)
+test/
+**/test/
+tests/
+**/tests/
+__tests__/
+**/__tests__/
+e2e/
+**/e2e/
 **/*.spec.ts
 **/*.spec.tsx
 **/*.test.ts
 **/*.test.tsx
-coverage
+coverage/
+**/coverage/
 playwright-report
+**/playwright-report
 test-results
+**/test-results
 
-# Docs
-docs
+# Docs (all markdown excluded from images)
+docs/
+**/docs/
 *.md
-!README.md
+**/*.md
 
 # Environment files
 .env

@@ -1,0 +1,128 @@
+# Enforces a size budget and a "no test/doc/coverage files" guarantee on the
+# Docker build contexts and production images. Prevents the regression
+# described in #1795 (test/, docs/, *.md, *.test.ts, coverage/ leaking into
+# images) from creeping back in.
+#
+# Two layers of enforcement:
+#   1. context-budget   — for every service context, asserts the .dockerignore
+#                         actually excludes test/doc/coverage files AND keeps
+#                         the build context under a size budget. Fast (no
+#                         language toolchain needed) and the direct guard for
+#                         this issue.
+#   2. oracle-image      — builds the real oracle image (the only service image
+#                         that COPYs its source into the final stage) and
+#                         asserts, via `docker run`, that no test/doc/md files
+#                         are present and the image is under budget.
+#
+# backend/frontend production-image builds are intentionally not exercised
+# here: their `npm ci` currently fails on a pre-existing peer-dependency
+# `ERESOLVE` (the deps stage does not copy the repo's `.npmrc`). That is tracked
+# separately. Their final images are kept clean structurally — the multi-stage
+# Dockerfiles only COPY dist/node_modules/prisma (backend) and
+# .next/standalone/.next/static/public (frontend) into the runner — and the
+# context-budget job above guarantees test/doc/coverage files never enter the
+# build context in the first place.
+
+name: Image Size Budget
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  context-budget:
+    name: Context size & cleanliness (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # budget_mb is sized with headroom above the measured post-fix context
+          # so normal source growth passes, but a returning .git / node_modules /
+          # target / docs layer fails. The precise guard is the presence check.
+          - { service: root,    context: .,         budget_mb: 25 }
+          - { service: backend,  context: ./backend,  budget_mb: 12 }
+          - { service: frontend, context: ./frontend, budget_mb: 15 }
+          - { service: oracle,   context: ./oracle,   budget_mb: 3 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build context snapshots
+        run: |
+          # scratch image  -> exact (uncompressed) build-context size for the budget check
+          printf 'FROM scratch\nCOPY . /\n' > /tmp/Dockerfile.size
+          docker build -f /tmp/Dockerfile.size -t ctx-size-${{ matrix.service }} "${{ matrix.context }}"
+          # alpine image    -> gives us a shell so we can list the context for the presence check
+          printf 'FROM alpine:3.20\nCOPY . /ctx\n' > /tmp/Dockerfile.presence
+          docker build -f /tmp/Dockerfile.presence -t ctx-presence-${{ matrix.service }} "${{ matrix.context }}"
+
+      - name: Enforce no test/doc/coverage files in build context
+        run: |
+          set -euo pipefail
+          # Anything reported here must be excluded by the service .dockerignore.
+          leftovers=$(docker run --rm ctx-presence-${{ matrix.service }} sh -c '
+            find /ctx -type f \( -name "*.md" -o -name "*.test.ts" -o -name "*.test.tsx" \
+              -o -name "*.test.js" -o -name "*.test.py" -o -name "*.spec.ts" \
+              -o -name "*.spec.tsx" -o -name "*.spec.js" -o -name "test_*.py" \
+              -o -name "*_test.py" -o -name "*.lcov" \) -print 2>/dev/null
+            find /ctx -type d \( -name test -o -name tests -o -name __tests__ -o -name e2e \
+              -o -name docs -o -name coverage -o -name htmlcov -o -name adversarial_tests \
+              -o -name test_snapshots -o -name proptest-regressions \
+              -o -name playwright-report -o -name test-results \) -print 2>/dev/null
+          ' | sort -u)
+          if [ -n "$leftovers" ]; then
+            echo "::error::Build context for '${{ matrix.service }}' still contains test/doc/coverage files — update the .dockerignore (#1795):"
+            echo "$leftovers" | head -n 50
+            exit 1
+          fi
+          echo "OK: '${{ matrix.service }}' build context has no test/doc/coverage files"
+
+      - name: Enforce build-context size budget
+        run: |
+          size=$(docker image inspect ctx-size-${{ matrix.service }} --format '{{.Size}}')
+          mb=$(( size / 1024 / 1024 ))
+          echo "'${{ matrix.service }}' build context = ${mb} MB (budget ${{ matrix.budget_mb }} MB)"
+          if [ "$mb" -gt "${{ matrix.budget_mb }}" ]; then
+            echo "::error::Build context for '${{ matrix.service }}' exceeds its budget (${mb} MB > ${{ matrix.budget_mb }} MB). Likely a missing .dockerignore exclusion (e.g. .git, node_modules, target, docs)."
+            exit 1
+          fi
+
+  oracle-image:
+    name: Production image size & cleanliness (oracle)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build oracle production image
+        run: docker build -t app-oracle:ci ./oracle
+
+      - name: Enforce no test/doc/md files in image (docker run)
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint sh app-oracle:ci -c '
+            hits=$(find /app -path "*/node_modules" -prune -o -type f \
+              \( -name "*.test.*" -o -name "*.spec.*" -o -name "test_*.py" \
+                 -o -name "*_test.py" -o -name "*.md" \) -print 2>/dev/null)
+            if [ -n "$hits" ]; then
+              echo "FAIL: test/doc/md files present in oracle image:"; echo "$hits"; exit 1
+            fi
+            for d in test tests docs __tests__ e2e coverage; do
+              if [ -e "/app/$d" ]; then echo "FAIL: /app/$d present in image"; exit 1; fi
+            done
+            echo "OK: oracle production image has no test/doc/md files"
+          '
+
+      - name: Enforce image size budget
+        run: |
+          size=$(docker image inspect app-oracle:ci --format '{{.Size}}')
+          mb=$(( size / 1024 / 1024 ))
+          echo "oracle image = ${mb} MB (budget 360 MB)"
+          if [ "$mb" -gt 360 ]; then
+            echo "::error::oracle image exceeds size budget (${mb} MB > 360 MB)."
+            exit 1
+          fi
