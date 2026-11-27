@@ -34,3 +34,131 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  contracts-debug:
+    name: Contracts (Debug Fast Check)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-debug-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-debug-
+      - name: Fast debug build & timing
+        id: debug_build
+        run: |
+          start=$(date +%s)
+          cargo build --workspace --target wasm32-unknown-unknown
+          end=$(date +%s)
+          elapsed=$((end - start))
+          echo "debug_time=${elapsed}" >> "$GITHUB_OUTPUT"
+          echo "Debug build completed in ${elapsed}s"
+      - name: Save debug timing
+        run: |
+          mkdir -p /tmp/timings
+          echo "${{ steps.debug_build.outputs.debug_time }}" > /tmp/timings/debug-time.txt
+      - name: Upload debug timing artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-build-timing
+          path: /tmp/timings/debug-time.txt
+
+  contracts-release:
+    name: Contracts (Release Build & Size Check)
+    needs: [contracts-debug]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      SOROBAN_WASM_LIMIT_BYTES: 262144
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contracts/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('contracts/**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-
+      - name: Download debug timing artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: debug-build-timing
+          path: /tmp/timings
+        continue-on-error: true
+      - name: Release build & timing
+        id: release_build
+        run: |
+          start=$(date +%s)
+          cargo build --release --workspace --target wasm32-unknown-unknown
+          end=$(date +%s)
+          elapsed=$((end - start))
+          echo "release_time=${elapsed}" >> "$GITHUB_OUTPUT"
+          echo "Release build completed in ${elapsed}s"
+      - name: Compare build times (Debug vs Release)
+        run: |
+          release_time="${{ steps.release_build.outputs.release_time }}"
+          debug_time="unknown"
+          if [ -f /tmp/timings/debug-time.txt ]; then
+            debug_time=$(cat /tmp/timings/debug-time.txt)
+          fi
+          echo "================ Build Time Comparison ================"
+          echo "Debug build time:   ${debug_time}s"
+          echo "Release build time: ${release_time}s"
+          echo "========================================================"
+      - name: Track contract Wasm sizes & alert on Soroban limit
+        env:
+          LIMIT: ${{ env.SOROBAN_WASM_LIMIT_BYTES }}
+        run: |
+          set -euo pipefail
+          limit="${LIMIT:-262144}"
+          echo "Checking Soroban Wasm size limit (${limit} bytes / 256 KB)..."
+          shopt -s nullglob
+          wasm_files=(target/wasm32-unknown-unknown/release/*.wasm)
+          if [ ${#wasm_files[@]} -eq 0 ]; then
+            echo "::error::No release wasm artifacts found in target/wasm32-unknown-unknown/release/"
+            exit 1
+          fi
+          failed=0
+          printf '%-50s %12s %12s %8s\n' 'CONTRACT' 'SIZE (bytes)' 'LIMIT' 'STATUS'
+          for f in "${wasm_files[@]}"; do
+            size=$(stat -c%s "$f")
+            if [ "$size" -gt "$limit" ]; then
+              status='EXCEEDED'
+              failed=1
+              echo "::warning file=$f::Contract $(basename "$f") size ($size bytes) exceeds Soroban limit ($limit bytes)!"
+            else
+              status='OK'
+            fi
+            printf '%-50s %12s %12s %8s\n' "$(basename "$f")" "$size" "$limit" "$status"
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::One or more contracts exceed the Soroban size limit of ${limit} bytes"
+            exit 1
+          fi
+          echo "✅ All release contracts are within the Soroban size limit"
+      - name: Upload release wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-release-wasm
+          path: contracts/target/wasm32-unknown-unknown/release/*.wasm
+
