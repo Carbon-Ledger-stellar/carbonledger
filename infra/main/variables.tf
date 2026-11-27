@@ -71,8 +71,6 @@ variable "redis_num_cache_clusters" {
 
 }
 
-}
-
 variable "enable_redis_sentinel" {
   description = <<-EOT
     When true, provisions a 3-node Redis Sentinel HA cluster (1 primary + 2 replicas)
