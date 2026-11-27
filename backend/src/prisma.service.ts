@@ -79,6 +79,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // Satisfies issue #1024 acceptance criterion: idle_timeout=900 (15 min).
     url.searchParams.set("idle_timeout", String(POOL_IDLE_TIMEOUT_S));
 
+    // Support PgBouncer transaction mode (#1453)
+    if (process.env.PGBOUNCER === "true" || process.env.DATABASE_URL?.includes("pgbouncer=true")) {
+      url.searchParams.set("pgbouncer", "true");
+    }
+
     super({
       datasources: { db: { url: url.toString() } },
       log: process.env.NODE_ENV === "development" ? ["query", "warn", "error"] : ["warn", "error"],
