@@ -1,6 +1,6 @@
 import './telemetry/register';
 import { NestFactory } from '@nestjs/core';
-import { ConsoleLogger, ForbiddenException, INestApplication, LogLevel, ValidationPipe, VersioningType } from '@nestjs/common';
+import { ConsoleLogger, INestApplication, LogLevel, ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { PrismaService } from './prisma.service';
 import { CorrelationIdContext } from './logger/correlation-id.context';
@@ -15,6 +15,7 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { LoggerService } from './logger/logger.service';
 import { DdosProtectionMiddleware } from './security/ddos-protection.middleware';
 import { RequestLoggingMiddleware } from './security/request-logging.middleware';
+import { createCorsConfig } from './common/cors.config';
 
 /**
  * Enhanced JSON logger with correlation ID support.
@@ -234,38 +235,10 @@ async function bootstrap() {
     next();
   });
 
-  // ── CORS (#1077) ───────────────────────────────────────────────────────────
-  // Strictly restricted to the configured frontend origin(s).
-  // ALLOWED_ORIGINS can be a comma-separated list for multi-environment deploys.
-  const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
-    : [process.env.FRONTEND_URL || 'http://localhost:3000'];
-
-  app.enableCors({
-    origin: (origin, callback) => {
-      // Allow same-origin requests (no origin header) and server-to-server calls
-      if (!origin) {
-        return callback(null, true);
-      }
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new ForbiddenException(`CORS: origin '${origin}' is not allowed`), false);
-    },
-    credentials:          true,
-    methods:              ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders:       [
-      'Content-Type',
-      'Authorization',
-      'X-Requested-With',
-      'Idempotency-Key',
-      'X-Correlation-ID',
-    ],
-    exposedHeaders:       ['X-Correlation-ID', 'X-RateLimit-Remaining'],
-    preflightContinue:    false,
-    optionsSuccessStatus: 204,
-    maxAge:               86400, // Cache preflight results for 24h
-  });
+  // ── CORS (#1461) ───────────────────────────────────────────────────────────
+  // Every environment uses an explicit CORS_ORIGINS allowlist. Production
+  // rejects missing, invalid, and wildcard configuration during startup.
+  app.enableCors(createCorsConfig());
 
   const stellarNetwork = app.get(StellarNetworkService);
   const httpAdapter = app.getHttpAdapter();

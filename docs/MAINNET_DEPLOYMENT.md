@@ -13,7 +13,7 @@ This runbook is for an approved production release of CarbonLedger services and 
 - [ ] Mainnet admin and oracle secret keys are available from the approved secret manager or signing process. Do not commit or print them.
 - [ ] The deployer account is funded with enough XLM for deployment, initialization, and fees/rent.
 - [ ] Contract IDs, WASM SHA-256 hashes, image digests, and release commit are recorded.
-- [ ] DNS, TLS certificates, firewall rules, and `ALLOWED_ORIGINS` point to production hosts.
+- [ ] DNS, TLS certificates, firewall rules, and `CORS_ORIGINS` point to production hosts.
 - [ ] Grafana, Loki, alert routing, error-log notifications, and on-call escalation are reachable.
 - [ ] A maintenance/rollback communication is ready and stakeholders have been notified.
 
@@ -58,7 +58,7 @@ JWT_SECRET=<random-production-secret>
 NODE_ENV=production
 PORT=3001
 FRONTEND_URL=https://app.carbonledger.com
-ALLOWED_ORIGINS=https://app.carbonledger.com
+CORS_ORIGINS=https://app.carbonledger.com
 LOG_LEVEL=info
 
 # Frontend build/runtime settings

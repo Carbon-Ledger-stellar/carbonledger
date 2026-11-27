@@ -902,13 +902,13 @@ Redis is used by the backend's BullMQ job queue for certificate generation, IPFS
 
 ---
 
-### `ALLOWED_ORIGINS`
+### `CORS_ORIGINS`
 
 | Property | Value |
 |----------|-------|
 | **Description** | Comma-separated list of origins allowed by the CORS policy. The backend rejects requests from any origin not in this list. |
 | **Type** | comma-separated URLs |
-| **Example** | `ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001,https://app.carbonledger.com` |
+| **Example** | `CORS_ORIGINS=http://localhost:3000,http://localhost:3001,https://app.carbonledger.com` |
 | **Required** | Yes |
 
 ---

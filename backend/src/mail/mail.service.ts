@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { MAIL_QUEUE, MailEvent } from './mail.constants';
 import { PrismaService } from '../prisma.service';
 import { enqueueWithTrace } from '../telemetry/tracing';
+import { resolveMailLocale } from './mail.locale';
 
 @Injectable()
 export class MailService {
@@ -22,7 +23,7 @@ export class MailService {
     return log;
   }
 
-  /** Send only if the user has the corresponding preference enabled. */
+  /** Send only if the user has the corresponding preference enabled. Locale is normalized with an English fallback. */
   async sendIfEnabled(publicKey: string, event: MailEvent, payload: any) {
     const user = await this.prisma.user.findUnique({
       where: { publicKey },
@@ -34,7 +35,10 @@ export class MailService {
     const enabled = prefs ? this.isEventEnabled(prefs, event) : true; // default: all on
     if (!enabled) return null;
 
-    return this.sendEmail(user.email, event, payload);
+    return this.sendEmail(user.email, event, {
+      ...payload,
+      locale: resolveMailLocale((prefs as { locale?: unknown } | null)?.locale),
+    });
   }
 
   /**
