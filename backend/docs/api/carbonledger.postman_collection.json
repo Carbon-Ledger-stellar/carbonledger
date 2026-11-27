@@ -1356,7 +1356,7 @@
         "description": "Retire credits",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"batchId\": \"batch_abc\",\n  \"amount\": 5,\n  \"beneficiary\": \"Acme Corp\",\n  \"purpose\": \"offset\"\n}",
+          "raw": "{\n  \"batchId\": \"batch_kenya_reforest_2024_01\",\n  \"projectId\": \"proj_amazon_basin_042\",\n  \"amount\": 125.5,\n  \"beneficiary\": \"Acme Global Corporation\",\n  \"retirementReason\": \"Annual corporate Scope 1 & 2 carbon footprint offset FY2025\",\n  \"retiredBy\": \"GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF\",\n  \"txHash\": \"a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -3020,7 +3020,7 @@
         "description": "Create retirement",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"batchId\": \"batch_abc\",\n  \"amount\": 5,\n  \"beneficiary\": \"Acme Corp\",\n  \"purpose\": \"offset\"\n}",
+          "raw": "{\n  \"batchId\": \"batch_kenya_reforest_2024_01\",\n  \"projectId\": \"proj_amazon_basin_042\",\n  \"amount\": 125.5,\n  \"beneficiary\": \"Acme Global Corporation\",\n  \"retirementReason\": \"Annual corporate Scope 1 & 2 carbon footprint offset FY2025\",\n  \"retiredBy\": \"GABCD1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEF\",\n  \"txHash\": \"a1b2c3d4e5f60718293a4b5c6d7e8f901234567890abcdef1234567890abcdef\"\n}",
           "options": {
             "raw": {
               "language": "json"
